@@ -2,26 +2,29 @@
 
 <div class="panel">
 
-<div class="controls">
+<div class="buttons">
 
 <button @click="selectAll">全选</button>
 <button @click="clearAll">全不选</button>
 <button @click="selectPaid">全选付费集</button>
+<button class="start-btn" @click="start">开始统计</button>
 
 </div>
 
+<div class="episode-list">
 <div
 v-for="drama in dramas"
 :key="drama.drama.id"
 >
 
-<div
-class="title"
-@click="drama.expanded=!drama.expanded"
->
+<div class="drama-header" @click="toggle(drama)">
+  <span class="toggle-icon">
+    {{ drama.expanded ? "[-]" : "[+]" }}
+  </span>
 
-{{drama.drama.name}}
-
+  <span class="drama-title">
+    {{ drama.drama.name }}
+  </span>
 </div>
 
 <div v-show="drama.expanded">
@@ -45,12 +48,8 @@ v-model="ep.selected"
 
 </div>
 
-<button @click="start">
-开始统计
-</button>
-
 </div>
-
+</div>
 </template>
 
 <script>
@@ -60,6 +59,10 @@ export default{
 props:["dramas"],
 
 methods:{
+
+  toggle(drama){
+    drama.expanded = !drama.expanded
+  },
 
 selectAll(){
 
@@ -111,31 +114,59 @@ this.$emit("startStatistics",ids)
 
 .panel{
 
-max-height:320px;
-overflow-y:auto;
-border:1px solid #ddd;
-padding:8px;
-margin-top:10px;
+  border:1px solid #e5e5e5;
+  border-radius:10px;
+  margin-top:12px;
+  background:white;
 
 }
 
-.controls{
+.buttons{
 
-margin-bottom:6px;
+  position:sticky;
+  top:0;
+  background:white;
+  padding:10px;
+  border-bottom:1px solid #eee;
+  display:flex;
+  gap:8px;
+  z-index:5;
 
 }
 
-.title{
-
-font-weight:bold;
-cursor:pointer;
-
+.buttons button{
+  padding:6px 10px;
+  border-radius:6px;
+  border:1px solid #ccc;
+  background:#f5f5f5;
+  cursor:pointer;
 }
 
-button{
+/* 橙色统计按钮 */
+.start-btn{
+  background:#ff9800;
+  border:none;
+  color:white;
+  font-weight:bold;
+}
 
-margin:6px 4px;
+/* 滚动区 */
+.episode-list{
+  max-height:300px;
+  overflow-y:auto;
+  padding:8px;
+}
 
+/* 剧标题 */
+.drama-header{
+  font-weight:bold;
+  cursor:pointer;
+  padding:6px 0;
+}
+
+.toggle-icon{
+  color:#3f51b5;
+  margin-right:6px;
 }
 
 </style>
