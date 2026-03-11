@@ -50,9 +50,6 @@ export default {
     };
   },
   methods: {
-    updateSearchResults(results) {
-      this.searchResults = results;
-    },
     async addDramas(ids) {
       if (!ids || ids.length === 0) return;
       this.progress = 0;
@@ -110,7 +107,7 @@ export default {
       this.currentAction = "开始统计";
 
       try {
-        const resp = await fetch("getdanmaku", {
+        const resp = await fetch("/getdanmaku", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sounds })
