@@ -4,7 +4,7 @@
 
 ## 试用
 
-[试用点我](https://mao-er-fmdan-mu-idtong-ji.onrender.com/)
+[试用点我](https://xiao-mao-fen-xi.onrender.com/)
 
 ## 说明
 
