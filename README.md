@@ -33,18 +33,6 @@ npm start
 
 Express 会托管 `dist` 目录中的静态文件，并保留 SPA 回退路由。
 
-## 部署到 Render
-
-推荐使用单个 Web Service 部署。
-
-- Environment: `Node`
-- Build Command: `npm install && npm run build`
-- Start Command: `npm start`
-- Node Version: `>=18`
-- Port: 由 Render 自动注入 `PORT`，项目已兼容
-
-如果你希望用 Blueprint 一键创建服务，可直接使用仓库中的 `render.yaml`。
-
 ## 说明
 
 - 猫耳接口可能出现访问限制，页面会给出提示。
