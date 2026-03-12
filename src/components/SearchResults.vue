@@ -39,7 +39,12 @@
         <div class="result-info">
           <div class="result-title">{{ item.name }}</div>
           <div class="result-meta">剧集ID：{{ item.id }}</div>
-          <div class="result-meta">总播放量：{{ getPlayCountWan(item) }}</div>
+          <div class="result-meta">
+            总播放量：{{ getPlayCountText(item) }}
+            <template v-if="hasSubscriptionNum(item)">
+              / 追剧人数：{{ formatNumber(item.subscription_num) }}
+            </template>
+          </div>
         </div>
       </div>
     </div>
@@ -64,17 +69,39 @@ export default {
     buildProxyImageUrl(url) {
       return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
     },
-    getPlayCountWan(item) {
+    formatPlayCount(value) {
+      const count = Number(value ?? 0);
+      if (!Number.isFinite(count) || count <= 0) {
+        return "0";
+      }
+
+      if (count < 10000) {
+        return `${count}`;
+      }
+
+      if (count < 100000000) {
+        return `${(count / 10000).toFixed(1)}万`;
+      }
+
+      return `${(count / 100000000).toFixed(2)}亿`;
+    },
+    formatNumber(value) {
+      const count = Number(value ?? 0);
+      if (!Number.isFinite(count) || count < 0) {
+        return "0";
+      }
+
+      return this.formatPlayCount(count);
+    },
+    getPlayCountText(item) {
       if (item.playCountWan) {
         return item.playCountWan;
       }
 
-      const count = Number(item.view_count ?? 0);
-      if (!Number.isFinite(count) || count <= 0) {
-        return "0.0万";
-      }
-
-      return `${(count / 10000).toFixed(1)}万`;
+      return this.formatPlayCount(item.view_count);
+    },
+    hasSubscriptionNum(item) {
+      return Number.isFinite(Number(item.subscription_num));
     },
     getSelectedIds() {
       return this.results

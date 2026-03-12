@@ -27,17 +27,15 @@
 
     <div class="search-card search-card-muted">
       <label class="field-label" for="manual-id-input">手动导入剧集ID</label>
-      <div class="search-block search-block-column">
+      <div class="search-block">
         <textarea
           id="manual-id-input"
           v-model="manualIds"
-          rows="3"
+          rows="2"
           class="search-input search-textarea"
           placeholder="输入一个或多个剧集ID，支持英文逗号、中文逗号、空格或换行分隔"
         ></textarea>
-        <div class="manual-actions">
-          <button class="primary-btn" @click="queryByIds">导入剧集</button>
-        </div>
+        <button class="primary-btn" @click="queryByIds">导入剧集</button>
       </div>
     </div>
   </div>
@@ -194,10 +192,6 @@ export default {
   align-items: stretch;
 }
 
-.search-block-column {
-  flex-direction: column;
-}
-
 .search-input {
   width: 100%;
   padding: 12px 14px;
@@ -220,13 +214,9 @@ export default {
 }
 
 .search-textarea {
-  min-height: 88px;
+  flex: 1 1 auto;
+  min-height: 64px;
   resize: vertical;
-}
-
-.manual-actions {
-  display: flex;
-  justify-content: flex-end;
 }
 
 .primary-btn {
@@ -262,10 +252,6 @@ export default {
 
   .primary-btn {
     width: 100%;
-  }
-
-  .manual-actions {
-    justify-content: stretch;
   }
 }
 </style>

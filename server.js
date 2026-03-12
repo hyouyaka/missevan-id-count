@@ -35,10 +35,18 @@ function formatPlayCountWan(value) {
   const count = Number(value);
 
   if (!Number.isFinite(count) || count <= 0) {
-    return "0.0万";
+    return "0";
   }
 
-  return `${(count / 10000).toFixed(1)}万`;
+  if (count < 10000) {
+    return `${count}`;
+  }
+
+  if (count < 100000000) {
+    return `${(count / 10000).toFixed(1)}万`;
+  }
+
+  return `${(count / 100000000).toFixed(2)}亿`;
 }
 
 function isAllowedImageHost(hostname) {
@@ -213,18 +221,33 @@ async function fetchSoundSummary(soundId) {
   return summary;
 }
 
-async function fetchDramaInfo(dramaId) {
-  const cached = getCachedValue(dramaCache, dramaId, DRAMA_CACHE_TTL_MS);
+async function fetchDramaInfo(dramaId, soundId = null) {
+  const cacheKey = soundId ? `sound:${soundId}` : `drama:${dramaId}`;
+  const cached = getCachedValue(dramaCache, cacheKey, DRAMA_CACHE_TTL_MS);
   if (cached) {
     return cached;
   }
 
   const data = await fetchJsonWithRetry(
-    `https://www.missevan.com/dramaapi/getdrama?drama_id=${dramaId}`
+    soundId
+      ? `https://www.missevan.com/dramaapi/getdramabysound?sound_id=${soundId}`
+      : `https://www.missevan.com/dramaapi/getdrama?drama_id=${dramaId}`
   );
 
   if (data.success) {
-    setCachedValue(dramaCache, dramaId, data.info);
+    setCachedValue(dramaCache, cacheKey, data.info);
+
+    const resolvedDramaId = Number(data?.info?.drama?.id ?? dramaId);
+    if (resolvedDramaId > 0) {
+      setCachedValue(dramaCache, `drama:${resolvedDramaId}`, data.info);
+    }
+
+    const resolvedSoundId = Number(
+      soundId ?? data?.info?.episodes?.episode?.[0]?.sound_id
+    );
+    if (resolvedSoundId > 0) {
+      setCachedValue(dramaCache, `sound:${resolvedSoundId}`, data.info);
+    }
   }
 
   return data.info;
@@ -380,15 +403,52 @@ app.get("/search", async (req, res) => {
       return res.json({ success: false });
     }
 
-    const results = data.info.Datas.map((drama) => ({
-      id: drama.id,
-      name: drama.name,
-      cover: drama.cover || "",
-      view_count: Number(drama.view_count ?? 0),
-      playCountWan: formatPlayCountWan(drama.view_count),
-      price: Number(drama.price ?? 0),
-      checked: false,
-    }));
+    const baseResults = data.info.Datas.map((drama) => {
+      const firstEpisode = Array.isArray(drama?.episode)
+        ? drama.episode[0]
+        : Array.isArray(drama?.episodes)
+          ? drama.episodes[0]
+          : drama?.episodes?.episode?.[0];
+      const soundId = Number(firstEpisode?.sound_id ?? 0);
+
+      return {
+        id: drama.id,
+        name: drama.name,
+        cover: drama.cover || "",
+        view_count: Number(drama.view_count ?? 0),
+        playCountWan: formatPlayCountWan(drama.view_count),
+        price: Number(drama.price ?? 0),
+        sound_id: soundId > 0 ? soundId : null,
+        subscription_num: null,
+        checked: false,
+      };
+    });
+
+    const results = await Promise.all(
+      baseResults.map(async (item) => {
+        if (!item.sound_id) {
+          return item;
+        }
+
+        try {
+          const info = await fetchDramaInfo(item.id, item.sound_id);
+          const subscriptionNum = Number(info?.drama?.subscription_num);
+
+          return {
+            ...item,
+            subscription_num: Number.isFinite(subscriptionNum)
+              ? subscriptionNum
+              : null,
+          };
+        } catch (error) {
+          console.error(
+            `获取追剧人数失败 drama_id=${item.id} sound_id=${item.sound_id}`,
+            error
+          );
+          return item;
+        }
+      })
+    );
 
     return res.json({ success: true, results });
   } catch (error) {
@@ -455,11 +515,13 @@ app.post("/getdramacards", async (req, res) => {
 
 app.post("/getdramas", async (req, res) => {
   const ids = req.body.drama_ids || [];
+  const soundIdMap = req.body.sound_id_map || {};
   const results = [];
 
   for (const id of ids) {
     try {
-      const info = await fetchDramaInfo(id);
+      const soundId = Number(soundIdMap[String(id)] ?? soundIdMap[id] ?? 0);
+      const info = await fetchDramaInfo(id, soundId > 0 ? soundId : null);
 
       if (info) {
         results.push({

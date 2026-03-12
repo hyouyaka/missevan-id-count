@@ -362,9 +362,15 @@ export default {
         return loaded;
       }
 
+      const searchResult = this.getSearchResultById(dramaId);
+      const soundIdMap = {};
+      if (Number(searchResult?.sound_id) > 0) {
+        soundIdMap[dramaId] = Number(searchResult.sound_id);
+      }
+
       const data = await this.postJson(
         "/getdramas",
-        { drama_ids: [dramaId] },
+        { drama_ids: [dramaId], sound_id_map: soundIdMap },
         signal,
         "加载剧集失败"
       );
