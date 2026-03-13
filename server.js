@@ -51,7 +51,7 @@ let cooldownStateLoaded = false;
 app.use(cors());
 app.use(express.json());
 
-app.get("/app-config", (req, res) => {)
+app.get("/app-config", (req, res) => {
   res.json({
     missevanEnabled: MISSEVAN_ENABLED,
     desktopApp: DESKTOP_APP,
@@ -63,7 +63,6 @@ app.get("/app-config", (req, res) => {)
     cooldownHours: MISSEVAN_COOLDOWN_HOURS,
     cooldownUntil: isInAccessDeniedCooldown() ? accessDeniedUntil : 0,
   });
-});
 });
 
 function sleep(ms) {
