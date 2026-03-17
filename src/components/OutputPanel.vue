@@ -104,7 +104,7 @@
             </div>
             <div>
               <div class="output-stat-label">
-                {{ drama.platform === "manbo" ? "投喂总数" : "打赏榜累计" }}
+                {{ getRewardLabel(drama) }}
               </div>
               <div class="output-stat-value">
                 {{
@@ -131,6 +131,44 @@
             </div>
           </div>
         </div>
+
+        <div v-if="revenueSummary" class="output-summary-card">
+          <div class="output-card-title">
+            {{ revenueSummary.summaryTitle || `汇总 / 已选 ${revenueSummary.selectedDramaCount} 部` }}
+          </div>
+          <div class="output-stats">
+            <div>
+              <div class="output-stat-label">总和去重 ID</div>
+              <div class="output-stat-value">
+                {{ revenueSummary.failed ? "访问失败" : revenueSummary.totalPaidUserCount }}
+              </div>
+            </div>
+            <div>
+              <div class="output-stat-label">
+                {{ getRewardLabel(revenueSummary, true) }}
+              </div>
+              <div class="output-stat-value">
+                {{
+                  revenueSummary.failed
+                    ? "访问失败"
+                    : formatRewardValue(revenueSummary.platform, revenueSummary.rewardTotal)
+                }}
+              </div>
+            </div>
+          </div>
+          <div class="output-revenue-line">
+            <div class="output-stat-label">收益预估</div>
+            <div class="output-stat-value">
+              {{
+                revenueSummary.failed
+                  ? "预估失败"
+                  : shouldShowRevenueRange(revenueSummary)
+                    ? formatRevenueRange(revenueSummary.minRevenueYuan, revenueSummary.maxRevenueYuan)
+                    : formatRevenue(revenueSummary.estimatedRevenueYuan)
+              }}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -151,9 +189,16 @@ export default {
     totalDanmaku: Number,
     totalUsers: Number,
     revenueResults: Array,
+    revenueSummary: Object,
     isRunning: Boolean,
   },
   methods: {
+    getRewardLabel(drama, isSummary = false) {
+      if (drama?.platform === "manbo") {
+        return "投喂总数";
+      }
+      return isSummary ? "打赏榜总和" : "打赏榜累计";
+    },
     formatRewardValue(platform, value) {
       const amount = Number(value ?? 0);
       return platform === "manbo" ? `${amount} 红豆` : `${amount} 钻石`;
@@ -162,10 +207,7 @@ export default {
       if (!drama || drama.failed) {
         return false;
       }
-      if (drama.platform !== "manbo") {
-        return false;
-      }
-      if (drama.revenueType !== "season" && drama.revenueType !== "episode") {
+      if (drama.minRevenueYuan == null || drama.maxRevenueYuan == null) {
         return false;
       }
       return Number.isFinite(Number(drama.minRevenueYuan))
@@ -204,7 +246,10 @@ export default {
       if (amount >= 10000) {
         return `${(amount / 10000).toFixed(1)} 万元`;
       }
-      return `${Math.round(amount)} 元`;
+      if (Number.isInteger(amount)) {
+        return `${amount} 元`;
+      }
+      return `${amount.toFixed(2).replace(/\.?0+$/, "")} 元`;
     },
     formatRevenueRange(minValue, maxValue) {
       return `${this.formatRevenue(minValue)} - ${this.formatRevenue(maxValue)}`;

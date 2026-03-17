@@ -62,6 +62,7 @@
           :totalDanmaku="currentState.totalDanmaku"
           :totalUsers="currentState.totalUsers"
           :revenueResults="currentState.revenueResults"
+          :revenueSummary="currentRevenueSummary"
           :isRunning="currentState.isRunning"
         />
       </section>
@@ -132,6 +133,9 @@ export default {
   computed: {
     currentState() {
       return this.platformStates[this.currentPlatform];
+    },
+    currentRevenueSummary() {
+      return this.buildRevenueSummary(this.currentState.revenueResults);
     },
     visiblePlatforms() {
       return this.platforms.filter((platform) => {
@@ -827,6 +831,182 @@ export default {
       });
       return userSet.size;
     },
+    buildUniqueUserIds(collections) {
+      const userSet = new Set();
+      collections.forEach((item) => {
+        const users = Array.isArray(item?.users) ? item.users : item;
+        (Array.isArray(users) ? users : []).forEach((uid) => userSet.add(uid));
+      });
+      return Array.from(userSet);
+    },
+    hasRevenueRange(result) {
+      if (
+        !result
+        || result.summaryRevenueMode === "single"
+        || result.summaryRevenueMode === "member_reward"
+      ) {
+        return false;
+      }
+      return Number.isFinite(Number(result?.minRevenueYuan))
+        && Number.isFinite(Number(result?.maxRevenueYuan));
+    },
+    getSummaryRevenueMode(result, platform) {
+      if (!result) {
+        return "single";
+      }
+      if (result.summaryRevenueMode) {
+        return result.summaryRevenueMode;
+      }
+      if (platform === "missevan" && result.vipOnlyReward) {
+        return "member_reward";
+      }
+      if (
+        platform === "manbo"
+        && (
+          result.revenueType === "member"
+          || (
+            Number(result?.diamondValue ?? 0) > 0
+            && Number(result?.titlePrice ?? 0) <= 0
+            && !this.hasRevenueRange({ ...result, summaryRevenueMode: "single" })
+          )
+        )
+      ) {
+        return "member_reward";
+      }
+      if (this.hasRevenueRange(result)) {
+        return "range";
+      }
+      return "single";
+    },
+    getSummaryRevenueTotals(results, platform) {
+      let estimatedRevenueYuan = 0;
+      let minRevenueYuan = null;
+      let maxRevenueYuan = null;
+      let hasRevenueRange = false;
+      let hasMemberReward = false;
+
+      results.forEach((item) => {
+        const mode = this.getSummaryRevenueMode(item, platform);
+        if (mode === "member_reward") {
+          hasMemberReward = true;
+          const amount = platform === "manbo"
+            ? Number(item?.diamondValue ?? 0) / 100
+            : Number(item?.rewardCoinTotal ?? 0) / 10;
+          estimatedRevenueYuan += amount;
+          if (hasRevenueRange) {
+            minRevenueYuan = Number(minRevenueYuan ?? 0) + amount;
+            maxRevenueYuan = Number(maxRevenueYuan ?? 0) + amount;
+          }
+          return;
+        }
+
+        if (mode === "range" && this.hasRevenueRange(item)) {
+          if (!hasRevenueRange) {
+            minRevenueYuan = estimatedRevenueYuan;
+            maxRevenueYuan = estimatedRevenueYuan;
+            hasRevenueRange = true;
+          }
+          minRevenueYuan += Number(item?.minRevenueYuan ?? 0);
+          maxRevenueYuan += Number(item?.maxRevenueYuan ?? 0);
+          estimatedRevenueYuan += Number(item?.estimatedRevenueYuan ?? 0);
+          return;
+        }
+
+        const amount = Number(item?.estimatedRevenueYuan ?? 0);
+        estimatedRevenueYuan += amount;
+        if (hasRevenueRange) {
+          minRevenueYuan = Number(minRevenueYuan ?? 0) + amount;
+          maxRevenueYuan = Number(maxRevenueYuan ?? 0) + amount;
+        }
+      });
+
+      if (estimatedRevenueYuan <= 0 && hasMemberReward) {
+        const rewardTotal = results.reduce((sum, item) => {
+          const mode = this.getSummaryRevenueMode(item, platform);
+          if (mode !== "member_reward") {
+            return sum;
+          }
+          return sum + (
+            platform === "manbo"
+              ? Number(item?.diamondValue ?? 0) / 100
+              : Number(item?.rewardCoinTotal ?? 0) / 10
+          );
+        }, 0);
+        estimatedRevenueYuan = rewardTotal;
+        if (hasRevenueRange) {
+          minRevenueYuan = Number(minRevenueYuan ?? 0) + rewardTotal;
+          maxRevenueYuan = Number(maxRevenueYuan ?? 0) + rewardTotal;
+        }
+      }
+
+      return {
+        estimatedRevenueYuan,
+        minRevenueYuan,
+        maxRevenueYuan,
+      };
+    },
+    getRevenueCurrencyUnit(platform) {
+      return platform === "manbo" ? "红豆" : "钻石";
+    },
+    buildRevenueSummaryTitle(summary) {
+      const baseTitle = `汇总 / 已选 ${summary.selectedDramaCount} 部`;
+      if (!summary || summary.failed || !summary.hasSummaryPrice) {
+        return baseTitle;
+      }
+      if (Number.isFinite(Number(summary.titleMemberPriceTotal))) {
+        return `${baseTitle}，总价 ${summary.titlePriceTotal}（会员 ${summary.titleMemberPriceTotal}）${summary.currencyUnit}`;
+      }
+      return `${baseTitle}，总价 ${summary.titlePriceTotal}${summary.currencyUnit}`;
+    },
+    buildRevenueSummary(results) {
+      if (!Array.isArray(results) || results.length === 0) {
+        return null;
+      }
+
+      const platform = results[0]?.platform || this.currentPlatform;
+      const failed = results.some((item) => item?.failed);
+      const paidUserIds = this.buildUniqueUserIds(
+        results.map((item) => item?.paidUserIds || [])
+      );
+      const rewardTotal = results.reduce((sum, item) => {
+        const rewardValue = platform === "manbo"
+          ? Number(item?.diamondValue ?? 0)
+          : Number(item?.rewardCoinTotal ?? 0);
+        return sum + rewardValue;
+      }, 0);
+      const revenueTotals = this.getSummaryRevenueTotals(results, platform);
+      const priceItems = results.filter((item) => item?.includeInSummaryPrice);
+      const hasSummaryPrice = !failed && priceItems.length > 0;
+      const titlePriceTotal = hasSummaryPrice
+        ? priceItems.reduce((sum, item) => sum + Number(item?.titlePrice ?? 0), 0)
+        : null;
+      const memberPriceItems = priceItems.filter((item) => {
+        return Number.isFinite(Number(item?.titleMemberPrice))
+          && Number(item?.titleMemberPrice) > 0;
+      });
+      const titleMemberPriceTotal = hasSummaryPrice && memberPriceItems.length > 0
+        ? memberPriceItems.reduce((sum, item) => sum + Number(item?.titleMemberPrice ?? 0), 0)
+        : null;
+
+      const summary = {
+        platform,
+        currencyUnit: this.getRevenueCurrencyUnit(platform),
+        selectedDramaCount: results.length,
+        totalPaidUserCount: paidUserIds.length,
+        paidUserIds,
+        rewardTotal,
+        hasSummaryPrice,
+        titlePriceTotal,
+        titleMemberPriceTotal,
+        estimatedRevenueYuan: revenueTotals.estimatedRevenueYuan,
+        minRevenueYuan: revenueTotals.minRevenueYuan,
+        maxRevenueYuan: revenueTotals.maxRevenueYuan,
+        failed,
+        summaryTitle: "",
+      };
+      summary.summaryTitle = this.buildRevenueSummaryTitle(summary);
+      return summary;
+    },
     async fetchRewardSummary(dramaId, signal) {
       return this.postJson(
         "/getrewardsummary",
@@ -856,6 +1036,12 @@ export default {
             title,
             subtitle,
             diamondValue,
+            titlePrice: null,
+            titleMemberPrice: null,
+            includeInSummaryPrice: false,
+            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
+            summaryRevenueMode: "single",
+            paidUserIds: [],
             paidUserCount: 0,
             estimatedRevenueYuan: 0,
             failed: true,
@@ -883,6 +1069,12 @@ export default {
             title,
             subtitle,
             diamondValue,
+            titlePrice: null,
+            titleMemberPrice: null,
+            includeInSummaryPrice: false,
+            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
+            summaryRevenueMode: "single",
+            paidUserIds: [],
             paidUserCount: 0,
             estimatedRevenueYuan: 0,
             failed: true,
@@ -892,7 +1084,8 @@ export default {
           continue;
         }
 
-        const paidUserCount = this.buildUniqueUserCount(episodeUsers.results);
+        const paidUserIds = this.buildUniqueUserIds(episodeUsers.results);
+        const paidUserCount = paidUserIds.length;
         if (revenueType === "member") {
           results.push({
             dramaId,
@@ -901,6 +1094,12 @@ export default {
             title,
             subtitle,
             diamondValue,
+            titlePrice: null,
+            titleMemberPrice: null,
+            includeInSummaryPrice: false,
+            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
+            summaryRevenueMode: "member_reward",
+            paidUserIds,
             paidUserCount,
             estimatedRevenueYuan: diamondValue / 100,
             failed: false,
@@ -915,6 +1114,14 @@ export default {
             title,
             subtitle,
             diamondValue,
+            titlePrice: Number(drama.price ?? 0),
+            titleMemberPrice: Number(drama.member_price ?? 0) > 0
+              ? Number(drama.member_price ?? 0)
+              : null,
+            includeInSummaryPrice: true,
+            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
+            summaryRevenueMode: "range",
+            paidUserIds,
             paidUserCount,
             minRevenueYuan: (paidUserCount * Number(drama.member_price ?? 0) + diamondValue) / 100,
             maxRevenueYuan: (paidUserCount * Number(drama.price ?? 0) + diamondValue) / 100,
@@ -946,6 +1153,14 @@ export default {
             title,
             subtitle,
             diamondValue,
+            titlePrice: hasUniformEpisodePrice
+              ? Number(episodePrices[0] ?? 0) * paidEpisodeCount
+              : null,
+            titleMemberPrice: null,
+            includeInSummaryPrice: hasUniformEpisodePrice,
+            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
+            summaryRevenueMode: hasUniformEpisodePrice ? "range" : "single",
+            paidUserIds,
             paidUserCount,
             estimatedRevenueYuan: minRevenueYuan,
             minRevenueYuan,
@@ -993,6 +1208,7 @@ export default {
           const memberPrice = Number(dramaInfo?.drama?.member_price ?? searchResult?.member_price ?? 0);
           const isMember = Boolean(dramaInfo?.drama?.is_member)
             || Number(dramaInfo?.drama?.vip ?? searchResult?.vip ?? 0) === 1;
+          const vipOnlyReward = isMember;
           const paidEpisodes = dramaInfo?.episodes?.episode?.filter((episode) => {
             return Number(episode.need_pay ?? 0) === 1 || Number(episode.price ?? 0) > 0;
           }) || [];
@@ -1060,10 +1276,16 @@ export default {
               : `${title} / ${price} 钻石`,
             price,
             memberPrice,
+            titlePrice: price > 0 ? price : null,
+            titleMemberPrice: memberPrice > 0 ? memberPrice : null,
+            includeInSummaryPrice: price > 0,
+            currencyUnit: this.getRevenueCurrencyUnit("missevan"),
+            summaryRevenueMode: vipOnlyReward ? "member_reward" : "single",
+            paidUserIds: Array.from(userSet),
             paidUserCount: userSet.size,
             rewardCoinTotal,
-            vipOnlyReward: isMember,
-            estimatedRevenueYuan: isMember
+            vipOnlyReward,
+            estimatedRevenueYuan: vipOnlyReward
               ? rewardCoinTotal / 10
               : (userSet.size * price + rewardCoinTotal) / 10,
             failed,
