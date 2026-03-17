@@ -93,7 +93,7 @@
           class="output-card"
         >
           <div class="output-card-title">
-            {{ drama.title }} / 单价 {{ formatDiamond(drama.price) }}
+            {{ drama.subtitle || `${drama.title} / 单价 ${formatDiamond(drama.price)}` }}
           </div>
           <div class="output-stats">
             <div>
@@ -103,16 +103,31 @@
               </div>
             </div>
             <div>
-              <div class="output-stat-label">打赏榜总额</div>
+              <div class="output-stat-label">
+                {{ drama.platform === "manbo" ? "投喂总数" : "打赏榜累计" }}
+              </div>
               <div class="output-stat-value">
-                {{ drama.failed ? "访问失败" : formatDiamond(drama.rewardCoinTotal) }}
+                {{
+                  drama.failed
+                    ? "访问失败"
+                    : formatRewardValue(
+                        drama.platform,
+                        drama.platform === "manbo" ? drama.diamondValue : drama.rewardCoinTotal
+                      )
+                }}
               </div>
             </div>
           </div>
           <div class="output-revenue-line">
-            <div class="output-stat-label">最低收益</div>
+            <div class="output-stat-label">{{ getRevenueLabel(drama) }}</div>
             <div class="output-stat-value">
-              {{ drama.failed ? "预估失败" : formatRevenue(drama.estimatedRevenueYuan) }}
+              {{
+                drama.failed
+                  ? "预估失败"
+                  : shouldShowRevenueRange(drama)
+                    ? formatRevenueRange(drama.minRevenueYuan, drama.maxRevenueYuan)
+                    : formatRevenue(drama.estimatedRevenueYuan)
+              }}
             </div>
           </div>
         </div>
@@ -139,6 +154,26 @@ export default {
     isRunning: Boolean,
   },
   methods: {
+    formatRewardValue(platform, value) {
+      const amount = Number(value ?? 0);
+      return platform === "manbo" ? `${amount} 红豆` : `${amount} 钻石`;
+    },
+    shouldShowRevenueRange(drama) {
+      if (!drama || drama.failed) {
+        return false;
+      }
+      if (drama.platform !== "manbo") {
+        return false;
+      }
+      if (drama.revenueType !== "season" && drama.revenueType !== "episode") {
+        return false;
+      }
+      return Number.isFinite(Number(drama.minRevenueYuan))
+        && Number.isFinite(Number(drama.maxRevenueYuan));
+    },
+    getRevenueLabel(drama) {
+      return drama?.vipOnlyReward ? "预估收益（仅计算打赏）" : "预估收益";
+    },
     formatPlayCountDisplay(value, failed) {
       if (failed) {
         return "部分分集统计失败";
@@ -171,6 +206,9 @@ export default {
       }
       return `${Math.round(amount)} 元`;
     },
+    formatRevenueRange(minValue, maxValue) {
+      return `${this.formatRevenue(minValue)} - ${this.formatRevenue(maxValue)}`;
+    },
     formatElapsed(value) {
       const totalSeconds = Math.max(0, Math.floor(Number(value ?? 0) / 1000));
       const hours = Math.floor(totalSeconds / 3600);
@@ -197,29 +235,21 @@ export default {
 .output-status-card,
 .output-card,
 .output-summary-card {
-  padding: 14px;
-  background: rgba(255, 255, 255, 0.78);
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.82);
   border: 1px solid rgba(29, 53, 87, 0.08);
-  border-radius: 16px;
-}
-
-.output-status-card {
-  background:
-    linear-gradient(135deg, rgba(255, 241, 235, 0.9), rgba(255, 255, 255, 0.86));
-  border-color: rgba(207, 92, 54, 0.12);
+  border-radius: 18px;
 }
 
 .status-header {
   display: flex;
   gap: 12px;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 10px;
 }
 
 .status-kicker {
-  margin-bottom: 6px;
-  color: var(--accent);
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -227,26 +257,25 @@ export default {
 }
 
 .status-text {
-  font-size: 16px;
+  margin-top: 6px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1.4;
 }
 
 .status-elapsed {
-  margin-top: 6px;
+  margin-top: 8px;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 13px;
 }
 
 .status-side {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  text-align: right;
 }
 
 .status-badge {
-  padding: 4px 10px;
+  display: inline-flex;
+  padding: 6px 10px;
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -255,15 +284,16 @@ export default {
 }
 
 .status-progress {
-  color: var(--accent-strong);
+  margin-top: 8px;
   font-size: 20px;
   font-weight: 800;
 }
 
 .output-progress {
-  height: 12px;
+  height: 10px;
+  margin-top: 16px;
   overflow: hidden;
-  background: rgba(207, 92, 54, 0.12);
+  background: rgba(29, 53, 87, 0.08);
   border-radius: 999px;
 }
 
@@ -271,57 +301,54 @@ export default {
   height: 100%;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   border-radius: inherit;
+  transition: width 0.2s ease;
 }
 
 .output-section {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .output-section-title {
-  color: var(--text-strong);
   font-size: 16px;
   font-weight: 800;
 }
 
 .output-list {
   display: grid;
-  gap: 10px;
-}
-
-.output-summary-card {
-  background: rgba(238, 244, 251, 0.8);
-  border-color: rgba(47, 93, 124, 0.12);
+  gap: 12px;
 }
 
 .output-card-title {
-  margin-bottom: 10px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 800;
   line-height: 1.5;
 }
 
 .output-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .output-stat-label {
-  margin-bottom: 4px;
   color: var(--text-muted);
   font-size: 12px;
+  font-weight: 700;
 }
 
 .output-stat-value {
-  color: var(--text-strong);
-  font-size: 16px;
+  margin-top: 6px;
+  font-size: 18px;
   font-weight: 800;
+  line-height: 1.3;
 }
 
 .output-revenue-line {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed rgba(29, 53, 87, 0.1);
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(29, 53, 87, 0.08);
 }
 
 @media (max-width: 640px) {
@@ -329,18 +356,17 @@ export default {
     padding: 14px;
   }
 
+  .status-header,
+  .output-stats {
+    grid-template-columns: 1fr;
+  }
+
   .status-header {
-    flex-direction: column;
-    align-items: flex-start;
+    display: grid;
   }
 
   .status-side {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .output-stats {
-    grid-template-columns: 1fr;
+    text-align: left;
   }
 }
 </style>

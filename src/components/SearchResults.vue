@@ -13,11 +13,7 @@
         <div class="toolbar-label">执行操作</div>
         <div class="toolbar-actions">
           <button class="run-btn" @click="addSelected">导入分集</button>
-          <button
-            v-if="platform === 'missevan'"
-            class="run-btn run-btn-secondary"
-            @click="estimateRevenue"
-          >
+          <button class="run-btn run-btn-secondary" @click="estimateRevenue">
             收益预估
           </button>
         </div>
@@ -41,12 +37,18 @@
         </div>
 
         <div class="result-info">
-          <div class="result-title">{{ item.name }}</div>
+          <div class="result-title-row">
+            <div class="result-title">{{ item.name }}</div>
+            <span v-if="item.is_member" class="result-badge">会员</span>
+          </div>
           <div class="result-meta">{{ idLabel }}: {{ item.id }}</div>
           <div class="result-meta">
             总播放量: {{ getPlayCountText(item) }}
             <template v-if="hasSubscriptionNum(item)">
               / {{ extraMetaLabel }}: {{ formatNumber(item.subscription_num) }}
+            </template>
+            <template v-if="platform === 'manbo'">
+              / 投喂总数: {{ formatNumber(item.diamond_value) }}
             </template>
           </div>
         </div>
@@ -239,6 +241,10 @@ export default {
   border-bottom: 1px solid rgba(29, 53, 87, 0.08);
 }
 
+.result-card:last-child {
+  border-bottom: none;
+}
+
 .result-check {
   display: flex;
   align-items: center;
@@ -249,7 +255,7 @@ export default {
   width: 60px;
   height: 60px;
   overflow: hidden;
-  background: linear-gradient(135deg, #eff4fa, #f7ece7);
+  background: linear-gradient(135deg, rgba(207, 92, 54, 0.12), rgba(47, 93, 124, 0.12));
   border-radius: 14px;
 }
 
@@ -260,97 +266,87 @@ export default {
 }
 
 .result-cover {
-  display: block;
   object-fit: cover;
 }
 
 .cover-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   color: var(--text-muted);
-  font-size: 11px;
-  text-align: center;
+  font-size: 12px;
 }
 
 .result-info {
   min-width: 0;
 }
 
+.result-title-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
 .result-title {
+  min-width: 0;
   overflow: hidden;
+  font-size: 16px;
   font-weight: 700;
-  line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.result-badge {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  color: #8b4d00;
+  font-size: 12px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ffe8a3, #ffd27a);
+  border: 1px solid rgba(139, 77, 0, 0.16);
+  border-radius: 999px;
 }
 
 .result-meta {
   margin-top: 4px;
   color: var(--text-muted);
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .empty-state {
-  padding: 24px 18px;
+  padding: 28px 18px 30px;
   text-align: center;
 }
 
 .empty-title {
-  margin-bottom: 6px;
+  font-size: 16px;
   font-weight: 700;
 }
 
 .empty-text {
+  margin-top: 8px;
   color: var(--text-muted);
+  font-size: 13px;
   line-height: 1.6;
 }
 
 @media (max-width: 640px) {
   .toolbar-shell {
     grid-template-columns: 1fr;
-    padding: 14px;
-  }
-
-  .toolbar-group {
-    align-items: stretch;
-  }
-
-  .toolbar-actions {
-    width: 100%;
-    gap: 6px;
-  }
-
-  .toolbar-group-run .toolbar-actions {
-    flex-wrap: nowrap;
-  }
-
-  .toolbar-group-run .run-btn {
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 10px 12px;
-    font-size: 13px;
-  }
-
-  .toolbar-actions-select .select-btn {
-    min-width: 0;
-    padding: 8px 10px;
-    font-size: 12px;
-  }
-
-  .result-list {
-    padding: 6px 14px 14px;
   }
 
   .result-card {
-    grid-template-columns: auto 52px minmax(0, 1fr);
-    gap: 10px;
+    grid-template-columns: auto 56px minmax(0, 1fr);
   }
 
   .cover-wrap {
-    width: 52px;
-    height: 52px;
+    width: 56px;
+    height: 56px;
+  }
+
+  .result-title-row {
+    flex-wrap: wrap;
   }
 }
 </style>

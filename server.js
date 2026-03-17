@@ -404,35 +404,14 @@ function extractManboMainEpisodeNumber(title) {
 }
 
 function inferManboEpisodeNeedPay(set, dramaMeta) {
-  const explicitPaid =
+  void dramaMeta;
+
+  return (
     Number(set?.payType ?? set?.setPayType ?? 0) === 1 ||
     Number(set?.vipFree ?? 0) === 1 ||
     Number(set?.price ?? 0) > 0 ||
-    Number(set?.memberPrice ?? 0) > 0;
-  if (explicitPaid) {
-    return 1;
-  }
-
-  if (!dramaMeta?.isPaidDrama) {
-    return 0;
-  }
-
-  const title = String(set?.setTitle || set?.setName || "").trim();
-
-  if (/\u9884\u544a|\u91c7\u8bbf|\u63a2\u73ed|\u5012\u8ba1\u65f6|\u4e3b\u9898\u66f2|FT/i.test(title)) {
-    return 0;
-  }
-
-  if (/\u5c0f\u5267\u573a|\u82b1\u7d6e|\u798f\u5229/u.test(title)) {
-    return 1;
-  }
-
-  const mainEpisodeNumber = extractManboMainEpisodeNumber(title);
-  if (mainEpisodeNumber == null) {
-    return 0;
-  }
-
-  return mainEpisodeNumber > dramaMeta.freeMainCount ? 1 : 0;
+    Number(set?.memberPrice ?? 0) > 0
+  ) ? 1 : 0;
 }
 
 function normalizeRawInputItems(items) {
@@ -550,7 +529,10 @@ function normalizeMissevanDramaInfo(info) {
       id: Number(drama.id),
       name: drama.name || "",
       cover: drama.cover || "",
+      vip: Number(drama.vip ?? 0),
       price: Number(drama.price ?? 0),
+      member_price: Number(drama?.vip_discount?.price ?? 0),
+      is_member: Number(drama.vip ?? 0) === 1,
       view_count: Number(drama.view_count ?? 0),
       subscription_num: Number(drama.subscription_num ?? 0),
       platform: "missevan",
@@ -748,6 +730,32 @@ function normalizeManboDramaInfo(raw) {
       Number(raw.memberPrice ?? 0) > 0,
     freeMainCount: extractManboFreeMainCount(raw.desc) ?? 0,
   };
+  const normalizedEpisodes = sets
+    .map((set) => ({
+      sound_id: String(set.setIdStr ?? set.setId ?? "").trim(),
+      name: set.setTitle || set.setName || `Episode ${set.setNo ?? ""}`,
+      need_pay: inferManboEpisodeNeedPay(set, dramaMeta),
+      pay_type: Number(set.payType ?? set.setPayType ?? 0),
+      vip_free: Number(set.vipFree ?? 0),
+      price: Number(set.price ?? 0),
+      member_price: Number(set.memberPrice ?? 0),
+      set_no: Number(set.setNo ?? 0),
+      play_count: Number(set.watchCount ?? 0),
+      type: Number(set.type ?? 0),
+      is_buy: Number(set.isBuy ?? raw.isBuy ?? 0),
+      platform: "manbo",
+    }))
+    .filter((episode) => isNumericId(episode.sound_id))
+    .sort((a, b) => a.set_no - b.set_no);
+  const isMember = isManboMemberDramaInfo({
+    drama: {
+      pay_type: Number(raw.payType ?? raw.setPayType ?? 0),
+      price: Number(raw.price ?? 0),
+    },
+    episodes: {
+      episode: normalizedEpisodes,
+    },
+  });
 
   return {
     drama: {
@@ -757,30 +765,16 @@ function normalizeManboDramaInfo(raw) {
       price: Number(raw.price ?? 0),
       view_count: Number(raw.watchCount ?? 0),
       subscription_num: Number(raw.favoriteCount ?? 0),
+      diamond_value: Number(raw.diamondValue ?? 0),
       pay_type: Number(raw.payType ?? raw.setPayType ?? 0),
       member_price: Number(raw.memberPrice ?? 0),
+      is_member: isMember,
       free_main_count: dramaMeta.freeMainCount,
       platform: "manbo",
       source_type: "drama",
     },
     episodes: {
-      episode: sets
-        .map((set) => ({
-          sound_id: String(set.setIdStr ?? set.setId ?? "").trim(),
-          name: set.setTitle || set.setName || `Episode ${set.setNo ?? ""}`,
-          need_pay: inferManboEpisodeNeedPay(set, dramaMeta),
-          pay_type: Number(set.payType ?? set.setPayType ?? 0),
-          vip_free: Number(set.vipFree ?? 0),
-          price: Number(set.price ?? 0),
-          member_price: Number(set.memberPrice ?? 0),
-          set_no: Number(set.setNo ?? 0),
-          play_count: Number(set.watchCount ?? 0),
-          type: Number(set.type ?? 0),
-          is_buy: Number(set.isBuy ?? raw.isBuy ?? 0),
-          platform: "manbo",
-        }))
-        .filter((episode) => isNumericId(episode.sound_id))
-        .sort((a, b) => a.set_no - b.set_no),
+      episode: normalizedEpisodes,
     },
     platform: "manbo",
     dm_count: Number(raw.dmCount ?? 0),
@@ -802,9 +796,34 @@ function normalizeManboCardFromDramaInfo(info) {
     price: Number(drama.price ?? 0),
     sound_id: info?.episodes?.episode?.[0]?.sound_id || null,
     subscription_num: Number(drama.subscription_num ?? 0),
+    diamond_value: Number(drama.diamond_value ?? 0),
+    is_member: Boolean(drama.is_member),
     checked: true,
     platform: "manbo",
   };
+}
+
+function isManboMemberDramaInfo(info) {
+  const drama = info?.drama || {};
+  const episodes = Array.isArray(info?.episodes?.episode)
+    ? info.episodes.episode
+    : [];
+  const allEpisodesFree = episodes.every((episode) => {
+    return (
+      Number(episode?.pay_type ?? 0) === 0 &&
+      Number(episode?.price ?? 0) === 0
+    );
+  });
+  const hasVipFreeEpisode = episodes.some(
+    (episode) => Number(episode?.vip_free ?? 0) === 1
+  );
+
+  return (
+    Number(drama.pay_type ?? 0) === 0 &&
+    Number(drama.price ?? 0) === 0 &&
+    allEpisodesFree &&
+    hasVipFreeEpisode
+  );
 }
 
 function findCachedManboEpisodeBySetId(setId) {
@@ -1568,7 +1587,10 @@ app.get("/search", async (req, res) => {
         cover: drama.cover || "",
         view_count: Number(drama.view_count ?? 0),
         playCountWan: formatPlayCountWan(drama.view_count),
+        vip: Number(drama.vip ?? 0),
         price: Number(drama.price ?? 0),
+        member_price: Number(drama?.vip_discount?.price ?? 0),
+        is_member: Number(drama.vip ?? 0) === 1,
         sound_id: soundId > 0 ? soundId : null,
         subscription_num: null,
         checked: false,
@@ -1588,6 +1610,9 @@ app.get("/search", async (req, res) => {
 
           return {
             ...item,
+            vip: Number(info?.drama?.vip ?? item.vip ?? 0),
+            member_price: Number(info?.drama?.member_price ?? 0),
+            is_member: Boolean(info?.drama?.is_member),
             subscription_num: Number.isFinite(subscriptionNum)
               ? subscriptionNum
               : null,
@@ -1644,7 +1669,10 @@ app.post("/getdramacards", async (req, res) => {
           cover: info.drama.cover || "",
           view_count: Number(info.drama.view_count ?? 0),
           playCountWan: formatPlayCountWan(info.drama.view_count),
+          vip: Number(info.drama.vip ?? 0),
           price: Number(info.drama.price ?? 0),
+          member_price: Number(info.drama.member_price ?? 0),
+          is_member: Boolean(info.drama.is_member),
           checked: true,
           platform: "missevan",
         });

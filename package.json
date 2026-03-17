@@ -46,11 +46,12 @@
         {
           "target": "portable",
           "arch": [
-            "x64"
+            "x64",
+            "ia32"
           ]
         }
       ],
-      "artifactName": "M&M-Toolkit-${version}.exe"
+      "artifactName": "M&M-Toolkit-${version}-${arch}.exe"
     }
   }
 }
