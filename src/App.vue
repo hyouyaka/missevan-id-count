@@ -478,6 +478,13 @@ export default {
     getLoadedDramaById(dramaId) {
       return this.currentState.dramas.find((item) => String(item?.drama?.id) === String(dramaId));
     },
+    normalizeOptionalNumber(value) {
+      if (value == null || value === "") {
+        return null;
+      }
+      const normalized = Number(value);
+      return Number.isFinite(normalized) ? normalized : null;
+    },
     async fetchDramaById(dramaId, signal) {
       const loaded = this.getLoadedDramaById(dramaId);
       if (loaded) {
@@ -953,10 +960,11 @@ export default {
       if (!summary || summary.failed || !summary.hasSummaryPrice) {
         return baseTitle;
       }
-      if (Number.isFinite(Number(summary.titleMemberPriceTotal))) {
-        return `${baseTitle}，总价 ${summary.titlePriceTotal}（会员 ${summary.titleMemberPriceTotal}）${summary.currencyUnit}`;
+      const titleMemberPriceTotal = this.normalizeOptionalNumber(summary.titleMemberPriceTotal);
+      if (titleMemberPriceTotal != null) {
+        return `${baseTitle}，总价 ${summary.titlePriceTotal}（会员 ${titleMemberPriceTotal}）${summary.currencyUnit}`;
       }
-      return `${baseTitle}，总价 ${summary.titlePriceTotal}${summary.currencyUnit}`;
+      return `${baseTitle}，总价 ${summary.titlePriceTotal} ${summary.currencyUnit}`;
     },
     buildRevenueSummary(results) {
       if (!Array.isArray(results) || results.length === 0) {
@@ -974,6 +982,19 @@ export default {
           : Number(item?.rewardCoinTotal ?? 0);
         return sum + rewardValue;
       }, 0);
+      const totalViewCount = results.reduce((sum, item) => {
+        return sum + Number(item?.viewCount ?? 0);
+      }, 0);
+      const rewardNumValues = platform === "missevan"
+        ? results
+          .map((item) => this.normalizeOptionalNumber(item?.rewardNum))
+          .filter((value) => value != null)
+        : [];
+      const rewardNumTotal = platform === "missevan"
+        ? (rewardNumValues.length
+          ? rewardNumValues.reduce((sum, value) => sum + value, 0)
+          : null)
+        : null;
       const revenueTotals = this.getSummaryRevenueTotals(results, platform);
       const priceItems = results.filter((item) => item?.includeInSummaryPrice);
       const hasSummaryPrice = !failed && priceItems.length > 0;
@@ -994,7 +1015,9 @@ export default {
         selectedDramaCount: results.length,
         totalPaidUserCount: paidUserIds.length,
         paidUserIds,
+        totalViewCount,
         rewardTotal,
+        rewardNum: rewardNumTotal,
         hasSummaryPrice,
         titlePriceTotal,
         titleMemberPriceTotal,
@@ -1023,6 +1046,7 @@ export default {
         const searchResult = this.getSearchResultById(dramaId);
         const dramaInfo = await this.fetchDramaById(dramaId, signal);
         const title = dramaInfo?.drama?.name || searchResult?.name || `Drama ${dramaId}`;
+        const viewCount = Number(dramaInfo?.drama?.view_count ?? searchResult?.view_count ?? 0);
         const diamondValue = Number(dramaInfo?.drama?.diamond_value ?? searchResult?.diamond_value ?? 0);
         const revenueType = this.getManboRevenueType(dramaInfo);
         const revenueEpisodes = this.getManboRevenueEpisodes(dramaInfo, revenueType);
@@ -1035,6 +1059,7 @@ export default {
             revenueType,
             title,
             subtitle,
+            viewCount,
             diamondValue,
             titlePrice: null,
             titleMemberPrice: null,
@@ -1068,6 +1093,7 @@ export default {
             revenueType,
             title,
             subtitle,
+            viewCount,
             diamondValue,
             titlePrice: null,
             titleMemberPrice: null,
@@ -1093,6 +1119,7 @@ export default {
             revenueType,
             title,
             subtitle,
+            viewCount,
             diamondValue,
             titlePrice: null,
             titleMemberPrice: null,
@@ -1113,6 +1140,7 @@ export default {
             revenueType,
             title,
             subtitle,
+            viewCount,
             diamondValue,
             titlePrice: Number(drama.price ?? 0),
             titleMemberPrice: Number(drama.member_price ?? 0) > 0
@@ -1152,6 +1180,7 @@ export default {
             revenueType,
             title,
             subtitle,
+            viewCount,
             diamondValue,
             titlePrice: hasUniformEpisodePrice
               ? Number(episodePrices[0] ?? 0) * paidEpisodeCount
@@ -1204,8 +1233,10 @@ export default {
           const searchResult = this.getSearchResultById(dramaId);
           const dramaInfo = await this.fetchDramaById(dramaId, signal);
           const title = dramaInfo?.drama?.name || searchResult?.name || `Drama ${dramaId}`;
+          const viewCount = Number(dramaInfo?.drama?.view_count ?? searchResult?.view_count ?? 0);
           const price = Number(dramaInfo?.drama?.price ?? searchResult?.price ?? 0);
           const memberPrice = Number(dramaInfo?.drama?.member_price ?? searchResult?.member_price ?? 0);
+          const rewardNum = this.normalizeOptionalNumber(searchResult?.reward_num);
           const isMember = Boolean(dramaInfo?.drama?.is_member)
             || Number(dramaInfo?.drama?.vip ?? searchResult?.vip ?? 0) === 1;
           const vipOnlyReward = isMember;
@@ -1274,6 +1305,7 @@ export default {
             subtitle: isMember
               ? `${title} / ${price}（会员${memberPrice}）钻石`
               : `${title} / ${price} 钻石`,
+            viewCount,
             price,
             memberPrice,
             titlePrice: price > 0 ? price : null,
@@ -1284,6 +1316,7 @@ export default {
             paidUserIds: Array.from(userSet),
             paidUserCount: userSet.size,
             rewardCoinTotal,
+            rewardNum,
             vipOnlyReward,
             estimatedRevenueYuan: vipOnlyReward
               ? rewardCoinTotal / 10

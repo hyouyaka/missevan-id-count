@@ -31,6 +31,7 @@ const danmakuCache = new Map();
 const dramaCache = new Map();
 const soundSummaryCache = new Map();
 const rewardSummaryCache = new Map();
+const rewardDetailCache = new Map();
 const manboDramaCache = new Map();
 const manboSetCache = new Map();
 const manboDanmakuCache = new Map();
@@ -39,6 +40,7 @@ const manboStatsTaskStore = new Map();
 const DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
 const SOUND_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
 const REWARD_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
+const REWARD_DETAIL_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANBO_DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANBO_SET_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANBO_DANMAKU_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -652,6 +654,44 @@ async function fetchRewardSummary(dramaId) {
 
   setCachedValue(rewardSummaryCache, dramaId, summary);
   return summary;
+}
+
+async function fetchRewardDetailMeta(dramaId) {
+  const cached = getCachedValue(
+    rewardDetailCache,
+    dramaId,
+    REWARD_DETAIL_CACHE_TTL_MS
+  );
+  if (cached) {
+    return cached;
+  }
+
+  const data = await fetchJsonWithRetry(
+    `https://www.missevan.com/reward/drama-reward-detail?drama_id=${dramaId}`,
+    2,
+    250,
+    { missevan: true }
+  );
+  const rewardNum = Number(data?.info?.reward_num ?? data?.info?.data?.reward_num);
+  const summary = {
+    success: true,
+    drama_id: Number(dramaId),
+    reward_num: Number.isFinite(rewardNum) ? rewardNum : null,
+    accessDenied: false,
+    error: "",
+  };
+
+  setCachedValue(rewardDetailCache, dramaId, summary);
+  return summary;
+}
+
+function normalizeOptionalFiniteNumber(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
 }
 
 async function fetchDanmakuSummary(soundId, dramaTitle) {
@@ -1593,6 +1633,7 @@ app.get("/search", async (req, res) => {
         is_member: Number(drama.vip ?? 0) === 1,
         sound_id: soundId > 0 ? soundId : null,
         subscription_num: null,
+        reward_num: null,
         checked: false,
         platform: "missevan",
       };
@@ -1600,8 +1641,20 @@ app.get("/search", async (req, res) => {
 
     const results = await Promise.all(
       baseResults.map(async (item) => {
+        const enriched = { ...item };
+
+        try {
+          const rewardMeta = await fetchRewardDetailMeta(item.id);
+          enriched.reward_num = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
+        } catch (error) {
+          console.error(
+            `Failed to fetch Missevan reward detail drama_id=${item.id}`,
+            error
+          );
+        }
+
         if (!item.sound_id) {
-          return item;
+          return enriched;
         }
 
         try {
@@ -1609,7 +1662,7 @@ app.get("/search", async (req, res) => {
           const subscriptionNum = Number(info?.drama?.subscription_num);
 
           return {
-            ...item,
+            ...enriched,
             vip: Number(info?.drama?.vip ?? item.vip ?? 0),
             member_price: Number(info?.drama?.member_price ?? 0),
             is_member: Boolean(info?.drama?.is_member),
@@ -1622,7 +1675,7 @@ app.get("/search", async (req, res) => {
             `Failed to fetch Missevan subscription number drama_id=${item.id}`,
             error
           );
-          return item;
+          return enriched;
         }
       })
     );
@@ -1663,6 +1716,14 @@ app.post("/getdramacards", async (req, res) => {
       const info = await fetchDramaInfo(id);
 
       if (info?.drama) {
+        let rewardNum = null;
+        try {
+          const rewardMeta = await fetchRewardDetailMeta(id);
+          rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
+        } catch (error) {
+          console.error(`Failed to fetch Missevan reward detail drama_id=${id}`, error);
+        }
+
         results.push({
           id: info.drama.id,
           name: info.drama.name,
@@ -1673,6 +1734,7 @@ app.post("/getdramacards", async (req, res) => {
           price: Number(info.drama.price ?? 0),
           member_price: Number(info.drama.member_price ?? 0),
           is_member: Boolean(info.drama.is_member),
+          reward_num: rewardNum,
           checked: true,
           platform: "missevan",
         });

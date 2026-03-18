@@ -47,6 +47,9 @@
             <template v-if="hasSubscriptionNum(item)">
               / {{ extraMetaLabel }}: {{ formatNumber(item.subscription_num) }}
             </template>
+            <template v-if="hasRewardNum(item)">
+              / 打赏人数: {{ formatPlainNumber(item.reward_num) }}
+            </template>
             <template v-if="platform === 'manbo'">
               / 投喂总数: {{ formatNumber(item.diamond_value) }}
             </template>
@@ -109,11 +112,21 @@ export default {
     formatNumber(value) {
       return this.formatPlayCount(value);
     },
+    formatPlainNumber(value) {
+      const count = Number(value ?? 0);
+      return Number.isFinite(count) ? `${Math.trunc(count)}` : "0";
+    },
     getPlayCountText(item) {
       return item.playCountWan || this.formatPlayCount(item.view_count);
     },
     hasSubscriptionNum(item) {
-      return Number.isFinite(Number(item.subscription_num));
+      return item?.subscription_num != null
+        && Number.isFinite(Number(item.subscription_num));
+    },
+    hasRewardNum(item) {
+      return this.platform === "missevan"
+        && item?.reward_num != null
+        && Number.isFinite(Number(item.reward_num));
     },
     getSelectedIds() {
       return this.results

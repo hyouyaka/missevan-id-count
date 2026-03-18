@@ -117,6 +117,10 @@
                 }}
               </div>
             </div>
+            <div v-if="hasRewardNum(drama)">
+              <div class="output-stat-label">打赏人数</div>
+              <div class="output-stat-value">{{ formatPlainCountValue(drama.rewardNum) }}</div>
+            </div>
           </div>
           <div class="output-revenue-line">
             <div class="output-stat-label">{{ getRevenueLabel(drama) }}</div>
@@ -144,6 +148,12 @@
               </div>
             </div>
             <div>
+              <div class="output-stat-label">总播放量</div>
+              <div class="output-stat-value">
+                {{ revenueSummary.failed ? "访问失败" : formatPlayCountWanFixed(revenueSummary.totalViewCount) }}
+              </div>
+            </div>
+            <div>
               <div class="output-stat-label">
                 {{ getRewardLabel(revenueSummary, true) }}
               </div>
@@ -154,6 +164,10 @@
                     : formatRewardValue(revenueSummary.platform, revenueSummary.rewardTotal)
                 }}
               </div>
+            </div>
+            <div v-if="hasRewardNum(revenueSummary)">
+              <div class="output-stat-label">打赏人次</div>
+              <div class="output-stat-value">{{ formatPlainCountValue(revenueSummary.rewardNum) }}</div>
             </div>
           </div>
           <div class="output-revenue-line">
@@ -203,6 +217,18 @@ export default {
       const amount = Number(value ?? 0);
       return platform === "manbo" ? `${amount} 红豆` : `${amount} 钻石`;
     },
+    hasRewardNum(drama) {
+      return drama?.platform === "missevan"
+        && drama?.rewardNum != null
+        && Number.isFinite(Number(drama?.rewardNum));
+    },
+    formatPlainCountValue(value) {
+      const count = Number(value ?? 0);
+      if (!Number.isFinite(count)) {
+        return "0";
+      }
+      return `${Math.trunc(count)}`;
+    },
     shouldShowRevenueRange(drama) {
       if (!drama || drama.failed) {
         return false;
@@ -231,6 +257,13 @@ export default {
         return `${(count / 10000).toFixed(1)}万`;
       }
       return `${(count / 100000000).toFixed(2)}亿`;
+    },
+    formatPlayCountWanFixed(value) {
+      const count = Number(value ?? 0);
+      if (!Number.isFinite(count) || count <= 0) {
+        return "0.0万";
+      }
+      return `${(count / 10000).toFixed(1)}万`;
     },
     formatDiamond(value) {
       return `${Number(value ?? 0)} 钻石`;
