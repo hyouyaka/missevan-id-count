@@ -2268,6 +2268,10 @@ async function executeMissevanRevenueTask(task) {
         );
       }
 
+      if (task.cancelled) {
+        break;
+      }
+
       if (!failed && !task.cancelled) {
         updateStatsTask(task, {
           currentAction: `正在统计收益：${title} / 打赏汇总`,
@@ -2279,6 +2283,9 @@ async function executeMissevanRevenueTask(task) {
         } else {
           rewardCoinTotal = Number(rewardSummary.rewardCoinTotal ?? 0);
         }
+      }
+      if (task.cancelled) {
+        break;
       }
       advanceRevenueProgress(task, 1, `正在统计收益：${title} / 打赏汇总`);
 
@@ -2452,8 +2459,12 @@ async function executeManboRevenueTask(task) {
           advanceRevenueProgress(
             task,
             1,
-            `正在统计收益：${title} / 分集 ${episodeIndex + 1}/${revenueEpisodes.length}`
+          `正在统计收益：${title} / 分集 ${episodeIndex + 1}/${revenueEpisodes.length}`
           );
+        }
+
+        if (task.cancelled) {
+          break;
         }
 
         if (failed) {

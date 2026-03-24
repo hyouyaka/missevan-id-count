@@ -108,10 +108,9 @@ export function createManboIndexStore({
   async function readPersistentSnapshot() {
     if (hasUpstash) {
       const raw = await upstashCommand(["GET", INDEX_KEY]);
-      if (!raw) {
-        return createEmptySnapshot();
+      if (raw) {
+        return JSON.parse(raw);
       }
-      return JSON.parse(raw);
     }
 
     const fileSnapshot = await readJsonFile(filePath);
