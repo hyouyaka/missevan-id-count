@@ -60,7 +60,7 @@
           :playCountTotal="currentStatsState.playCountTotal"
           :playCountFailed="currentStatsState.playCountFailed"
           :idResults="currentStatsState.idResults"
-          :suspectedOverflowMainEpisodes="currentStatsState.suspectedOverflowMainEpisodes"
+          :suspectedOverflowEpisodes="currentStatsState.suspectedOverflowEpisodes"
           :idSelectedEpisodeCount="currentStatsState.idSelectedEpisodeCount"
           :totalDanmaku="currentStatsState.totalDanmaku"
           :totalUsers="currentStatsState.totalUsers"
@@ -99,7 +99,7 @@ function createStatsState() {
     playCountTotal: 0,
     playCountFailed: false,
     idResults: [],
-    suspectedOverflowMainEpisodes: [],
+    suspectedOverflowEpisodes: [],
     idSelectedEpisodeCount: 0,
     totalDanmaku: 0,
     totalUsers: 0,
@@ -318,7 +318,7 @@ export default {
       state.playCountTotal = 0;
       state.playCountFailed = false;
       state.idResults = [];
-      state.suspectedOverflowMainEpisodes = [];
+      state.suspectedOverflowEpisodes = [];
       state.idSelectedEpisodeCount = 0;
       state.totalDanmaku = 0;
       state.totalUsers = 0;
@@ -467,8 +467,8 @@ export default {
       }
       if (Array.isArray(result.idResults)) {
         state.idResults = result.idResults;
-        state.suspectedOverflowMainEpisodes = Array.isArray(result.suspectedOverflowMainEpisodes)
-          ? result.suspectedOverflowMainEpisodes
+        state.suspectedOverflowEpisodes = Array.isArray(result.suspectedOverflowEpisodes)
+          ? result.suspectedOverflowEpisodes
           : [];
         state.idSelectedEpisodeCount = Number(
           result.idSelectedEpisodeCount ?? state.idSelectedEpisodeCount ?? 0
@@ -805,6 +805,7 @@ export default {
             sound_id: episode.sound_id,
             drama_title: dramaTitle,
             episode_title: episode.name || "",
+            duration: Number(episode.duration ?? 0),
           },
           signal,
           "Failed to fetch revenue danmaku"

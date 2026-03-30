@@ -41,8 +41,6 @@ const MANBO_MAIN_EXCLUDE_PATTERNS = [
   /小剧场/u,
 ];
 
-const MISSEVAN_OVERFLOW_DANMAKU_COUNTS = new Set([12000, 25000, 35000]);
-
 export function isMainEpisode(platform, episode) {
   const name = String(episode?.name || "").trim();
   const includes = platform === "manbo"
@@ -58,11 +56,34 @@ export function isMainEpisode(platform, episode) {
   );
 }
 
-export function isMissevanLikelyDanmakuOverflow({ danmaku, episodeTitle }) {
-  return (
-    isMainEpisode("missevan", { name: episodeTitle })
-    && MISSEVAN_OVERFLOW_DANMAKU_COUNTS.has(Number(danmaku ?? 0))
-  );
+export function getMissevanDanmakuCapByDurationMs(durationMs) {
+  const normalizedDuration = Number(durationMs ?? 0);
+  if (!Number.isFinite(normalizedDuration) || normalizedDuration <= 0) {
+    return 0;
+  }
+
+  const minuteMs = 60 * 1000;
+  if (normalizedDuration <= minuteMs) {
+    return 500;
+  }
+  if (normalizedDuration <= 3 * minuteMs) {
+    return 2500;
+  }
+  if (normalizedDuration <= 10 * minuteMs) {
+    return 8500;
+  }
+  if (normalizedDuration <= 25 * minuteMs) {
+    return 12000;
+  }
+  if (normalizedDuration <= 40 * minuteMs) {
+    return 25000;
+  }
+  return 35000;
+}
+
+export function isMissevanLikelyDanmakuOverflow({ durationMs, danmaku }) {
+  const expectedCap = getMissevanDanmakuCapByDurationMs(durationMs);
+  return expectedCap > 0 && Number(danmaku ?? 0) === expectedCap;
 }
 
 export function isPaidEpisode(platform, episode) {

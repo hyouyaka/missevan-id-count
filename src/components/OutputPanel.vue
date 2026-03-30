@@ -89,12 +89,12 @@
             </div>
           </div>
           <div
-            v-if="Array.isArray(suspectedOverflowMainEpisodes) && suspectedOverflowMainEpisodes.length"
+            v-if="Array.isArray(suspectedOverflowEpisodes) && suspectedOverflowEpisodes.length"
             class="output-overflow-list"
           >
-            <div class="output-stat-label">疑似弹幕溢出正片</div>
+            <div class="output-stat-label">疑似弹幕溢出分集</div>
             <div
-              v-for="title in suspectedOverflowMainEpisodes"
+              v-for="title in suspectedOverflowEpisodes"
               :key="`overflow-id-${title}`"
               class="output-overflow-item"
             >
@@ -204,12 +204,12 @@
             </div>
           </div>
           <div
-            v-if="Array.isArray(revenueSummary.suspectedOverflowMainEpisodes) && revenueSummary.suspectedOverflowMainEpisodes.length"
+            v-if="Array.isArray(revenueSummary.suspectedOverflowEpisodes) && revenueSummary.suspectedOverflowEpisodes.length"
             class="output-overflow-list"
           >
-            <div class="output-stat-label">疑似弹幕溢出正片</div>
+            <div class="output-stat-label">疑似弹幕溢出分集</div>
             <div
-              v-for="title in revenueSummary.suspectedOverflowMainEpisodes"
+              v-for="title in revenueSummary.suspectedOverflowEpisodes"
               :key="`overflow-revenue-${title}`"
               class="output-overflow-item"
             >
@@ -234,7 +234,7 @@ export default {
     playCountTotal: Number,
     playCountFailed: Boolean,
     idResults: Array,
-    suspectedOverflowMainEpisodes: {
+    suspectedOverflowEpisodes: {
       type: Array,
       default: () => [],
     },

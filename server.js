@@ -677,6 +677,7 @@ function normalizeMissevanDramaInfo(info) {
         ...episode,
         sound_id: Number(episode.sound_id),
         name: episode.name || "",
+        duration: Number(episode.duration ?? 0),
         need_pay: Number(episode.need_pay ?? 0),
         price: Number(episode.price ?? 0),
       })),
@@ -2031,7 +2032,7 @@ async function executeMissevanIdTask(task) {
   const episodes = Array.isArray(task.episodes) ? task.episodes : [];
   const dramaMap = buildIdDramaMap(episodes);
   const allUsers = new Set();
-  const suspectedOverflowMainEpisodes = new Set();
+  const suspectedOverflowEpisodes = new Set();
 
   updateStatsTask(task, {
     status: "running",
@@ -2048,6 +2049,7 @@ async function executeMissevanIdTask(task) {
     const soundId = Number(episode?.sound_id ?? 0);
     const dramaTitle = String(episode?.drama_title ?? "").trim() || "Unknown";
     const episodeTitle = String(episode?.episode_title ?? episode?.name ?? "").trim();
+    const durationMs = Number(episode?.duration ?? 0);
     try {
       const result = await fetchDanmakuSummary(soundId, dramaTitle, episodeTitle);
       if (result.success) {
@@ -2061,10 +2063,10 @@ async function executeMissevanIdTask(task) {
         }
         task.totalDanmaku += Number(result.danmaku ?? 0);
         if (isMissevanLikelyDanmakuOverflow({
+          durationMs,
           danmaku: result.danmaku,
-          episodeTitle,
         })) {
-          suspectedOverflowMainEpisodes.add(
+          suspectedOverflowEpisodes.add(
             buildOverflowDisplayTitle(dramaTitle, episodeTitle)
           );
         }
@@ -2112,7 +2114,7 @@ async function executeMissevanIdTask(task) {
         danmaku: drama.danmaku,
         users: drama.userSet.size,
       })),
-      suspectedOverflowMainEpisodes: Array.from(suspectedOverflowMainEpisodes),
+      suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
       totalDanmaku: task.totalDanmaku,
       totalUsers: allUsers.size,
       idSelectedEpisodeCount: task.totalCount,
@@ -2200,7 +2202,7 @@ async function executeManboIdTask(task) {
         danmaku: drama.danmaku,
         users: drama.userSet.size,
       })),
-      suspectedOverflowMainEpisodes: [],
+      suspectedOverflowEpisodes: [],
       totalDanmaku: task.totalDanmaku,
       totalUsers: allUsers.size,
       idSelectedEpisodeCount: task.totalCount,
@@ -2304,7 +2306,7 @@ async function executeUnsupportedPlayCountTask(task) {
 async function executeMissevanRevenueTask(task) {
   const dramaIds = Array.isArray(task.dramaIds) ? task.dramaIds : [];
   const results = [];
-  const suspectedOverflowMainEpisodes = new Set();
+  const suspectedOverflowEpisodes = new Set();
   initializeRevenueProgress(task, dramaIds);
 
   updateStatsTask(task, {
@@ -2366,10 +2368,10 @@ async function executeMissevanRevenueTask(task) {
           userSet.add(uid);
         });
         if (isMissevanLikelyDanmakuOverflow({
+          durationMs: Number(episode?.duration ?? 0),
           danmaku: danmakuResult.danmaku,
-          episodeTitle: String(episode?.name ?? "").trim(),
         })) {
-          suspectedOverflowMainEpisodes.add(
+          suspectedOverflowEpisodes.add(
             buildOverflowDisplayTitle(title, String(episode?.name ?? "").trim())
           );
         }
@@ -2477,7 +2479,7 @@ async function executeMissevanRevenueTask(task) {
         revenueResults: results,
         revenueSummary: {
           ...createRevenueSummary(results),
-          suspectedOverflowMainEpisodes: Array.from(suspectedOverflowMainEpisodes),
+          suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
         },
       },
     });
@@ -2493,7 +2495,7 @@ async function executeMissevanRevenueTask(task) {
       revenueResults: results,
       revenueSummary: {
         ...createRevenueSummary(results),
-        suspectedOverflowMainEpisodes: Array.from(suspectedOverflowMainEpisodes),
+        suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
       },
     },
   });
@@ -3431,6 +3433,7 @@ function normalizeTaskEpisodes(rawEpisodes = []) {
       sound_id: String(episode?.sound_id ?? "").trim(),
       drama_title: String(episode?.drama_title ?? "").trim(),
       episode_title: String(episode?.episode_title ?? "").trim(),
+      duration: Number(episode?.duration ?? 0),
     }))
     .filter((episode) => episode.sound_id);
 }

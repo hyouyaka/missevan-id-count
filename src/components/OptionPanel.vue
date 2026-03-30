@@ -110,6 +110,7 @@ export default {
               sound_id: episode.sound_id,
               drama_title: dramaTitle,
               episode_title: episode.name,
+              duration: Number(episode.duration ?? 0),
             });
           }
         });
