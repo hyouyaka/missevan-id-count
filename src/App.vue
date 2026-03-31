@@ -29,13 +29,16 @@
       <template v-if="currentPlatform !== 'report'">
       <section class="panel panel-search">
         <SearchPanel
+          :key="currentPlatform"
           :platform="currentPlatform"
+          :formState="currentBrowseState.searchForm"
           :isDesktopApp="appConfig.desktopApp"
           :cooldownHours="appConfig.cooldownHours"
           :cooldownUntil="appConfig.cooldownUntil"
           :desktopAppUrl="appConfig.desktopAppUrl"
           :frontendVersion="appConfig.frontendVersion"
           :handleVersionResponse="updateVersionStatusFromResponse"
+          @updateFormState="updateSearchForm"
           @resetState="resetSearchFlow"
           @updateResults="setSearchResults"
         />
@@ -45,16 +48,11 @@
         <SearchResults
           :platform="currentPlatform"
           :results="currentBrowseState.searchResults"
-          @addDramas="addDramas"
-          @startRevenueEstimate="startRevenueEstimate"
-        />
-      </section>
-
-      <section ref="optionsPanel" class="panel panel-options">
-        <OptionPanel
-          :platform="currentPlatform"
           :dramas="currentBrowseState.dramas"
+          :selectedEpisodes="currentBrowseState.selectedEpisodesSnapshot"
+          @addDramas="addDramas"
           @selectionChange="updateSelection"
+          @startRevenueEstimate="startRevenueEstimate"
           @startPlayCountStatistics="startPlayCountStatistics"
           @startIdStatistics="startIdStatisticsConcurrent"
         />
@@ -94,7 +92,6 @@
 <script>
 import { defineAsyncComponent } from "vue";
 import OutputPanel from "./components/OutputPanel.vue";
-import OptionPanel from "./components/OptionPanel.vue";
 import SearchPanel from "./components/SearchPanel.vue";
 import SearchResults from "./components/SearchResults.vue";
 
@@ -128,6 +125,10 @@ function createStatsState() {
 
 function createPlatformState() {
   return {
+    searchForm: {
+      keyword: "",
+      manualInput: "",
+    },
     searchResults: [],
     dramas: [],
     selectedEpisodesSnapshot: [],
@@ -152,7 +153,7 @@ function getDefaultAppConfig() {
 }
 
 export default {
-  components: { SearchPanel, SearchResults, OptionPanel, OutputPanel, DesktopReportPanel },
+  components: { SearchPanel, SearchResults, OutputPanel, DesktopReportPanel },
   data() {
     return {
       currentPlatform: "missevan",
@@ -379,6 +380,16 @@ export default {
         this.currentPlatform = platform;
       }
     },
+    updateSearchForm(patch = {}) {
+      const state = this.currentBrowseState;
+      if (!state?.searchForm) {
+        return;
+      }
+      state.searchForm = {
+        ...state.searchForm,
+        ...patch,
+      };
+    },
     notifyAllActiveStatsTaskCancels() {
       Object.values(this.platformStates).forEach((state) => {
         if (state?.stats?.activeTaskId) {
@@ -418,6 +429,24 @@ export default {
       state.searchResults = [];
       state.dramas = [];
       state.selectedEpisodesSnapshot = [];
+    },
+    collectSelectedEpisodesFromDramas(dramas = []) {
+      const selectedEpisodes = [];
+      dramas.forEach((drama) => {
+        const dramaTitle = drama?.drama?.name || "";
+        const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
+        episodes.forEach((episode) => {
+          if (episode.selected) {
+            selectedEpisodes.push({
+              sound_id: episode.sound_id,
+              drama_title: dramaTitle,
+              episode_title: episode.name,
+              duration: Number(episode.duration ?? 0),
+            });
+          }
+        });
+      });
+      return selectedEpisodes;
     },
     updateSelection(selectedEpisodes) {
       const state = this.currentBrowseState;
@@ -730,19 +759,27 @@ export default {
     },
     async addDramas(ids) {
       const state = this.currentBrowseState;
-      state.dramas = [];
-      state.selectedEpisodesSnapshot = [];
       if (!ids || ids.length === 0) {
         return;
       }
       let hasAccessDenied = false;
+      const existingDramaMap = new Map(
+        state.dramas.map((drama) => [String(drama?.drama?.id), drama])
+      );
+      const mergedDramas = [...state.dramas];
       try {
         for (let i = 0; i < ids.length; i += 1) {
-          const id = ids[i];
+          const id = String(ids[i]);
+          if (existingDramaMap.has(id)) {
+            const existingDrama = existingDramaMap.get(id);
+            existingDrama.expanded = false;
+            continue;
+          }
           try {
             const drama = await this.fetchDramaById(id);
             this.addEpisodeSelectionFlags(drama);
-            state.dramas.push(drama);
+            mergedDramas.push(drama);
+            existingDramaMap.set(id, drama);
           } catch (error) {
             if (error?.accessDenied) {
               hasAccessDenied = true;
@@ -750,11 +787,13 @@ export default {
             console.error(`Failed to import drama ${id}`, error);
           }
         }
+        state.dramas = mergedDramas;
+        state.selectedEpisodesSnapshot = this.collectSelectedEpisodesFromDramas(state.dramas);
         if (hasAccessDenied) {
           await this.showMissevanAccessHint();
         }
         if (state.dramas.length > 0) {
-          this.scrollToPanel("optionsPanel");
+          this.scrollToPanel("resultsPanel");
         }
       } catch (error) {
         console.error("Failed to import dramas", error);
@@ -823,123 +862,6 @@ export default {
       } finally {
         this.finishRun(state, runId);
       }
-    },
-    getManboRevenueType(dramaInfo) {
-      const drama = dramaInfo?.drama || {};
-      const episodes = Array.isArray(dramaInfo?.episodes?.episode) ? dramaInfo.episodes.episode : [];
-      const allEpisodesFree = episodes.every((episode) => {
-        return Number(episode?.pay_type ?? 0) === 0 && Number(episode?.price ?? 0) === 0;
-      });
-      const hasVipFreeEpisode = episodes.some((episode) => Number(episode?.vip_free ?? 0) === 1);
-      if (
-        Number(drama.pay_type ?? 0) === 0 &&
-        Number(drama.price ?? 0) === 0 &&
-        allEpisodesFree &&
-        hasVipFreeEpisode
-      ) {
-        return "member";
-      }
-      if (
-        Number(drama.pay_type ?? 0) === 1 &&
-        Number(drama.price ?? 0) > 0 &&
-        Number(drama.member_price ?? 0) > 0
-      ) {
-        return "season";
-      }
-      if (
-        Number(drama.pay_type ?? 0) === 0 &&
-        Number(drama.price ?? 0) === 0 &&
-        episodes.some((episode) => Number(episode?.price ?? 0) > 0)
-      ) {
-        return "episode";
-      }
-      return "unknown";
-    },
-    getManboRevenueEpisodes(dramaInfo, revenueType) {
-      const episodes = Array.isArray(dramaInfo?.episodes?.episode) ? dramaInfo.episodes.episode : [];
-      if (revenueType === "member") {
-        return episodes.filter((episode) => Number(episode?.vip_free ?? 0) === 1);
-      }
-      if (revenueType === "season") {
-        return episodes.filter((episode) => Number(episode?.pay_type ?? 0) === 1);
-      }
-      if (revenueType === "episode") {
-        return episodes.filter((episode) => Number(episode?.price ?? 0) > 0);
-      }
-      return [];
-    },
-    getManboRevenueSubtitle(title, dramaInfo, revenueType, episodes) {
-      const drama = dramaInfo?.drama || {};
-      if (revenueType === "member") {
-        return title + " / 会员剧（仅计算投喂）";
-      }
-      if (revenueType === "season") {
-        return title + " / 全季" + Number(drama.price ?? 0) + "（折后" + Number(drama.member_price ?? 0) + "）红豆";
-      }
-      if (revenueType === "episode") {
-        const prices = [...new Set(
-          episodes.map((episode) => Number(episode?.price ?? 0)).filter((price) => price > 0)
-        )];
-        return prices.length === 1
-          ? title + " / 每集" + prices[0] + "红豆"
-          : title + " / 分集付费红豆";
-      }
-      return title + " / 暂不支持收益预估";
-    },
-    async collectRevenueEpisodeUsers(episodes, dramaTitle, signal, onProgress = null) {
-      const results = [];
-      let failed = false;
-      let accessDenied = false;
-
-      for (let i = 0; i < episodes.length; i += 1) {
-        const episode = episodes[i];
-        if (typeof onProgress === "function") {
-          onProgress({
-            completedCount: i,
-            totalCount: episodes.length,
-            episode,
-            dramaTitle,
-          });
-        }
-        const danmakuResult = await this.postJson(
-          this.getDanmakuEndpoint(),
-          {
-            sound_id: episode.sound_id,
-            drama_title: dramaTitle,
-            episode_title: episode.name || "",
-            duration: Number(episode.duration ?? 0),
-          },
-          signal,
-          "Failed to fetch revenue danmaku"
-        );
-        if (!danmakuResult.success) {
-          failed = true;
-          accessDenied = accessDenied || Boolean(danmakuResult.accessDenied);
-          break;
-        }
-        results.push({
-          episode,
-          users: Array.isArray(danmakuResult.users) ? danmakuResult.users : [],
-        });
-        if (typeof onProgress === "function") {
-          onProgress({
-            completedCount: i + 1,
-            totalCount: episodes.length,
-            episode,
-            dramaTitle,
-          });
-        }
-      }
-
-      return { results, failed, accessDenied };
-    },
-    buildUniqueUserCount(collections) {
-      const userSet = new Set();
-      collections.forEach((item) => {
-        const users = Array.isArray(item?.users) ? item.users : item;
-        (Array.isArray(users) ? users : []).forEach((uid) => userSet.add(uid));
-      });
-      return userSet.size;
     },
     buildUniqueUserIds(collections) {
       const userSet = new Set();
@@ -1079,6 +1001,26 @@ export default {
       const paidUserIds = this.buildUniqueUserIds(
         results.map((item) => item?.paidUserIds || [])
       );
+      let totalPayCount = 0;
+      let hasPayCount = false;
+      let allPayCount = results.length > 0;
+      let hasDanmakuIds = false;
+      results.forEach((item) => {
+        const paidCountSource = String(item?.paidCountSource || "");
+        if (paidCountSource === "pay_count") {
+          hasPayCount = true;
+          totalPayCount += Number(item?.payCount ?? item?.paidUserCount ?? 0);
+        } else {
+          allPayCount = false;
+          hasDanmakuIds = true;
+        }
+      });
+      const totalDanmakuPaidUserCount = paidUserIds.length;
+      const paidCountSourceSummary = allPayCount
+        ? "pay_count"
+        : hasPayCount
+          ? "mixed"
+          : "danmaku_ids";
       const rewardTotal = results.reduce((sum, item) => {
         const rewardValue = platform === "manbo"
           ? Number(item?.diamondValue ?? 0)
@@ -1116,7 +1058,14 @@ export default {
         platform,
         currencyUnit: this.getRevenueCurrencyUnit(platform),
         selectedDramaCount: results.length,
-        totalPaidUserCount: paidUserIds.length,
+        totalPaidUserCount: paidCountSourceSummary === "pay_count"
+          ? totalPayCount
+          : paidCountSourceSummary === "danmaku_ids"
+            ? totalDanmakuPaidUserCount
+            : null,
+        totalPayCount: hasPayCount ? totalPayCount : null,
+        totalDanmakuPaidUserCount: hasDanmakuIds ? totalDanmakuPaidUserCount : null,
+        paidCountSourceSummary,
         paidUserIds,
         totalViewCount,
         rewardTotal,
@@ -1132,180 +1081,6 @@ export default {
       };
       summary.summaryTitle = this.buildRevenueSummaryTitle(summary);
       return summary;
-    },
-    async fetchRewardSummary(dramaId, signal) {
-      return this.postJson(
-        "/getrewardsummary",
-        { drama_id: dramaId },
-        signal,
-        "Failed to fetch reward summary"
-      );
-    },
-    async buildManboRevenueResults(dramaIds, state, signal) {
-      const results = [];
-
-      for (let i = 0; i < dramaIds.length; i += 1) {
-        const dramaId = String(dramaIds[i]);
-        const searchResult = this.getSearchResultById(dramaId);
-        const dramaInfo = await this.fetchDramaById(dramaId, signal);
-        const title = dramaInfo?.drama?.name || searchResult?.name || `Drama ${dramaId}`;
-        const viewCount = Number(dramaInfo?.drama?.view_count ?? searchResult?.view_count ?? 0);
-        const diamondValue = Number(dramaInfo?.drama?.diamond_value ?? searchResult?.diamond_value ?? 0);
-        const revenueType = this.getManboRevenueType(dramaInfo);
-        const revenueEpisodes = this.getManboRevenueEpisodes(dramaInfo, revenueType);
-        const subtitle = this.getManboRevenueSubtitle(title, dramaInfo, revenueType, revenueEpisodes);
-
-        if (revenueType === "unknown" || revenueEpisodes.length === 0) {
-          results.push({
-            dramaId,
-            platform: "manbo",
-            revenueType,
-            title,
-            subtitle,
-            viewCount,
-            diamondValue,
-            titlePrice: null,
-            titleMemberPrice: null,
-            includeInSummaryPrice: false,
-            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
-            summaryRevenueMode: "single",
-            paidUserIds: [],
-            paidUserCount: 0,
-            estimatedRevenueYuan: 0,
-            failed: true,
-            accessDenied: false,
-          });
-          state.progress = Math.floor(((i + 1) / dramaIds.length) * 100);
-          continue;
-        }
-
-        const episodeUsers = await this.collectRevenueEpisodeUsers(
-          revenueEpisodes,
-          title,
-          signal,
-          ({ completedCount, totalCount }) => {
-            state.currentAction = `正在统计收益 ${completedCount}/${totalCount}集`;
-            const episodeProgress = totalCount > 0 ? completedCount / totalCount : 1;
-            state.progress = Math.floor(((i + episodeProgress) / dramaIds.length) * 100);
-          }
-        );
-        if (episodeUsers.failed) {
-          results.push({
-            dramaId,
-            platform: "manbo",
-            revenueType,
-            title,
-            subtitle,
-            viewCount,
-            diamondValue,
-            titlePrice: null,
-            titleMemberPrice: null,
-            includeInSummaryPrice: false,
-            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
-            summaryRevenueMode: "single",
-            paidUserIds: [],
-            paidUserCount: 0,
-            estimatedRevenueYuan: 0,
-            failed: true,
-            accessDenied: episodeUsers.accessDenied,
-          });
-          state.progress = Math.floor(((i + 1) / dramaIds.length) * 100);
-          continue;
-        }
-
-        const paidUserIds = this.buildUniqueUserIds(episodeUsers.results);
-        const paidUserCount = paidUserIds.length;
-        if (revenueType === "member") {
-          results.push({
-            dramaId,
-            platform: "manbo",
-            revenueType,
-            title,
-            subtitle,
-            viewCount,
-            diamondValue,
-            titlePrice: null,
-            titleMemberPrice: null,
-            includeInSummaryPrice: false,
-            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
-            summaryRevenueMode: "member_reward",
-            paidUserIds,
-            paidUserCount,
-            estimatedRevenueYuan: diamondValue / 100,
-            failed: false,
-            accessDenied: false,
-          });
-        } else if (revenueType === "season") {
-          const drama = dramaInfo?.drama || {};
-          results.push({
-            dramaId,
-            platform: "manbo",
-            revenueType,
-            title,
-            subtitle,
-            viewCount,
-            diamondValue,
-            titlePrice: Number(drama.price ?? 0),
-            titleMemberPrice: Number(drama.member_price ?? 0) > 0
-              ? Number(drama.member_price ?? 0)
-              : null,
-            includeInSummaryPrice: true,
-            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
-            summaryRevenueMode: "range",
-            paidUserIds,
-            paidUserCount,
-            minRevenueYuan: (paidUserCount * Number(drama.member_price ?? 0) + diamondValue) / 100,
-            maxRevenueYuan: (paidUserCount * Number(drama.price ?? 0) + diamondValue) / 100,
-            estimatedRevenueYuan: (paidUserCount * Number(drama.member_price ?? 0) + diamondValue) / 100,
-            failed: false,
-            accessDenied: false,
-          });
-        } else {
-          const paidEpisodeCount = episodeUsers.results.length;
-          const episodePrices = [
-            ...new Set(
-              episodeUsers.results
-                .map((item) => Number(item?.episode?.price ?? 0))
-                .filter((price) => price > 0)
-            ),
-          ];
-          const episodeRevenue = episodeUsers.results.reduce((sum, item) => {
-            return sum + item.users.length * Number(item?.episode?.price ?? 0);
-          }, 0);
-          const minRevenueYuan = (episodeRevenue + diamondValue) / 100;
-          const hasUniformEpisodePrice = episodePrices.length === 1;
-          const maxRevenueYuan = hasUniformEpisodePrice
-            ? (paidUserCount * episodePrices[0] * paidEpisodeCount + diamondValue) / 100
-            : null;
-          results.push({
-            dramaId,
-            platform: "manbo",
-            revenueType,
-            title,
-            subtitle,
-            viewCount,
-            diamondValue,
-            titlePrice: hasUniformEpisodePrice
-              ? Number(episodePrices[0] ?? 0) * paidEpisodeCount
-              : null,
-            titleMemberPrice: null,
-            includeInSummaryPrice: hasUniformEpisodePrice,
-            currencyUnit: this.getRevenueCurrencyUnit("manbo"),
-            summaryRevenueMode: hasUniformEpisodePrice ? "range" : "single",
-            paidUserIds,
-            paidUserCount,
-            estimatedRevenueYuan: minRevenueYuan,
-            minRevenueYuan,
-            maxRevenueYuan,
-            failed: false,
-            accessDenied: false,
-          });
-        }
-
-        state.progress = Math.floor(((i + 1) / dramaIds.length) * 100);
-      }
-
-      return results;
     },
     async startRevenueEstimate(dramaIds) {
       const state = this.currentStatsState;

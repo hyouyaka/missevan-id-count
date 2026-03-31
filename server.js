@@ -1045,6 +1045,7 @@ function normalizeManboDramaInfo(raw) {
       price: Number(raw.price ?? 0),
       view_count: Number(raw.watchCount ?? 0),
       subscription_num: Number(raw.favoriteCount ?? 0),
+      pay_count: normalizeOptionalFiniteNumber(raw.payCount),
       diamond_value: Number(raw.diamondValue ?? 0),
       pay_type: Number(raw.payType ?? raw.setPayType ?? 0),
       member_price: Number(raw.memberPrice ?? 0),
@@ -1076,6 +1077,7 @@ function normalizeManboCardFromDramaInfo(info) {
     price: Number(drama.price ?? 0),
     sound_id: info?.episodes?.episode?.[0]?.sound_id || null,
     subscription_num: Number(drama.subscription_num ?? 0),
+    pay_count: normalizeOptionalFiniteNumber(drama.pay_count),
     diamond_value: Number(drama.diamond_value ?? 0),
     is_member: Boolean(drama.is_member),
     checked: true,
@@ -1836,6 +1838,8 @@ function buildPlayCountDramaMap(episodes) {
 function createRevenueSummary(results) {
   const safeResults = Array.isArray(results) ? results : [];
   const totalPaidUserSet = new Set();
+  let totalPaidCount = 0;
+  let totalDanmakuPaidUserCount = 0;
   let totalViewCount = 0;
   let rewardTotal = 0;
   let rewardNum = 0;
@@ -1847,10 +1851,21 @@ function createRevenueSummary(results) {
   let failed = false;
   let platform = safeResults[0]?.platform || "";
   let currencyUnit = platform === "manbo" ? "红豆" : "钻石";
+  let allPayCount = safeResults.length > 0;
+  let hasPayCount = false;
+  let hasDanmakuIds = false;
 
   safeResults.forEach((item) => {
     platform = platform || item?.platform || "";
     currencyUnit = platform === "manbo" ? "红豆" : "钻石";
+    const paidCountSource = String(item?.paidCountSource || "");
+    if (paidCountSource === "pay_count") {
+      hasPayCount = true;
+      totalPaidCount += Number(item?.payCount ?? item?.paidUserCount ?? 0);
+    } else {
+      allPayCount = false;
+      hasDanmakuIds = true;
+    }
     (Array.isArray(item?.paidUserIds) ? item.paidUserIds : []).forEach((uid) => {
       if (uid != null && uid !== "") {
         totalPaidUserSet.add(String(uid));
@@ -1907,11 +1922,25 @@ function createRevenueSummary(results) {
       : `${baseTitle}，总价 ${titlePriceTotal} ${currencyUnit}`;
   }
 
+  totalDanmakuPaidUserCount = totalPaidUserSet.size;
+  const paidCountSourceSummary = allPayCount
+    ? "pay_count"
+    : hasPayCount
+      ? "mixed"
+      : "danmaku_ids";
+
   return {
     platform,
     currencyUnit,
     selectedDramaCount: safeResults.length,
-    totalPaidUserCount: totalPaidUserSet.size,
+    totalPaidUserCount: paidCountSourceSummary === "pay_count"
+      ? totalPaidCount
+      : paidCountSourceSummary === "danmaku_ids"
+        ? totalDanmakuPaidUserCount
+        : null,
+    totalPayCount: hasPayCount ? totalPaidCount : null,
+    totalDanmakuPaidUserCount: hasDanmakuIds ? totalDanmakuPaidUserCount : null,
+    paidCountSourceSummary,
     totalViewCount,
     rewardTotal,
     rewardNum: platform === "missevan" && hasRewardNum ? rewardNum : null,
@@ -1929,10 +1958,17 @@ function createRevenueSummary(results) {
 function getManboRevenueType(info) {
   const drama = info?.drama || {};
   const episodes = Array.isArray(info?.episodes?.episode) ? info.episodes.episode : [];
+  const hasPaidEpisodes = episodes.some((episode) => Number(episode?.price ?? 0) > 0);
   const allEpisodesFree = episodes.every((episode) => {
     return Number(episode?.pay_type ?? 0) === 0 && Number(episode?.price ?? 0) === 0;
   });
   const hasVipFreeEpisode = episodes.some((episode) => Number(episode?.vip_free ?? 0) === 1);
+  if (
+    Number(drama.pay_type ?? 0) !== 1 &&
+    hasPaidEpisodes
+  ) {
+    return "episode";
+  }
   if (
     Number(drama.pay_type ?? 0) === 0 &&
     Number(drama.price ?? 0) === 0 &&
@@ -1942,18 +1978,9 @@ function getManboRevenueType(info) {
     return "member";
   }
   if (
-    Number(drama.pay_type ?? 0) === 1 &&
-    Number(drama.price ?? 0) > 0 &&
-    Number(drama.member_price ?? 0) > 0
+    Number(drama.pay_type ?? 0) === 1
   ) {
     return "season";
-  }
-  if (
-    Number(drama.pay_type ?? 0) === 0 &&
-    Number(drama.price ?? 0) === 0 &&
-    episodes.some((episode) => Number(episode?.price ?? 0) > 0)
-  ) {
-    return "episode";
   }
   return "unknown";
 }
@@ -1972,13 +1999,33 @@ function getManboRevenueEpisodes(info, revenueType) {
   return [];
 }
 
-function getManboRevenueSubtitle(title, dramaInfo, revenueType, episodes) {
+function resolveManboSeasonPricing(dramaInfo) {
   const drama = dramaInfo?.drama || {};
+  const titlePrice = Math.max(0, Number(drama.price ?? 0));
+  const memberPriceCandidate = Math.max(0, Number(drama.member_price ?? 0));
+  const titleMemberPrice = memberPriceCandidate > 0
+    ? memberPriceCandidate
+    : titlePrice;
+  const hasDiscountRange = titlePrice > 0 && memberPriceCandidate > 0 && titleMemberPrice < titlePrice;
+
+  return {
+    titlePrice,
+    titleMemberPrice,
+    hasDiscountRange,
+    includeInSummaryPrice: titlePrice > 0,
+  };
+}
+
+function getManboRevenueSubtitle(title, dramaInfo, revenueType, episodes) {
   if (revenueType === "member") {
     return `${title} / 会员剧（仅计算投喂）`;
   }
   if (revenueType === "season") {
-    return `${title} / 全季${Number(drama.price ?? 0)}（折后${Number(drama.member_price ?? 0)}）红豆`;
+    const seasonPricing = resolveManboSeasonPricing(dramaInfo);
+    if (seasonPricing.hasDiscountRange) {
+      return `${title} / 全季${seasonPricing.titlePrice}（折后${seasonPricing.titleMemberPrice}）红豆`;
+    }
+    return `${title} / 全季${seasonPricing.titlePrice}红豆`;
   }
   if (revenueType === "episode") {
     const prices = [...new Set(
@@ -1989,6 +2036,15 @@ function getManboRevenueSubtitle(title, dramaInfo, revenueType, episodes) {
       : `${title} / 分集付费红豆`;
   }
   return `${title} / 暂不支持收益预估`;
+}
+
+function getManboPayCount(info) {
+  return normalizeOptionalFiniteNumber(info?.drama?.pay_count);
+}
+
+function shouldUseManboOfficialPayCount(info, revenueType) {
+  const payCount = getManboPayCount(info);
+  return revenueType !== "episode" && revenueType !== "member" && Number(payCount ?? 0) > 0;
 }
 
 async function finalizeCancelledTask(task, patch = {}) {
@@ -2551,12 +2607,17 @@ async function executeManboRevenueTask(task) {
       const diamondValue = Number(dramaInfo?.drama?.diamond_value ?? 0);
       const revenueType = getManboRevenueType(dramaInfo);
       const revenueEpisodes = getManboRevenueEpisodes(dramaInfo, revenueType);
+      const seasonPricing = revenueType === "season" ? resolveManboSeasonPricing(dramaInfo) : null;
+      const payCount = getManboPayCount(dramaInfo);
       const subtitle = getManboRevenueSubtitle(title, dramaInfo, revenueType, revenueEpisodes);
       dramaUnit = createRevenueDramaUnit(task, title, revenueEpisodes.length, 1);
       task.progressTotalUnits += Math.max(0, dramaUnit.totalUnits - 1);
       advanceRevenueProgress(task, 1, `正在统计收益：${title} / 详情`);
 
-      if (revenueType === "unknown" || revenueEpisodes.length === 0) {
+      if (
+        revenueType === "unknown"
+        || (revenueType !== "season" && revenueEpisodes.length === 0)
+      ) {
         results.push({
           dramaId,
           platform: "manbo",
@@ -2570,10 +2631,45 @@ async function executeManboRevenueTask(task) {
           includeInSummaryPrice: false,
           currencyUnit: "红豆",
           summaryRevenueMode: "single",
+          payCount,
+          paidCountSource: "danmaku_ids",
           paidUserIds: [],
           paidUserCount: 0,
           estimatedRevenueYuan: 0,
           failed: true,
+          accessDenied: false,
+        });
+        completeRevenueDramaUnits(task, dramaUnit, `正在统计收益：${title} / 已完成`);
+      } else if (shouldUseManboOfficialPayCount(dramaInfo, revenueType)) {
+        const normalizedPayCount = Number(payCount ?? 0);
+        const estimatedRevenueYuan = (
+          normalizedPayCount * Number(seasonPricing?.titleMemberPrice ?? 0) + diamondValue
+        ) / 100;
+        const maxRevenueYuan = seasonPricing?.hasDiscountRange
+          ? (normalizedPayCount * Number(seasonPricing?.titlePrice ?? 0) + diamondValue) / 100
+          : null;
+
+        results.push({
+          dramaId,
+          platform: "manbo",
+          revenueType,
+          title,
+          subtitle,
+          viewCount,
+          diamondValue,
+          titlePrice: seasonPricing?.includeInSummaryPrice ? seasonPricing.titlePrice : null,
+          titleMemberPrice: seasonPricing?.includeInSummaryPrice ? seasonPricing.titleMemberPrice : null,
+          includeInSummaryPrice: Boolean(seasonPricing?.includeInSummaryPrice),
+          currencyUnit: "红豆",
+          summaryRevenueMode: seasonPricing?.hasDiscountRange ? "range" : "single",
+          payCount: normalizedPayCount,
+          paidCountSource: "pay_count",
+          paidUserIds: [],
+          paidUserCount: normalizedPayCount,
+          estimatedRevenueYuan,
+          minRevenueYuan: seasonPricing?.hasDiscountRange ? estimatedRevenueYuan : null,
+          maxRevenueYuan,
+          failed: false,
           accessDenied: false,
         });
         completeRevenueDramaUnits(task, dramaUnit, `正在统计收益：${title} / 已完成`);
@@ -2639,6 +2735,8 @@ async function executeManboRevenueTask(task) {
             includeInSummaryPrice: false,
             currencyUnit: "红豆",
             summaryRevenueMode: "member_reward",
+            payCount,
+            paidCountSource: "danmaku_ids",
             paidUserIds,
             paidUserCount,
             estimatedRevenueYuan: diamondValue / 100,
@@ -2646,7 +2744,12 @@ async function executeManboRevenueTask(task) {
             accessDenied,
           });
         } else if (revenueType === "season") {
-          const drama = dramaInfo?.drama || {};
+          const estimatedRevenueYuan = (
+            paidUserCount * Number(seasonPricing?.titleMemberPrice ?? 0) + diamondValue
+          ) / 100;
+          const maxRevenueYuan = seasonPricing?.hasDiscountRange
+            ? (paidUserCount * Number(seasonPricing?.titlePrice ?? 0) + diamondValue) / 100
+            : null;
           results.push({
             dramaId,
             platform: "manbo",
@@ -2655,18 +2758,18 @@ async function executeManboRevenueTask(task) {
             subtitle,
             viewCount,
             diamondValue,
-            titlePrice: Number(drama.price ?? 0),
-            titleMemberPrice: Number(drama.member_price ?? 0) > 0
-              ? Number(drama.member_price ?? 0)
-              : null,
-            includeInSummaryPrice: true,
+            titlePrice: seasonPricing?.includeInSummaryPrice ? seasonPricing.titlePrice : null,
+            titleMemberPrice: seasonPricing?.includeInSummaryPrice ? seasonPricing.titleMemberPrice : null,
+            includeInSummaryPrice: Boolean(seasonPricing?.includeInSummaryPrice),
             currencyUnit: "红豆",
-            summaryRevenueMode: "range",
+            summaryRevenueMode: seasonPricing?.hasDiscountRange ? "range" : "single",
+            payCount,
+            paidCountSource: "danmaku_ids",
             paidUserIds,
             paidUserCount,
-            minRevenueYuan: (paidUserCount * Number(drama.member_price ?? 0) + diamondValue) / 100,
-            maxRevenueYuan: (paidUserCount * Number(drama.price ?? 0) + diamondValue) / 100,
-            estimatedRevenueYuan: (paidUserCount * Number(drama.member_price ?? 0) + diamondValue) / 100,
+            minRevenueYuan: seasonPricing?.hasDiscountRange ? estimatedRevenueYuan : null,
+            maxRevenueYuan,
+            estimatedRevenueYuan,
             failed,
             accessDenied,
           });
@@ -2702,6 +2805,8 @@ async function executeManboRevenueTask(task) {
             includeInSummaryPrice: hasUniformEpisodePrice,
             currencyUnit: "红豆",
             summaryRevenueMode: hasUniformEpisodePrice ? "range" : "single",
+            payCount,
+            paidCountSource: "danmaku_ids",
             paidUserIds,
             paidUserCount,
             estimatedRevenueYuan: minRevenueYuan,
@@ -2732,6 +2837,8 @@ async function executeManboRevenueTask(task) {
         includeInSummaryPrice: false,
         currencyUnit: "红豆",
         summaryRevenueMode: "single",
+        payCount: null,
+        paidCountSource: "danmaku_ids",
         paidUserIds: [],
         paidUserCount: 0,
         estimatedRevenueYuan: 0,
@@ -3233,6 +3340,12 @@ app.get("/manbo/search", async (req, res) => {
       },
     });
   }
+
+  void writeUsageLog({
+    platform: "manbo",
+    action: "search",
+    keyword,
+  });
 
   try {
     const [matchedRecords, meta] = await Promise.all([

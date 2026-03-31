@@ -1,10 +1,6 @@
 <template>
   <div class="search-panel">
     <div class="search-head">
-      <div>
-        <p class="section-kicker">{{ platformTitle }}</p>
-        <h2 class="section-title">{{ panelTitle }}</h2>
-      </div>
       <p class="section-tip">
         <template v-if="platform === 'missevan' && !isDesktopApp">
           如果搜索接口暂时受限，请 {{ cooldownText }} 小时后再来。
@@ -28,7 +24,7 @@
       <div class="search-block">
         <input
           id="keyword-input"
-          v-model="keyword"
+          v-model="keywordModel"
           type="text"
           class="search-input"
           placeholder="输入作品名、作者名或关键词"
@@ -45,7 +41,7 @@
       <div class="search-block">
         <input
           id="manbo-keyword-input"
-          v-model="manboKeyword"
+          v-model="keywordModel"
           type="text"
           class="search-input"
           placeholder="输入剧名、别名或 Drama ID"
@@ -62,7 +58,7 @@
       <div class="search-block">
         <textarea
           id="manual-input"
-          v-model="manualInput"
+          v-model="manualInputModel"
           rows="3"
           class="search-input search-textarea"
           :placeholder="manualPlaceholder"
@@ -99,6 +95,13 @@ export default {
       type: String,
       default: "missevan",
     },
+    formState: {
+      type: Object,
+      default: () => ({
+        keyword: "",
+        manualInput: "",
+      }),
+    },
     isDesktopApp: {
       type: Boolean,
       default: false,
@@ -126,21 +129,26 @@ export default {
   },
   data() {
     return {
-      keyword: "",
-      manboKeyword: "",
-      manualInput: "",
       isSearchPending: false,
       isManualPending: false,
     };
   },
   computed: {
-    platformTitle() {
-      return this.platform === "manbo" ? "Manbo 导入" : "Missevan 搜索";
+    keywordModel: {
+      get() {
+        return String(this.formState?.keyword ?? "");
+      },
+      set(value) {
+        this.emitFormState({ keyword: value });
+      },
     },
-    panelTitle() {
-      return this.platform === "manbo"
-        ? "先搜索本地库，再查看完整信息"
-        : "先搜索，再批量导入";
+    manualInputModel: {
+      get() {
+        return String(this.formState?.manualInput ?? "");
+      },
+      set(value) {
+        this.emitFormState({ manualInput: value });
+      },
     },
     panelTip() {
       if (this.platform === "manbo") {
@@ -177,6 +185,9 @@ export default {
     },
   },
   methods: {
+    emitFormState(patch = {}) {
+      this.$emit("updateFormState", patch);
+    },
     normalizeVersion(value) {
       const normalized = String(value ?? "").trim();
       return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : "0.0.0";
@@ -206,9 +217,10 @@ export default {
       return data;
     },
     clearManualInput() {
-      this.keyword = "";
-      this.manboKeyword = "";
-      this.manualInput = "";
+      this.emitFormState({
+        keyword: "",
+        manualInput: "",
+      });
     },
     async fetchAppConfig() {
       try {
@@ -269,7 +281,7 @@ export default {
       }
 
       if (this.platform === "manbo") {
-        const keyword = this.manboKeyword.trim();
+        const keyword = this.keywordModel.trim();
         if (!keyword) {
           return;
         }
@@ -300,7 +312,7 @@ export default {
         return;
       }
 
-      const keyword = this.keyword.trim();
+      const keyword = this.keywordModel.trim();
       if (!keyword) {
         return;
       }
@@ -339,7 +351,7 @@ export default {
       }
 
       if (this.platform === "manbo") {
-        const rawItems = this.parseRawItems(this.manualInput);
+        const rawItems = this.parseRawItems(this.manualInputModel);
         if (!rawItems.length) {
           alert("请至少输入一个有效的 Manbo ID 或链接");
           return;
@@ -356,7 +368,7 @@ export default {
         return;
       }
 
-      const ids = this.parseIds(this.manualInput);
+      const ids = this.parseIds(this.manualInputModel);
       if (!ids.length) {
         alert("请至少输入一个有效的作品 ID");
         return;
@@ -464,21 +476,6 @@ export default {
 .search-head {
   display: grid;
   gap: 6px;
-}
-
-.section-kicker {
-  margin: 0 0 4px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.section-title {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.2;
 }
 
 .section-tip {

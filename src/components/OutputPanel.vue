@@ -118,7 +118,7 @@
           </div>
           <div class="output-stats">
             <div>
-              <div class="output-stat-label">付费用户 ID 数</div>
+              <div class="output-stat-label">{{ getPaidCountLabel(drama) }}</div>
               <div class="output-stat-value">
                 {{ drama.failed ? "访问失败" : drama.paidUserCount }}
               </div>
@@ -162,10 +162,34 @@
             {{ revenueSummary.summaryTitle || `汇总 / 已选 ${revenueSummary.selectedDramaCount} 部` }}
           </div>
           <div class="output-stats">
-            <div>
+            <div v-if="revenueSummary.paidCountSourceSummary === 'mixed'">
+              <div class="output-stat-label">总付费人次</div>
+              <div class="output-stat-value">
+                {{
+                  revenueSummary.failed
+                    ? "访问失败"
+                    : formatPlainCountValue(revenueSummary.totalPayCount)
+                }}
+              </div>
+            </div>
+            <div v-if="revenueSummary.paidCountSourceSummary === 'mixed'">
               <div class="output-stat-label">总和去重 ID</div>
               <div class="output-stat-value">
-                {{ revenueSummary.failed ? "访问失败" : revenueSummary.totalPaidUserCount }}
+                {{
+                  revenueSummary.failed
+                    ? "访问失败"
+                    : formatPlainCountValue(revenueSummary.totalDanmakuPaidUserCount)
+                }}
+              </div>
+            </div>
+            <div v-else>
+              <div class="output-stat-label">{{ getSummaryPaidCountLabel(revenueSummary) }}</div>
+              <div class="output-stat-value">
+                {{
+                  revenueSummary.failed
+                    ? "访问失败"
+                    : formatPlainCountValue(revenueSummary.totalPaidUserCount)
+                }}
               </div>
             </div>
             <div>
@@ -246,6 +270,20 @@ export default {
     isRunning: Boolean,
   },
   methods: {
+    getPaidCountLabel(drama) {
+      if (drama?.platform === "manbo" && drama?.paidCountSource === "pay_count") {
+        return "付费人数";
+      }
+      return "付费用户 ID 数";
+    },
+    getSummaryPaidCountLabel(summary) {
+      if (summary?.platform === "manbo") {
+        if (summary?.paidCountSourceSummary === "pay_count") {
+          return "总付费人次";
+        }
+      }
+      return "总和去重 ID";
+    },
     getRewardLabel(drama, isSummary = false) {
       if (drama?.platform === "manbo") {
         return "投喂总数";
