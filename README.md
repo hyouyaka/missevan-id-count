@@ -30,9 +30,11 @@ Windows 桌面版会直接在界面中提示这一步。
 - `ENABLE_MISSEVAN=true` 或不设置：显示 `Missevan + Manbo`
 - `ENABLE_MISSEVAN=false`：隐藏 `Missevan`，并禁用相关后端接口
 - `MISSEVAN_COOLDOWN_HOURS=4`：线上环境猫耳 418 冷却时间，默认 4 小时
+- `MISSEVAN_PERSISTENT_COOLDOWN`：可选，显式控制是否启用持久化 cooldown；本地默认不启用，Render / Railway 默认启用
+- `MISSEVAN_COOLDOWN_KEY`：可选，指定当前部署环境使用的 cooldown key，例如 `missevan:cooldown:render`
 - `PORT`：服务监听端口，Render / Railway 会自动注入
 - `UPSTASH_REDIS_REST_URL`：可选，配置后用于持久化 Manbo 轻量索引库
-- `UPSTASH_REDIS_REST_TOKEN`：可选，配合 Upstash Redis 持久化 Manbo 轻量索引库
+- `UPSTASH_REDIS_REST_TOKEN`：可选，配合 Upstash Redis 持久化 Manbo 轻量索引库与 Missevan cooldown
 - `MANBO_INDEX_SYNC_INTERVAL_MS=30000`：可选，多实例环境下刷新远端 Manbo 索引快照的间隔
 
 未配置 Upstash 时，Manbo 轻量索引库会回退到运行目录下的 `runtime/manbo-index.json`。
@@ -47,6 +49,8 @@ Windows 桌面版会直接在界面中提示这一步。
 UPSTASH_REDIS_REST_URL=https://your-upstash-endpoint.upstash.io
 UPSTASH_REDIS_REST_TOKEN=your-upstash-token
 MANBO_INDEX_SYNC_INTERVAL_MS=30000
+MISSEVAN_PERSISTENT_COOLDOWN=false
+MISSEVAN_COOLDOWN_KEY=missevan:cooldown:local
 ```
 
 Windows 桌面版支持以下优先顺序：
@@ -64,6 +68,9 @@ Windows 桌面版支持以下优先顺序：
 - Build Command: `npm install && npm run build`
 - Start Command: `npm start`
 - 推荐环境变量：`ENABLE_MISSEVAN=false`
+- 私用猫耳版推荐额外配置：
+  - `MISSEVAN_PERSISTENT_COOLDOWN=true`
+  - `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render`
 
 部署完成后可以访问 `/app-config` 确认配置是否生效。
 
@@ -82,6 +89,9 @@ Windows 桌面版支持以下优先顺序：
 - 私用猫耳版：`ENABLE_MISSEVAN=true`
 - 公开版：`ENABLE_MISSEVAN=false`
 - `MISSEVAN_COOLDOWN_HOURS=4`
+- 私用猫耳版推荐额外配置：
+  - `MISSEVAN_PERSISTENT_COOLDOWN=true`
+  - `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:railway`
 
 说明：
 

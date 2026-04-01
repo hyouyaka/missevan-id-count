@@ -6,7 +6,11 @@ import https from "https";
 import { createRequire } from "module";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createManboIndexStore, normalizeManboIndexName } from "./manboIndexStore.js";
+import {
+  createManboIndexStore,
+  createUpstashRestClient,
+  normalizeManboIndexName,
+} from "./manboIndexStore.js";
 import { loadLocalEnv } from "./envConfig.js";
 import { isMissevanLikelyDanmakuOverflow } from "./shared/episodeRules.js";
 
@@ -39,10 +43,12 @@ const MISSEVAN_REPEAT_COOLDOWN_HOURS = 1;
 const MISSEVAN_DESKTOP_APP_URL = String(
   process.env.MISSEVAN_DESKTOP_APP_URL || ""
 ).trim();
+const MISSEVAN_COOLDOWN_KEY = String(
+  process.env.MISSEVAN_COOLDOWN_KEY || "missevan:cooldown:v1"
+).trim() || "missevan:cooldown:v1";
 const MISSEVAN_COOLDOWN_MS = MISSEVAN_COOLDOWN_HOURS * 60 * 60 * 1000;
 const MISSEVAN_REPEAT_COOLDOWN_MS =
   MISSEVAN_REPEAT_COOLDOWN_HOURS * 60 * 60 * 1000;
-const COOLDOWN_STATE_PATH = path.join(runtimeDir, "missevan-cooldown.json");
 
 const MANBO_API_BASE = "https://www.kilamanbo.com/web_manbo";
 const MANBO_API_HOST = "www.kilamanbo.com";
@@ -58,6 +64,7 @@ const manboDanmakuCache = new Map();
 const manboDanmakuInFlight = new Map();
 const manboStatsTaskStore = new Map();
 const manboIndexStore = createManboIndexStore({ runtimeDir });
+const upstashClient = createUpstashRestClient();
 
 const DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
 const SOUND_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -90,7 +97,12 @@ const manboHttpsAgent = new https.Agent({
 
 let accessDeniedUntil = 0;
 let accessDeniedUseShortCooldown = false;
+let accessDeniedCooldownMode = "none";
 let cooldownStateLoaded = false;
+let cooldownPersistenceWarningLogged = false;
+let cooldownRefreshPromise = null;
+let lastCooldownRefreshAt = 0;
+let lastCooldownRefreshSucceeded = false;
 
 app.use(cors());
 app.use(express.json());
@@ -221,81 +233,202 @@ function isAccessDeniedError(error) {
   return String(error?.message || error).includes("HTTP 418");
 }
 
-function shouldUsePersistentCooldown() {
-  return MISSEVAN_ENABLED && !DESKTOP_APP;
+function isTruthyEnvValue(value) {
+  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
+}
+
+function isFalsyEnvValue(value) {
+  return ["0", "false", "no", "off"].includes(String(value ?? "").trim().toLowerCase());
+}
+
+function isHostedDeployment() {
+  return (
+    isTruthyEnvValue(process.env.RENDER)
+    || Boolean(process.env.RENDER_SERVICE_ID)
+    || Boolean(process.env.RAILWAY_ENVIRONMENT)
+    || Boolean(process.env.RAILWAY_PROJECT_ID)
+    || Boolean(process.env.RAILWAY_SERVICE_ID)
+  );
+}
+
+function shouldPersistAccessDeniedCooldown() {
+  if (!MISSEVAN_ENABLED || DESKTOP_APP) {
+    return false;
+  }
+
+  const explicitValue = process.env.MISSEVAN_PERSISTENT_COOLDOWN;
+  if (isTruthyEnvValue(explicitValue)) {
+    return true;
+  }
+  if (isFalsyEnvValue(explicitValue)) {
+    return false;
+  }
+
+  return isHostedDeployment();
+}
+
+function logCooldownPersistenceUnavailable(message, error = null) {
+  if (cooldownPersistenceWarningLogged) {
+    return;
+  }
+
+  cooldownPersistenceWarningLogged = true;
+  if (error) {
+    console.error(message, error);
+    return;
+  }
+  console.error(message);
+}
+
+function getSerializedCooldownState() {
+  return JSON.stringify({
+    accessDeniedUntil,
+    accessDeniedCooldownMode,
+    accessDeniedUseShortCooldown,
+  });
+}
+
+function applyLoadedCooldownState(payload) {
+  const until = Number(payload?.accessDeniedUntil ?? 0);
+  accessDeniedUntil = Number.isFinite(until) ? until : 0;
+  accessDeniedCooldownMode =
+    payload?.accessDeniedCooldownMode === "base"
+      ? "base"
+      : payload?.accessDeniedCooldownMode === "repeat"
+        ? "repeat"
+        : payload?.accessDeniedCooldownMode === "repeat_ready"
+          ? "repeat_ready"
+          : "none";
+  accessDeniedUseShortCooldown = payload?.accessDeniedUseShortCooldown === true;
+}
+
+function armRepeatCooldownIfNeeded() {
+  const shouldUseRepeatCooldown =
+    accessDeniedUseShortCooldown
+    || ["base", "repeat", "repeat_ready"].includes(accessDeniedCooldownMode);
+
+  accessDeniedUntil = 0;
+  accessDeniedUseShortCooldown = shouldUseRepeatCooldown;
+  accessDeniedCooldownMode = shouldUseRepeatCooldown ? "repeat_ready" : "none";
+}
+
+async function writeCooldownStateToUpstash() {
+  if (!shouldPersistAccessDeniedCooldown()) {
+    return;
+  }
+
+  if (!upstashClient.enabled) {
+    logCooldownPersistenceUnavailable(
+      "Persistent Missevan cooldown is enabled, but Upstash Redis is not configured."
+    );
+    return;
+  }
+
+  try {
+    await upstashClient.command(["SET", MISSEVAN_COOLDOWN_KEY, getSerializedCooldownState()]);
+  } catch (error) {
+    console.error("Failed to persist Missevan cooldown state to Upstash", error);
+  }
+}
+
+async function clearCooldownStateFromUpstash() {
+  if (!shouldPersistAccessDeniedCooldown()) {
+    return;
+  }
+
+  if (!upstashClient.enabled) {
+    logCooldownPersistenceUnavailable(
+      "Persistent Missevan cooldown is enabled, but Upstash Redis is not configured."
+    );
+    return;
+  }
+
+  try {
+    await upstashClient.command(["DEL", MISSEVAN_COOLDOWN_KEY]);
+  } catch (error) {
+    console.error("Failed to clear Missevan cooldown state from Upstash", error);
+  }
 }
 
 async function persistAccessDeniedCooldown() {
-  if (!shouldUsePersistentCooldown()) {
-    return;
-  }
-
-  try {
-    await fs.mkdir(runtimeDir, { recursive: true });
-    await fs.writeFile(
-      COOLDOWN_STATE_PATH,
-      JSON.stringify(
-        {
-          accessDeniedUntil,
-          accessDeniedUseShortCooldown,
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-  } catch (error) {
-    console.error("Failed to persist Missevan cooldown state", error);
-  }
+  await writeCooldownStateToUpstash();
 }
 
 async function clearPersistedAccessDeniedCooldown() {
-  if (!shouldUsePersistentCooldown()) {
-    return;
-  }
-
-  try {
-    await fs.rm(COOLDOWN_STATE_PATH, { force: true });
-  } catch (error) {
-    console.error("Failed to clear Missevan cooldown state", error);
-  }
+  await clearCooldownStateFromUpstash();
 }
 
 async function loadAccessDeniedCooldown() {
-  if (cooldownStateLoaded || !shouldUsePersistentCooldown()) {
+  if (!shouldPersistAccessDeniedCooldown()) {
     cooldownStateLoaded = true;
+    lastCooldownRefreshSucceeded = true;
     return;
   }
 
-  cooldownStateLoaded = true;
+  if (!upstashClient.enabled) {
+    cooldownStateLoaded = false;
+    lastCooldownRefreshSucceeded = false;
+    logCooldownPersistenceUnavailable(
+      "Persistent Missevan cooldown is enabled, but Upstash Redis is not configured."
+    );
+    return;
+  }
 
   try {
-    const content = await fs.readFile(COOLDOWN_STATE_PATH, "utf8");
-    const payload = JSON.parse(content);
-    const until = Number(payload?.accessDeniedUntil ?? 0);
-    accessDeniedUntil = Number.isFinite(until) ? until : 0;
-    accessDeniedUseShortCooldown = payload?.accessDeniedUseShortCooldown === true;
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      console.error("Failed to read Missevan cooldown state", error);
+    const raw = await upstashClient.command(["GET", MISSEVAN_COOLDOWN_KEY]);
+    cooldownStateLoaded = true;
+    lastCooldownRefreshSucceeded = true;
+    lastCooldownRefreshAt = Date.now();
+    if (!raw) {
+      accessDeniedUntil = 0;
+      accessDeniedCooldownMode = "none";
+      accessDeniedUseShortCooldown = false;
+      return;
     }
-    accessDeniedUntil = 0;
-    accessDeniedUseShortCooldown = false;
+
+    applyLoadedCooldownState(JSON.parse(raw));
+  } catch (error) {
+    cooldownStateLoaded = false;
+    lastCooldownRefreshSucceeded = false;
+    console.error("Failed to read Missevan cooldown state from Upstash", error);
+    return;
   }
 
   if (accessDeniedUntil <= Date.now()) {
-    accessDeniedUntil = 0;
+    armRepeatCooldownIfNeeded();
     await persistAccessDeniedCooldown();
   }
 }
 
-function isInAccessDeniedCooldown() {
-  if (!shouldUsePersistentCooldown()) {
-    return false;
+async function refreshMissevanCooldownState(force = false) {
+  if (!shouldPersistAccessDeniedCooldown()) {
+    return;
   }
 
+  if (!force && cooldownRefreshPromise) {
+    return cooldownRefreshPromise;
+  }
+
+  cooldownRefreshPromise = loadAccessDeniedCooldown()
+    .finally(() => {
+      cooldownRefreshPromise = null;
+    });
+  return cooldownRefreshPromise;
+}
+
+function buildMissevanAccessDeniedResponse(error, fallbackMessage = "Missevan request failed") {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    success: false,
+    accessDenied: isMissevanAccessDenied(error),
+    message: fallbackMessage,
+    error: message,
+  };
+}
+
+function isInAccessDeniedCooldown() {
   if (accessDeniedUntil > 0 && accessDeniedUntil <= Date.now()) {
-    accessDeniedUntil = 0;
+    armRepeatCooldownIfNeeded();
     void persistAccessDeniedCooldown();
     return false;
   }
@@ -304,31 +437,40 @@ function isInAccessDeniedCooldown() {
 }
 
 function markAccessDeniedCooldown() {
-  if (!shouldUsePersistentCooldown()) {
-    return;
-  }
-
+  const useShortCooldown = accessDeniedUseShortCooldown;
   accessDeniedUntil = Date.now() + (
-    accessDeniedUseShortCooldown
+    useShortCooldown
       ? MISSEVAN_REPEAT_COOLDOWN_MS
       : MISSEVAN_COOLDOWN_MS
   );
-  accessDeniedUseShortCooldown = true;
+  accessDeniedCooldownMode = useShortCooldown ? "repeat" : "base";
+  accessDeniedUseShortCooldown = useShortCooldown;
+  cooldownStateLoaded = true;
+  lastCooldownRefreshSucceeded = true;
+  lastCooldownRefreshAt = Date.now();
   void persistAccessDeniedCooldown();
 }
 
 function markSuccessfulMissevanRequest() {
-  if (!shouldUsePersistentCooldown()) {
-    return;
-  }
-
   if (accessDeniedUntil === 0 && accessDeniedUseShortCooldown === false) {
     return;
   }
 
   accessDeniedUntil = 0;
+  accessDeniedCooldownMode = "none";
   accessDeniedUseShortCooldown = false;
+  cooldownStateLoaded = true;
+  lastCooldownRefreshSucceeded = true;
+  lastCooldownRefreshAt = Date.now();
   void clearPersistedAccessDeniedCooldown();
+}
+
+function isCooldownError(error) {
+  return String(error?.message || error).startsWith("ACCESS_DENIED_COOLDOWN:");
+}
+
+function isMissevanAccessDenied(error) {
+  return isAccessDeniedError(error) || isCooldownError(error);
 }
 
 function getCooldownRemainingMs() {
@@ -2123,8 +2265,31 @@ async function executeMissevanIdTask(task) {
     totalUsers: 0,
   });
 
-  await runWithConcurrency(episodes, 3, async (episode) => {
-    if (task.cancelled) {
+  await refreshMissevanCooldownState();
+  if (isInAccessDeniedCooldown()) {
+    task.accessDenied = true;
+    return updateStatsTask(task, {
+      status: "completed",
+      progress: 100,
+      currentAction: "访问受限",
+      totalUsers: 0,
+      result: {
+        idResults: Array.from(dramaMap.values()).map((drama) => ({
+          title: drama.title,
+          selectedEpisodeCount: drama.selectedEpisodeCount,
+          danmaku: drama.danmaku,
+          users: drama.userSet.size,
+        })),
+        suspectedOverflowEpisodes: [],
+        totalDanmaku: 0,
+        totalUsers: 0,
+        idSelectedEpisodeCount: task.totalCount,
+      },
+    });
+  }
+
+  await runWithConcurrency(episodes, 1, async (episode) => {
+    if (task.cancelled || task.accessDenied) {
       return;
     }
     const soundId = Number(episode?.sound_id ?? 0);
@@ -2155,12 +2320,14 @@ async function executeMissevanIdTask(task) {
         task.failedCount += 1;
         if (result.accessDenied) {
           task.accessDenied = true;
+          return;
         }
       }
     } catch (error) {
       task.failedCount += 1;
-      if (isAccessDeniedError(error)) {
+      if (isMissevanAccessDenied(error)) {
         task.accessDenied = true;
+        return;
       }
     }
     task.completedCount += 1;
@@ -2301,8 +2468,29 @@ async function executeMissevanPlayCountTask(task) {
     progress: 0,
   });
 
+  await refreshMissevanCooldownState();
+  if (isInAccessDeniedCooldown()) {
+    task.accessDenied = true;
+    return updateStatsTask(task, {
+      status: "completed",
+      progress: 100,
+      currentAction: "访问受限",
+      result: {
+        playCountResults: Array.from(dramaMap.values()).map((drama) => ({
+          title: drama.title,
+          selectedEpisodeCount: drama.selectedEpisodeCount,
+          playCountTotal: drama.playCountTotal,
+          playCountFailed: true,
+        })),
+        playCountSelectedEpisodeCount: task.totalCount,
+        playCountTotal: 0,
+        playCountFailed: true,
+      },
+    });
+  }
+
   for (const episode of episodes) {
-    if (task.cancelled) {
+    if (task.cancelled || task.accessDenied) {
       break;
     }
     const soundId = Number(episode?.sound_id ?? 0);
@@ -2315,6 +2503,7 @@ async function executeMissevanPlayCountTask(task) {
           drama.playCountFailed = true;
           if (summary?.accessDenied) {
             task.accessDenied = true;
+            break;
           }
         } else {
           drama.playCountTotal += Number(summary.view_count ?? 0);
@@ -2325,8 +2514,9 @@ async function executeMissevanPlayCountTask(task) {
       if (drama) {
         drama.playCountFailed = true;
       }
-      if (isAccessDeniedError(error)) {
+      if (isMissevanAccessDenied(error)) {
         task.accessDenied = true;
+        break;
       }
       task.failedCount += 1;
     }
@@ -2396,8 +2586,25 @@ async function executeMissevanRevenueTask(task) {
     progress: 0,
   });
 
+  await refreshMissevanCooldownState();
+  if (isInAccessDeniedCooldown()) {
+    task.accessDenied = true;
+    return updateStatsTask(task, {
+      status: "completed",
+      progress: 100,
+      currentAction: "访问受限",
+      result: {
+        revenueResults: results,
+        revenueSummary: {
+          ...createRevenueSummary(results),
+          suspectedOverflowEpisodes: [],
+        },
+      },
+    });
+  }
+
   for (const dramaIdValue of dramaIds) {
-    if (task.cancelled) {
+    if (task.cancelled || task.accessDenied) {
       break;
     }
     const dramaId = Number(dramaIdValue);
@@ -2443,6 +2650,9 @@ async function executeMissevanRevenueTask(task) {
             1,
             `正在统计收益：${title} / 分集 ${episodeIndex + 1}/${paidEpisodes.length}`
           );
+          if (accessDenied) {
+            task.accessDenied = true;
+          }
           break;
         }
         (Array.isArray(danmakuResult.users) ? danmakuResult.users : []).forEach((uid) => {
@@ -2475,6 +2685,9 @@ async function executeMissevanRevenueTask(task) {
         if (!rewardSummary?.success) {
           failed = true;
           accessDenied = accessDenied || Boolean(rewardSummary?.accessDenied);
+          if (accessDenied) {
+            task.accessDenied = true;
+          }
         } else {
           rewardCoinTotal = Number(rewardSummary.rewardCoinTotal ?? 0);
         }
@@ -2518,8 +2731,7 @@ async function executeMissevanRevenueTask(task) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const accessDenied =
-        isAccessDeniedError(error) ||
-        String(message).startsWith("ACCESS_DENIED_COOLDOWN:");
+        isMissevanAccessDenied(error);
       task.accessDenied = task.accessDenied || accessDenied;
       task.failedCount += 1;
       results.push({
@@ -2552,6 +2764,9 @@ async function executeMissevanRevenueTask(task) {
     }
 
     task.completedCount += 1;
+    if (task.accessDenied) {
+      break;
+    }
   }
 
   if (task.cancelled) {
@@ -2978,6 +3193,7 @@ app.get("/search", async (req, res) => {
   });
 
   try {
+    await refreshMissevanCooldownState();
     const data = await fetchJsonWithRetry(
       `https://www.missevan.com/dramaapi/search?s=${encodeURIComponent(
         normalizedKeyword
@@ -3018,57 +3234,56 @@ app.get("/search", async (req, res) => {
       };
     });
 
-    const results = await Promise.all(
-      baseResults.map(async (item) => {
-        const enriched = { ...item };
+    const results = [];
+    for (const item of baseResults) {
+      const enriched = { ...item };
 
-        try {
-          const rewardMeta = await fetchRewardDetailMeta(item.id);
-          enriched.reward_num = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
-        } catch (error) {
-          console.error(
-            `Failed to fetch Missevan reward detail drama_id=${item.id}`,
-            error
-          );
+      try {
+        const rewardMeta = await fetchRewardDetailMeta(item.id);
+        enriched.reward_num = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
+      } catch (error) {
+        if (isMissevanAccessDenied(error)) {
+          throw error;
         }
+        console.error(
+          `Failed to fetch Missevan reward detail drama_id=${item.id}`,
+          error
+        );
+      }
 
-        if (!item.sound_id) {
-          return enriched;
+      if (!item.sound_id) {
+        results.push(enriched);
+        continue;
+      }
+
+      try {
+        const info = await fetchDramaInfo(item.id, item.sound_id);
+        const subscriptionNum = Number(info?.drama?.subscription_num);
+        results.push({
+          ...enriched,
+          vip: Number(info?.drama?.vip ?? item.vip ?? 0),
+          member_price: Number(info?.drama?.member_price ?? 0),
+          is_member: Boolean(info?.drama?.is_member),
+          subscription_num: Number.isFinite(subscriptionNum)
+            ? subscriptionNum
+            : null,
+        });
+      } catch (error) {
+        if (isMissevanAccessDenied(error)) {
+          throw error;
         }
-
-        try {
-          const info = await fetchDramaInfo(item.id, item.sound_id);
-          const subscriptionNum = Number(info?.drama?.subscription_num);
-
-          return {
-            ...enriched,
-            vip: Number(info?.drama?.vip ?? item.vip ?? 0),
-            member_price: Number(info?.drama?.member_price ?? 0),
-            is_member: Boolean(info?.drama?.is_member),
-            subscription_num: Number.isFinite(subscriptionNum)
-              ? subscriptionNum
-              : null,
-          };
-        } catch (error) {
-          console.error(
-            `Failed to fetch Missevan subscription number drama_id=${item.id}`,
-            error
-          );
-          return enriched;
-        }
-      })
-    );
+        console.error(
+          `Failed to fetch Missevan subscription number drama_id=${item.id}`,
+          error
+        );
+        results.push(enriched);
+      }
+    }
 
     return res.json({ success: true, results });
   } catch (error) {
     console.error(error);
-    return res.json({
-      success: false,
-      accessDenied:
-        isAccessDeniedError(error) ||
-        String(error?.message || error).startsWith("ACCESS_DENIED_COOLDOWN:"),
-      message: "Missevan request failed",
-    });
+    return res.json(buildMissevanAccessDeniedResponse(error));
   }
 });
 
@@ -3090,6 +3305,7 @@ app.post("/getdramacards", async (req, res) => {
     });
   }
 
+  await refreshMissevanCooldownState();
   for (const id of ids) {
     try {
       const info = await fetchDramaInfo(id);
@@ -3100,6 +3316,10 @@ app.post("/getdramacards", async (req, res) => {
           const rewardMeta = await fetchRewardDetailMeta(id);
           rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
         } catch (error) {
+          if (isMissevanAccessDenied(error)) {
+            accessDenied = true;
+            throw error;
+          }
           console.error(`Failed to fetch Missevan reward detail drama_id=${id}`, error);
         }
 
@@ -3123,10 +3343,12 @@ app.post("/getdramacards", async (req, res) => {
     } catch (error) {
       accessDenied =
         accessDenied ||
-        isAccessDeniedError(error) ||
-        String(error?.message || error).startsWith("ACCESS_DENIED_COOLDOWN:");
+        isMissevanAccessDenied(error);
       console.error(`Failed to fetch Missevan drama card drama_id=${id}`, error);
       failedIds.push(Number(id));
+      if (accessDenied) {
+        break;
+      }
     }
   }
 
@@ -3146,7 +3368,11 @@ app.post("/getdramas", async (req, res) => {
   const soundIdMap = req.body.sound_id_map || {};
   const results = [];
 
-  for (const id of ids) {
+  await refreshMissevanCooldownState();
+  let stoppedByAccessDenied = false;
+  let stopIndex = ids.length;
+  for (let index = 0; index < ids.length; index += 1) {
+    const id = ids[index];
     try {
       const soundId = Number(soundIdMap[String(id)] ?? soundIdMap[id] ?? 0);
       const info = await fetchDramaInfo(id, soundId > 0 ? soundId : null);
@@ -3161,12 +3387,21 @@ app.post("/getdramas", async (req, res) => {
         results.push({ success: false, id, accessDenied: false });
       }
     } catch (error) {
-      const accessDenied =
-        isAccessDeniedError(error) ||
-        String(error?.message || error).startsWith("ACCESS_DENIED_COOLDOWN:");
+      const accessDenied = isMissevanAccessDenied(error);
       console.error(`Failed to fetch Missevan drama drama_id=${id}`, error);
       results.push({ success: false, id, accessDenied });
+      if (accessDenied) {
+        stoppedByAccessDenied = true;
+        stopIndex = index + 1;
+        break;
+      }
     }
+  }
+
+  if (stoppedByAccessDenied) {
+    ids.slice(stopIndex).forEach((id) => {
+      results.push({ success: false, id, accessDenied: true });
+    });
   }
 
   return res.json(results);
@@ -3179,7 +3414,11 @@ app.post("/getsoundsummary", async (req, res) => {
   const soundIds = normalizeIds(req.body.sound_ids || []);
   const results = [];
 
-  for (const soundId of soundIds) {
+  await refreshMissevanCooldownState();
+  let stoppedByAccessDenied = false;
+  let stopIndex = soundIds.length;
+  for (let index = 0; index < soundIds.length; index += 1) {
+    const soundId = soundIds[index];
     try {
       results.push(await fetchSoundSummary(soundId));
     } catch (error) {
@@ -3192,13 +3431,31 @@ app.post("/getsoundsummary", async (req, res) => {
         viewCountWan: "",
         playCountFailed: true,
         accessDenied:
-          isAccessDeniedError(error) ||
-          String(message).startsWith("ACCESS_DENIED_COOLDOWN:"),
+          isMissevanAccessDenied(error),
         error: message,
       });
+      if (isMissevanAccessDenied(error)) {
+        stoppedByAccessDenied = true;
+        stopIndex = index + 1;
+        break;
+      }
     }
 
     await sleep(350);
+  }
+
+  if (stoppedByAccessDenied) {
+    soundIds.slice(stopIndex).forEach((soundId) => {
+      results.push({
+        sound_id: Number(soundId),
+        success: false,
+        view_count: null,
+        viewCountWan: "",
+        playCountFailed: true,
+        accessDenied: true,
+        error: "ACCESS_DENIED_COOLDOWN",
+      });
+    });
   }
 
   return res.json(results);
@@ -3221,6 +3478,7 @@ app.post("/getrewardsummary", async (req, res) => {
   }
 
   try {
+    await refreshMissevanCooldownState();
     const result = await fetchRewardSummary(dramaId);
     return res.json(result);
   } catch (error) {
@@ -3255,6 +3513,7 @@ app.post("/getrewardmeta", async (req, res) => {
   }
 
   try {
+    await refreshMissevanCooldownState();
     const result = await fetchRewardDetailMeta(dramaId);
     return res.json(result);
   } catch (error) {
@@ -3295,6 +3554,7 @@ app.post("/getsounddanmaku", async (req, res) => {
     });
   }
 
+  await refreshMissevanCooldownState();
   const result = await fetchDanmakuSummary(soundId, dramaTitle, episodeTitle);
   return res.json(result);
 });
@@ -3660,6 +3920,9 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
 }
 
 app.post("/stat-tasks", async (req, res) => {
+  if ((req.body?.platform === "manbo" ? "manbo" : "missevan") === "missevan") {
+    await refreshMissevanCooldownState();
+  }
   const task = createStatsTaskFromRequest(req, res);
   if (!task) {
     return;
