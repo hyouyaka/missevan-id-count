@@ -4,10 +4,7 @@
       <div class="hero-top">
         <div>
           <p class="hero-eyebrow">M&M Toolkit Gateway</p>
-          <h1 class="hero-title">双区域冷却引导主页</h1>
-          <p class="hero-subtitle">
-            分别读取 Oregon 与 Singapore 两个 Render 区域的冷却状态，在一边被风控时引导你切换到另一边继续使用。
-          </p>
+          <h1 class="hero-title">小猫小狐数据分析</h1>
         </div>
         <div class="hero-version">v{{ frontendVersion }}</div>
       </div>
@@ -22,23 +19,10 @@
           {{ primaryActionLabel }}
         </button>
         <button class="secondary-action" type="button" @click="refreshAllRegions">
-          刷新区域状态
+          刷新节点状态
         </button>
       </div>
     </header>
-
-    <section class="summary-panel">
-      <div class="summary-copy">
-        <p class="summary-label">当前建议</p>
-        <h2 class="summary-title">{{ recommendationTitle }}</h2>
-        <p class="summary-text">{{ recommendationText }}</p>
-      </div>
-      <div class="summary-badges">
-        <span v-for="badge in summaryBadges" :key="badge" class="summary-badge">
-          {{ badge }}
-        </span>
-      </div>
-    </section>
 
     <section class="region-grid" aria-label="区域状态">
       <article
@@ -54,13 +38,7 @@
           <span v-if="recommendedRegion?.key === region.key" class="region-pill">推荐</span>
         </div>
 
-        <p class="region-description">{{ region.statusDescription }}</p>
-
         <dl class="region-meta">
-          <div class="meta-row">
-            <dt>地址</dt>
-            <dd>{{ region.displayHost }}</dd>
-          </div>
           <div class="meta-row">
             <dt>版本</dt>
             <dd>{{ region.versionText }}</dd>
@@ -70,7 +48,11 @@
             <dd>{{ region.enableText }}</dd>
           </div>
           <div class="meta-row">
-            <dt>冷却</dt>
+            <dt>Manbo</dt>
+            <dd>{{ region.manboText }}</dd>
+          </div>
+          <div class="meta-row">
+            <dt>下一次受限尝试</dt>
             <dd>{{ region.cooldownText }}</dd>
           </div>
         </dl>
@@ -87,15 +69,6 @@
         </div>
       </article>
     </section>
-
-    <section class="notes-panel">
-      <h2 class="notes-title">部署提示</h2>
-      <ul class="notes-list">
-        <li>Oregon 与 Singapore 应部署为两个独立的 Render 服务。</li>
-        <li>两个服务必须配置不同的 `MISSEVAN_COOLDOWN_KEY`，避免共用同一份 cooldown。</li>
-        <li>若两边都显示冷却中，说明两个区域当前都不适合继续使用。</li>
-      </ul>
-    </section>
   </div>
 </template>
 
@@ -103,6 +76,13 @@
 function normalizeVersion(value) {
   const normalized = String(value ?? "").trim();
   return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : "0.0.0";
+}
+
+function getDefaultGatewayConfig() {
+  return {
+    desktopApp: false,
+    hostedDeployment: false,
+  };
 }
 
 function normalizeRegionBaseUrl(value) {
@@ -127,16 +107,24 @@ function createRegionState(key, label, baseUrl) {
 }
 
 export default {
+  props: {
+    appConfig: {
+      type: Object,
+      default: () => getDefaultGatewayConfig(),
+    },
+  },
   data() {
     const frontendVersion = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
-    const oregonUrl = normalizeRegionBaseUrl(import.meta.env.VITE_REGION_OREGON_URL);
-    const singaporeUrl = normalizeRegionBaseUrl(import.meta.env.VITE_REGION_SINGAPORE_URL);
+    const area1Url = normalizeRegionBaseUrl(import.meta.env.VITE_REGION_AREA1_URL);
+    const area2Url = normalizeRegionBaseUrl(import.meta.env.VITE_REGION_AREA2_URL);
+    const area3Url = normalizeRegionBaseUrl(import.meta.env.VITE_REGION_AREA3_URL);
 
     return {
       frontendVersion: normalizeVersion(frontendVersion),
       regions: [
-        createRegionState("oregon", "Oregon", oregonUrl),
-        createRegionState("singapore", "Singapore", singaporeUrl),
+        createRegionState("area1", "节点1", area1Url),
+        createRegionState("area2", "节点2", area2Url),
+        createRegionState("area3", "节点3", area3Url),
       ],
     };
   },
@@ -145,10 +133,7 @@ export default {
       return this.regions.map((region) => {
         const hasConfig = Boolean(region.baseUrl);
         const isCoolingDown = hasConfig && Number(region.cooldownUntil ?? 0) > Date.now();
-        const isReady = hasConfig && !region.requestFailed && region.missevanEnabled && !isCoolingDown;
-        const displayHost = hasConfig
-          ? this.extractHost(region.baseUrl)
-          : "未配置区域地址";
+        const isReady = hasConfig && !region.requestFailed;
         const cooldownText = !hasConfig
           ? "未配置"
           : region.requestFailed
@@ -160,39 +145,19 @@ export default {
           ? "muted"
           : region.requestFailed
             ? "error"
-            : !region.missevanEnabled
-              ? "disabled"
-              : isCoolingDown
-                ? "warning"
-                : "ok";
+            : "ok";
         const statusTitle = !hasConfig
-          ? "未配置区域"
+          ? "未配置节点"
           : region.requestFailed
             ? "状态获取失败"
-            : !region.missevanEnabled
-              ? "Missevan 未启用"
-              : isCoolingDown
-                ? "冷却中"
-                : "可立即使用";
-        const statusDescription = !hasConfig
-          ? "请先配置该区域的站点地址。"
-          : region.requestFailed
-            ? region.requestError || "暂时无法读取该区域的 /app-config。"
-            : !region.missevanEnabled
-              ? "该区域当前未开放 Missevan。"
-              : isCoolingDown
-                ? `预计还需 ${this.formatCooldownRemaining(region.cooldownUntil)}。`
-                : "当前区域没有命中 cooldown，可以直接进入。";
-
+            : "节点可访问";
         return {
           ...region,
           isCoolingDown,
           isReady,
-          displayHost,
           cooldownText,
           statusTone,
           statusTitle,
-          statusDescription,
           versionText: region.requestFailed || !hasConfig
             ? "--"
             : normalizeVersion(region.frontendVersion),
@@ -203,68 +168,39 @@ export default {
               : region.missevanEnabled
                 ? "已启用"
                 : "未启用",
-          actionLabel: isReady ? "进入该区域" : "暂不可用",
+          manboText: !hasConfig ? "未配置" : "可用",
+          actionLabel: isReady ? "进入该节点" : "暂不可用",
         };
       });
     },
     recommendedRegion() {
+      const availableRegions = this.regionCards.filter(
+        (region) => region.isReady && region.missevanEnabled && !region.isCoolingDown
+      );
+      if (availableRegions.length > 0) {
+        return this.pickPreferredRegion(availableRegions);
+      }
+
       const readyRegions = this.regionCards.filter((region) => region.isReady);
       if (readyRegions.length > 0) {
-        return readyRegions.find((region) => region.key === "oregon") || readyRegions[0];
+        return this.pickPreferredRegion(readyRegions);
       }
 
-      const coolingRegions = this.regionCards.filter((region) => region.baseUrl && !region.requestFailed);
-      if (coolingRegions.length > 0) {
-        return coolingRegions.find((region) => region.key === "oregon") || coolingRegions[0];
+      const configuredRegions = this.regionCards.filter((region) => region.baseUrl);
+      if (configuredRegions.length > 0) {
+        return this.pickPreferredRegion(configuredRegions);
       }
 
-      return this.regionCards.find((region) => region.baseUrl) || null;
+      return this.pickPreferredRegion(this.regionCards.filter((region) => region.baseUrl)) || null;
     },
     primaryActionLabel() {
       if (!this.recommendedRegion) {
-        return "请先配置区域地址";
+        return "请先配置节点地址";
       }
       if (this.recommendedRegion.isReady) {
         return `直接进入 ${this.recommendedRegion.label}`;
       }
       return `${this.recommendedRegion.label} 当前不可用`;
-    },
-    recommendationTitle() {
-      if (!this.recommendedRegion) {
-        return "尚未配置任何区域";
-      }
-      if (this.recommendedRegion.isReady) {
-        return `建议优先使用 ${this.recommendedRegion.label}`;
-      }
-      if (this.regionCards.every((region) => region.isCoolingDown || !region.isReady)) {
-        return "两个区域当前都不可立即使用";
-      }
-      return `请检查 ${this.recommendedRegion.label} 配置`;
-    },
-    recommendationText() {
-      if (!this.recommendedRegion) {
-        return "请在部署环境中配置 VITE_REGION_OREGON_URL 和 VITE_REGION_SINGAPORE_URL。";
-      }
-      if (this.recommendedRegion.isReady) {
-        return `${this.recommendedRegion.label} 当前没有 cooldown，可直接跳转到该区域的正式工具页。`;
-      }
-      const readyAlternative = this.regionCards.find(
-        (region) => region.key !== this.recommendedRegion.key && region.isReady
-      );
-      if (readyAlternative) {
-        return `${this.recommendedRegion.label} 当前受限，建议切换到 ${readyAlternative.label}。`;
-      }
-      return "当前两个区域要么在冷却中，要么还没有正确返回状态。";
-    },
-    summaryBadges() {
-      return this.regionCards.map((region) => {
-        const suffix = region.isReady
-          ? "可用"
-          : region.isCoolingDown
-            ? region.cooldownText
-            : region.statusTitle;
-        return `${region.label} · ${suffix}`;
-      });
     },
   },
   mounted() {
@@ -275,12 +211,14 @@ export default {
       const frontendVersion = encodeURIComponent(this.frontendVersion);
       return `${baseUrl}/app-config?frontendVersion=${frontendVersion}`;
     },
-    extractHost(baseUrl) {
-      try {
-        return new URL(baseUrl).host;
-      } catch (_) {
-        return baseUrl;
-      }
+    buildRegionEntryUrl(baseUrl) {
+      return `${baseUrl}/tool`;
+    },
+    pickPreferredRegion(regions) {
+      const preferredOrder = ["area1", "area2", "area3"];
+      return preferredOrder
+        .map((key) => regions.find((region) => region.key === key))
+        .find(Boolean) || regions[0] || null;
     },
     formatCooldownRemaining(until) {
       const remainingMs = Math.max(0, Number(until ?? 0) - Date.now());
@@ -338,7 +276,7 @@ export default {
       if (!region?.isReady || !region.baseUrl || typeof window === "undefined") {
         return;
       }
-      window.location.assign(region.baseUrl);
+      window.location.assign(this.buildRegionEntryUrl(region.baseUrl));
     },
   },
 };
@@ -387,9 +325,7 @@ button {
 }
 
 .hero,
-.summary-panel,
-.region-card,
-.notes-panel {
+.region-card {
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
   box-shadow: var(--panel-shadow);
@@ -420,14 +356,6 @@ button {
   margin: 0;
   font-size: clamp(28px, 4vw, 40px);
   line-height: 1.08;
-}
-
-.hero-subtitle {
-  max-width: 760px;
-  margin: 10px 0 0;
-  color: var(--text-muted);
-  font-size: 15px;
-  line-height: 1.7;
 }
 
 .hero-version {
@@ -483,56 +411,9 @@ button {
   opacity: 0.52;
 }
 
-.summary-panel {
-  display: flex;
-  gap: 20px;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 18px;
-  padding: 20px 22px;
-  border-radius: 22px;
-}
-
-.summary-label {
-  margin: 0 0 6px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.summary-title {
-  margin: 0;
-  font-size: 24px;
-}
-
-.summary-text {
-  margin: 8px 0 0;
-  color: var(--text-muted);
-  line-height: 1.65;
-}
-
-.summary-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.summary-badge {
-  padding: 8px 12px;
-  color: var(--info);
-  font-size: 13px;
-  font-weight: 700;
-  background: rgba(238, 245, 251, 0.92);
-  border: 1px solid rgba(47, 93, 124, 0.12);
-  border-radius: 999px;
-}
-
 .region-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 16px;
   margin-top: 18px;
 }
@@ -599,13 +480,6 @@ button {
   border-radius: 999px;
 }
 
-.region-description {
-  min-height: 48px;
-  margin: 0;
-  color: var(--text-muted);
-  line-height: 1.65;
-}
-
 .region-meta {
   display: grid;
   gap: 10px;
@@ -638,33 +512,13 @@ button {
   width: 100%;
 }
 
-.notes-panel {
-  margin-top: 18px;
-  padding: 20px 22px;
-  border-radius: 22px;
-}
-
-.notes-title {
-  margin: 0 0 10px;
-  font-size: 20px;
-}
-
-.notes-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-muted);
-  line-height: 1.7;
-}
-
 @media (max-width: 760px) {
   .landing-shell {
     padding: 16px 12px 44px;
   }
 
   .hero,
-  .summary-panel,
-  .region-card,
-  .notes-panel {
+  .region-card {
     border-radius: 20px;
   }
 
@@ -672,8 +526,7 @@ button {
     padding: 20px 18px;
   }
 
-  .hero-top,
-  .summary-panel {
+  .hero-top {
     display: grid;
   }
 
@@ -681,8 +534,7 @@ button {
     font-size: 30px;
   }
 
-  .hero-actions,
-  .summary-badges {
+  .hero-actions {
     display: grid;
   }
 

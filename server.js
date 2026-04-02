@@ -130,6 +130,7 @@ app.get("/app-config", (req, res) => {
   res.json({
     missevanEnabled: MISSEVAN_ENABLED,
     desktopApp: DESKTOP_APP,
+    hostedDeployment: isHostedDeployment(),
     brandName: MISSEVAN_ENABLED ? "M&M Toolkit" : "Manbo Toolkit",
     titleZh: MISSEVAN_ENABLED ? "小猫小狐数据分析" : "小狐分析",
     description: MISSEVAN_ENABLED

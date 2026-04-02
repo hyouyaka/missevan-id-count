@@ -17,11 +17,11 @@ npm start
 
 ## `dev` 分支
 
-`dev` 分支用于双区域冷却引导主页。
+`dev` 分支用于节点状态引导主页。
 
-- 根页面会显示 `Oregon` 与 `Singapore` 两个 Render 区域的状态
-- 页面只读取两个区域各自的 `/app-config`
-- 选中区域后会直接跳转到对应区域的正式工具页
+- 根页面会显示 `节点1`、`节点2`、`节点3` 的状态
+- 页面会读取各节点各自的 `/app-config`
+- 选中节点后会直接跳转到对应工具页
 
 这个分支不承担统一 API 网关职责，只做区域状态展示和跳转。
 
@@ -35,19 +35,28 @@ npm start
 
 Windows 桌面版会直接在界面中提示这一步。
 
-## 环境变量
+## 部署环境变量总表
 
-- `ENABLE_MISSEVAN=true` 或不设置：显示 `Missevan + Manbo`
-- `ENABLE_MISSEVAN=false`：隐藏 `Missevan`，并禁用相关后端接口
-- `MISSEVAN_COOLDOWN_HOURS=4`：线上环境猫耳 418 冷却时间，默认 4 小时
-- `MISSEVAN_PERSISTENT_COOLDOWN`：可选，显式控制是否启用持久化 cooldown；本地默认不启用，Render / Railway 默认启用
-- `MISSEVAN_COOLDOWN_KEY`：可选，指定当前部署环境使用的 cooldown key，例如 `missevan:cooldown:render`
-- `PORT`：服务监听端口，Render / Railway 会自动注入
-- `UPSTASH_REDIS_REST_URL`：可选，配置后用于持久化 Manbo 轻量索引库
-- `UPSTASH_REDIS_REST_TOKEN`：可选，配合 Upstash Redis 持久化 Manbo 轻量索引库与 Missevan cooldown
-- `MANBO_INDEX_SYNC_INTERVAL_MS=30000`：可选，多实例环境下刷新远端 Manbo 索引快照的间隔
-- `VITE_REGION_OREGON_URL`：前端可选，双区域主页中 Oregon 工具页地址
-- `VITE_REGION_SINGAPORE_URL`：前端可选，双区域主页中 Singapore 工具页地址
+- `VITE_REGION_AREA1_URL`：节点1工具页地址
+- `VITE_REGION_AREA2_URL`：节点2工具页地址
+- `VITE_REGION_AREA3_URL`：节点3工具页地址
+- `ENABLE_MISSEVAN`：是否启用 `Missevan`，`true` 或不设置表示启用，`false` 表示隐藏并禁用相关接口
+- `MISSEVAN_COOLDOWN_HOURS`：`Missevan` 命中 418 后的冷却小时数，默认 `4`
+- `MISSEVAN_PERSISTENT_COOLDOWN`：是否持久化 cooldown；本地默认不启用，Render / Railway 默认启用
+- `MISSEVAN_COOLDOWN_KEY`：当前部署使用的 cooldown key，例如 `missevan:cooldown:render:area1`
+- `MISSEVAN_DESKTOP_APP_URL`：网页版提示用户下载桌面版时使用的地址
+- `UPSTASH_REDIS_REST_URL`：Upstash Redis 地址，用于持久化 Manbo 轻量索引和 Missevan cooldown
+- `UPSTASH_REDIS_REST_TOKEN`：Upstash Redis Token
+- `MANBO_INDEX_SYNC_INTERVAL_MS`：多实例环境下刷新远端 Manbo 索引快照的间隔，默认 `30000`
+- `MANBO_DANMAKU_PAGE_CONCURRENCY`：Manbo 弹幕分页抓取并发，默认 `12`
+- `MANBO_STATS_EPISODE_CONCURRENCY`：Manbo 统计任务分集并发，默认 `4`
+- `MANBO_FETCH_TIMEOUT_MS`：Manbo 请求超时毫秒数，默认 `10000`
+- `PORT`：服务监听端口，Render / Railway 通常自动注入
+
+补充说明：
+
+- `PORT`、`RENDER_*`、`RAILWAY_*`、`DESKTOP_APP`、`APP_DATA_DIR` 属于平台或运行时注入变量，部署时通常不需要手动设置
+- 本地调试可直接访问 `/tool`，不需要额外配置 localhost 节点变量
 
 未配置 Upstash 时，Manbo 轻量索引库会回退到运行目录下的 `runtime/manbo-index.json`。
 
@@ -62,9 +71,10 @@ UPSTASH_REDIS_REST_URL=https://your-upstash-endpoint.upstash.io
 UPSTASH_REDIS_REST_TOKEN=your-upstash-token
 MANBO_INDEX_SYNC_INTERVAL_MS=30000
 MISSEVAN_PERSISTENT_COOLDOWN=false
-MISSEVAN_COOLDOWN_KEY=missevan:cooldown:local
-VITE_REGION_OREGON_URL=https://your-oregon-service.onrender.com
-VITE_REGION_SINGAPORE_URL=https://your-singapore-service.onrender.com
+MISSEVAN_COOLDOWN_KEY=missevan:cooldown:v1
+VITE_REGION_AREA1_URL=https://your-area1-service.onrender.com
+VITE_REGION_AREA2_URL=https://your-area2-service.onrender.com
+VITE_REGION_AREA3_URL=https://your-area3-service.onrender.com
 ```
 
 Windows 桌面版支持以下优先顺序：
@@ -84,18 +94,20 @@ Windows 桌面版支持以下优先顺序：
 - 推荐环境变量：`ENABLE_MISSEVAN=false`
 - 私用猫耳版推荐额外配置：
   - `MISSEVAN_PERSISTENT_COOLDOWN=true`
-  - `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render:oregon`
+  - `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render:area1`
 
 部署完成后可以访问 `/app-config` 确认配置是否生效。
 
-如果你把另一个服务部署到 Singapore，推荐：
+如果你把另外两个服务部署为节点2和节点3，推荐：
 
-- `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render:singapore`
+- `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render:area2`
+- `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render:area3`
 
-双区域主页所在站点需要额外配置：
+节点主页所在站点需要额外配置：
 
-- `VITE_REGION_OREGON_URL=https://your-oregon-service.onrender.com`
-- `VITE_REGION_SINGAPORE_URL=https://your-singapore-service.onrender.com`
+- `VITE_REGION_AREA1_URL=https://your-area1-service.onrender.com`
+- `VITE_REGION_AREA2_URL=https://your-area2-service.onrender.com`
+- `VITE_REGION_AREA3_URL=https://your-area3-service.onrender.com`
 
 ## Railway 部署
 

@@ -3,7 +3,11 @@
     <div class="search-head">
       <p class="section-tip">
         <template v-if="platform === 'missevan' && !isDesktopApp">
-          如果搜索接口暂时受限，请 {{ cooldownText }} 小时后再来。
+          如果猫耳接口暂时受限，请 {{ cooldownText }} 小时之后再来。
+          也可<a
+            class="section-tip-link"
+            :href="homePageUrl"
+          >返回首页</a>选择其他节点。
           <template v-if="desktopAppUrl">
             或<a
               class="section-tip-link"
@@ -156,6 +160,12 @@ export default {
       }
 
       return this.getMissevanAccessLimitedText();
+    },
+    homePageUrl() {
+      if (typeof window === "undefined") {
+        return "/";
+      }
+      return `${window.location.origin}/`;
     },
     cooldownText() {
       return this.getRemainingCooldownHours();
