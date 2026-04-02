@@ -15,6 +15,16 @@ npm start
 
 启动后访问 `http://localhost:3000`。
 
+## `dev` 分支
+
+`dev` 分支用于双区域冷却引导主页。
+
+- 根页面会显示 `Oregon` 与 `Singapore` 两个 Render 区域的状态
+- 页面只读取两个区域各自的 `/app-config`
+- 选中区域后会直接跳转到对应区域的正式工具页
+
+这个分支不承担统一 API 网关职责，只做区域状态展示和跳转。
+
 ## 猫耳访问受限说明
 
 如果 `Missevan` 显示“访问受限”：
@@ -36,6 +46,8 @@ Windows 桌面版会直接在界面中提示这一步。
 - `UPSTASH_REDIS_REST_URL`：可选，配置后用于持久化 Manbo 轻量索引库
 - `UPSTASH_REDIS_REST_TOKEN`：可选，配合 Upstash Redis 持久化 Manbo 轻量索引库与 Missevan cooldown
 - `MANBO_INDEX_SYNC_INTERVAL_MS=30000`：可选，多实例环境下刷新远端 Manbo 索引快照的间隔
+- `VITE_REGION_OREGON_URL`：前端可选，双区域主页中 Oregon 工具页地址
+- `VITE_REGION_SINGAPORE_URL`：前端可选，双区域主页中 Singapore 工具页地址
 
 未配置 Upstash 时，Manbo 轻量索引库会回退到运行目录下的 `runtime/manbo-index.json`。
 
@@ -51,6 +63,8 @@ UPSTASH_REDIS_REST_TOKEN=your-upstash-token
 MANBO_INDEX_SYNC_INTERVAL_MS=30000
 MISSEVAN_PERSISTENT_COOLDOWN=false
 MISSEVAN_COOLDOWN_KEY=missevan:cooldown:local
+VITE_REGION_OREGON_URL=https://your-oregon-service.onrender.com
+VITE_REGION_SINGAPORE_URL=https://your-singapore-service.onrender.com
 ```
 
 Windows 桌面版支持以下优先顺序：
@@ -70,9 +84,18 @@ Windows 桌面版支持以下优先顺序：
 - 推荐环境变量：`ENABLE_MISSEVAN=false`
 - 私用猫耳版推荐额外配置：
   - `MISSEVAN_PERSISTENT_COOLDOWN=true`
-  - `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render`
+  - `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render:oregon`
 
 部署完成后可以访问 `/app-config` 确认配置是否生效。
+
+如果你把另一个服务部署到 Singapore，推荐：
+
+- `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:render:singapore`
+
+双区域主页所在站点需要额外配置：
+
+- `VITE_REGION_OREGON_URL=https://your-oregon-service.onrender.com`
+- `VITE_REGION_SINGAPORE_URL=https://your-singapore-service.onrender.com`
 
 ## Railway 部署
 
