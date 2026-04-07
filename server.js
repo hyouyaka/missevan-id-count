@@ -46,6 +46,23 @@ const MISSEVAN_DESKTOP_APP_URL = String(
 const MISSEVAN_COOLDOWN_KEY = String(
   process.env.MISSEVAN_COOLDOWN_KEY || "missevan:cooldown:v1"
 ).trim() || "missevan:cooldown:v1";
+const LANDING_REGION_COOLDOWN_KEYS = Object.freeze([
+  {
+    key: "area1",
+    label: "节点1",
+    cooldownKey: "missevan:cooldown:render:area1",
+  },
+  {
+    key: "area2",
+    label: "节点2",
+    cooldownKey: "missevan:cooldown:render:area2",
+  },
+  {
+    key: "area3",
+    label: "节点3",
+    cooldownKey: "missevan:cooldown:render:area3",
+  },
+]);
 const MISSEVAN_COOLDOWN_MS = MISSEVAN_COOLDOWN_HOURS * 60 * 60 * 1000;
 const MISSEVAN_REPEAT_COOLDOWN_MS =
   MISSEVAN_REPEAT_COOLDOWN_HOURS * 60 * 60 * 1000;
@@ -281,12 +298,17 @@ function logCooldownPersistenceUnavailable(message, error = null) {
   console.error(message);
 }
 
-function getSerializedCooldownState() {
-  return JSON.stringify({
+function getCooldownStatePayload() {
+  return {
+    appVersion: APP_VERSION,
     accessDeniedUntil,
     accessDeniedCooldownMode,
     accessDeniedUseShortCooldown,
-  });
+  };
+}
+
+function getSerializedCooldownState() {
+  return JSON.stringify(getCooldownStatePayload());
 }
 
 function applyLoadedCooldownState(payload) {
@@ -313,7 +335,36 @@ function armRepeatCooldownIfNeeded() {
   accessDeniedCooldownMode = shouldUseRepeatCooldown ? "repeat_ready" : "none";
 }
 
-async function writeCooldownStateToUpstash() {
+function buildLandingRegionSnapshot(region, raw, fallbackVersion, options = {}) {
+  let payload = null;
+  let statusKnown = options.statusKnown !== false;
+
+  if (typeof raw === "string" && raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch (_) {
+      payload = null;
+      statusKnown = false;
+    }
+  }
+
+  const resolvedFallbackVersion = normalizeVersion(fallbackVersion);
+  const appVersion = normalizeVersion(payload?.appVersion ?? resolvedFallbackVersion);
+  const cooldownUntil = Number(payload?.accessDeniedUntil ?? 0);
+
+  return {
+    key: region.key,
+    label: region.label,
+    version: appVersion === "0.0.0" ? resolvedFallbackVersion : appVersion,
+    cooldownUntil: statusKnown && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()
+      ? cooldownUntil
+      : 0,
+    cooldownHours: MISSEVAN_COOLDOWN_HOURS,
+    statusKnown,
+  };
+}
+
+async function writeCooldownStateToUpstash(payload = null) {
   if (!shouldPersistAccessDeniedCooldown()) {
     return;
   }
@@ -326,7 +377,8 @@ async function writeCooldownStateToUpstash() {
   }
 
   try {
-    await upstashClient.command(["SET", MISSEVAN_COOLDOWN_KEY, getSerializedCooldownState()]);
+    const serializedState = JSON.stringify(payload ?? getCooldownStatePayload());
+    await upstashClient.command(["SET", MISSEVAN_COOLDOWN_KEY, serializedState]);
   } catch (error) {
     console.error("Failed to persist Missevan cooldown state to Upstash", error);
   }
@@ -345,7 +397,12 @@ async function clearCooldownStateFromUpstash() {
   }
 
   try {
-    await upstashClient.command(["DEL", MISSEVAN_COOLDOWN_KEY]);
+    await writeCooldownStateToUpstash({
+      ...getCooldownStatePayload(),
+      accessDeniedUntil: 0,
+      accessDeniedCooldownMode: "none",
+      accessDeniedUseShortCooldown: false,
+    });
   } catch (error) {
     console.error("Failed to clear Missevan cooldown state from Upstash", error);
   }
@@ -384,6 +441,7 @@ async function loadAccessDeniedCooldown() {
       accessDeniedUntil = 0;
       accessDeniedCooldownMode = "none";
       accessDeniedUseShortCooldown = false;
+      await persistAccessDeniedCooldown();
       return;
     }
 
@@ -415,6 +473,22 @@ async function refreshMissevanCooldownState(force = false) {
       cooldownRefreshPromise = null;
     });
   return cooldownRefreshPromise;
+}
+
+async function persistCurrentAppVersionToCooldownState() {
+  if (!shouldPersistAccessDeniedCooldown()) {
+    return;
+  }
+
+  if (!upstashClient.enabled) {
+    return;
+  }
+
+  if (!cooldownStateLoaded || !lastCooldownRefreshSucceeded) {
+    return;
+  }
+
+  await writeCooldownStateToUpstash();
 }
 
 function buildMissevanAccessDeniedResponse(error, fallbackMessage = "Missevan request failed") {
@@ -3937,6 +4011,38 @@ function setNoStoreHeaders(res) {
   res.setHeader("Expires", "0");
 }
 
+app.get("/landing/regions", async (req, res) => {
+  setNoStoreHeaders(res);
+  const frontendVersion = getFrontendVersionFromRequest(req);
+
+  if (!upstashClient.enabled) {
+    return res.json({
+      regions: LANDING_REGION_COOLDOWN_KEYS.map((region) =>
+        buildLandingRegionSnapshot(region, null, frontendVersion, { statusKnown: false })
+      ),
+    });
+  }
+
+  try {
+    const snapshots = await Promise.all(
+      LANDING_REGION_COOLDOWN_KEYS.map(async (region) => {
+        const raw = await upstashClient.command(["GET", region.cooldownKey]);
+        return buildLandingRegionSnapshot(region, raw, frontendVersion);
+      })
+    );
+
+    return res.json({ regions: snapshots });
+  } catch (error) {
+    console.error("Failed to read landing region snapshots from Upstash", error);
+    return res.status(500).json({
+      error: "Failed to read landing region snapshots",
+      regions: LANDING_REGION_COOLDOWN_KEYS.map((region) =>
+        buildLandingRegionSnapshot(region, null, frontendVersion, { statusKnown: false })
+      ),
+    });
+  }
+});
+
 app.get("/stat-tasks/:taskId", async (req, res) => {
   const task = getStatsTaskOr404(req.params.taskId, res);
   if (!task) {
@@ -4005,6 +4111,7 @@ export async function startServer(port = defaultPort) {
   }
 
   await loadAccessDeniedCooldown();
+  await persistCurrentAppVersionToCooldownState();
   await manboIndexStore.ensureLoaded();
 
   serverInstance = await new Promise((resolve, reject) => {

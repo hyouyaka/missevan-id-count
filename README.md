@@ -20,7 +20,8 @@ npm start
 `dev` 分支用于节点状态引导主页。
 
 - 根页面会显示 `节点1`、`节点2`、`节点3` 的状态
-- 页面会读取各节点各自的 `/app-config`
+- 页面会统一读取首页服务自己的 `/landing/regions`
+- 首页只展示节点版本号和 `Missevan` 受限冷却时间
 - 选中节点后会直接跳转到对应工具页
 
 这个分支不承担统一 API 网关职责，只做区域状态展示和跳转。
@@ -44,6 +45,7 @@ Windows 桌面版会直接在界面中提示这一步。
 - `MISSEVAN_COOLDOWN_HOURS`：`Missevan` 命中 418 后的冷却小时数，默认 `4`
 - `MISSEVAN_PERSISTENT_COOLDOWN`：是否持久化 cooldown；本地默认不启用，Render / Railway 默认启用
 - `MISSEVAN_COOLDOWN_KEY`：当前部署使用的 cooldown key，例如 `missevan:cooldown:render:area1`
+- 持久化 cooldown 的 JSON 会额外写入 `appVersion`，供首页节点列表直接显示版本号
 - `MISSEVAN_DESKTOP_APP_URL`：网页版提示用户下载桌面版时使用的地址
 - `UPSTASH_REDIS_REST_URL`：Upstash Redis 地址，用于持久化 Manbo 轻量索引和 Missevan cooldown
 - `UPSTASH_REDIS_REST_TOKEN`：Upstash Redis Token
@@ -108,6 +110,12 @@ Windows 桌面版支持以下优先顺序：
 - `VITE_REGION_AREA1_URL=https://your-area1-service.onrender.com`
 - `VITE_REGION_AREA2_URL=https://your-area2-service.onrender.com`
 - `VITE_REGION_AREA3_URL=https://your-area3-service.onrender.com`
+
+首页会固定读取以下 3 个 cooldown key 来展示节点信息：
+
+- `missevan:cooldown:render:area1`
+- `missevan:cooldown:render:area2`
+- `missevan:cooldown:render:area3`
 
 ## Railway 部署
 
