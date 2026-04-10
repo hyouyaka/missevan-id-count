@@ -1,13 +1,20 @@
 import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import fs from "fs";
+import path from "path";
 
 const packageJson = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
 );
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(String(packageJson.version || "0.0.0")),
   },

@@ -69,12 +69,23 @@ const MISSEVAN_REPEAT_COOLDOWN_MS =
 
 const MANBO_API_BASE = "https://www.kilamanbo.com/web_manbo";
 const MANBO_API_HOST = "www.kilamanbo.com";
+const MANBO_INFO_KEY = "manbo:info:v1";
+const MISSEVAN_INFO_KEY = "missevan:info:v1";
+const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
+const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
+  5000,
+  Number(process.env.INFO_STORE_SYNC_INTERVAL_MS ?? 30000) || 30000
+);
+const MANBO_INFO_FALLBACK_PATH = path.join(__dirname, "data", "manbo-drama-info.json");
+const MISSEVAN_INFO_FALLBACK_PATH = path.join(__dirname, "data", "missevan-drama-info.json");
+const NEW_DRAMA_IDS_FALLBACK_PATH = path.join(runtimeDir, "new-drama-ids.json");
 
 const danmakuCache = new Map();
 const dramaCache = new Map();
 const soundSummaryCache = new Map();
 const rewardSummaryCache = new Map();
 const rewardDetailCache = new Map();
+const missevanSearchApiCache = new Map();
 const manboDramaCache = new Map();
 const manboSetCache = new Map();
 const manboDanmakuCache = new Map();
@@ -82,11 +93,44 @@ const manboDanmakuInFlight = new Map();
 const manboStatsTaskStore = new Map();
 const manboIndexStore = createManboIndexStore({ runtimeDir });
 const upstashClient = createUpstashRestClient();
+const manboInfoStore = {
+  platform: "manbo",
+  key: MANBO_INFO_KEY,
+  fallbackPath: MANBO_INFO_FALLBACK_PATH,
+  snapshot: null,
+  records: [],
+  byDramaId: new Map(),
+  loaded: false,
+  lastLoadedAt: 0,
+  loadPromise: null,
+  writePromise: Promise.resolve(),
+};
+const missevanInfoStore = {
+  platform: "missevan",
+  key: MISSEVAN_INFO_KEY,
+  fallbackPath: MISSEVAN_INFO_FALLBACK_PATH,
+  snapshot: null,
+  records: [],
+  byDramaId: new Map(),
+  loaded: false,
+  lastLoadedAt: 0,
+  loadPromise: null,
+  writePromise: Promise.resolve(),
+};
+const newDramaIdsStore = {
+  key: NEW_DRAMA_IDS_KEY,
+  fallbackPath: NEW_DRAMA_IDS_FALLBACK_PATH,
+  snapshot: null,
+  loaded: false,
+  loadPromise: null,
+  writePromise: Promise.resolve(),
+};
 
 const DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
 const SOUND_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
 const REWARD_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
 const REWARD_DETAIL_CACHE_TTL_MS = 30 * 60 * 1000;
+const MISSEVAN_SEARCH_API_CACHE_TTL_MS = 10 * 60 * 1000;
 const MANBO_DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANBO_SET_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANBO_DANMAKU_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -120,6 +164,12 @@ let cooldownPersistenceWarningLogged = false;
 let cooldownRefreshPromise = null;
 let lastCooldownRefreshAt = 0;
 let lastCooldownRefreshSucceeded = false;
+
+const MANBO_TYPE_TO_GENRE = Object.freeze({
+  3: "全年龄",
+  4: "纯爱",
+  6: "言情",
+});
 
 app.use(cors());
 app.use(express.json());
@@ -356,9 +406,10 @@ function buildLandingRegionSnapshot(region, raw, fallbackVersion, options = {}) 
     key: region.key,
     label: region.label,
     version: appVersion === "0.0.0" ? resolvedFallbackVersion : appVersion,
-    cooldownUntil: statusKnown && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()
-      ? cooldownUntil
-      : 0,
+    cooldownUntil:
+      statusKnown && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()
+        ? cooldownUntil
+        : 0,
     cooldownHours: MISSEVAN_COOLDOWN_HOURS,
     statusKnown,
   };
@@ -595,6 +646,50 @@ function normalizeKeyword(keyword) {
   return String(keyword ?? "").trim().slice(0, 200);
 }
 
+function isSameHostUsageLogRequest(req) {
+  const requestHost = String(req.get("host") || "")
+    .trim()
+    .toLowerCase();
+  if (!requestHost) {
+    return false;
+  }
+
+  const origin = String(req.get("origin") || "").trim();
+  if (origin) {
+    try {
+      return new URL(origin).host.toLowerCase() === requestHost;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  const referer = String(req.get("referer") || "").trim();
+  if (referer) {
+    try {
+      return new URL(referer).host.toLowerCase() === requestHost;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function normalizeSearchOffset(value) {
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized > 0
+    ? Math.floor(normalized)
+    : 0;
+}
+
+function normalizeSearchLimit(value, defaultLimit = 5, maxLimit = 5) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return defaultLimit;
+  }
+  return Math.min(Math.floor(normalized), maxLimit);
+}
+
 function normalizeIds(values, limit = 200) {
   return Array.from(
     new Set(
@@ -751,6 +846,1392 @@ function normalizeRawInputItems(items) {
     })
     .filter((item) => item.raw)
     .slice(0, 200);
+}
+
+function normalizeTextValue(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeStringArray(values, limit = 100) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [])
+    .map((item) => normalizeTextValue(item))
+    .filter((item) => {
+      if (!item || seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    })
+    .slice(0, limit);
+}
+
+function normalizeNumericArray(values, limit = 100) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [])
+    .map((item) => Number(item))
+    .filter((item) => {
+      if (!Number.isFinite(item) || item <= 0 || seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    })
+    .slice(0, limit);
+}
+
+function normalizeStringIdArray(values, limit = 1000) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [])
+    .map((item) => String(item ?? "").trim())
+    .filter((item) => {
+      if (!/^\d+$/.test(item) || seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    })
+    .slice(0, limit);
+}
+
+function normalizeStringMap(mapLike) {
+  const result = {};
+  if (!mapLike || typeof mapLike !== "object") {
+    return result;
+  }
+  Object.entries(mapLike).forEach(([key, value]) => {
+    const normalizedKey = String(key ?? "").trim();
+    const normalizedValue = normalizeTextValue(value);
+    if (normalizedKey && normalizedValue) {
+      result[normalizedKey] = normalizedValue;
+    }
+  });
+  return result;
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function createEmptyManboInfoSnapshot() {
+  return {
+    version: 1,
+    updatedAt: 0,
+    records: [],
+  };
+}
+
+function createEmptyMissevanInfoSnapshot() {
+  return {};
+}
+
+function createEmptyNewDramaIdsSnapshot() {
+  return {
+    manbo: [],
+    missevan: [],
+  };
+}
+
+function getInfoStore(platform) {
+  return platform === "manbo" ? manboInfoStore : missevanInfoStore;
+}
+
+function normalizeNewDramaIdsSnapshot(snapshot) {
+  const nextSnapshot =
+    snapshot && typeof snapshot === "object"
+      ? snapshot
+      : createEmptyNewDramaIdsSnapshot();
+  return {
+    manbo: normalizeStringIdArray(nextSnapshot.manbo, 5000),
+    missevan: normalizeStringIdArray(nextSnapshot.missevan, 5000),
+  };
+}
+
+async function readJsonFileIfExists(filePath) {
+  try {
+    const content = await fs.readFile(filePath, "utf8");
+    return JSON.parse(content);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function normalizeManboLibraryRecord(record) {
+  const dramaId = String(record?.dramaId ?? "").trim();
+  if (!isNumericId(dramaId)) {
+    return null;
+  }
+
+  const name = normalizeTextValue(record?.name);
+  return {
+    dramaId,
+    name,
+    normalizedName: normalizeManboIndexName(record?.normalizedName || name),
+    aliases: normalizeStringArray(record?.aliases, 30),
+    cover: normalizeTextValue(record?.cover),
+    mainCvNicknames: normalizeStringArray(record?.mainCvNicknames, 20),
+    mainCvNames: normalizeStringArray(record?.mainCvNames, 20),
+    catalog: normalizeOptionalFiniteNumber(record?.catalog),
+    createTime: normalizeTextValue(record?.createTime),
+    catalogName: normalizeTextValue(record?.catalogName),
+    type: normalizeOptionalFiniteNumber(record?.type),
+    genre: normalizeTextValue(record?.genre),
+    mainCvIds: normalizeNumericArray(record?.mainCvIds, 20),
+    mainCvRoleNames: normalizeStringArray(record?.mainCvRoleNames, 20),
+    seriesTitle: normalizeTextValue(record?.seriesTitle),
+    author: normalizeTextValue(record?.author),
+  };
+}
+
+function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey = "") {
+  const dramaId = Number(node?.dramaId ?? 0);
+  if (!Number.isFinite(dramaId) || dramaId <= 0) {
+    return null;
+  }
+
+  const title = normalizeTextValue(node?.title);
+  const seriesTitle = normalizeTextValue(node?.seriesTitle || fallbackSeriesTitle || title);
+  return {
+    title,
+    dramaId,
+    soundIds: normalizeStringIdArray(node?.soundIds, 500),
+    maincvs: normalizeNumericArray(node?.maincvs, 20),
+    type: normalizeOptionalFiniteNumber(node?.type),
+    cvroles: normalizeStringMap(node?.cvroles),
+    cvnames: normalizeStringMap(node?.cvnames),
+    catalog: normalizeOptionalFiniteNumber(node?.catalog),
+    createTime: normalizeTextValue(node?.createTime),
+    author: normalizeTextValue(node?.author),
+    seriesTitle,
+    seasonKey: normalizeTextValue(seasonKey),
+  };
+}
+
+function applyInfoStoreSnapshot(store, snapshot) {
+  const safeSnapshot =
+    snapshot && typeof snapshot === "object"
+      ? snapshot
+      : store.platform === "manbo"
+        ? createEmptyManboInfoSnapshot()
+        : createEmptyMissevanInfoSnapshot();
+
+  if (store.platform === "manbo") {
+    const records = (Array.isArray(safeSnapshot.records) ? safeSnapshot.records : [])
+      .map((record) => normalizeManboLibraryRecord(record))
+      .filter(Boolean);
+    store.snapshot = {
+      version: Number(safeSnapshot.version ?? 1) || 1,
+      updatedAt: Number(safeSnapshot.updatedAt ?? 0) || Date.now(),
+      records,
+    };
+    store.records = records;
+    store.byDramaId = new Map(records.map((record) => [record.dramaId, record]));
+  } else {
+    const flatRecords = [];
+    const byDramaId = new Map();
+    Object.entries(safeSnapshot).forEach(([seriesTitle, seasons]) => {
+      Object.entries(seasons || {}).forEach(([seasonKey, node]) => {
+        const normalized = normalizeMissevanSeasonRecord(node, seriesTitle, seasonKey);
+        if (!normalized) {
+          return;
+        }
+        flatRecords.push(normalized);
+        byDramaId.set(String(normalized.dramaId), normalized);
+      });
+    });
+    store.snapshot = safeSnapshot;
+    store.records = flatRecords;
+    store.byDramaId = byDramaId;
+  }
+
+  store.loaded = true;
+  store.lastLoadedAt = Date.now();
+}
+
+async function readInfoStoreSnapshot(store) {
+  if (upstashClient.enabled) {
+    try {
+      const raw = await upstashClient.command(["GET", store.key]);
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch (error) {
+      console.error(`Failed to read Upstash info snapshot key=${store.key}`, error);
+    }
+  }
+
+  const localSnapshot = await readJsonFileIfExists(store.fallbackPath);
+  if (localSnapshot) {
+    return localSnapshot;
+  }
+
+  return store.platform === "manbo"
+    ? createEmptyManboInfoSnapshot()
+    : createEmptyMissevanInfoSnapshot();
+}
+
+async function ensureInfoStoreLoaded(store, forceRefresh = false) {
+  if (
+    store.loaded &&
+    !forceRefresh &&
+    Date.now() - store.lastLoadedAt < INFO_STORE_SYNC_INTERVAL_MS
+  ) {
+    return store;
+  }
+
+  if (store.loadPromise) {
+    await store.loadPromise;
+    return store;
+  }
+
+  store.loadPromise = (async () => {
+    try {
+      const snapshot = await readInfoStoreSnapshot(store);
+      applyInfoStoreSnapshot(store, snapshot);
+    } catch (error) {
+      if (!store.loaded) {
+        applyInfoStoreSnapshot(
+          store,
+          store.platform === "manbo"
+            ? createEmptyManboInfoSnapshot()
+            : createEmptyMissevanInfoSnapshot()
+        );
+      }
+      console.error(`Failed to load info store platform=${store.platform}`, error);
+    } finally {
+      store.loadPromise = null;
+    }
+  })();
+
+  await store.loadPromise;
+  return store;
+}
+
+async function persistInfoStoreSnapshot(store, snapshot) {
+  const payload = JSON.stringify(snapshot);
+  if (upstashClient.enabled) {
+    await upstashClient.command(["SET", store.key, payload]);
+  } else {
+    await fs.writeFile(store.fallbackPath, payload, "utf8");
+  }
+  applyInfoStoreSnapshot(store, snapshot);
+}
+
+function queueInfoStoreWrite(store, mutateSnapshot) {
+  store.writePromise = store.writePromise
+    .catch(() => {})
+    .then(async () => {
+      await ensureInfoStoreLoaded(store, true);
+      const nextSnapshot = await mutateSnapshot(cloneJson(store.snapshot));
+      if (!nextSnapshot) {
+        return;
+      }
+      await persistInfoStoreSnapshot(store, nextSnapshot);
+    });
+
+  return store.writePromise;
+}
+
+async function readNewDramaIdsSnapshot() {
+  if (upstashClient.enabled) {
+    try {
+      const raw = await upstashClient.command(["GET", newDramaIdsStore.key]);
+      if (raw) {
+        return normalizeNewDramaIdsSnapshot(JSON.parse(raw));
+      }
+    } catch (error) {
+      console.error(`Failed to read Upstash new drama id snapshot key=${newDramaIdsStore.key}`, error);
+    }
+  }
+
+  const localSnapshot = await readJsonFileIfExists(newDramaIdsStore.fallbackPath);
+  if (localSnapshot) {
+    return normalizeNewDramaIdsSnapshot(localSnapshot);
+  }
+
+  return createEmptyNewDramaIdsSnapshot();
+}
+
+function applyNewDramaIdsSnapshot(snapshot) {
+  newDramaIdsStore.snapshot = normalizeNewDramaIdsSnapshot(snapshot);
+  newDramaIdsStore.loaded = true;
+}
+
+async function ensureNewDramaIdsLoaded(forceRefresh = false) {
+  if (newDramaIdsStore.loaded && !forceRefresh) {
+    return newDramaIdsStore.snapshot;
+  }
+
+  if (newDramaIdsStore.loadPromise) {
+    await newDramaIdsStore.loadPromise;
+    return newDramaIdsStore.snapshot;
+  }
+
+  newDramaIdsStore.loadPromise = (async () => {
+    try {
+      applyNewDramaIdsSnapshot(await readNewDramaIdsSnapshot());
+    } catch (error) {
+      if (!newDramaIdsStore.loaded) {
+        applyNewDramaIdsSnapshot(createEmptyNewDramaIdsSnapshot());
+      }
+      console.error("Failed to load new drama id snapshot", error);
+    } finally {
+      newDramaIdsStore.loadPromise = null;
+    }
+  })();
+
+  await newDramaIdsStore.loadPromise;
+  return newDramaIdsStore.snapshot;
+}
+
+async function persistNewDramaIdsSnapshot(snapshot) {
+  const normalizedSnapshot = normalizeNewDramaIdsSnapshot(snapshot);
+  const payload = JSON.stringify(normalizedSnapshot);
+  if (upstashClient.enabled) {
+    await upstashClient.command(["SET", newDramaIdsStore.key, payload]);
+  } else {
+    await fs.mkdir(path.dirname(newDramaIdsStore.fallbackPath), { recursive: true });
+    await fs.writeFile(newDramaIdsStore.fallbackPath, payload, "utf8");
+  }
+  applyNewDramaIdsSnapshot(normalizedSnapshot);
+}
+
+function queueNewDramaIdsAppend(platform, ids) {
+  const normalizedIds = normalizeStringIdArray(ids, 5000);
+  if (!normalizedIds.length || !["manbo", "missevan"].includes(platform)) {
+    return Promise.resolve();
+  }
+
+  newDramaIdsStore.writePromise = newDramaIdsStore.writePromise
+    .catch(() => {})
+    .then(async () => {
+      const snapshot = cloneJson(await ensureNewDramaIdsLoaded(true));
+      const merged = {
+        ...createEmptyNewDramaIdsSnapshot(),
+        ...snapshot,
+      };
+      merged[platform] = normalizeStringIdArray(
+        []
+          .concat(Array.isArray(merged[platform]) ? merged[platform] : [])
+          .concat(normalizedIds),
+        5000
+      );
+      await persistNewDramaIdsSnapshot(merged);
+    });
+
+  return newDramaIdsStore.writePromise;
+}
+
+function fireAndForget(label, task) {
+  setTimeout(() => {
+    Promise.resolve()
+      .then(task)
+      .catch((error) => {
+        console.error(label, error);
+      });
+  }, 0);
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const source = Array.isArray(items) ? items : [];
+  const results = new Array(source.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(Number(limit) || 1, source.length || 1));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (cursor < source.length) {
+        const currentIndex = cursor;
+        cursor += 1;
+        results[currentIndex] = await mapper(source[currentIndex], currentIndex);
+      }
+    })
+  );
+
+  return results;
+}
+
+function getSearchFieldScore(value, rawKeyword, normalizedKeyword) {
+  const rawValue = normalizeTextValue(value);
+  if (!rawValue) {
+    return 0;
+  }
+  if (rawValue === rawKeyword) {
+    return 900;
+  }
+
+  const normalizedValue = normalizeManboIndexName(rawValue);
+  if (!normalizedValue || !normalizedKeyword) {
+    return 0;
+  }
+  if (normalizedValue === normalizedKeyword) {
+    return 780;
+  }
+  if (normalizedValue.startsWith(normalizedKeyword)) {
+    return 620;
+  }
+  if (normalizedValue.includes(normalizedKeyword)) {
+    return 460;
+  }
+  return 0;
+}
+
+function getWeightedSearchScore(entries, rawKeyword, normalizedKeyword) {
+  let bestScore = 0;
+  entries.forEach(({ value, boost = 0 }) => {
+    const values = Array.isArray(value) ? value : [value];
+    values.forEach((item) => {
+      const score = getSearchFieldScore(item, rawKeyword, normalizedKeyword);
+      if (score > 0) {
+        bestScore = Math.max(bestScore, score + boost);
+      }
+    });
+  });
+  return bestScore;
+}
+
+function scoreManboLibraryRecord(record, keyword) {
+  const rawKeyword = normalizeTextValue(keyword);
+  const normalizedKeyword = normalizeManboIndexName(rawKeyword);
+  if (!rawKeyword) {
+    return 0;
+  }
+  if (record.dramaId === rawKeyword) {
+    return 1200;
+  }
+  return getWeightedSearchScore(
+    [
+      { value: record.name, boost: 220 },
+      { value: record.aliases, boost: 180 },
+      { value: record.mainCvNicknames, boost: 150 },
+      { value: record.mainCvNames, boost: 140 },
+      { value: record.mainCvRoleNames, boost: 120 },
+      { value: record.seriesTitle, boost: 100 },
+      { value: record.author, boost: 90 },
+    ],
+    rawKeyword,
+    normalizedKeyword
+  );
+}
+
+function scoreMissevanLibraryRecord(record, keyword) {
+  const rawKeyword = normalizeTextValue(keyword);
+  const normalizedKeyword = normalizeManboIndexName(rawKeyword);
+  if (!rawKeyword) {
+    return 0;
+  }
+  if (String(record.dramaId) === rawKeyword) {
+    return 1200;
+  }
+  if (record.soundIds.includes(rawKeyword)) {
+    return 1120;
+  }
+  return getWeightedSearchScore(
+    [
+      { value: record.title, boost: 220 },
+      { value: record.seriesTitle, boost: 170 },
+      { value: Object.values(record.cvnames), boost: 150 },
+      { value: Object.values(record.cvroles), boost: 130 },
+      { value: record.author, boost: 90 },
+    ],
+    rawKeyword,
+    normalizedKeyword
+  );
+}
+
+function searchManboLibraryRecords(records, keyword, limit = 30) {
+  return Array.from(
+    records
+    .map((record) => ({
+      record,
+      score: scoreManboLibraryRecord(record, keyword),
+    }))
+    .filter((item) => item.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        String(a.record.dramaId).localeCompare(String(b.record.dramaId))
+    )
+    .reduce((map, item) => {
+      const key = String(item.record?.dramaId ?? "");
+      if (!key || map.has(key)) {
+        return map;
+      }
+      map.set(key, item.record);
+      return map;
+    }, new Map())
+    .values()
+  ).slice(0, limit);
+}
+
+function searchMissevanLibraryRecords(records, keyword, limit = 30) {
+  return Array.from(
+    records
+    .map((record) => ({
+      record,
+      score: scoreMissevanLibraryRecord(record, keyword),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.record.dramaId - b.record.dramaId)
+    .reduce((map, item) => {
+      const key = String(item.record?.dramaId ?? "");
+      if (!key || map.has(key)) {
+        return map;
+      }
+      map.set(key, item.record);
+      return map;
+    }, new Map())
+    .values()
+  ).slice(0, limit);
+}
+
+function buildMainCvText(mainCvs) {
+  const names = normalizeStringArray(mainCvs, 20);
+  return names.length ? `主要CV：${names.join("，")}` : "";
+}
+
+function getMissevanMainCvNames(record) {
+  const byMainIds = record.maincvs
+    .map((cvId) => record.cvnames[String(cvId)] || "")
+    .filter(Boolean);
+  const fallback = Object.values(record.cvnames);
+  return normalizeStringArray(byMainIds.length ? byMainIds : fallback, 20);
+}
+
+function buildManboSearchFallbackCard(record) {
+  const mainCvs = normalizeStringArray(record?.mainCvNicknames, 20);
+  return {
+    id: String(record?.dramaId ?? ""),
+    name: record?.name || "",
+    cover: record?.cover || "",
+    view_count: 0,
+    playCountWan: "0",
+    price: 0,
+    sound_id: null,
+    subscription_num: null,
+    pay_count: null,
+    diamond_value: 0,
+    is_member: false,
+    checked: false,
+    platform: "manbo",
+    main_cvs: mainCvs,
+    main_cv_text: buildMainCvText(mainCvs),
+  };
+}
+
+function buildMissevanSearchFallbackCard(record) {
+  const mainCvs = getMissevanMainCvNames(record);
+  const primarySoundId = normalizeStringIdArray(record?.soundIds, 1)[0] || null;
+  return {
+    id: Number(record?.dramaId ?? 0),
+    name: record?.title || "",
+    cover: "",
+    view_count: 0,
+    playCountWan: "0",
+    vip: 0,
+    price: 0,
+    member_price: 0,
+    is_member: false,
+    sound_id: primarySoundId ? Number(primarySoundId) : null,
+    subscription_num: null,
+    reward_num: null,
+    checked: false,
+    platform: "missevan",
+    search_source: "library",
+    main_cvs: mainCvs,
+    main_cv_text: buildMainCvText(mainCvs),
+  };
+}
+
+function normalizeMissevanApiSearchCandidate(item) {
+  const source = item && typeof item === "object" ? item : {};
+  const drama = source?.drama && typeof source.drama === "object" ? source.drama : {};
+  const info = source?.info && typeof source.info === "object" ? source.info : {};
+  const candidate = source?.drama_info && typeof source.drama_info === "object"
+    ? source.drama_info
+    : source;
+
+  const dramaId = Number(
+    candidate?.drama_id ??
+      candidate?.dramaId ??
+      candidate?.id ??
+      drama?.drama_id ??
+      drama?.dramaId ??
+      drama?.id ??
+      info?.drama_id ??
+      info?.id ??
+      0
+  );
+  if (!Number.isFinite(dramaId) || dramaId <= 0) {
+    return null;
+  }
+
+  const title = normalizeTextValue(
+    candidate?.title ??
+      candidate?.name ??
+      candidate?.drama_name ??
+      drama?.title ??
+      drama?.name ??
+      info?.title ??
+      info?.name
+  );
+  if (!title) {
+    return null;
+  }
+
+  const soundId = Number(
+    source?.sound_id ??
+      source?.soundid ??
+      source?.soundId ??
+      candidate?.sound_id ??
+      candidate?.soundid ??
+      candidate?.soundId ??
+      drama?.sound_id ??
+      drama?.soundId ??
+      0
+  );
+
+  return {
+    dramaId,
+    title,
+    cover: normalizeTextValue(
+      candidate?.cover ??
+        candidate?.small_cover ??
+        drama?.cover ??
+        drama?.small_cover ??
+        info?.cover ??
+        ""
+    ),
+    soundId: Number.isFinite(soundId) && soundId > 0 ? soundId : null,
+  };
+}
+
+function collectMissevanSearchCandidateArrays(payload) {
+  const queue = [payload?.info, payload?.data, payload?.result, payload?.results];
+  const arrays = [];
+  const visited = new Set();
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    if (Array.isArray(current)) {
+      arrays.push(current);
+      continue;
+    }
+
+    if (typeof current !== "object") {
+      continue;
+    }
+
+    Object.values(current).forEach((value) => {
+      if (!value || visited.has(value)) {
+        return;
+      }
+      if (Array.isArray(value)) {
+        arrays.push(value);
+        visited.add(value);
+        return;
+      }
+      if (typeof value === "object") {
+        queue.push(value);
+      }
+    });
+  }
+
+  return arrays;
+}
+
+async function searchMissevanApiRecords(keyword, limit = 30) {
+  const cacheKey = normalizeTextValue(keyword);
+  const cached = getCachedValue(
+    missevanSearchApiCache,
+    cacheKey,
+    MISSEVAN_SEARCH_API_CACHE_TTL_MS
+  );
+  if (cached) {
+    return cached;
+  }
+
+  const payload = await fetchJsonWithRetry(
+    `https://www.missevan.com/dramaapi/search?s=${encodeURIComponent(cacheKey)}`,
+    2,
+    250,
+    { missevan: true }
+  );
+
+  if (!payload?.success) {
+    const infoMessage = normalizeTextValue(payload?.info);
+    if (payload?.code === 100010007 || infoMessage.includes("木有找到")) {
+      setCachedValue(missevanSearchApiCache, cacheKey, []);
+      return [];
+    }
+  }
+
+  const normalized = Array.from(
+    collectMissevanSearchCandidateArrays(payload)
+      .flat()
+      .map(normalizeMissevanApiSearchCandidate)
+      .filter(Boolean)
+      .reduce((map, item) => {
+        const key = String(item.dramaId);
+        if (!map.has(key)) {
+          map.set(key, item);
+        }
+        return map;
+      }, new Map())
+      .values()
+  ).slice(0, limit);
+
+  setCachedValue(missevanSearchApiCache, cacheKey, normalized);
+  return normalized;
+}
+
+function getMissevanApiCvNames(info, limit = 2) {
+  return normalizeStringArray(
+    (Array.isArray(info?.cvs) ? info.cvs : [])
+      .map((entry) => normalizeTextValue(entry?.displayName ?? entry?.name))
+      .filter(Boolean),
+    limit
+  );
+}
+
+function buildMissevanApiSearchFallbackCard(record, mainCvs = []) {
+  return {
+    id: Number(record?.dramaId ?? 0),
+    name: record?.title || "",
+    cover: record?.cover || "",
+    view_count: 0,
+    playCountWan: "0",
+    vip: 0,
+    price: 0,
+    member_price: 0,
+    is_member: false,
+    sound_id: Number(record?.soundId ?? 0) || null,
+    subscription_num: null,
+    reward_num: null,
+    checked: false,
+    platform: "missevan",
+    search_source: "missevan_api",
+    main_cvs: mainCvs,
+    main_cv_text: buildMainCvText(mainCvs),
+  };
+}
+
+function buildSearchPageMeta(keyword, totalMatched, offset, limit) {
+  const safeTotalMatched = Math.max(0, Number(totalMatched ?? 0));
+  const safeOffset = Math.max(0, Number(offset ?? 0));
+  const safeLimit = Math.max(1, Number(limit ?? 5));
+  const nextOffset = Math.min(safeTotalMatched, safeOffset + safeLimit);
+  return {
+    keyword,
+    matchedCount: safeTotalMatched,
+    totalMatched: safeTotalMatched,
+    offset: safeOffset,
+    limit: safeLimit,
+    nextOffset,
+    hasMore: nextOffset < safeTotalMatched,
+  };
+}
+
+async function hydrateMissevanSearchRecord(record) {
+  const fallbackCard = buildMissevanSearchFallbackCard(record);
+  try {
+    const soundId = Number(fallbackCard.sound_id ?? 0);
+    const info = await fetchDramaInfo(
+      record.dramaId,
+      soundId > 0 ? soundId : null
+    );
+    if (!info?.drama) {
+      return fallbackCard;
+    }
+
+    let rewardNum = null;
+    try {
+      const rewardMeta = await fetchRewardDetailMeta(record.dramaId);
+      rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
+    } catch (error) {
+      if (!isMissevanAccessDenied(error)) {
+        console.error(
+          `Failed to fetch Missevan reward detail drama_id=${record.dramaId}`,
+          error
+        );
+      }
+    }
+
+    const viewCount = Number(info.drama.view_count ?? 0);
+    return {
+      ...fallbackCard,
+      cover: info.drama.cover || fallbackCard.cover,
+      view_count: viewCount,
+      playCountWan: formatPlayCountWan(viewCount),
+      vip: Number(info.drama.vip ?? 0),
+      price: Number(info.drama.price ?? 0),
+      member_price: Number(info.drama.member_price ?? 0),
+      is_member: Boolean(info.drama.is_member),
+      sound_id:
+        Number(
+          fallbackCard.sound_id ??
+            info?.episodes?.episode?.[0]?.sound_id ??
+            0
+        ) || null,
+      subscription_num: normalizeOptionalFiniteNumber(
+        info.drama.subscription_num
+      ),
+      reward_num: rewardNum,
+    };
+  } catch (error) {
+    if (!isMissevanAccessDenied(error)) {
+      console.error(
+        `Failed to hydrate Missevan search result drama_id=${record.dramaId}`,
+        error
+      );
+    }
+    return fallbackCard;
+  }
+}
+
+async function hydrateMissevanApiSearchRecord(record) {
+  const fallbackCard = buildMissevanApiSearchFallbackCard(record);
+
+  try {
+    const info = await fetchDramaInfo(record.dramaId);
+    if (!info?.drama) {
+      return fallbackCard;
+    }
+
+    let rewardNum = null;
+    try {
+      const rewardMeta = await fetchRewardDetailMeta(record.dramaId);
+      rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
+    } catch (error) {
+      if (!isMissevanAccessDenied(error)) {
+        console.error(
+          `Failed to fetch Missevan reward detail drama_id=${record.dramaId}`,
+          error
+        );
+      }
+    }
+
+    const mainCvs = getMissevanApiCvNames(info, 2);
+    const viewCount = Number(info.drama.view_count ?? 0);
+
+    return {
+      ...fallbackCard,
+      cover: info.drama.cover || fallbackCard.cover,
+      view_count: viewCount,
+      playCountWan: formatPlayCountWan(viewCount),
+      vip: Number(info.drama.vip ?? 0),
+      price: Number(info.drama.price ?? 0),
+      member_price: Number(info.drama.member_price ?? 0),
+      is_member: Boolean(info.drama.is_member),
+      sound_id:
+        Number(
+          fallbackCard.sound_id ??
+            info?.episodes?.episode?.[0]?.sound_id ??
+            0
+        ) || null,
+      subscription_num: normalizeOptionalFiniteNumber(
+        info.drama.subscription_num
+      ),
+      reward_num: rewardNum,
+      main_cvs: mainCvs,
+      main_cv_text: buildMainCvText(mainCvs),
+    };
+  } catch (error) {
+    if (!isMissevanAccessDenied(error)) {
+      console.error(
+        `Failed to hydrate Missevan API search result drama_id=${record.dramaId}`,
+        error
+      );
+    }
+    return fallbackCard;
+  }
+}
+
+async function hydrateManboSearchRecord(record) {
+  const fallbackCard = buildManboSearchFallbackCard(record);
+  try {
+    const info = await fetchManboDramaDetail(record.dramaId);
+    const card = normalizeManboCardFromDramaInfo(info);
+    if (!card) {
+      return fallbackCard;
+    }
+    return {
+      ...card,
+      checked: false,
+      main_cvs: fallbackCard.main_cvs,
+      main_cv_text: fallbackCard.main_cv_text,
+    };
+  } catch (error) {
+    console.error(
+      `Failed to hydrate Manbo search result dramaId=${record.dramaId}`,
+      error
+    );
+    return fallbackCard;
+  }
+}
+
+function pickMonthLabelFromTimestamp(value, milliseconds = false) {
+  const timestamp = Number(value ?? 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return "";
+  }
+  const date = new Date(milliseconds ? timestamp : timestamp * 1000);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function pickMissevanCreateMonth(info) {
+  const episodes = Array.isArray(info?.episodes?.episode) ? info.episodes.episode : [];
+  const firstEpisode = episodes
+    .map((episode) => ({
+      soundId: Number(episode?.sound_id ?? 0),
+      createTime: Number(episode?.create_time ?? 0),
+    }))
+    .filter((episode) => episode.soundId > 0 && episode.createTime > 0)
+    .sort((a, b) => a.createTime - b.createTime)[0];
+  return firstEpisode ? pickMonthLabelFromTimestamp(firstEpisode.createTime, false) : "";
+}
+
+function pickManboCreateMonth(payload) {
+  const sets = Array.isArray(payload?.setRespList) ? payload.setRespList : [];
+  const firstSet = sets
+    .map((set) => ({
+      setNo: Number(set?.setNo ?? 0),
+      createTime: Number(set?.createTime ?? 0),
+    }))
+    .filter((set) => set.createTime > 0)
+    .sort((a, b) => {
+      if (a.setNo > 0 && b.setNo > 0 && a.setNo !== b.setNo) {
+        return a.setNo - b.setNo;
+      }
+      return a.createTime - b.createTime;
+    })[0];
+  return firstSet ? pickMonthLabelFromTimestamp(firstSet.createTime, true) : "";
+}
+
+function resolveMissevanDramaType(rawType) {
+  if (typeof rawType === "string") {
+    const text = normalizeTextValue(rawType);
+    if (text === "全年龄") {
+      return 3;
+    }
+    if (text === "纯爱") {
+      return 4;
+    }
+    if (text === "言情") {
+      return 6;
+    }
+  }
+  const numeric = Number(rawType);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function inferManboDramaType(labels) {
+  const names = normalizeStringArray(
+    (Array.isArray(labels) ? labels : []).map((label) => label?.aliasName || label?.name || "")
+  );
+  if (names.some((name) => name.includes("言情"))) {
+    return 6;
+  }
+  if (names.some((name) => name.includes("纯爱"))) {
+    return 4;
+  }
+  if (names.some((name) => name.includes("全年龄"))) {
+    return 3;
+  }
+  return null;
+}
+
+function extractManboAuthor(text) {
+  const source = String(text ?? "");
+  const patterns = [
+    /(?:晋江文学城|长佩文学|豆瓣阅读|布咕阅读)\s*([^，。；：:、,.!?！？\r\n]{1,24})\s*原(?:著|作)/u,
+    /([^，。；：:、,.!?！？\r\n]{1,24})\s*原(?:著|作)/u,
+  ];
+
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match?.[1]) {
+      const candidate = normalizeTextValue(match[1]).replace(/^[《【「『]+|[》】」』]+$/g, "");
+      if (candidate && !/(漫播|APP|联合出品|广播剧|有声)/i.test(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return "";
+}
+
+function extractMissevanCvEntries(info) {
+  const entries = [];
+  const seen = new Set();
+  const cvs = Array.isArray(info?.cvs) ? info.cvs : [];
+  cvs.forEach((item, index) => {
+    const cvId = Number(item?.cv_info?.id ?? 0);
+    const displayName = normalizeTextValue(item?.cv_info?.name);
+    if (!cvId || !displayName || seen.has(cvId)) {
+      return;
+    }
+    seen.add(cvId);
+    entries.push({
+      index,
+      cvId,
+      displayName,
+      roleName: normalizeTextValue(item?.character),
+    });
+  });
+  return entries;
+}
+
+function buildMissevanLibraryNodeFromInfo(info, soundInfo = null) {
+  const drama = info?.drama || {};
+  const dramaId = Number(drama.id ?? 0);
+  if (!Number.isFinite(dramaId) || dramaId <= 0) {
+    return null;
+  }
+
+  const sourceInfo = soundInfo?.cvs?.length ? soundInfo : info;
+  const cvEntries = extractMissevanCvEntries(sourceInfo).slice(0, 6);
+  const cvnames = {};
+  const cvroles = {};
+  cvEntries.forEach((entry) => {
+    cvnames[String(entry.cvId)] = entry.displayName;
+    if (entry.roleName) {
+      cvroles[String(entry.cvId)] = entry.roleName;
+    }
+  });
+
+  const soundIds = normalizeStringIdArray([
+    ...(Array.isArray(info?.episodes?.episode) ? info.episodes.episode.map((episode) => episode?.sound_id) : []),
+    ...(Array.isArray(soundInfo?.episodes?.episode) ? soundInfo.episodes.episode.map((episode) => episode?.sound_id) : []),
+  ]);
+
+  const title = normalizeTextValue(drama.name);
+  return {
+    title,
+    dramaId,
+    soundIds,
+    maincvs: cvEntries.map((entry) => entry.cvId),
+    type: resolveMissevanDramaType(soundInfo?.drama?.type ?? drama.type),
+    cvroles,
+    cvnames,
+    catalog: normalizeOptionalFiniteNumber(drama.catalog),
+    createTime: pickMissevanCreateMonth(soundInfo || info),
+    author: normalizeTextValue(drama.author),
+    seriesTitle: title,
+  };
+}
+
+function isIgnoredManboCvRole(roleName) {
+  return /上传者|制作|出品|工作室|配音导演|后期|策划/u.test(roleName);
+}
+
+function extractManboCvEntries(payload) {
+  const source = Array.isArray(payload?.cvPerformMainRespList) && payload.cvPerformMainRespList.length
+    ? payload.cvPerformMainRespList
+    : Array.isArray(payload?.cvRespList)
+      ? payload.cvRespList
+      : [];
+  const seen = new Set();
+  const entries = [];
+  source.forEach((item, index) => {
+    const cvId = Number(item?.cvResp?.id ?? item?.platUid ?? 0);
+    const displayName = normalizeTextValue(item?.cvNickname || item?.cvResp?.nickname);
+    const roleName = normalizeTextValue(item?.role);
+    if (!cvId || !displayName || seen.has(cvId) || isIgnoredManboCvRole(roleName)) {
+      return;
+    }
+    seen.add(cvId);
+    entries.push({
+      index,
+      cvId,
+      displayName,
+      roleName,
+    });
+  });
+  return entries.slice(0, 6);
+}
+
+function buildManboLibraryRecordFromPayload(payload, existingRecord = null) {
+  const dramaId = String(payload?.radioDramaIdStr ?? payload?.radioDramaId ?? "").trim();
+  if (!isNumericId(dramaId)) {
+    return null;
+  }
+
+  const name = normalizeTextValue(payload?.title || existingRecord?.name);
+  const type = inferManboDramaType(payload?.categoryLabels);
+  const catalog = normalizeOptionalFiniteNumber(payload?.catelog ?? payload?.category);
+  const cvEntries = extractManboCvEntries(payload);
+
+  return {
+    dramaId,
+    name,
+    normalizedName: normalizeManboIndexName(name),
+    aliases: normalizeStringArray(existingRecord?.aliases, 30),
+    cover: normalizeTextValue(payload?.coverPic || payload?.largePic || payload?.sharePicUrl),
+    mainCvNicknames: cvEntries.map((entry) => entry.displayName),
+    mainCvNames: normalizeStringArray(existingRecord?.mainCvNames, 20),
+    catalog,
+    createTime: pickManboCreateMonth(payload),
+    catalogName: normalizeTextValue(payload?.radioDramaCategoryResp?.name),
+    type,
+    genre: type ? MANBO_TYPE_TO_GENRE[type] || "" : "",
+    mainCvIds: cvEntries.map((entry) => entry.cvId),
+    mainCvRoleNames: cvEntries.map((entry) => entry.roleName).filter(Boolean),
+    seriesTitle: name,
+    author: extractManboAuthor(payload?.desc),
+  };
+}
+
+function mergeStringField(currentValue, nextValue) {
+  const currentText = normalizeTextValue(currentValue);
+  return currentText || normalizeTextValue(nextValue);
+}
+
+function mergeNullableNumber(currentValue, nextValue) {
+  const currentNumber = normalizeOptionalFiniteNumber(currentValue);
+  return currentNumber != null ? currentNumber : normalizeOptionalFiniteNumber(nextValue);
+}
+
+function mergeStringArrays(currentValues, nextValues, limit = 30) {
+  return normalizeStringArray(
+    []
+      .concat(Array.isArray(currentValues) ? currentValues : [])
+      .concat(Array.isArray(nextValues) ? nextValues : []),
+    limit
+  );
+}
+
+function mergeNumericArrays(currentValues, nextValues, limit = 30) {
+  return normalizeNumericArray(
+    []
+      .concat(Array.isArray(currentValues) ? currentValues : [])
+      .concat(Array.isArray(nextValues) ? nextValues : []),
+    limit
+  );
+}
+
+function mergeManboLibraryRecord(existingRecord, incomingRecord) {
+  const current = normalizeManboLibraryRecord(existingRecord) || { dramaId: incomingRecord.dramaId };
+  const incoming = normalizeManboLibraryRecord(incomingRecord);
+  if (!incoming) {
+    return current;
+  }
+
+  const aliases = mergeStringArrays(current.aliases, incoming.aliases, 30);
+  if (current.name && incoming.name && current.name !== incoming.name) {
+    aliases.push(current.name);
+  }
+
+  return normalizeManboLibraryRecord({
+    ...current,
+    dramaId: incoming.dramaId,
+    name: mergeStringField(current.name, incoming.name),
+    normalizedName: mergeStringField(current.normalizedName, incoming.normalizedName || incoming.name),
+    aliases,
+    cover: mergeStringField(current.cover, incoming.cover),
+    mainCvNicknames: mergeStringArrays(current.mainCvNicknames, incoming.mainCvNicknames, 20),
+    mainCvNames: mergeStringArrays(current.mainCvNames, incoming.mainCvNames, 20),
+    catalog: mergeNullableNumber(current.catalog, incoming.catalog),
+    createTime: mergeStringField(current.createTime, incoming.createTime),
+    catalogName: mergeStringField(current.catalogName, incoming.catalogName),
+    type: mergeNullableNumber(current.type, incoming.type),
+    genre: mergeStringField(current.genre, incoming.genre),
+    mainCvIds: mergeNumericArrays(current.mainCvIds, incoming.mainCvIds, 20),
+    mainCvRoleNames: mergeStringArrays(current.mainCvRoleNames, incoming.mainCvRoleNames, 20),
+    seriesTitle: mergeStringField(current.seriesTitle, incoming.seriesTitle),
+    author: mergeStringField(current.author, incoming.author),
+  });
+}
+
+function mergeStringMap(currentMap, nextMap) {
+  const merged = { ...normalizeStringMap(currentMap) };
+  Object.entries(normalizeStringMap(nextMap)).forEach(([key, value]) => {
+    if (!merged[key]) {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
+function mergeMissevanSeasonRecord(existingRecord, incomingRecord) {
+  const current = normalizeMissevanSeasonRecord(existingRecord) || {
+    dramaId: Number(incomingRecord?.dramaId ?? 0),
+  };
+  const incoming = normalizeMissevanSeasonRecord(incomingRecord);
+  if (!incoming) {
+    return current;
+  }
+
+  return normalizeMissevanSeasonRecord({
+    ...current,
+    title: mergeStringField(current.title, incoming.title),
+    dramaId: current.dramaId || incoming.dramaId,
+    soundIds: mergeStringArrays(current.soundIds, incoming.soundIds, 500),
+    maincvs: mergeNumericArrays(current.maincvs, incoming.maincvs, 20),
+    type: mergeNullableNumber(current.type, incoming.type),
+    cvroles: mergeStringMap(current.cvroles, incoming.cvroles),
+    cvnames: mergeStringMap(current.cvnames, incoming.cvnames),
+    catalog: mergeNullableNumber(current.catalog, incoming.catalog),
+    createTime: mergeStringField(current.createTime, incoming.createTime),
+    author: mergeStringField(current.author, incoming.author),
+    seriesTitle: mergeStringField(current.seriesTitle, incoming.seriesTitle || incoming.title),
+  });
+}
+
+function findMissevanSeasonLocation(snapshot, dramaId) {
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  for (const [seriesTitle, seasons] of Object.entries(snapshot || {})) {
+    for (const [seasonKey, node] of Object.entries(seasons || {})) {
+      if (String(node?.dramaId ?? "").trim() === normalizedDramaId) {
+        return {
+          seriesTitle,
+          seasonKey,
+          node,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function getNextSeasonKey(seasons) {
+  const keys = Object.keys(seasons || {});
+  let maxIndex = 0;
+  keys.forEach((key) => {
+    const match = key.match(/^season(\d+)$/i);
+    if (match) {
+      maxIndex = Math.max(maxIndex, Number(match[1]));
+    }
+  });
+  return `season${maxIndex + 1}`;
+}
+
+async function fetchMissevanLibraryNodeByDramaId(dramaId) {
+  await refreshMissevanCooldownState();
+  const dramaPayload = await fetchJsonWithRetry(
+    `https://www.missevan.com/dramaapi/getdrama?drama_id=${Number(dramaId)}`,
+    2,
+    250,
+    { missevan: true }
+  );
+  const info = dramaPayload?.info || {};
+  if (!dramaPayload?.success || !info?.drama?.id) {
+    return null;
+  }
+
+  const primarySoundId = Number(
+    Array.isArray(info?.episodes?.episode) ? info.episodes.episode[0]?.sound_id : 0
+  );
+  let soundInfo = null;
+  if (primarySoundId > 0) {
+    try {
+      const soundPayload = await fetchJsonWithRetry(
+        `https://www.missevan.com/dramaapi/getdramabysound?sound_id=${primarySoundId}`,
+        2,
+        250,
+        { missevan: true }
+      );
+      if (soundPayload?.success && soundPayload?.info) {
+        soundInfo = soundPayload.info;
+      }
+    } catch (error) {
+      if (isMissevanAccessDenied(error)) {
+        throw error;
+      }
+      console.error(`Failed to fetch Missevan sound info for upsert drama_id=${dramaId}`, error);
+    }
+  }
+
+  return buildMissevanLibraryNodeFromInfo(info, soundInfo);
+}
+
+async function upsertMissevanLibraryRecords(dramaIds) {
+  const uniqueDramaIds = normalizeDramaIds(dramaIds).map((id) => String(id));
+  if (!uniqueDramaIds.length) {
+    return;
+  }
+
+  await queueInfoStoreWrite(missevanInfoStore, async (snapshot) => {
+    const nextSnapshot = snapshot && typeof snapshot === "object" ? snapshot : createEmptyMissevanInfoSnapshot();
+    for (const dramaId of uniqueDramaIds) {
+      const incomingNode = await fetchMissevanLibraryNodeByDramaId(dramaId);
+      if (!incomingNode) {
+        continue;
+      }
+
+      const existingLocation = findMissevanSeasonLocation(nextSnapshot, dramaId);
+      if (existingLocation) {
+        const merged = mergeMissevanSeasonRecord(existingLocation.node, incomingNode);
+        if (merged) {
+          nextSnapshot[existingLocation.seriesTitle][existingLocation.seasonKey] = merged;
+        }
+        continue;
+      }
+
+      const seriesTitle = normalizeTextValue(incomingNode.seriesTitle || incomingNode.title || `__pending__${dramaId}`);
+      const seasons = nextSnapshot[seriesTitle] || {};
+      seasons[getNextSeasonKey(seasons)] = incomingNode;
+      nextSnapshot[seriesTitle] = seasons;
+    }
+    return nextSnapshot;
+  });
+}
+
+async function upsertManboLibraryRecords(dramaIds) {
+  const uniqueDramaIds = normalizeStringIds(dramaIds, 200);
+  if (!uniqueDramaIds.length) {
+    return;
+  }
+
+  await queueInfoStoreWrite(manboInfoStore, async (snapshot) => {
+    const nextSnapshot =
+      snapshot && typeof snapshot === "object"
+        ? snapshot
+        : createEmptyManboInfoSnapshot();
+    nextSnapshot.records = Array.isArray(nextSnapshot.records) ? nextSnapshot.records : [];
+    const recordIndexMap = new Map(
+      nextSnapshot.records
+        .map((record, index) => [String(record?.dramaId ?? "").trim(), index])
+        .filter(([dramaId]) => dramaId)
+    );
+
+    for (const dramaId of uniqueDramaIds) {
+      const payload = await fetchManboDramaPayload(dramaId);
+      if (!payload) {
+        continue;
+      }
+
+      const existingIndex = recordIndexMap.get(dramaId);
+      const existingRecord = existingIndex != null ? nextSnapshot.records[existingIndex] : null;
+      const incomingRecord = buildManboLibraryRecordFromPayload(payload, existingRecord);
+      const mergedRecord = mergeManboLibraryRecord(existingRecord, incomingRecord);
+      if (!mergedRecord) {
+        continue;
+      }
+
+      if (existingIndex != null) {
+        nextSnapshot.records[existingIndex] = mergedRecord;
+      } else {
+        nextSnapshot.records.push(mergedRecord);
+        recordIndexMap.set(dramaId, nextSnapshot.records.length - 1);
+      }
+    }
+
+    nextSnapshot.updatedAt = Date.now();
+    return nextSnapshot;
+  });
 }
 
 async function writeUsageLog(entry) {
@@ -924,6 +2405,11 @@ function normalizeMissevanDramaInfo(info) {
         price: Number(episode.price ?? 0),
       })),
     },
+    cvs: extractMissevanCvEntries(info).map((entry) => ({
+      cvId: entry.cvId,
+      displayName: entry.displayName,
+      roleName: entry.roleName,
+    })),
     platform: "missevan",
   };
 }
@@ -1284,6 +2770,7 @@ function normalizeManboCardFromDramaInfo(info) {
   if (!isNumericId(drama?.id)) {
     return null;
   }
+  const revenueType = getManboRevenueType(info);
 
   return {
     id: drama.id,
@@ -1297,6 +2784,7 @@ function normalizeManboCardFromDramaInfo(info) {
     pay_count: normalizeOptionalFiniteNumber(drama.pay_count),
     diamond_value: Number(drama.diamond_value ?? 0),
     is_member: Boolean(drama.is_member),
+    revenue_type: revenueType,
     checked: true,
     platform: "manbo",
   };
@@ -1414,6 +2902,25 @@ async function fetchManboDramaDetail(dramaId) {
     return cached;
   }
 
+  const payload = await fetchManboDramaPayload(normalizedDramaId);
+  if (!payload) {
+    return null;
+  }
+
+  const normalized = normalizeManboDramaInfo(payload);
+  if (normalized?.drama?.id) {
+    setCachedValue(manboDramaCache, normalized.drama.id, normalized);
+  }
+
+  return normalized;
+}
+
+async function fetchManboDramaPayload(dramaId) {
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  if (!isNumericId(normalizedDramaId)) {
+    return null;
+  }
+
   const data = await fetchJsonWithRetry(
     `${MANBO_API_BASE}/dramaDetail?dramaId=${normalizedDramaId}`
   );
@@ -1421,13 +2928,7 @@ async function fetchManboDramaDetail(dramaId) {
   if (Number(data?.code) !== 200 || !data?.data) {
     return null;
   }
-
-  const normalized = normalizeManboDramaInfo(data.data);
-  if (normalized?.drama?.id) {
-    setCachedValue(manboDramaCache, normalized.drama.id, normalized);
-  }
-
-  return normalized;
+  return data.data;
 }
 
 async function fetchManboSetDetail(setId) {
@@ -3256,6 +4757,8 @@ app.get("/search", async (req, res) => {
   }
   const { keyword } = req.query;
   const normalizedKeyword = normalizeKeyword(keyword);
+  const offset = normalizeSearchOffset(req.query.offset);
+  const limit = normalizeSearchLimit(req.query.limit, 5, 5);
 
   if (!normalizedKeyword) {
     return res.json({ success: false, message: "Missing keyword" });
@@ -3268,97 +4771,151 @@ app.get("/search", async (req, res) => {
   });
 
   try {
+    await ensureInfoStoreLoaded(missevanInfoStore);
     await refreshMissevanCooldownState();
-    const data = await fetchJsonWithRetry(
-      `https://www.missevan.com/dramaapi/search?s=${encodeURIComponent(
-        normalizedKeyword
-      )}&page=1`,
-      2,
-      250,
-      { missevan: true }
+
+    const matchedRecords = searchMissevanLibraryRecords(
+      missevanInfoStore.records,
+      normalizedKeyword,
+      30
     );
+    let source = "library";
+    let totalMatched = matchedRecords.length;
+    let results = [];
 
-    if (!data.success) {
-      return res.json({ success: false });
+    if (matchedRecords.length > 0) {
+      const pagedRecords = matchedRecords.slice(offset, offset + limit);
+      results = await mapWithConcurrency(
+        pagedRecords,
+        4,
+        hydrateMissevanSearchRecord
+      );
+    } else {
+      source = "missevan_api";
+      const apiRecords = await searchMissevanApiRecords(normalizedKeyword, 30);
+      totalMatched = apiRecords.length;
+      const pagedRecords = apiRecords.slice(offset, offset + limit);
+      results = await mapWithConcurrency(
+        pagedRecords,
+        4,
+        hydrateMissevanApiSearchRecord
+      );
     }
 
-    const baseResults = data.info.Datas.map((drama) => {
-      const firstEpisode = Array.isArray(drama?.episode)
-        ? drama.episode[0]
-        : Array.isArray(drama?.episodes)
-          ? drama.episodes[0]
-          : drama?.episodes?.episode?.[0];
-      const soundId = Number(firstEpisode?.sound_id ?? 0);
-      const price = Number(drama.price ?? 0);
+    const meta = {
+      ...buildSearchPageMeta(
+        normalizedKeyword,
+        totalMatched,
+        offset,
+        limit
+      ),
+      source,
+    };
 
-      return {
-        id: Number(drama.id),
-        name: drama.name,
-        cover: drama.cover || "",
-        view_count: Number(drama.view_count ?? 0),
-        playCountWan: formatPlayCountWan(drama.view_count),
-        vip: Number(drama.vip ?? 0),
-        price,
-        member_price: resolveMissevanMemberPrice(price, drama?.vip_discount?.price),
-        is_member: Number(drama.vip ?? 0) === 1,
-        sound_id: soundId > 0 ? soundId : null,
-        subscription_num: null,
-        reward_num: null,
-        checked: false,
-        platform: "missevan",
-      };
+    return res.json({
+      success: totalMatched > 0,
+      results,
+      meta,
     });
-
-    const results = [];
-    for (const item of baseResults) {
-      const enriched = { ...item };
-
-      try {
-        const rewardMeta = await fetchRewardDetailMeta(item.id);
-        enriched.reward_num = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
-      } catch (error) {
-        if (isMissevanAccessDenied(error)) {
-          throw error;
-        }
-        console.error(
-          `Failed to fetch Missevan reward detail drama_id=${item.id}`,
-          error
-        );
-      }
-
-      if (!item.sound_id) {
-        results.push(enriched);
-        continue;
-      }
-
-      try {
-        const info = await fetchDramaInfo(item.id, item.sound_id);
-        const subscriptionNum = Number(info?.drama?.subscription_num);
-        results.push({
-          ...enriched,
-          vip: Number(info?.drama?.vip ?? item.vip ?? 0),
-          member_price: Number(info?.drama?.member_price ?? 0),
-          is_member: Boolean(info?.drama?.is_member),
-          subscription_num: Number.isFinite(subscriptionNum)
-            ? subscriptionNum
-            : null,
-        });
-      } catch (error) {
-        if (isMissevanAccessDenied(error)) {
-          throw error;
-        }
-        console.error(
-          `Failed to fetch Missevan subscription number drama_id=${item.id}`,
-          error
-        );
-        results.push(enriched);
-      }
-    }
-
-    return res.json({ success: true, results });
   } catch (error) {
     console.error(error);
     return res.json(buildMissevanAccessDeniedResponse(error));
+  }
+});
+
+app.post("/register-new-drama-ids", async (req, res) => {
+  const platform = req.body?.platform;
+  const dramaIds = normalizeDramaIds(req.body?.drama_ids || []).map((id) => String(id));
+
+  if (!["missevan", "manbo"].includes(platform)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid platform",
+    });
+  }
+
+  if (!dramaIds.length) {
+    return res.json({
+      success: true,
+      count: 0,
+    });
+  }
+
+  try {
+    await queueNewDramaIdsAppend(platform, dramaIds);
+    return res.json({
+      success: true,
+      count: dramaIds.length,
+    });
+  } catch (error) {
+    console.error(`Failed to register new drama ids for ${platform}`, error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to register drama ids",
+    });
+  }
+});
+
+app.post("/usage-log", async (req, res) => {
+  try {
+    if (!isSameHostUsageLogRequest(req)) {
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden usage log request",
+      });
+    }
+
+    const payload = req.body && typeof req.body === "object" ? req.body : {};
+    const platform = String(payload.platform ?? "").trim();
+    const action = String(payload.action ?? "").trim();
+    const error = String(payload.error ?? "").trim();
+
+    if (
+      platform !== "missevan" ||
+      !["search", "manual_import"].includes(action) ||
+      error !== "ACCESS_DENIED_COOLDOWN:frontend_precheck"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid usage log payload",
+      });
+    }
+
+    const sanitizedEntry = {
+      platform,
+      action,
+      accessDenied: true,
+      success: false,
+      error,
+      cooldownUntil: Math.max(0, Number(payload.cooldownUntil ?? 0) || 0),
+    };
+
+    if (action === "search") {
+      const keyword = normalizeKeyword(payload.keyword);
+      if (!keyword) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing search keyword",
+        });
+      }
+      sanitizedEntry.keyword = keyword;
+    }
+
+    if (action === "manual_import") {
+      sanitizedEntry.manualInputCount = Math.max(
+        0,
+        Math.min(200, Math.floor(Number(payload.manualInputCount ?? 0) || 0))
+      );
+    }
+
+    await writeUsageLog(sanitizedEntry);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("Failed to write usage log from client payload", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to write usage log",
+    });
   }
 });
 
@@ -3380,12 +4937,16 @@ app.post("/getdramacards", async (req, res) => {
     });
   }
 
+  await ensureInfoStoreLoaded(missevanInfoStore);
   await refreshMissevanCooldownState();
+  const newDramaIds = [];
   for (const id of ids) {
     try {
       const info = await fetchDramaInfo(id);
 
       if (info?.drama) {
+        const libraryRecord = missevanInfoStore.byDramaId.get(String(info.drama.id));
+        const mainCvs = libraryRecord ? getMissevanMainCvNames(libraryRecord) : [];
         let rewardNum = null;
         try {
           const rewardMeta = await fetchRewardDetailMeta(id);
@@ -3398,7 +4959,7 @@ app.post("/getdramacards", async (req, res) => {
           console.error(`Failed to fetch Missevan reward detail drama_id=${id}`, error);
         }
 
-        results.push({
+        const nextCard = {
           id: info.drama.id,
           name: info.drama.name,
           cover: info.drama.cover || "",
@@ -3411,7 +4972,14 @@ app.post("/getdramacards", async (req, res) => {
           reward_num: rewardNum,
           checked: true,
           platform: "missevan",
-        });
+        };
+        if (libraryRecord && mainCvs.length > 0) {
+          nextCard.main_cvs = mainCvs;
+          nextCard.main_cv_text = buildMainCvText(mainCvs);
+        } else if (!libraryRecord) {
+          newDramaIds.push(String(info.drama.id));
+        }
+        results.push(nextCard);
       } else {
         failedIds.push(Number(id));
       }
@@ -3425,6 +4993,12 @@ app.post("/getdramacards", async (req, res) => {
         break;
       }
     }
+  }
+
+  if (newDramaIds.length > 0) {
+    fireAndForget("Failed to append new Missevan drama ids", async () => {
+      await queueNewDramaIdsAppend("missevan", newDramaIds);
+    });
   }
 
   return res.json({
@@ -3665,6 +5239,8 @@ app.post("/manbo/resolve-input", async (req, res) => {
 
 app.get("/manbo/search", async (req, res) => {
   const keyword = normalizeKeyword(req.query.keyword);
+  const offset = normalizeSearchOffset(req.query.offset);
+  const limit = normalizeSearchLimit(req.query.limit, 5, 5);
   if (!keyword) {
     return res.json({
       success: false,
@@ -3683,43 +5259,31 @@ app.get("/manbo/search", async (req, res) => {
   });
 
   try {
-    const [matchedRecords, meta] = await Promise.all([
-      manboIndexStore.search(keyword, 30),
-      manboIndexStore.getMeta(),
-    ]);
-    const hydratedResults = [];
-    const failedIds = [];
-
-    for (const record of matchedRecords.slice(0, 15)) {
-      try {
-        const info = await fetchManboDramaDetail(record.dramaId);
-        const card = normalizeManboCardFromDramaInfo(info);
-        if (!card) {
-          failedIds.push(record.dramaId);
-          continue;
-        }
-
-        const indexRecord = buildManboIndexRecordFromDramaInfo(info);
-        if (indexRecord) {
-          await manboIndexStore.upsert(indexRecord);
-        }
-        hydratedResults.push(card);
-      } catch (error) {
-        console.error(`Failed to hydrate Manbo search result dramaId=${record.dramaId}`, error);
-        failedIds.push(record.dramaId);
-      }
-    }
+    await ensureInfoStoreLoaded(manboInfoStore);
+    const matchedRecords = searchManboLibraryRecords(
+      manboInfoStore.records,
+      keyword,
+      30
+    );
+    const pagedRecords = matchedRecords.slice(offset, offset + limit);
+    const hydratedResults = await mapWithConcurrency(
+      pagedRecords,
+      4,
+      hydrateManboSearchRecord
+    );
+    const meta = buildSearchPageMeta(
+      keyword,
+      matchedRecords.length,
+      offset,
+      limit
+    );
 
     return res.json({
-      success: hydratedResults.length > 0,
+      success: matchedRecords.length > 0,
       results: hydratedResults,
       meta: {
-        keyword,
-        recordCount: meta.recordCount,
-        updatedAt: meta.updatedAt,
-        matchedCount: matchedRecords.length,
+        ...meta,
         hydratedCount: hydratedResults.length,
-        failedIds,
       },
     });
   } catch (error) {
@@ -3729,10 +5293,8 @@ app.get("/manbo/search", async (req, res) => {
       results: [],
       meta: {
         keyword,
-        recordCount: 0,
         matchedCount: 0,
         hydratedCount: 0,
-        failedIds: [],
       },
       error: error instanceof Error ? error.message : String(error),
     });
@@ -3773,6 +5335,8 @@ app.post("/manbo/getdramacards", async (req, res) => {
     });
   }
 
+  await ensureInfoStoreLoaded(manboInfoStore);
+  const newDramaIds = [];
   for (const item of items) {
     try {
       const resolved = await resolveManboItem(item);
@@ -3784,11 +5348,18 @@ app.post("/manbo/getdramacards", async (req, res) => {
       const info = await fetchManboDramaDetail(resolved.dramaId);
       const card = normalizeManboCardFromDramaInfo(info);
       if (card) {
-        const indexRecord = buildManboIndexRecordFromDramaInfo(info);
-        if (indexRecord) {
-          await manboIndexStore.upsert(indexRecord);
+        const libraryRecord = manboInfoStore.byDramaId.get(String(card.id));
+        const mainCvs = normalizeStringArray(libraryRecord?.mainCvNicknames, 20);
+        const nextCard = {
+          ...card,
+        };
+        if (libraryRecord && mainCvs.length > 0) {
+          nextCard.main_cvs = mainCvs;
+          nextCard.main_cv_text = buildMainCvText(mainCvs);
+        } else if (!libraryRecord) {
+          newDramaIds.push(String(resolved.dramaId));
         }
-        results.push(card);
+        results.push(nextCard);
       } else {
         failedItems.push(item.raw);
       }
@@ -3806,6 +5377,12 @@ app.post("/manbo/getdramacards", async (req, res) => {
   const dedupedResults = Array.from(
     new Map(results.map((item) => [String(item.id), item])).values()
   );
+
+  if (newDramaIds.length > 0) {
+    fireAndForget("Failed to append new Manbo drama ids", async () => {
+      await queueNewDramaIdsAppend("manbo", newDramaIds);
+    });
+  }
 
   return res.json({
     success: dedupedResults.length > 0,
