@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangleIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -28,7 +28,6 @@ import {
 } from "@/app/app-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function ToolView({ initialAppConfig }) {
@@ -68,33 +67,31 @@ export function ToolView({ initialAppConfig }) {
     platformStatesRef.current = platformStates;
   }, [platformStates]);
 
-  const visiblePlatforms = useMemo(
-    () =>
-      [
-        { key: "missevan", label: "Missevan" },
-        { key: "manbo", label: "Manbo" },
-        { key: "report", label: "Excel 报表" },
-      ].filter((platform) => {
-        if (platform.key === "report") {
-          return appConfig.desktopApp;
-        }
-        return platform.key !== "missevan" || appConfig.missevanEnabled;
-      }),
-    [appConfig.desktopApp, appConfig.missevanEnabled]
-  );
+  const visiblePlatforms = [
+    { key: "missevan", label: "Missevan" },
+    { key: "manbo", label: "Manbo" },
+    { key: "report", label: "Excel 报表" },
+  ].filter((platform) => {
+    if (platform.key === "report") {
+      return appConfig.desktopApp;
+    }
+    return platform.key !== "missevan" || appConfig.missevanEnabled;
+  });
 
   const currentBrowseState = currentPlatform === "report" ? null : platformStates[currentPlatform];
   const currentStatsState = currentBrowseState?.stats || null;
   const currentRevenueSummary = currentStatsState?.revenueSummary || buildRevenueSummary(currentStatsState?.revenueResults || [], currentPlatform);
   const stepOneHint =
     currentPlatform === "missevan"
-      ? `如果猫耳接口暂时受限，请 ${getRemainingCooldownHours(
-          {
-            cooldownHours: appConfig.cooldownHours,
-            cooldownUntil: appConfig.cooldownUntil,
-          },
-          appConfig.cooldownHours
-        )} 小时后再来。`
+      ? appConfig.desktopApp
+        ? "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
+        : `如果猫耳接口暂时受限，请 ${getRemainingCooldownHours(
+            {
+              cooldownHours: appConfig.cooldownHours,
+              cooldownUntil: appConfig.cooldownUntil,
+            },
+            appConfig.cooldownHours
+          )} 小时后再来。`
       : "";
 
   function scrollToPanel(ref) {
@@ -228,6 +225,10 @@ export function ToolView({ initialAppConfig }) {
       searchKeyword: "",
       searchNextOffset: 0,
       searchHasMore: false,
+      searchCurrentPage: 1,
+      searchPageSize: 5,
+      searchTotalMatched: 0,
+      searchPageCache: {},
       isLoadingMoreResults: false,
       searchResults: [],
       dramas: [],
@@ -237,12 +238,20 @@ export function ToolView({ initialAppConfig }) {
 
   function setSearchResults(platform, results, source = "search", meta = {}) {
     const normalizedResults = Array.isArray(results) ? results.map((item) => ({ ...item })) : [];
+    const pageSize = Number(meta?.limit ?? normalizedResults.length ?? 5) || 5;
+    const offset = Number(meta?.offset ?? 0) || 0;
+    const page = source === "search" ? Math.floor(offset / Math.max(1, pageSize)) + 1 : 1;
+    const totalMatched = source === "search" ? Number(meta?.matchedCount ?? meta?.totalMatched ?? normalizedResults.length) || 0 : 0;
     updatePlatformState(platform, (state) => ({
       ...state,
       searchResultSource: source === "manual" ? "manual" : "search",
       searchKeyword: source === "search" ? String(meta?.keyword ?? state.searchForm.keyword ?? "").trim() : "",
       searchNextOffset: source === "search" ? Number(meta?.nextOffset ?? normalizedResults.length) || 0 : 0,
       searchHasMore: source === "search" ? Boolean(meta?.hasMore) : false,
+      searchCurrentPage: page,
+      searchPageSize: Math.max(1, pageSize),
+      searchTotalMatched: totalMatched,
+      searchPageCache: source === "search" ? { [page]: normalizedResults } : {},
       isLoadingMoreResults: false,
       searchResults: normalizedResults,
     }));
@@ -255,6 +264,13 @@ export function ToolView({ initialAppConfig }) {
     updatePlatformState(currentPlatformRef.current, (state) => ({
       ...state,
       searchResults: nextResults,
+      searchPageCache:
+        state.searchResultSource === "search"
+          ? {
+              ...state.searchPageCache,
+              [state.searchCurrentPage || 1]: nextResults,
+            }
+          : state.searchPageCache,
     }));
   }
 
@@ -272,28 +288,51 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
-  function appendSearchResults(platform, results, meta = {}) {
+  function getAllSearchResults(state) {
+    if (state?.searchResultSource !== "search") {
+      return state?.searchResults || [];
+    }
+    const pageCache = state?.searchPageCache || {};
+    const merged = new Map();
+    Object.keys(pageCache)
+      .map((key) => Number(key))
+      .filter((key) => Number.isFinite(key))
+      .sort((left, right) => left - right)
+      .forEach((page) => {
+        (Array.isArray(pageCache[page]) ? pageCache[page] : []).forEach((item) => {
+          merged.set(String(item.id), item);
+        });
+      });
+    return Array.from(merged.values());
+  }
+
+  function updateSearchPage(platform, page, results, meta = {}) {
     const normalizedResults = Array.isArray(results) ? results.map((item) => ({ ...item })) : [];
     updatePlatformState(platform, (state) => ({
       ...state,
       searchNextOffset: Number(meta?.nextOffset ?? state.searchNextOffset) || 0,
       searchHasMore: Boolean(meta?.hasMore),
+      searchCurrentPage: page,
+      searchPageSize: Number(meta?.limit ?? state.searchPageSize ?? 5) || 5,
+      searchTotalMatched: Number(meta?.matchedCount ?? meta?.totalMatched ?? state.searchTotalMatched ?? normalizedResults.length) || 0,
+      searchPageCache: {
+        ...state.searchPageCache,
+        [page]: normalizedResults.map((item) => {
+          const previous = (state.searchPageCache?.[page] || []).find((cached) => String(cached.id) === String(item.id));
+          return {
+            ...item,
+            checked: previous?.checked ?? item.checked,
+          };
+        }),
+      },
       isLoadingMoreResults: false,
-      searchResults: Array.from(
-        normalizedResults.reduce((map, item) => {
-          const key = String(item.id);
-          if (map.has(key)) {
-            const previous = map.get(key);
-            map.set(key, {
-              ...item,
-              checked: previous?.checked ?? item.checked,
-            });
-          } else {
-            map.set(key, item);
-          }
-          return map;
-        }, new Map(state.searchResults.map((item) => [String(item.id), item]))).values()
-      ),
+      searchResults: normalizedResults.map((item) => {
+        const previous = (state.searchPageCache?.[page] || []).find((cached) => String(cached.id) === String(item.id));
+        return {
+          ...item,
+          checked: previous?.checked ?? item.checked,
+        };
+      }),
     }));
   }
 
@@ -307,11 +346,22 @@ export function ToolView({ initialAppConfig }) {
     return data;
   }
 
-  async function loadMoreSearchResults(platform = currentPlatformRef.current) {
+  async function loadSearchPage(page, platform = currentPlatformRef.current) {
     const state = platformStatesRef.current[platform];
     const keyword = String(state?.searchKeyword ?? "").trim();
-    const offset = Number(state?.searchNextOffset ?? 0);
-    if (!keyword || state?.searchResultSource === "manual" || !state?.searchHasMore || state?.isLoadingMoreResults) {
+    const pageSize = Number(state?.searchPageSize ?? 5) || 5;
+    const safePage = Math.max(1, Number(page ?? 1) || 1);
+    const cachedPage = state?.searchPageCache?.[safePage];
+    if (!keyword || state?.searchResultSource === "manual" || state?.isLoadingMoreResults) {
+      return;
+    }
+    if (Array.isArray(cachedPage)) {
+      updatePlatformState(platform, (current) => ({
+        ...current,
+        searchCurrentPage: safePage,
+        searchResults: cachedPage,
+      }));
+      scrollToPanel(resultsPanelRef);
       return;
     }
 
@@ -321,10 +371,11 @@ export function ToolView({ initialAppConfig }) {
     }));
 
     try {
+      const offset = (safePage - 1) * pageSize;
       const endpoint =
         platform === "manbo"
-          ? `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=5`
-          : `/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=5`;
+          ? `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`
+          : `/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`;
       const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
         cache: "no-store",
       });
@@ -334,8 +385,14 @@ export function ToolView({ initialAppConfig }) {
         if (platform === "missevan" && data?.accessDenied) {
           resetSearchFlow(platform);
           await showMissevanAccessHint();
+        } else if (platform === "manbo" && data?.unavailable) {
+          toast.error("漫播搜索不可用，请改用 ID 或链接导入。");
+          updatePlatformState(platform, (current) => ({
+            ...current,
+            isLoadingMoreResults: false,
+          }));
         } else {
-          toast.error("加载更多结果失败，请稍后重试。");
+          toast.error("加载搜索结果失败，请稍后重试。");
           updatePlatformState(platform, (current) => ({
             ...current,
             isLoadingMoreResults: false,
@@ -344,13 +401,14 @@ export function ToolView({ initialAppConfig }) {
         return;
       }
 
-      appendSearchResults(platform, data.results || [], data.meta || {});
+      updateSearchPage(platform, safePage, data.results || [], data.meta || {});
+      scrollToPanel(resultsPanelRef);
     } catch (error) {
-      console.error("Failed to load more search results", error);
+      console.error("Failed to load search page", error);
       if (platform === "missevan" && error?.accessDenied) {
         await showMissevanAccessHint();
       } else {
-        toast.error("加载更多结果失败，请稍后重试。");
+        toast.error("加载搜索结果失败，请稍后重试。");
       }
       updatePlatformState(platform, (current) => ({
         ...current,
@@ -608,7 +666,7 @@ export function ToolView({ initialAppConfig }) {
       await refreshCooldownState();
     }
     const message = appConfigRef.current.desktopApp
-      ? "如果看到访问受限，请先使用任意浏览器打开猫耳主页完成验证后再重试。"
+      ? "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
       : getCooldownMessage();
     updatePlatformState("missevan", (state) => ({
       ...state,
@@ -624,12 +682,12 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function getSearchResultById(platform, dramaId) {
-    return platformStatesRef.current[platform]?.searchResults.find((item) => String(item.id) === String(dramaId));
+    return getAllSearchResults(platformStatesRef.current[platform]).find((item) => String(item.id) === String(dramaId));
   }
 
   function getSearchResultsByIds(platform, dramaIds) {
     const idSet = new Set((Array.isArray(dramaIds) ? dramaIds : []).map((id) => String(id)));
-    return (platformStatesRef.current[platform]?.searchResults || []).filter((item) => idSet.has(String(item.id)));
+    return getAllSearchResults(platformStatesRef.current[platform]).filter((item) => idSet.has(String(item.id)));
   }
 
   function getLoadedDramaById(platform, dramaId) {
@@ -874,23 +932,35 @@ export function ToolView({ initialAppConfig }) {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 sm:py-8">
-      <Card className="border-white/65 bg-[rgba(255,252,247,0.98)] shadow-[0_24px_56px_-42px_rgba(30,32,41,0.16)]">
-        <CardContent className="relative flex flex-col gap-6 p-6 sm:p-8">
-          <div className="pointer-events-none absolute left-6 top-0 h-24 w-[min(36rem,calc(100%-3rem))] rounded-b-[2rem] bg-[linear-gradient(90deg,rgba(59,62,122,0.14),rgba(239,131,95,0.16)_48%,transparent)] blur-sm sm:w-[min(40rem,calc(100%-3.5rem))]" />
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="relative space-y-3">
-              <div className="text-[0.7rem] font-semibold uppercase tracking-[0.32em] text-[rgb(59,62,122)]">{appConfig.brandName}</div>
-              <div className="text-3xl font-semibold tracking-tight sm:text-[2.7rem]">{appConfig.titleZh}</div>
-              <p className="max-w-3xl text-sm leading-6 text-muted-foreground/85">{appConfig.description}</p>
+    <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pb-24 pt-3 sm:px-5 sm:pb-8 lg:gap-5 lg:px-6">
+      <header className="sticky top-0 z-20 -mx-3 border-b border-border/75 bg-background/92 px-3 py-3 backdrop-blur-xl sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-primary">{appConfig.brandName}</div>
+                <Badge variant="coral" className="h-5 px-2 text-[0.68rem]">
+                  v{appConfig.frontendVersion}
+                </Badge>
+              </div>
+              <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-3">
+                <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{appConfig.titleZh}</h1>
+                <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">{appConfig.description}</p>
+              </div>
             </div>
-            <Badge variant="coral" className="w-fit px-3 py-1 text-xs font-semibold">
-              v{appConfig.frontendVersion}
-            </Badge>
+            <Tabs value={currentPlatform} onValueChange={setCurrentPlatform}>
+              <TabsList className="inline-flex w-full justify-start overflow-x-auto sm:w-fit">
+                {visiblePlatforms.map((platform) => (
+                  <TabsTrigger key={platform.key} className="px-3" value={platform.key}>
+                    {platform.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
           </div>
 
           {appConfig.versionMismatch ? (
-            <Alert className="border-[rgba(239,131,95,0.22)] bg-[rgba(255,240,233,0.9)]">
+            <Alert className="border-destructive/30 bg-destructive/10">
               <AlertTriangleIcon className="size-4" />
               <AlertTitle>工具版本已更新</AlertTitle>
               <AlertDescription>
@@ -898,37 +968,33 @@ export function ToolView({ initialAppConfig }) {
               </AlertDescription>
             </Alert>
           ) : null}
-
-          <Tabs value={currentPlatform} onValueChange={setCurrentPlatform}>
-            <TabsList className="inline-flex w-fit max-w-full justify-start overflow-x-auto">
-              {visiblePlatforms.map((platform) => (
-                <TabsTrigger key={platform.key} className="px-3.5" value={platform.key}>
-                  {platform.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </CardContent>
-      </Card>
+        </div>
+      </header>
 
       {currentPlatform !== "report" ? (
         <div className="grid gap-4 sm:gap-5">
           {currentPlatform === "missevan" ? (
             <div className="px-1 text-sm leading-6 text-muted-foreground">
-              {stepOneHint} 也可前往
-              {" "}
-              <a className="font-medium text-[rgb(59,62,122)] underline underline-offset-4" href="/">
-                首页
-              </a>
-              {" "}选择其他节点，或直接使用
-              {appConfig.desktopAppUrl ? (
+              {appConfig.desktopApp ? (
+                stepOneHint
+              ) : (
                 <>
-                  <a className="font-medium text-[rgb(59,62,122)] underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
-                    桌面版
+                  {stepOneHint} 也可前往
+                  {" "}
+                  <a className="font-medium text-primary underline underline-offset-4" href="/">
+                    首页
                   </a>
-                  。
+                  {" "}选择其他节点，或直接使用
+                  {appConfig.desktopAppUrl ? (
+                    <>
+                      <a className="font-medium text-primary underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
+                        桌面版
+                      </a>
+                      。
+                    </>
+                  ) : "桌面版。"}
                 </>
-              ) : "桌面版。"}
+              )}
             </div>
           ) : null}
 
@@ -957,13 +1023,16 @@ export function ToolView({ initialAppConfig }) {
               onStartIdStatistics={startIdStatisticsConcurrent}
               onStartPlayCountStatistics={startPlayCountStatistics}
               onStartRevenueEstimate={startRevenueEstimate}
-              onLoadMoreResults={() => loadMoreSearchResults(currentPlatform)}
-              hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
+              onLoadSearchPage={(page) => loadSearchPage(page, currentPlatform)}
+              allResults={getAllSearchResults(currentBrowseState)}
+              currentPage={Number(currentBrowseState?.searchCurrentPage ?? 1) || 1}
               isLoadingMoreResults={Boolean(currentBrowseState?.isLoadingMoreResults)}
+              pageSize={Number(currentBrowseState?.searchPageSize ?? 5) || 5}
               platform={currentPlatform}
               resultSource={currentBrowseState?.searchResultSource || "search"}
               results={currentBrowseState?.searchResults || []}
               selectedEpisodes={currentBrowseState?.selectedEpisodesSnapshot || []}
+              totalResults={Number(currentBrowseState?.searchTotalMatched ?? 0) || 0}
             />
           </section>
 

@@ -124,6 +124,10 @@ export function createPlatformState() {
     searchKeyword: "",
     searchNextOffset: 0,
     searchHasMore: false,
+    searchCurrentPage: 1,
+    searchPageSize: 5,
+    searchTotalMatched: 0,
+    searchPageCache: {},
     isLoadingMoreResults: false,
     searchResults: [],
     dramas: [],
@@ -355,6 +359,13 @@ export function buildRevenueSummary(results, currentPlatform) {
       : [];
   const rewardNumTotal = platform === "missevan" ? (rewardNumValues.length ? rewardNumValues.reduce((sum, value) => sum + value, 0) : null) : null;
   const revenueTotals = getSummaryRevenueTotals(results, platform);
+  const summaryRevenueModes = results.map((item) => getSummaryRevenueMode(item, platform));
+  const summaryRevenueMode =
+    summaryRevenueModes.length > 0 && summaryRevenueModes.every((mode) => mode === "member_reward")
+      ? "member_reward"
+      : summaryRevenueModes.some((mode) => mode === "range")
+        ? "range"
+        : "single";
   const priceItems = results.filter((item) => item?.includeInSummaryPrice);
   const hasSummaryPrice = !failed && priceItems.length > 0;
   const titlePriceTotal = hasSummaryPrice ? priceItems.reduce((sum, item) => sum + Number(item?.titlePrice ?? 0), 0) : null;
@@ -380,6 +391,7 @@ export function buildRevenueSummary(results, currentPlatform) {
     hasSummaryPrice,
     titlePriceTotal,
     titleMemberPriceTotal,
+    summaryRevenueMode,
     estimatedRevenueYuan: revenueTotals.estimatedRevenueYuan,
     minRevenueYuan: revenueTotals.minRevenueYuan,
     maxRevenueYuan: revenueTotals.maxRevenueYuan,

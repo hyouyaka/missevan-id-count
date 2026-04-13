@@ -6,9 +6,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { buildReportWorkbook, createEmptyGroupedRows, getOutputSheetName, parseTemplateWorkbook } from "@/services/excelReport";
 import { isMainEpisode, isMemberEpisode, isPaidEpisode } from "@/utils/episodeRules";
 import { getBackendVersionFromResponse, normalizeVersion } from "@/app/app-utils";
+import { createEmptyGroupedRows, getOutputSheetName } from "../../shared/excelReportMeta.js";
 
 function createDefaultState() {
   return {
@@ -466,16 +466,12 @@ export function DesktopReportPanel({ handleVersionResponse }) {
       return;
     }
 
-    setState((current) => ({ ...current, currentAction: "正在读取模板" }));
-    const fileResult = await desktopApi.readFile(picked.filePath);
-    if (!fileResult?.success || !fileResult?.bytes) {
-      setState((current) => ({ ...current, currentAction: "模板读取失败" }));
-      toast.error(fileResult?.error || "读取模板失败");
-      return;
-    }
-
     try {
-      const parsed = await parseTemplateWorkbook(fileResult.bytes);
+      setState((current) => ({ ...current, currentAction: "正在读取模板" }));
+      const parsed = await desktopApi.parseTemplateWorkbook(picked.filePath);
+      if (!parsed?.success) {
+        throw new Error(parsed?.error || "读取模板失败");
+      }
       setState((current) => ({
         ...current,
         selectedFilePath: picked.filePath,
@@ -551,8 +547,7 @@ export function DesktopReportPanel({ handleVersionResponse }) {
       });
 
       setState((current) => ({ ...current, currentAction: "正在写入 Excel 报告" }));
-      const bytes = await buildReportWorkbook(groupedRows);
-      const writeResult = await desktopApi.writeFile(saveSelection.filePath, bytes);
+      const writeResult = await desktopApi.writeReportWorkbook(saveSelection.filePath, groupedRows);
       if (!writeResult?.success) {
         throw new Error(writeResult?.error || "写入 Excel 失败");
       }

@@ -60,7 +60,7 @@ Windows 桌面版会直接在界面中提示这一步。
 - `PORT`、`RENDER_*`、`RAILWAY_*`、`DESKTOP_APP`、`APP_DATA_DIR` 属于平台或运行时注入变量，部署时通常不需要手动设置
 - 本地调试可直接访问 `/tool`，不需要额外配置 localhost 节点变量
 
-未配置 Upstash 时，Manbo 轻量索引库会回退到运行目录下的 `runtime/manbo-index.json`。
+未配置 Upstash 或 Upstash 不可用时，猫耳搜索会直接调用猫耳搜索 API，Manbo 搜索会提示不可用并仅支持通过 ID / 链接导入。
 
 ## 本地 `.env`
 
@@ -85,7 +85,7 @@ Windows 桌面版支持以下优先顺序：
 2. `APP_DATA_DIR/.env`
 3. 系统已有环境变量
 
-如果都没有配置 Upstash，桌面版会继续回退到本地 runtime 索引文件，再回退到内置的 `data/manbo-index.seed.json`。
+如果都没有配置 Upstash，桌面版不会内置 Manbo 起始库；Manbo 仍可通过 ID / 链接导入。
 
 ## Render 部署
 
@@ -167,4 +167,3 @@ npm run pack:win
 - 桌面版会在本机内嵌启动 Express 服务
 - `Missevan` 请求从用户自己的电脑发出，通常比云环境更稳定
 - 图标文件为 `windowsapp.ico`
-- 打包后的桌面版会内置 `data/manbo-index.seed.json` 作为默认 Manbo 起始库

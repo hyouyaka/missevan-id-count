@@ -28,10 +28,21 @@ contextBridge.exposeInMainWorld("desktopExcel", {
       bytes: result?.bytes ? toUint8Array(result.bytes) : null,
     };
   },
+  async parseTemplateWorkbook(filePath) {
+    return ipcRenderer.invoke("desktop-excel:parse-template-workbook", {
+      filePath,
+    });
+  },
   async writeFile(filePath, bytes) {
     return ipcRenderer.invoke("desktop-excel:write-file", {
       filePath,
       bytes: Array.from(toUint8Array(bytes)),
+    });
+  },
+  async writeReportWorkbook(filePath, groupedRows) {
+    return ipcRenderer.invoke("desktop-excel:write-report-workbook", {
+      filePath,
+      groupedRows,
     });
   },
   async openFile(filePath) {

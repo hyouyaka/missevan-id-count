@@ -1,46 +1,9 @@
-const INPUT_SHEETS = {
-  missevan: "Missevan",
-  manbo: "Manbo",
-};
-
-const OUTPUT_SHEETS = {
-  missevan: {
-    paid: "猫耳-付费",
-    member: "猫耳-会员",
-    free: "猫耳-免费",
-  },
-  manbo: {
-    paid: "漫播-付费",
-    member: "漫播-会员",
-    free: "漫播-免费",
-  },
-};
-
-const SHEET_THEMES = {
-  missevan: {
-    paid: { tabColor: "C65A38", headerFill: "FFF0EA", accentFill: "FFF7F3" },
-    member: { tabColor: "2F5D7C", headerFill: "EAF4FB", accentFill: "F4FAFD" },
-    free: { tabColor: "3B7A57", headerFill: "EAF7EF", accentFill: "F5FBF7" },
-  },
-  manbo: {
-    paid: { tabColor: "A2463C", headerFill: "FDEEEB", accentFill: "FFF7F4" },
-    member: { tabColor: "566C9C", headerFill: "EEF2FC", accentFill: "F8F9FE" },
-    free: { tabColor: "4C8B7A", headerFill: "EDF8F5", accentFill: "F7FCFA" },
-  },
-};
-
-const HEADERS = {
-  missevan: {
-    paid: ["排行", "标题", "总播放量（万）", "全季ID", "第一季ID", "追剧人次", "打赏（万钻石）", "打赏人次", "最低收益（万元）", "总价（钻石）"],
-    member: ["排行", "标题", "总播放量（万）", "全季ID", "第一季ID", "追剧人次", "打赏（万钻石）", "打赏人次", "总价（钻石）"],
-    free: ["排行", "标题", "总播放量（万）", "全季ID（正片）", "第一季ID（正片）", "追剧人次"],
-  },
-  manbo: {
-    paid: ["排行", "标题", "总播放量（万）", "全季ID", "第一季ID", "收藏人次", "投喂（万红豆）", "最低收益（万元）", "总价（红豆）"],
-    member: ["排行", "标题", "总播放量（万）", "全季ID", "第一季ID", "收藏人次", "投喂（万红豆）"],
-    free: ["排行", "标题", "总播放量（万）", "全季ID（正片）", "第一季ID（正片）", "收藏数"],
-  },
-};
+import {
+  HEADERS,
+  INPUT_SHEETS,
+  OUTPUT_SHEETS,
+  SHEET_THEMES,
+} from "../shared/excelReportMeta.js";
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -87,7 +50,12 @@ function getColumnIndexes(headerRow) {
 
 async function getXlsx() {
   const module = await import("xlsx");
-  return module;
+  return module.default || module;
+}
+
+async function getExcelJs() {
+  const module = await import("exceljs");
+  return module.default || module;
 }
 
 function parseInputSheet(XLSX, workbook, platform) {
@@ -165,18 +133,13 @@ function parseInputSheet(XLSX, workbook, platform) {
 
 export async function parseTemplateWorkbook(bytes) {
   const XLSX = await getXlsx();
-  const workbook = XLSX.read(bytes, { type: "array" });
+  const workbook = XLSX.read(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), { type: "array" });
   const missevan = parseInputSheet(XLSX, workbook, "missevan");
   const manbo = parseInputSheet(XLSX, workbook, "manbo");
   return {
     rows: [...missevan.rows, ...manbo.rows],
     parseErrors: [...missevan.errors, ...manbo.errors],
   };
-}
-
-function buildSheetAoA(headers, rows) {
-  const dataRows = rows.map((row) => headers.map((header) => row[header] ?? ""));
-  return [headers, ...dataRows];
 }
 
 function getColumnWidths(headers) {
@@ -195,7 +158,7 @@ function getColumnWidths(headers) {
 }
 
 export async function buildReportWorkbook(groupedRows) {
-  const ExcelJS = await import("exceljs");
+  const ExcelJS = await getExcelJs();
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "M&M Toolkit";
   workbook.company = "M&M Toolkit";
@@ -306,15 +269,4 @@ export async function buildReportWorkbook(groupedRows) {
 
   const buffer = await workbook.xlsx.writeBuffer();
   return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-}
-
-export function createEmptyGroupedRows() {
-  return {
-    missevan: { paid: [], member: [], free: [] },
-    manbo: { paid: [], member: [], free: [] },
-  };
-}
-
-export function getOutputSheetName(platform, category) {
-  return OUTPUT_SHEETS[platform][category];
 }

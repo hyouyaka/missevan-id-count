@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon, CoinsIcon, ListChecksIcon, PlayCircleIcon, RadioTowerIcon } from "lucide-react";
+import { useState } from "react";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, CoinsIcon, ListChecksIcon, PlayCircleIcon, RadioTowerIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
@@ -34,6 +34,28 @@ function collectSelectedEpisodes(dramas = []) {
   return selectedEpisodes;
 }
 
+function buildPaginationItems(currentPage, totalPages) {
+  const safeTotal = Math.max(1, Number(totalPages) || 1);
+  const safeCurrent = Math.min(safeTotal, Math.max(1, Number(currentPage) || 1));
+  if (safeTotal <= 7) {
+    return Array.from({ length: safeTotal }, (_, index) => index + 1);
+  }
+
+  const pages = new Set([1, safeTotal, safeCurrent - 1, safeCurrent, safeCurrent + 1]);
+  const sortedPages = Array.from(pages)
+    .filter((page) => page >= 1 && page <= safeTotal)
+    .sort((left, right) => left - right);
+  const items = [];
+  sortedPages.forEach((page) => {
+    const previous = items[items.length - 1];
+    if (typeof previous === "number" && page - previous > 1) {
+      items.push(`ellipsis-${previous}-${page}`);
+    }
+    items.push(page);
+  });
+  return items;
+}
+
 export function SearchResults({
   platform = "missevan",
   resultSource = "search",
@@ -47,49 +69,26 @@ export function SearchResults({
   onStartRevenueEstimate,
   onStartPlayCountStatistics,
   onStartIdStatistics,
-  onLoadMoreResults,
-  hasMoreResults = false,
+  onLoadSearchPage,
+  allResults = [],
+  currentPage = 1,
   isLoadingMoreResults = false,
+  pageSize = 5,
+  totalResults = 0,
 }) {
   const idLabel = platform === "manbo" ? "Drama ID" : "作品 ID";
   const episodeIdLabel = platform === "manbo" ? "Set ID" : "Sound ID";
   const extraMetaLabel = platform === "manbo" ? "收藏数" : "追剧人数";
-  const selectedDramaCount = results.filter((result) => result.checked).length;
+  const actionResults = allResults.length ? allResults : results;
+  const selectedDramaCount = actionResults.filter((result) => result.checked).length;
   const importedDramaCount = dramas.length;
   const selectedEpisodeCount = selectedEpisodes.length;
   const visibleResults = results;
-  const canLoadMore = resultSource === "search" && hasMoreResults;
-  const selectedDramaIdSet = new Set(results.filter((result) => result.checked).map((result) => String(result.id)));
-  const [toolbarScale, setToolbarScale] = useState(1);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) {
-      return undefined;
-    }
-    const viewport = window.visualViewport;
-    const desktopQuery = window.matchMedia("(min-width: 1024px)");
-    const syncToolbarScale = () => {
-      const nextScale = Number(viewport.scale ?? 1);
-      setToolbarScale(!desktopQuery.matches && Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1);
-    };
-    syncToolbarScale();
-    viewport.addEventListener("resize", syncToolbarScale);
-    viewport.addEventListener("scroll", syncToolbarScale);
-    if (typeof desktopQuery.addEventListener === "function") {
-      desktopQuery.addEventListener("change", syncToolbarScale);
-    } else {
-      desktopQuery.addListener?.(syncToolbarScale);
-    }
-    return () => {
-      viewport.removeEventListener("resize", syncToolbarScale);
-      viewport.removeEventListener("scroll", syncToolbarScale);
-      if (typeof desktopQuery.removeEventListener === "function") {
-        desktopQuery.removeEventListener("change", syncToolbarScale);
-      } else {
-        desktopQuery.removeListener?.(syncToolbarScale);
-      }
-    };
-  }, []);
+  const totalPages = resultSource === "search" ? Math.max(1, Math.ceil(Number(totalResults || results.length) / Math.max(1, Number(pageSize || 5)))) : 1;
+  const showPagination = resultSource === "search" && totalPages > 1;
+  const paginationItems = buildPaginationItems(currentPage, totalPages);
+  const selectedDramaIdSet = new Set(actionResults.filter((result) => result.checked).map((result) => String(result.id)));
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
 
   function getTitleClassName(title) {
     const length = String(title ?? "").trim().length;
@@ -186,7 +185,7 @@ export function SearchResults({
   }
 
   function getSelectedDramaIds() {
-    return results
+    return actionResults
       .filter((result) => result.checked)
       .map((result) => (platform === "manbo" ? String(result.id) : Number(result.id)));
   }
@@ -326,90 +325,178 @@ export function SearchResults({
 
   function getMetricToneClass(index) {
     const variants = [
-      "border-[rgba(33,41,67,0.14)] bg-[rgba(248,242,234,0.98)] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.62),0_8px_18px_-16px_rgba(33,41,67,0.22)]",
-      "border-[rgba(239,131,95,0.22)] bg-[rgb(239,131,95)] text-white",
-      "border-[rgba(59,62,122,0.18)] bg-[rgba(59,62,122,0.96)] text-white",
+      "border-border/80 bg-background text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.62),0_8px_18px_-16px_rgba(15,23,42,0.18)]",
+      "border-secondary/20 bg-secondary text-secondary-foreground",
+      "border-primary/20 bg-primary text-primary-foreground",
     ];
     return variants[index % variants.length];
   }
 
-  const actionButtonBaseClass = "h-8 min-w-[4.25rem] gap-1 px-2 text-[10px] whitespace-nowrap sm:h-9 sm:min-w-[7rem] sm:gap-1.5 sm:px-2.5 sm:text-[11px] lg:h-6 lg:w-full lg:min-w-0 lg:justify-start lg:px-1.5 lg:text-[9px]";
-  const toolbarTransform = toolbarScale > 1 ? `scale(${1 / toolbarScale})` : undefined;
+  const actionButtonBaseClass = "h-9 w-full justify-start px-2.5 text-xs";
+  const mobileActionButtonClass = "h-9 min-w-0 gap-1 px-1.5 text-[0.64rem] sm:px-2 sm:text-xs";
+
+  function runMobileAction(callback) {
+    setMobileActionsOpen(false);
+    callback?.();
+  }
+
+  function ActionPanel({ variant = "desktop" }) {
+    if (variant === "mobile") {
+      return (
+        <div className="grid gap-2 rounded-lg border border-border/80 bg-card/98 p-2 shadow-[0_18px_48px_-30px_rgba(15,23,42,0.42)] backdrop-blur-xl">
+          <div className="grid grid-cols-3 gap-2">
+            <label className="flex h-9 min-w-0 items-center justify-between gap-1 rounded-md border border-border/75 bg-background px-2 text-[0.68rem] font-medium">
+              <span className="truncate">作品全选</span>
+              <Switch
+                aria-label="切换全选作品"
+                checked={areAllResultsSelected()}
+                onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
+                className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+              />
+            </label>
+            <label className="flex h-9 min-w-0 items-center justify-between gap-1 rounded-md border border-border/75 bg-background px-2 text-[0.68rem] font-medium">
+              <span className="truncate">付费全选</span>
+              <Switch
+                aria-label="切换全选付费"
+                checked={areSelectedDramaPaidEpisodesSelected()}
+                onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked))}
+                className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+              />
+            </label>
+            <Button
+              variant="outline"
+              className={mobileActionButtonClass}
+              onClick={() => runMobileAction(() => onAddDramas?.(getSelectedDramaIds()))}
+            >
+              <ListChecksIcon data-icon="inline-start" />
+              导入分集
+            </Button>
+          </div>
+          <div className={`grid gap-2 ${platform !== "manbo" ? "grid-cols-3" : "grid-cols-2"}`}>
+            <Button
+              variant="secondary"
+              className={mobileActionButtonClass}
+              onClick={() => runMobileAction(() => onStartRevenueEstimate?.(getSelectedDramaIds()))}
+            >
+              <CoinsIcon data-icon="inline-start" />
+              收益预估
+            </Button>
+            {platform !== "manbo" ? (
+              <Button
+                variant="secondary"
+                className={mobileActionButtonClass}
+                onClick={() => runMobileAction(() => onStartPlayCountStatistics?.(getSelectedEpisodeIds()))}
+              >
+                <PlayCircleIcon data-icon="inline-start" />
+                统计播放量
+              </Button>
+            ) : null}
+            <Button
+              variant="secondary"
+              className={mobileActionButtonClass}
+              onClick={() => runMobileAction(() => onStartIdStatistics?.(getSelectedEpisodeIds()))}
+            >
+              <RadioTowerIcon data-icon="inline-start" />
+              统计弹幕ID
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    const statClass = "rounded-md border border-border/75 bg-background px-2.5 py-2";
+
+    return (
+      <div className="grid gap-3">
+        <div className="grid grid-cols-3 gap-2 lg:grid-cols-1">
+          {[
+            { label: "作品", value: selectedDramaCount },
+            { label: "导入", value: importedDramaCount },
+            { label: "分集", value: selectedEpisodeCount },
+          ].map((item) => (
+            <div key={item.label} className={statClass}>
+              <div className="text-[0.68rem] text-muted-foreground">{item.label}</div>
+              <div className="mt-0.5 text-base font-semibold text-foreground">{item.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
+          <label className="flex h-9 items-center justify-between gap-2 rounded-md border border-border/75 bg-background px-2.5 text-xs font-medium">
+            <span>作品全选</span>
+            <Switch
+              aria-label="切换全选作品"
+              checked={areAllResultsSelected()}
+              onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
+              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+            />
+          </label>
+          <label className="flex h-9 items-center justify-between gap-2 rounded-md border border-border/75 bg-background px-2.5 text-xs font-medium">
+            <span>付费全选</span>
+            <Switch
+              aria-label="切换全选付费"
+              checked={areSelectedDramaPaidEpisodesSelected()}
+              onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked))}
+              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+            />
+          </label>
+        </div>
+
+        <div className={`grid gap-2 ${platform !== "manbo" ? "grid-cols-2 lg:grid-cols-1" : "grid-cols-1"}`}>
+          <Button
+            variant="outline"
+            className={actionButtonBaseClass}
+            onClick={() => {
+              setMobileActionsOpen(false);
+              onAddDramas?.(getSelectedDramaIds());
+            }}
+          >
+            <ListChecksIcon data-icon="inline-start" />
+            导入分集
+          </Button>
+          <Button
+            variant="secondary"
+            className={actionButtonBaseClass}
+            onClick={() => {
+              setMobileActionsOpen(false);
+              onStartRevenueEstimate?.(getSelectedDramaIds());
+            }}
+          >
+            <CoinsIcon data-icon="inline-start" />
+            收益预估
+          </Button>
+          {platform !== "manbo" ? (
+            <Button
+              variant="secondary"
+              className={actionButtonBaseClass}
+              onClick={() => {
+                setMobileActionsOpen(false);
+                onStartPlayCountStatistics?.(getSelectedEpisodeIds());
+              }}
+            >
+              <PlayCircleIcon data-icon="inline-start" />
+              统计播放量
+            </Button>
+          ) : null}
+          <Button
+            variant="secondary"
+            className={actionButtonBaseClass}
+            onClick={() => {
+              setMobileActionsOpen(false);
+              onStartIdStatistics?.(getSelectedEpisodeIds());
+            }}
+          >
+            <RadioTowerIcon data-icon="inline-start" />
+            统计弹幕 ID
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="grid gap-4">
-      {results.length ? (
-        <Card
-          className="fixed inset-x-3 top-[10vh] z-40 w-auto overflow-visible border-[rgba(33,41,67,0.18)] bg-[rgba(33,41,67,0.72)] text-white shadow-[0_22px_48px_-34px_rgba(33,41,67,0.42)] backdrop-blur-xl lg:inset-x-auto lg:left-[min(calc(50%+40rem+0.75rem),calc(100vw-9.75rem))] lg:top-1/2 lg:z-30 lg:w-36 lg:-translate-y-1/2 lg:bg-[rgba(33,41,67,0.88)]"
-          style={{
-            transform: toolbarTransform,
-            transformOrigin: "top center",
-          }}
-        >
-          <CardHeader className="gap-2.5 p-3 sm:p-3 lg:p-2.5">
-            <div className="flex items-center gap-1 overflow-x-auto whitespace-nowrap text-[10px] sm:text-xs lg:grid lg:w-full lg:grid-cols-1 lg:gap-1.5 lg:overflow-visible lg:whitespace-normal">
-              <div className="rounded-[calc(var(--radius)-0.12rem)] bg-white/10 px-1.5 py-1 text-white/80 sm:px-2">
-                已选作品 <span className="font-semibold text-[rgb(239,131,95)]">{selectedDramaCount}</span>
-              </div>
-              <div className="rounded-[calc(var(--radius)-0.12rem)] bg-white/10 px-1.5 py-1 text-white/80 sm:px-2">
-                已导入 <span className="font-semibold text-[rgb(239,131,95)]">{importedDramaCount}</span>
-              </div>
-              <div className="rounded-[calc(var(--radius)-0.12rem)] bg-white/10 px-1.5 py-1 text-white/80 sm:px-2">
-                已选分集 <span className="font-semibold text-[rgb(239,131,95)]">{selectedEpisodeCount}</span>
-              </div>
-              <div className="flex items-center gap-1 rounded-[calc(var(--radius)-0.08rem)] border border-white/14 bg-[rgba(255,252,247,0.96)] px-1.5 py-1 text-[rgb(33,41,67)] shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] sm:px-2">
-                <Switch
-                  aria-label="切换全选作品"
-                  checked={areAllResultsSelected()}
-                  onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
-                  className="data-checked:bg-[rgb(239,131,95)] data-unchecked:bg-[rgba(59,62,122,0.24)] dark:data-unchecked:bg-[rgba(59,62,122,0.24)]"
-                />
-                <span className="text-[10px] font-medium sm:text-xs">作品</span>
-              </div>
-              <div className="flex items-center gap-1 rounded-[calc(var(--radius)-0.08rem)] border border-white/14 bg-[rgba(255,252,247,0.96)] px-1.5 py-1 text-[rgb(33,41,67)] shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] sm:px-2">
-                <Switch
-                  aria-label="切换全选付费"
-                  checked={areSelectedDramaPaidEpisodesSelected()}
-                  onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked))}
-                  className="data-checked:bg-[rgb(239,131,95)] data-unchecked:bg-[rgba(59,62,122,0.24)] dark:data-unchecked:bg-[rgba(59,62,122,0.24)]"
-                />
-                <span className="text-[10px] font-medium sm:text-xs">付费</span>
-              </div>
-            </div>
-
-            <div className={`grid gap-1.5 lg:w-full lg:gap-1 ${platform !== "manbo" ? "grid-cols-4 lg:grid-cols-1" : "grid-cols-3 lg:grid-cols-1"}`}>
-              <Button
-                variant="outline"
-                className={`${actionButtonBaseClass} justify-center border-white/18 bg-[rgba(255,252,247,0.96)] text-[rgb(33,41,67)] hover:bg-white hover:text-[rgb(33,41,67)] lg:justify-start`}
-                onClick={() => onAddDramas?.(getSelectedDramaIds())}
-              >
-                <ListChecksIcon data-icon="inline-start" />
-                <span className="sm:hidden">导入</span>
-                <span className="hidden sm:inline">导入分集</span>
-              </Button>
-              <Button variant="secondary" className={`${actionButtonBaseClass} justify-center lg:justify-start`} onClick={() => onStartRevenueEstimate?.(getSelectedDramaIds())}>
-                <CoinsIcon data-icon="inline-start" />
-                <span className="sm:hidden">收益</span>
-                <span className="hidden sm:inline">收益预估</span>
-              </Button>
-              {platform !== "manbo" ? (
-                <Button variant="secondary" className={`${actionButtonBaseClass} justify-center lg:justify-start`} onClick={() => onStartPlayCountStatistics?.(getSelectedEpisodeIds())}>
-                  <PlayCircleIcon data-icon="inline-start" />
-                  <span className="sm:hidden">播放</span>
-                  <span className="hidden sm:inline">统计播放量</span>
-                </Button>
-              ) : null}
-              <Button variant="secondary" className={`${actionButtonBaseClass} justify-center lg:justify-start`} onClick={() => onStartIdStatistics?.(getSelectedEpisodeIds())}>
-                <RadioTowerIcon data-icon="inline-start" />
-                <span className="sm:hidden">弹幕</span>
-                <span className="hidden sm:inline">统计弹幕 ID</span>
-              </Button>
-            </div>
-          </CardHeader>
-        </Card>
-      ) : null}
-
-      <Card className="bg-[rgba(255,252,247,0.98)] shadow-[0_24px_52px_-40px_rgba(30,32,41,0.18)]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_11rem] lg:items-start">
+      <Card className="min-w-0 border-border/80 bg-card shadow-[0_24px_52px_-42px_rgba(15,23,42,0.24)]">
         <CardContent className="pt-5">
         {results.length ? (
           <div className="grid gap-3 sm:gap-4">
@@ -419,7 +506,7 @@ export function SearchResults({
               const mainCvText = item.main_cv_text || "";
 
               return (
-                <div key={item.id} className="rounded-[calc(var(--radius)+0.08rem)] border border-border/72 bg-[rgba(255,252,247,0.97)] p-3.5 shadow-[0_18px_36px_-30px_rgba(30,32,41,0.12)] sm:p-4">
+                <div key={item.id} className="rounded-lg border border-border/75 bg-card p-3.5 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)] sm:p-4">
                   <div className="flex flex-col gap-2.5">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="flex min-w-0 gap-3">
@@ -467,7 +554,7 @@ export function SearchResults({
                               size="sm"
                               checked={areAllEpisodesSelected(item.id)}
                               onCheckedChange={(checked) => setSelectedEpisodes(item.id, () => Boolean(checked))}
-                              className="data-checked:bg-[rgb(239,131,95)] data-unchecked:bg-[rgba(59,62,122,0.16)] dark:data-unchecked:bg-[rgba(59,62,122,0.16)]"
+                              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
                             />
                             <span>全选</span>
                           </div>
@@ -477,7 +564,7 @@ export function SearchResults({
                               size="sm"
                               checked={arePaidEpisodesSelected(item.id)}
                               onCheckedChange={(checked) => setPaidEpisodesSelected(item.id, Boolean(checked))}
-                              className="data-checked:bg-[rgb(239,131,95)] data-unchecked:bg-[rgba(59,62,122,0.16)] dark:data-unchecked:bg-[rgba(59,62,122,0.16)]"
+                              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
                             />
                             <span>付费</span>
                           </div>
@@ -569,20 +656,34 @@ export function SearchResults({
                 </div>
               );
             })}
-            {canLoadMore ? (
-              <div className="flex justify-center pt-1">
-                <Button
-                  className="px-5"
-                  disabled={isLoadingMoreResults}
-                  onClick={() => onLoadMoreResults?.()}
-                >
-                  {isLoadingMoreResults ? "加载中" : "加载更多结果"}
-                </Button>
+            {showPagination ? (
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                {paginationItems.map((item) =>
+                  typeof item === "number" ? (
+                    <Button
+                      key={`search-page-${item}`}
+                      variant={item === currentPage ? "default" : "outline"}
+                      size="sm"
+                      className="min-w-9 px-2"
+                      disabled={isLoadingMoreResults}
+                      onClick={() => onLoadSearchPage?.(item)}
+                    >
+                      {item}
+                    </Button>
+                  ) : (
+                    <span key={item} className="px-1 text-sm text-muted-foreground">
+                      ...
+                    </span>
+                  )
+                )}
+                {isLoadingMoreResults ? (
+                  <span className="text-xs text-muted-foreground">加载中</span>
+                ) : null}
               </div>
             ) : null}
           </div>
         ) : (
-          <div className="rounded-[calc(var(--radius)+0.08rem)] border border-dashed border-border/80 bg-muted/15 px-6 py-10 text-center">
+          <div className="rounded-lg border border-dashed border-border/80 bg-muted/30 px-6 py-10 text-center">
             <div className="text-base font-semibold">还没有导入结果</div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               {platform === "manbo"
@@ -593,7 +694,51 @@ export function SearchResults({
         )}
         </CardContent>
       </Card>
-
+      {results.length ? (
+        <aside className="hidden lg:sticky lg:top-36 lg:block">
+          <div className="rounded-lg border border-border/80 bg-card p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.32)]">
+            <div className="mb-3 text-xs font-semibold text-muted-foreground">批量操作</div>
+            <ActionPanel />
+          </div>
+        </aside>
+      ) : null}
+      {results.length ? (
+        <>
+          {mobileActionsOpen ? (
+            <button
+              aria-label="收起批量操作"
+              className="fixed inset-0 z-30 cursor-default bg-transparent lg:hidden"
+              type="button"
+              onClick={() => setMobileActionsOpen(false)}
+            />
+          ) : null}
+          <div className="fixed inset-x-3 bottom-3 z-40 lg:hidden">
+            {mobileActionsOpen ? (
+              <div className="mb-2">
+                <ActionPanel variant="mobile" />
+              </div>
+            ) : null}
+            <div className="rounded-lg border border-border/80 bg-card/96 p-2 shadow-[0_18px_48px_-28px_rgba(15,23,42,0.42)] backdrop-blur-xl">
+            <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_auto] items-center gap-2">
+              {[
+                { label: "作品", value: selectedDramaCount },
+                { label: "导入", value: importedDramaCount },
+                { label: "分集", value: selectedEpisodeCount },
+              ].map((item) => (
+                <div key={item.label} className="min-w-0 rounded-md bg-muted/55 px-2 py-1 text-center">
+                  <div className="truncate text-[0.62rem] text-muted-foreground">{item.label}</div>
+                  <div className="text-sm font-semibold">{item.value}</div>
+                </div>
+              ))}
+              <Button size="sm" className="h-10 px-3" onClick={() => setMobileActionsOpen((current) => !current)}>
+                统计
+                <ChevronUpIcon className={mobileActionsOpen ? "rotate-180 transition-transform" : "transition-transform"} data-icon="inline-end" />
+              </Button>
+            </div>
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -76,8 +76,8 @@ const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
   5000,
   Number(process.env.INFO_STORE_SYNC_INTERVAL_MS ?? 30000) || 30000
 );
-const MANBO_INFO_FALLBACK_PATH = path.join(__dirname, "data", "manbo-drama-info.json");
-const MISSEVAN_INFO_FALLBACK_PATH = path.join(__dirname, "data", "missevan-drama-info.json");
+const MANBO_INFO_FALLBACK_PATH = path.join(runtimeDir, "manbo-drama-info.json");
+const MISSEVAN_INFO_FALLBACK_PATH = path.join(runtimeDir, "missevan-drama-info.json");
 const NEW_DRAMA_IDS_FALLBACK_PATH = path.join(runtimeDir, "new-drama-ids.json");
 
 const danmakuCache = new Map();
@@ -101,6 +101,7 @@ const manboInfoStore = {
   records: [],
   byDramaId: new Map(),
   loaded: false,
+  remoteAvailable: false,
   lastLoadedAt: 0,
   loadPromise: null,
   writePromise: Promise.resolve(),
@@ -113,6 +114,7 @@ const missevanInfoStore = {
   records: [],
   byDramaId: new Map(),
   loaded: false,
+  remoteAvailable: false,
   lastLoadedAt: 0,
   loadPromise: null,
   writePromise: Promise.resolve(),
@@ -1057,17 +1059,16 @@ async function readInfoStoreSnapshot(store) {
   if (upstashClient.enabled) {
     try {
       const raw = await upstashClient.command(["GET", store.key]);
+      store.remoteAvailable = true;
       if (raw) {
         return JSON.parse(raw);
       }
     } catch (error) {
+      store.remoteAvailable = false;
       console.error(`Failed to read Upstash info snapshot key=${store.key}`, error);
     }
-  }
-
-  const localSnapshot = await readJsonFileIfExists(store.fallbackPath);
-  if (localSnapshot) {
-    return localSnapshot;
+  } else {
+    store.remoteAvailable = false;
   }
 
   return store.platform === "manbo"
@@ -1116,7 +1117,9 @@ async function persistInfoStoreSnapshot(store, snapshot) {
   const payload = JSON.stringify(snapshot);
   if (upstashClient.enabled) {
     await upstashClient.command(["SET", store.key, payload]);
+    store.remoteAvailable = true;
   } else {
+    await fs.mkdir(path.dirname(store.fallbackPath), { recursive: true });
     await fs.writeFile(store.fallbackPath, payload, "utf8");
   }
   applyInfoStoreSnapshot(store, snapshot);
@@ -4780,23 +4783,30 @@ app.get("/search", async (req, res) => {
     await ensureInfoStoreLoaded(missevanInfoStore);
     await refreshMissevanCooldownState();
 
-    const matchedRecords = searchMissevanLibraryRecords(
-      missevanInfoStore.records,
-      normalizedKeyword,
-      30
-    );
-    let source = "library";
-    let totalMatched = matchedRecords.length;
+    let source = "missevan_api";
+    let totalMatched = 0;
     let results = [];
 
-    if (matchedRecords.length > 0) {
-      const pagedRecords = matchedRecords.slice(offset, offset + limit);
-      results = await mapWithConcurrency(
-        pagedRecords,
-        4,
-        hydrateMissevanSearchRecord
+    if (missevanInfoStore.remoteAvailable) {
+      const matchedRecords = searchMissevanLibraryRecords(
+        missevanInfoStore.records,
+        normalizedKeyword,
+        30
       );
-    } else {
+      source = "library";
+      totalMatched = matchedRecords.length;
+
+      if (matchedRecords.length > 0) {
+        const pagedRecords = matchedRecords.slice(offset, offset + limit);
+        results = await mapWithConcurrency(
+          pagedRecords,
+          4,
+          hydrateMissevanSearchRecord
+        );
+      }
+    }
+
+    if (!results.length && totalMatched === 0) {
       source = "missevan_api";
       const apiRecords = await searchMissevanApiRecords(normalizedKeyword, 30);
       totalMatched = apiRecords.length;
@@ -5266,6 +5276,20 @@ app.get("/manbo/search", async (req, res) => {
 
   try {
     await ensureInfoStoreLoaded(manboInfoStore);
+    if (!manboInfoStore.remoteAvailable) {
+      return res.status(503).json({
+        success: false,
+        unavailable: true,
+        results: [],
+        message: "Manbo search is unavailable while Upstash is not available. Please import by ID or link.",
+        meta: {
+          keyword,
+          matchedCount: 0,
+          hydratedCount: 0,
+        },
+      });
+    }
+
     const matchedRecords = searchManboLibraryRecords(
       manboInfoStore.records,
       keyword,

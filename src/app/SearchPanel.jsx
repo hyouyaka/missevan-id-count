@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { SearchIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { ChevronDownIcon, SearchIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -31,6 +31,7 @@ export function SearchPanel({
 }) {
   const [isSearchPending, setIsSearchPending] = useState(false);
   const [isManualPending, setIsManualPending] = useState(false);
+  const [isManualOpen, setIsManualOpen] = useState(false);
   const manualPlaceholder =
     platform === "manbo"
       ? "可混合输入多个作品 ID、分集 ID、网页链接或分享链接，支持空格、逗号或换行分隔"
@@ -145,6 +146,10 @@ export function SearchPanel({
           data.meta || {}
         );
         if (!data.success) {
+          if (data.unavailable) {
+            showBlockingNotice("漫播搜索不可用", "当前无法连接漫播信息库，请改用作品 ID、分集 ID 或链接导入。");
+            return;
+          }
           showBlockingNotice(
             Number(data?.meta?.matchedCount ?? 0) > 0 ? "漫播信息库搜索未完全命中" : "",
             Number(data?.meta?.matchedCount ?? 0) > 0
@@ -171,7 +176,7 @@ export function SearchPanel({
         if (isDesktopApp) {
           showBlockingNotice(
             "Missevan 当前受限",
-            "如果看到访问受限，请先使用任意浏览器打开猫耳主页完成验证后再重试。"
+            "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
           );
         } else {
           showMissevanCooldownNotice(config || { cooldownHours, cooldownUntil });
@@ -284,7 +289,7 @@ export function SearchPanel({
           if (isDesktopApp) {
             showBlockingNotice(
               "Missevan 当前受限",
-              "如果看到访问受限，请先使用任意浏览器打开猫耳主页完成验证后再重试。"
+              "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
             );
           } else {
             showMissevanCooldownNotice(config || { cooldownHours, cooldownUntil });
@@ -308,53 +313,63 @@ export function SearchPanel({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card className="bg-[rgba(255,252,247,0.98)] shadow-[0_20px_40px_-30px_rgba(30,32,41,0.14)]">
-        <CardHeader className="gap-1 border-b border-border/70 pb-4">
-          <CardTitle className="text-base">搜索</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row">
-          <Input
-            className="h-11 border-border/80 bg-background/82 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
-            placeholder={
-              platform === "missevan"
-                ? "输入作品名、CV、角色名、原作名或关键词"
-                : "输入剧名、CV、角色名、原作名或 Drama ID"
-            }
-            value={formState?.keyword ?? ""}
-            onChange={(event) => setKeyword(event.target.value)}
-            onKeyDown={(event) => event.key === "Enter" && search()}
-          />
-          <Button className="h-11 px-5" disabled={isSearchPending} onClick={search}>
-            <SearchIcon data-icon="inline-start" />
-            {isSearchPending ? "搜索中" : "搜索"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card className="bg-[rgba(255,252,247,0.98)] shadow-[0_20px_40px_-30px_rgba(30,32,41,0.14)]">
-        <CardHeader className="gap-1 border-b border-border/70 pb-4">
-          <CardTitle className="text-base">手动导入</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row sm:items-start">
-          <Textarea
-            className="min-h-24 flex-1 border-border/80 bg-background/82 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
-            placeholder={manualPlaceholder}
-            value={formState?.manualInput ?? ""}
-            onChange={(event) => setManualInput(event.target.value)}
-          />
-          <div className="flex flex-col gap-3 sm:w-auto sm:min-w-[7rem]">
-            <Button className="h-11 px-5" disabled={isManualPending} onClick={queryManualInput}>
-              <UploadIcon data-icon="inline-start" />
-              {isManualPending ? "导入中" : "导入"}
-            </Button>
-            <Button variant="secondary" className="h-11 px-5" onClick={clearManualInput}>
-              <Trash2Icon data-icon="inline-start" />
-              清空
+    <Card className="border-border/80 bg-card shadow-[0_20px_46px_-38px_rgba(15,23,42,0.28)]">
+      <CardContent className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)]">
+        <div className="flex min-w-0 flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-base font-semibold text-foreground">搜索</div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="lg:hidden"
+              aria-expanded={isManualOpen}
+              onClick={() => setIsManualOpen((current) => !current)}
+            >
+              手动导入
+              <ChevronDownIcon className={isManualOpen ? "rotate-180 transition-transform" : "transition-transform"} />
             </Button>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Input
+              className="h-11 border-border/80 bg-background focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+              placeholder={
+                platform === "missevan"
+                  ? "输入作品名、CV、角色名、原作名或关键词"
+                  : "输入剧名、CV、角色名、原作名或 Drama ID"
+              }
+              value={formState?.keyword ?? ""}
+              onChange={(event) => setKeyword(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && search()}
+            />
+            <Button className="h-11 px-5" disabled={isSearchPending} onClick={search}>
+              <SearchIcon data-icon="inline-start" />
+              {isSearchPending ? "搜索中" : "搜索"}
+            </Button>
+          </div>
+        </div>
+
+        <div className={`${isManualOpen ? "flex" : "hidden"} min-w-0 flex-col gap-3 lg:flex`}>
+          <div className="hidden text-base font-semibold text-foreground lg:block">手动导入</div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+            <Textarea
+              className="min-h-20 flex-1 border-border/80 bg-background focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 lg:min-h-24"
+              placeholder={manualPlaceholder}
+              value={formState?.manualInput ?? ""}
+              onChange={(event) => setManualInput(event.target.value)}
+            />
+            <div className="grid grid-cols-2 gap-3 sm:w-auto sm:min-w-[7rem] sm:grid-cols-1">
+              <Button className="h-11 px-5" disabled={isManualPending} onClick={queryManualInput}>
+                <UploadIcon data-icon="inline-start" />
+                {isManualPending ? "导入中" : "导入"}
+              </Button>
+              <Button variant="secondary" className="h-11 px-5" onClick={clearManualInput}>
+                <Trash2Icon data-icon="inline-start" />
+                清空
+              </Button>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

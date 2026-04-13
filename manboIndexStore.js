@@ -1,12 +1,9 @@
 import fs from "fs/promises";
 import path from "path";
 import fetch from "node-fetch";
-import { fileURLToPath } from "url";
 
 export const MANBO_INDEX_VERSION = 1;
 const INDEX_KEY = "manbo:index:v1";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 function normalizeWhitespace(value) {
   return String(value ?? "")
@@ -104,7 +101,6 @@ export function createUpstashRestClient({
 export function createManboIndexStore({
   runtimeDir,
   filePath = path.join(runtimeDir, "manbo-index.json"),
-  seedFilePath = path.join(__dirname, "data", "manbo-index.seed.json"),
   upstashRestUrl = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, ""),
   upstashRestToken = process.env.UPSTASH_REDIS_REST_TOKEN || "",
   syncIntervalMs = Number(process.env.MANBO_INDEX_SYNC_INTERVAL_MS ?? 30000) || 30000,
@@ -143,8 +139,7 @@ export function createManboIndexStore({
       return fileSnapshot;
     }
 
-    const seedSnapshot = await readJsonFile(seedFilePath);
-    return seedSnapshot || createEmptySnapshot();
+    return createEmptySnapshot();
   }
 
   function applySnapshot(snapshot) {

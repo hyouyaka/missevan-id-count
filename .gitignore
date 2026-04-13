@@ -16,6 +16,7 @@ dist-ssr
 upstash.env
 release
 logs
+data/
 tmp-manbo-crypto.js
 runtime/manbo-index.json
 runtime/missevan-cooldown.json
@@ -24,6 +25,7 @@ runtime/missevan-cooldown.json
 .vscode/*
 !.vscode/extensions.json
 .idea
+.codex/
 .DS_Store
 *.suo
 *.ntvs*

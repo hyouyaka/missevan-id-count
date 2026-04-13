@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { promises as fs } from "fs";
 import { loadLocalEnv } from "../envConfig.js";
+import { buildReportWorkbook, parseTemplateWorkbook } from "./excelReport.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,6 +76,31 @@ function registerDesktopExcelHandlers() {
     }
   });
 
+  ipcMain.handle("desktop-excel:parse-template-workbook", async (_, payload = {}) => {
+    const filePath = String(payload?.filePath || "").trim();
+    if (!filePath) {
+      return { success: false, rows: [], parseErrors: [], error: "Missing file path" };
+    }
+
+    try {
+      const bytes = await fs.readFile(filePath);
+      const parsed = await parseTemplateWorkbook(bytes);
+      return {
+        success: true,
+        rows: parsed.rows,
+        parseErrors: parsed.parseErrors,
+        error: "",
+      };
+    } catch (error) {
+      return {
+        success: false,
+        rows: [],
+        parseErrors: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+
   ipcMain.handle("desktop-excel:write-file", async (_, payload = {}) => {
     const filePath = String(payload?.filePath || "").trim();
     const bytes = Array.isArray(payload?.bytes) ? payload.bytes : [];
@@ -83,6 +109,24 @@ function registerDesktopExcelHandlers() {
     }
 
     try {
+      await fs.writeFile(filePath, Buffer.from(bytes));
+      return { success: true, error: "" };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+
+  ipcMain.handle("desktop-excel:write-report-workbook", async (_, payload = {}) => {
+    const filePath = String(payload?.filePath || "").trim();
+    if (!filePath) {
+      return { success: false, error: "Missing file path" };
+    }
+
+    try {
+      const bytes = await buildReportWorkbook(payload?.groupedRows || {});
       await fs.writeFile(filePath, Buffer.from(bytes));
       return { success: true, error: "" };
     } catch (error) {
