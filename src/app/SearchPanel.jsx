@@ -34,8 +34,8 @@ export function SearchPanel({
   const [isManualOpen, setIsManualOpen] = useState(false);
   const manualPlaceholder =
     platform === "manbo"
-      ? "可混合输入多个作品 ID、分集 ID、网页链接或分享链接，支持空格、逗号或换行分隔"
-      : "输入一个或多个作品 ID，支持英文逗号、中文逗号、空格或换行分隔";
+      ? "可混合输入多个作品ID、分集 ID、网页链接或分享链接，支持空格、逗号或换行分隔"
+      : "输入一个或多个作品ID，支持英文逗号、中文逗号、空格或换行分隔";
 
   function setKeyword(value) {
     onUpdateFormState?.({ keyword: value });
@@ -147,14 +147,14 @@ export function SearchPanel({
         );
         if (!data.success) {
           if (data.unavailable) {
-            showBlockingNotice("漫播搜索不可用", "当前无法连接漫播信息库，请改用作品 ID、分集 ID 或链接导入。");
+            showBlockingNotice("漫播搜索不可用", "当前无法连接漫播信息库，请改用作品ID、分集 ID 或链接导入。");
             return;
           }
           showBlockingNotice(
             Number(data?.meta?.matchedCount ?? 0) > 0 ? "漫播信息库搜索未完全命中" : "",
             Number(data?.meta?.matchedCount ?? 0) > 0
               ? "信息库有记录，但拉取漫播详情失败，请稍后重试或手动导入。"
-              : "未找到相关剧集"
+              : "未找到剧集，可尝试导入剧集ID或分享链接"
           );
         }
         return;
@@ -228,7 +228,7 @@ export function SearchPanel({
       const data = await parseVersionedJson(response);
 
       if (!data.success) {
-        showBlockingNotice("Manbo 导入失败", "请检查输入内容是否为有效的作品 ID、分集 ID 或链接。");
+        showBlockingNotice("Manbo 导入失败", "请检查输入内容是否为有效的作品ID、分集 ID 或链接。");
         return;
       }
 
@@ -271,7 +271,7 @@ export function SearchPanel({
 
       const ids = parseNumericIds(formState?.manualInput);
       if (!ids.length) {
-        showBlockingNotice("缺少作品 ID", "请至少输入一个有效的作品 ID。");
+        showBlockingNotice("缺少作品ID", "请至少输入一个有效的作品ID。");
         return;
       }
 
@@ -296,13 +296,13 @@ export function SearchPanel({
           }
           return;
         }
-        showBlockingNotice("导入作品失败", "请检查输入的作品 ID。");
+        showBlockingNotice("导入作品失败", "请检查输入的作品ID。");
         return;
       }
 
       onUpdateResults?.(data.results, "manual");
       if (data.failedIds?.length) {
-        toast.warning(`以下作品 ID 导入失败：${data.failedIds.join(", ")}`);
+        toast.warning(`以下作品ID导入失败：${data.failedIds.join(", ")}`);
       }
     } catch (error) {
       console.error(error);
@@ -335,7 +335,7 @@ export function SearchPanel({
               placeholder={
                 platform === "missevan"
                   ? "输入作品名、CV、角色名、原作名或关键词"
-                  : "输入剧名、CV、角色名、原作名或 Drama ID"
+                  : "输入剧名、CV、角色名、原作名或作品ID"
               }
               value={formState?.keyword ?? ""}
               onChange={(event) => setKeyword(event.target.value)}

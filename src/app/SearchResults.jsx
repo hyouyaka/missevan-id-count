@@ -119,7 +119,7 @@ export function SearchResults({
   pageSize = 5,
   totalResults = 0,
 }) {
-  const idLabel = platform === "manbo" ? "Drama ID" : "作品 ID";
+  const idLabel = "作品ID";
   const episodeIdLabel = platform === "manbo" ? "Set ID" : "Sound ID";
   const extraMetaLabel = platform === "manbo" ? "收藏数" : "追剧人数";
   const actionResults = allResults.length ? allResults : results;
@@ -774,8 +774,8 @@ export function SearchResults({
             <div className="text-base font-semibold">还没有导入结果</div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               {platform === "manbo"
-                ? "先搜索已收录的漫播信息库，或继续粘贴 Manbo 的 ID / 链接导入。"
-                : "先搜索关键词，或直接输入作品 ID 后将结果导入到这里。"}
+                ? "先搜索已收录的漫播信息库，或继续粘贴作品ID / 链接导入。"
+                : "先搜索关键词，或直接输入作品ID后将结果导入到这里。"}
             </p>
           </div>
         )}

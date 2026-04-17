@@ -13,6 +13,7 @@ import {
 
 import { buildVersionedUrl, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -21,6 +22,7 @@ function buildProxyImageUrl(url) {
 }
 
 const RANKS_CLIENT_CACHE_TTL_MS = 30 * 60 * 1000;
+const RANKS_EXPECTED_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const ranksClientCache = {
   data: null,
   loadedAt: 0,
@@ -60,6 +62,24 @@ function formatRankUpdatedAt(value) {
 function formatRankUpdatedDate(value) {
   const formatted = formatRankUpdatedAt(value);
   return formatted === "未知" ? "" : formatted.slice(0, 10);
+}
+
+function isRanksClientCacheFresh(frontendVersion) {
+  const normalizedVersion = String(frontendVersion ?? "").trim();
+  if (!ranksClientCache.data || ranksClientCache.frontendVersion !== normalizedVersion) {
+    return false;
+  }
+  const now = Date.now();
+  if (now - ranksClientCache.loadedAt >= RANKS_CLIENT_CACHE_TTL_MS) {
+    return false;
+  }
+
+  const updatedAtMs = Date.parse(ranksClientCache.data?.data?.updatedAt || "");
+  if (Number.isFinite(updatedAtMs) && now >= updatedAtMs + RANKS_EXPECTED_REFRESH_INTERVAL_MS) {
+    return false;
+  }
+
+  return true;
 }
 
 function getTitleClassName(title) {
@@ -187,14 +207,15 @@ function RankItemCard({ item, platform }) {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <span className={`min-w-0 break-words ${getTitleClassName(item.name)}`}>{item.name}</span>
+              {item.is_member ? <Badge variant="info" className="shrink-0">会员</Badge> : null}
             </div>
             {item.id && !isMissevanPeak ? (
               <div className="mt-1 text-xs text-muted-foreground">
-                {platform === "manbo" ? "Drama ID" : "作品 ID"}: {item.id}
+                作品ID：{item.id}
               </div>
             ) : null}
             {isMissevanPeak && dramaIdText ? (
-              <div className="mt-1 text-xs text-muted-foreground">包含剧集ID：{dramaIdText}</div>
+              <div className="mt-1 text-xs text-muted-foreground">包含作品ID：{dramaIdText}</div>
             ) : null}
             {item.main_cv_text ? <div className="mt-1 text-xs text-muted-foreground">{item.main_cv_text}</div> : null}
             {recentUpdatedDate ? (
@@ -275,12 +296,7 @@ function getRank(category, rankKey) {
 
 async function fetchRanksData(frontendVersion) {
   const normalizedVersion = String(frontendVersion ?? "").trim();
-  const now = Date.now();
-  if (
-    ranksClientCache.data &&
-    ranksClientCache.frontendVersion === normalizedVersion &&
-    now - ranksClientCache.loadedAt < RANKS_CLIENT_CACHE_TTL_MS
-  ) {
+  if (isRanksClientCacheFresh(frontendVersion)) {
     return ranksClientCache.data;
   }
 
@@ -291,7 +307,9 @@ async function fetchRanksData(frontendVersion) {
   ranksClientCache.frontendVersion = normalizedVersion;
   ranksClientCache.promise = (async () => {
     try {
-      const response = await fetch(buildVersionedUrl("/ranks", frontendVersion));
+      const response = await fetch(buildVersionedUrl("/ranks", frontendVersion), {
+        cache: "no-cache",
+      });
       const data = await response.json();
       const payload = {
         response,
@@ -415,7 +433,7 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse })
   return (
     <div className="grid gap-4 sm:gap-5">
       <div className="px-1 text-sm leading-6 text-muted-foreground">
-        榜单刷新时间：{formatRankUpdatedAt(rankData?.updatedAt)}
+        同步猫耳和漫播榜单，每日7:10刷新。此次榜单刷新于：{formatRankUpdatedAt(rankData?.updatedAt)}（北京时间）
       </div>
 
       {isLoading ? (

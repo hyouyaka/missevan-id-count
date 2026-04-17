@@ -1114,6 +1114,7 @@ function buildMissevanRankCard(rankKey, item, index, dramas) {
     reward_num: normalizeRankNumber(drama.reward_num),
     reward_total: normalizeRankNumber(drama.reward_total),
     updated_at: normalizeTextValue(drama.updated_at),
+    is_member: drama.isVIP === true,
     main_cvs: mainCvs,
     main_cv_text: buildRankMainCvText(mainCvs),
     platform: "missevan",
@@ -1149,6 +1150,7 @@ function buildManboRankCard(rank, item, index, dramas) {
     pay_count: normalizeRankNumber(drama.pay_count),
     diamond_value: normalizeRankNumber(drama.diamond_value),
     updated_at: normalizeTextValue(drama.updated_at),
+    is_member: drama.isVIP === true,
     rank_value_label: unitName,
     rank_value: rankValue,
     main_cvs: mainCvs,
@@ -1617,6 +1619,104 @@ function getWeightedSearchScore(entries, rawKeyword, normalizedKeyword) {
   return bestScore;
 }
 
+const SEARCH_CATEGORY_TERMS = Object.freeze([
+  { key: "audio_comic", terms: ["有声漫画", "有声漫"] },
+  { key: "audio_drama", terms: ["有声剧"] },
+  { key: "radio_drama", terms: ["广播剧"] },
+]);
+
+const MANBO_CATEGORY_ALIASES = Object.freeze({
+  radio_drama: ["广播剧"],
+  audio_drama: ["有声剧", "有声书"],
+  audio_comic: ["有声漫", "有声漫画"],
+});
+
+const MISSEVAN_CATEGORY_CATALOGS = Object.freeze({
+  radio_drama: 89,
+  audio_drama: 93,
+  audio_comic: 96,
+});
+
+function escapeRegExp(value) {
+  return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildSearchBranches(keyword) {
+  const rawKeyword = normalizeTextValue(keyword);
+  const branches = [{ keyword: rawKeyword, category: null }];
+  if (!rawKeyword) {
+    return branches;
+  }
+
+  const normalizedKeyword = normalizeManboIndexName(rawKeyword);
+  for (const category of SEARCH_CATEGORY_TERMS) {
+    for (const term of category.terms) {
+      const normalizedTerm = normalizeManboIndexName(term);
+      if (!normalizedTerm || !normalizedKeyword.includes(normalizedTerm)) {
+        continue;
+      }
+
+      const splitKeyword = normalizeTextValue(
+        rawKeyword.replace(new RegExp(escapeRegExp(term), "g"), "")
+      );
+      if (!splitKeyword || normalizeManboIndexName(splitKeyword) === normalizedKeyword) {
+        continue;
+      }
+
+      branches.push({
+        keyword: splitKeyword,
+        category: category.key,
+      });
+      return branches;
+    }
+  }
+
+  return branches;
+}
+
+function recordTextIncludesAny(values, terms) {
+  const normalizedTerms = (Array.isArray(terms) ? terms : [])
+    .map((term) => normalizeManboIndexName(term))
+    .filter(Boolean);
+  if (!normalizedTerms.length) {
+    return false;
+  }
+
+  return (Array.isArray(values) ? values : [values]).some((value) => {
+    const normalizedValue = normalizeManboIndexName(value);
+    return normalizedValue && normalizedTerms.some((term) => normalizedValue.includes(term));
+  });
+}
+
+function matchesManboSearchCategory(record, category) {
+  if (!category) {
+    return true;
+  }
+
+  const aliases = MANBO_CATEGORY_ALIASES[category] || [];
+  if (recordTextIncludesAny(record?.catalogName, aliases)) {
+    return true;
+  }
+
+  if (category === "audio_comic") {
+    return recordTextIncludesAny(
+      [record?.genre, record?.name, record?.seriesTitle],
+      aliases
+    );
+  }
+
+  return false;
+}
+
+function matchesMissevanSearchCategory(record, category) {
+  if (!category) {
+    return true;
+  }
+
+  const expectedCatalog = MISSEVAN_CATEGORY_CATALOGS[category];
+  return Number(record?.catalog ?? 0) === expectedCatalog;
+}
+
 function scoreManboLibraryRecord(record, keyword) {
   const rawKeyword = normalizeTextValue(keyword);
   const normalizedKeyword = normalizeManboIndexName(rawKeyword);
@@ -1666,6 +1766,26 @@ function scoreMissevanLibraryRecord(record, keyword) {
   );
 }
 
+function buildScoredManboLibraryMatches(records, keyword, category = null) {
+  return sortScoredDramaRecords(records
+    .filter((record) => matchesManboSearchCategory(record, category))
+    .map((record) => ({
+      record,
+      score: scoreManboLibraryRecord(record, keyword),
+    }))
+    .filter((item) => item.score > 0));
+}
+
+function buildScoredMissevanLibraryMatches(records, keyword, category = null) {
+  return sortScoredDramaRecords(records
+    .filter((record) => matchesMissevanSearchCategory(record, category))
+    .map((record) => ({
+      record,
+      score: scoreMissevanLibraryRecord(record, keyword),
+    }))
+    .filter((item) => item.score > 0));
+}
+
 function applyOptionalSearchLimit(records, limit) {
   const normalizedLimit = Number(limit);
   if (!Number.isFinite(normalizedLimit) || normalizedLimit <= 0) {
@@ -1694,43 +1814,45 @@ function sortScoredDramaRecords(items) {
 }
 
 function searchManboLibraryRecords(records, keyword, limit = null) {
+  const branches = buildSearchBranches(keyword);
   const matchedRecords = Array.from(
-    sortScoredDramaRecords(records
-    .map((record) => ({
-      record,
-      score: scoreManboLibraryRecord(record, keyword),
-    }))
-    .filter((item) => item.score > 0))
-    .reduce((map, item) => {
+    branches
+      .flatMap((branch) => buildScoredManboLibraryMatches(
+        records,
+        branch.keyword,
+        branch.category
+      ))
+      .reduce((map, item) => {
       const key = String(item.record?.dramaId ?? "");
       if (!key || map.has(key)) {
         return map;
       }
       map.set(key, item);
       return map;
-    }, new Map())
-    .values()
+      }, new Map())
+      .values()
   ).map((item) => item.record);
   return applyOptionalSearchLimit(matchedRecords, limit);
 }
 
 function searchMissevanLibraryRecords(records, keyword, limit = null) {
+  const branches = buildSearchBranches(keyword);
   const matchedRecords = Array.from(
-    sortScoredDramaRecords(records
-    .map((record) => ({
-      record,
-      score: scoreMissevanLibraryRecord(record, keyword),
-    }))
-    .filter((item) => item.score > 0))
-    .reduce((map, item) => {
+    branches
+      .flatMap((branch) => buildScoredMissevanLibraryMatches(
+        records,
+        branch.keyword,
+        branch.category
+      ))
+      .reduce((map, item) => {
       const key = String(item.record?.dramaId ?? "");
       if (!key || map.has(key)) {
         return map;
       }
       map.set(key, item);
       return map;
-    }, new Map())
-    .values()
+      }, new Map())
+      .values()
   ).map((item) => item.record);
   return applyOptionalSearchLimit(matchedRecords, limit);
 }
@@ -4928,8 +5050,13 @@ async function executeStatsTask(task) {
 
 app.get("/ranks", async (req, res) => {
   try {
+    const response = await getCachedRanksResponse();
     res.setHeader("Cache-Control", `public, max-age=${Math.floor(RANKS_CACHE_TTL_MS / 1000)}`);
-    return res.json(await getCachedRanksResponse());
+    if (response.updatedAt) {
+      res.setHeader("X-Ranks-Updated-At", response.updatedAt);
+      res.setHeader("ETag", `"ranks-${Buffer.from(response.updatedAt).toString("base64url")}"`);
+    }
+    return res.json(response);
   } catch (error) {
     console.error("Failed to read ranks snapshot", error);
     return res.status(503).json({
