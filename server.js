@@ -78,6 +78,7 @@ const MANBO_API_HOST = "www.kilamanbo.com";
 const MANBO_INFO_KEY = "manbo:info:v1";
 const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
+const RANKS_KEY = "ranks";
 const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
   5000,
   Number(process.env.INFO_STORE_SYNC_INTERVAL_MS ?? 30000) || 30000
@@ -132,6 +133,11 @@ const newDramaIdsStore = {
   loadPromise: null,
   writePromise: Promise.resolve(),
 };
+const ranksCache = {
+  response: null,
+  loadedAt: 0,
+  loadPromise: null,
+};
 
 const DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
 const SOUND_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -143,6 +149,10 @@ const MANBO_SET_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANBO_DANMAKU_CACHE_TTL_MS = 30 * 60 * 1000;
 const MANBO_STATS_TASK_TTL_MS = 60 * 60 * 1000;
 const MANBO_STATS_TASK_HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
+const RANKS_CACHE_TTL_MS = Math.max(
+  60 * 1000,
+  Number(process.env.RANKS_CACHE_TTL_MS ?? 30 * 60 * 1000) || 30 * 60 * 1000
+);
 const MANBO_DANMAKU_PAGE_CONCURRENCY = Math.max(
   1,
   Number(process.env.MANBO_DANMAKU_PAGE_CONCURRENCY ?? 12) || 12
@@ -990,6 +1000,285 @@ function normalizeManboLibraryRecord(record) {
     seriesTitle: normalizeTextValue(record?.seriesTitle),
     author: normalizeTextValue(record?.author),
   };
+}
+
+const RANK_CATEGORY_CONFIG = Object.freeze({
+  missevan: [
+    {
+      key: "new",
+      label: "新品榜",
+      ranks: [
+        { key: "new_daily", label: "日榜" },
+        { key: "new_weekly", label: "周榜" },
+      ],
+    },
+    {
+      key: "popular",
+      label: "人气榜",
+      ranks: [
+        { key: "popular_weekly", label: "周榜" },
+        { key: "popular_monthly", label: "月榜" },
+      ],
+    },
+    {
+      key: "bestseller",
+      label: "畅销榜",
+      ranks: [
+        { key: "bestseller_weekly", label: "周榜" },
+        { key: "bestseller_monthly", label: "月榜" },
+      ],
+    },
+    {
+      key: "peak",
+      label: "巅峰榜",
+      ranks: [{ key: "peak", label: "巅峰榜" }],
+    },
+  ],
+  manbo: [
+    {
+      key: "hot",
+      label: "热播榜",
+      ranks: [{ key: "hot", label: "热播榜" }],
+    },
+    {
+      key: "box_office",
+      label: "票房榜",
+      ranks: [
+        { key: "box_office_total", label: "总榜" },
+        { key: "box_office_member", label: "会员剧" },
+        { key: "box_office_paid", label: "付费剧" },
+      ],
+    },
+    {
+      key: "diamond",
+      label: "钻石榜",
+      ranks: [{ key: "diamond_monthly", label: "月榜" }],
+    },
+    {
+      key: "peak",
+      label: "巅峰榜",
+      ranks: [{ key: "peak", label: "巅峰榜" }],
+    },
+  ],
+});
+
+function normalizeRankNumber(value) {
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function buildRankMainCvText(mainCvs) {
+  const names = normalizeStringArray(mainCvs, 20);
+  return names.length ? `主要CV：${names.join("，")}` : "";
+}
+
+function buildMissevanRankCard(rankKey, item, index, dramas) {
+  if (rankKey === "peak") {
+    const name = normalizeTextValue(item?.name);
+    if (!name) {
+      return null;
+    }
+    const dramaIds = normalizeStringIds(item?.dramaIds, 100);
+    const mainCvs = normalizeStringArray(item?.cvs, 20);
+    return {
+      rank: index + 1,
+      name,
+      cover: normalizeTextValue(item?.cover),
+      view_count: normalizeRankNumber(item?.view_count) ?? 0,
+      drama_ids: dramaIds,
+      main_cvs: mainCvs,
+      main_cv_text: buildRankMainCvText(mainCvs),
+      platform: "missevan",
+      type: "peak",
+    };
+  }
+
+  const dramaId = String(item ?? "").trim();
+  if (!isNumericId(dramaId)) {
+    return null;
+  }
+
+  const drama = dramas?.[dramaId];
+  if (!drama || typeof drama !== "object") {
+    return null;
+  }
+
+  const mainCvs = normalizeStringArray(drama.maincvs, 20);
+  return {
+    rank: index + 1,
+    id: Number(dramaId),
+    name: normalizeTextValue(drama.name),
+    cover: normalizeTextValue(drama.cover),
+    view_count: normalizeRankNumber(drama.view_count) ?? 0,
+    subscription_num: normalizeRankNumber(drama.subscription_num),
+    reward_num: normalizeRankNumber(drama.reward_num),
+    reward_total: normalizeRankNumber(drama.reward_total),
+    updated_at: normalizeTextValue(drama.updated_at),
+    main_cvs: mainCvs,
+    main_cv_text: buildRankMainCvText(mainCvs),
+    platform: "missevan",
+    type: "drama",
+  };
+}
+
+function buildManboRankCard(rank, item, index, dramas) {
+  const dramaId = String(item?.dramaId ?? "").trim();
+  if (!isNumericId(dramaId)) {
+    return null;
+  }
+
+  const drama = dramas?.[dramaId];
+  if (!drama || typeof drama !== "object") {
+    return null;
+  }
+
+  const unitName = normalizeTextValue(rank?.unitName || "排行值");
+  const rankValue =
+    item?.diamondValue != null
+      ? normalizeRankNumber(item.diamondValue)
+      : normalizeRankNumber(item?.hotValue);
+  const mainCvs = normalizeStringArray(drama.maincvs, 20);
+
+  return {
+    rank: index + 1,
+    id: dramaId,
+    name: normalizeTextValue(drama.name),
+    cover: normalizeTextValue(drama.cover),
+    view_count: normalizeRankNumber(drama.view_count) ?? 0,
+    subscription_num: normalizeRankNumber(drama.favorite_count),
+    pay_count: normalizeRankNumber(drama.pay_count),
+    diamond_value: normalizeRankNumber(drama.diamond_value),
+    updated_at: normalizeTextValue(drama.updated_at),
+    rank_value_label: unitName,
+    rank_value: rankValue,
+    main_cvs: mainCvs,
+    main_cv_text: buildRankMainCvText(mainCvs),
+    platform: "manbo",
+  };
+}
+
+function buildNormalizedRank(rankKey, rankConfig, rank, platformPayload, platform) {
+  if (!rank || typeof rank !== "object") {
+    return null;
+  }
+
+  const sourceItems = Array.isArray(rank.items) ? rank.items : [];
+  const dramas =
+    platformPayload?.dramas && typeof platformPayload.dramas === "object"
+      ? platformPayload.dramas
+      : {};
+  const items = sourceItems
+    .map((item, index) =>
+      platform === "missevan"
+        ? buildMissevanRankCard(rankKey, item, index, dramas)
+        : buildManboRankCard(rank, item, index, dramas)
+    )
+    .filter(Boolean);
+
+  return {
+    key: rankKey,
+    label: rankConfig.label,
+    name: normalizeTextValue(rank.name || rankConfig.label),
+    fetchedAt: normalizeTextValue(rank.fetched_at),
+    unitName: normalizeTextValue(rank.unitName),
+    items,
+  };
+}
+
+function buildNormalizedRankPlatform(snapshot, platform) {
+  const platformPayload =
+    snapshot?.[platform] && typeof snapshot[platform] === "object"
+      ? snapshot[platform]
+      : {};
+  const ranks =
+    platformPayload?.ranks && typeof platformPayload.ranks === "object"
+      ? platformPayload.ranks
+      : {};
+
+  const categories = (RANK_CATEGORY_CONFIG[platform] || [])
+    .map((category) => {
+      const normalizedRanks = category.ranks
+        .map((rankConfig) =>
+          buildNormalizedRank(
+            rankConfig.key,
+            rankConfig,
+            ranks[rankConfig.key],
+            platformPayload,
+            platform
+          )
+        )
+        .filter(Boolean);
+
+      if (!normalizedRanks.length) {
+        return null;
+      }
+
+      return {
+        key: category.key,
+        label: category.label,
+        ranks: normalizedRanks,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    key: platform,
+    label: platform === "missevan" ? "猫耳" : "漫播",
+    categories,
+  };
+}
+
+function buildNormalizedRanksResponse(snapshot) {
+  const safeSnapshot =
+    snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+      ? snapshot
+      : {};
+
+  return {
+    success: true,
+    updatedAt: normalizeTextValue(safeSnapshot?._meta?.updated_at),
+    platforms: {
+      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan"),
+      manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo"),
+    },
+  };
+}
+
+async function readRanksSnapshot() {
+  if (!upstashClient.enabled) {
+    throw new Error("Upstash Redis is not configured");
+  }
+
+  const raw = await upstashClient.command(["GET", RANKS_KEY]);
+  if (!raw) {
+    return {};
+  }
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+async function getCachedRanksResponse() {
+  const now = Date.now();
+  if (ranksCache.response && now - ranksCache.loadedAt < RANKS_CACHE_TTL_MS) {
+    return ranksCache.response;
+  }
+
+  if (ranksCache.loadPromise) {
+    return ranksCache.loadPromise;
+  }
+
+  ranksCache.loadPromise = (async () => {
+    try {
+      const snapshot = await readRanksSnapshot();
+      const response = buildNormalizedRanksResponse(snapshot);
+      ranksCache.response = response;
+      ranksCache.loadedAt = Date.now();
+      return response;
+    } finally {
+      ranksCache.loadPromise = null;
+    }
+  })();
+
+  return ranksCache.loadPromise;
 }
 
 function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey = "") {
@@ -4636,6 +4925,24 @@ async function executeStatsTask(task) {
     });
   }
 }
+
+app.get("/ranks", async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", `public, max-age=${Math.floor(RANKS_CACHE_TTL_MS / 1000)}`);
+    return res.json(await getCachedRanksResponse());
+  } catch (error) {
+    console.error("Failed to read ranks snapshot", error);
+    return res.status(503).json({
+      success: false,
+      updatedAt: "",
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+      message: "Ranks are unavailable",
+    });
+  }
+});
 
 app.get("/health", (req, res) => {
   res.json({ ok: true });

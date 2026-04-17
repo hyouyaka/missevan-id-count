@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { DesktopReportPanel } from "@/app/DesktopReportPanel";
 import { MessageDialog } from "@/app/MessageDialog";
 import { OutputPanel } from "@/app/OutputPanel";
+import { RanksPanel } from "@/app/RanksPanel";
 import { SearchPanel } from "@/app/SearchPanel";
 import { SearchResults } from "@/app/SearchResults";
 import {
@@ -71,6 +72,7 @@ export function ToolView({ initialAppConfig }) {
   const visiblePlatforms = [
     { key: "missevan", label: "Missevan" },
     { key: "manbo", label: "Manbo" },
+    { key: "ranks", label: "Ranks" },
     { key: "report", label: "Excel 报表" },
   ].filter((platform) => {
     if (platform.key === "report") {
@@ -79,7 +81,7 @@ export function ToolView({ initialAppConfig }) {
     return platform.key !== "missevan" || appConfig.missevanEnabled;
   });
 
-  const currentBrowseState = currentPlatform === "report" ? null : platformStates[currentPlatform];
+  const currentBrowseState = currentPlatform === "report" || currentPlatform === "ranks" ? null : platformStates[currentPlatform];
   const currentStatsState = currentBrowseState?.stats || null;
   const currentRevenueSummary = currentStatsState?.revenueSummary || buildRevenueSummary(currentStatsState?.revenueResults || [], currentPlatform);
   const stepOneHint =
@@ -995,7 +997,9 @@ export function ToolView({ initialAppConfig }) {
         </div>
       </header>
 
-      {currentPlatform !== "report" ? (
+      {currentPlatform === "ranks" ? (
+        <RanksPanel frontendVersion={appConfig.frontendVersion} handleVersionResponse={updateVersionStatusFromResponse} />
+      ) : currentPlatform !== "report" ? (
         <div className="grid gap-4 sm:gap-5">
           {currentPlatform === "missevan" ? (
             <div className="px-1 text-sm leading-6 text-muted-foreground">
