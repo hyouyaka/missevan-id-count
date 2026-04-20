@@ -35,6 +35,7 @@ const logsDir = path.join(appDataDir, "logs");
 const runtimeDir = path.join(appDataDir, "runtime");
 const usageLogPath = path.join(logsDir, "usage.log");
 const APP_VERSION = String(packageJson.version || "0.0.0").trim() || "0.0.0";
+const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || "1mb").trim() || "1mb";
 const MISSEVAN_ENABLED = process.env.ENABLE_MISSEVAN !== "false";
 const DESKTOP_APP = process.env.DESKTOP_APP === "true";
 const MISSEVAN_COOLDOWN_HOURS = Math.max(
@@ -208,7 +209,25 @@ let lastCooldownRefreshAt = 0;
 let lastCooldownRefreshSucceeded = false;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+app.use((error, req, res, next) => {
+  if (error?.type !== "entity.too.large") {
+    return next(error);
+  }
+
+  console.error("Request payload too large", {
+    method: req.method,
+    url: req.originalUrl || req.url,
+    contentLength: req.get("content-length") || "",
+    limit: JSON_BODY_LIMIT,
+  });
+
+  return res.status(413).json({
+    success: false,
+    message: "Request payload too large",
+  });
+});
 
 function normalizeVersion(value) {
   const normalized = String(value ?? "").trim();
