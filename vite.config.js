@@ -4,9 +4,14 @@ import tailwindcss from "@tailwindcss/vite";
 import fs from "fs";
 import path from "path";
 
+import { loadLocalEnv } from "./envConfig.js";
+
+await loadLocalEnv({ projectRoot: path.resolve(__dirname) });
+
 const packageJson = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
 );
+const backendTarget = `http://localhost:${Number(process.env.PORT) || 3000}`;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -20,20 +25,22 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/search": "http://localhost:3000",
-      "/getdramacards": "http://localhost:3000",
-      "/getdramas": "http://localhost:3000",
-      "/getsoundsummary": "http://localhost:3000",
-      "/getrewardsummary": "http://localhost:3000",
-      "/getrewardmeta": "http://localhost:3000",
-      "/getsounddanmaku": "http://localhost:3000",
-      "/getdanmaku": "http://localhost:3000",
-      "/image-proxy": "http://localhost:3000",
-      "/app-config": "http://localhost:3000",
-      "/manbo/getdramas": "http://localhost:3000",
-      "/manbo/getsetdanmaku": "http://localhost:3000",
-      "/manbo/getsetsummary": "http://localhost:3000",
-      "/manbo/stat-tasks": "http://localhost:3000",
+      "/search": backendTarget,
+      "/getdramacards": backendTarget,
+      "/getdramas": backendTarget,
+      "/getsoundsummary": backendTarget,
+      "/getrewardsummary": backendTarget,
+      "/getrewardmeta": backendTarget,
+      "/getsounddanmaku": backendTarget,
+      "/getdanmaku": backendTarget,
+      "/image-proxy": backendTarget,
+      "/app-config": backendTarget,
+      "/usage-log": backendTarget,
+      "/register-new-drama-ids": backendTarget,
+      "/stat-tasks": backendTarget,
+      "/ranks": backendTarget,
+      "/landing": backendTarget,
+      "/manbo": backendTarget,
     },
   },
 });

@@ -5,13 +5,13 @@ import {
   GemIcon,
   HashIcon,
   HeartIcon,
-  MessageCircleIcon,
+  MicIcon,
   PlayCircleIcon,
   RefreshCwIcon,
   ShoppingCartIcon,
   StarIcon,
   TrophyIcon,
-  UsersIcon,
+  UsersRoundIcon,
 } from "lucide-react";
 
 import { buildVersionedUrl, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
@@ -102,7 +102,7 @@ const metricLegendItems = [
   { label: "收藏", icon: StarIcon },
   { label: "打赏人数", icon: GemIcon },
   { label: "打赏榜总和", icon: CoinsIcon },
-  { label: "付费集弹幕ID数", icon: MessageCircleIcon },
+  { label: "付费集弹幕ID数", icon: UsersRoundIcon },
   { label: "投喂", icon: BeanIcon },
   { label: "购买人数/收听人数", icon: ShoppingCartIcon },
   { label: "排行值", icon: TrophyIcon },
@@ -114,7 +114,7 @@ const metricIconMap = {
   收藏数: StarIcon,
   打赏人数: GemIcon,
   打赏榜总和: CoinsIcon,
-  付费集弹幕ID数: MessageCircleIcon,
+  付费集弹幕ID数: UsersRoundIcon,
   投喂总数: BeanIcon,
   "购买人数/收听人数": ShoppingCartIcon,
   排行值: TrophyIcon,
@@ -277,7 +277,7 @@ function RankItemCard({ item, platform, rankKey = "" }) {
               </div>
             ) : null}
             <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <UsersIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
+              <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
               <span className="min-w-0 break-words">{mainCvText || "暂无"}</span>
             </div>
             {recentUpdatedDate ? (

@@ -1,6 +1,6 @@
 {
   "name": "missevan-counter",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "M&M Toolkit for Missevan and Manbo statistics.",
   "author": "M&M Toolkit",
   "type": "module",
@@ -9,7 +9,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "start": "node server.js",
     "desktop": "npm run build && electron .",

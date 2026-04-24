@@ -1,4 +1,5 @@
-import { PauseCircleIcon } from "lucide-react";
+import { useState } from "react";
+import { BeanIcon, ChevronDownIcon, ChevronUpIcon, CoinsIcon, GemIcon, HandCoinsIcon, MessagesSquareIcon, PauseCircleIcon, PlayCircleIcon, ShoppingCartIcon, Trash2Icon, UsersRoundIcon, XIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,8 @@ import {
   formatPlainNumber,
   formatPlayCountDisplay,
   formatPlayCountWanFixed,
+  formatRevenueDisplayValue,
+  shouldShowRevenueRange,
 } from "@/app/app-utils";
 
 function getMetricToneClass(index) {
@@ -121,11 +124,122 @@ function getOverflowEpisodesForDrama(dramaId, keys = []) {
   return filteredTitles;
 }
 
+const HISTORY_METRIC_ICON_MAP = {
+  playCount: PlayCircleIcon,
+  danmakuCount: MessagesSquareIcon,
+  uniqueUsers: UsersRoundIcon,
+  paidCount: ShoppingCartIcon,
+  rewardNum: GemIcon,
+  revenue: HandCoinsIcon,
+};
+
+function getHistoryMetricIcon(metric, platform) {
+  if (metric?.key === "rewardTotal") {
+    return platform === "manbo" ? BeanIcon : CoinsIcon;
+  }
+  return HISTORY_METRIC_ICON_MAP[metric?.key] || null;
+}
+
+function HistoryMetric({ metric, platform }) {
+  const Icon = getHistoryMetricIcon(metric, platform);
+
+  return (
+    <div className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+      {Icon ? <Icon className="size-3.5 shrink-0 text-foreground/72" aria-hidden="true" /> : null}
+      <span className="sr-only">{metric.label}</span>
+      <span className="font-medium text-foreground">{metric.value}</span>
+    </div>
+  );
+}
+
+function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
+  const [collapsed, setCollapsed] = useState(true);
+
+  if (!entries?.length) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-border/80 bg-background/55 p-3 sm:p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">查询历史</div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px] text-muted-foreground"
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            {collapsed ? <ChevronDownIcon className="size-3.5" /> : <ChevronUpIcon className="size-3.5" />}
+            {collapsed ? "展开" : "收起"}
+          </Button>
+        </div>
+        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-muted-foreground" onClick={onClearHistory}>
+          <Trash2Icon className="size-3.5" />
+          清空
+        </Button>
+      </div>
+
+      {!collapsed ? <div className="grid gap-3">
+        {entries.map((entry, index) => (
+          <div
+            key={entry.id}
+            className={`${index > 0 ? "border-t border-border/70 pt-3" : ""} grid gap-2`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-[11px] font-medium text-foreground/78">{entry.createdAtLabel}</div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 text-muted-foreground"
+                onClick={() => onDeleteHistoryEntry?.(entry.id)}
+                aria-label={`删除 ${entry.createdAtLabel} 这条历史`}
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            </div>
+
+            {entry.summaryMetrics?.length ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="text-[11px] font-medium text-foreground/78">汇总：</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {entry.summaryMetrics.map((metric) => (
+                    <HistoryMetric key={`${entry.id}-${metric.key}`} metric={metric} platform={entry.platform} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid gap-1 text-[11px] leading-5 text-foreground/76">
+              {entry.items?.map((item) => (
+                <div key={item.id} className="flex flex-wrap items-center gap-1.5 break-words">
+                  <span className="font-medium text-foreground/82">{item.title}：</span>
+                  {item.segments?.map((segment) => (
+                    <HistoryMetric
+                      key={`${item.id}-${segment.metricKey}-${segment.value}-${segment.unit || "none"}`}
+                      metric={segment}
+                      platform={entry.platform}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div> : null}
+    </div>
+  );
+}
+
 export function OutputPanel({
   platform,
   progress,
   currentAction,
   elapsedMs,
+  historyEntries = [],
+  currentHistoryEntryId = "",
   playCountResults,
   playCountSelectedEpisodeCount,
   playCountTotal,
@@ -139,6 +253,8 @@ export function OutputPanel({
   revenueSummary,
   isRunning,
   onCancelStatistics,
+  onDeleteHistoryEntry,
+  onClearHistory,
 }) {
   const resolvedRevenueSummary = revenueSummary || buildRevenueSummary(revenueResults, platform);
 
@@ -172,16 +288,6 @@ export function OutputPanel({
 
   function hasRewardNum(drama) {
     return drama?.platform === "missevan" && drama?.rewardNum != null && Number.isFinite(Number(drama?.rewardNum));
-  }
-
-  function shouldShowRevenueRange(drama) {
-    if (!drama || drama.failed) {
-      return false;
-    }
-    if (drama.minRevenueYuan == null || drama.maxRevenueYuan == null) {
-      return false;
-    }
-    return Number.isFinite(Number(drama.minRevenueYuan)) && Number.isFinite(Number(drama.maxRevenueYuan));
   }
 
   function isManboRewardOnlyRevenue(drama) {
@@ -220,52 +326,61 @@ export function OutputPanel({
   const hasAnyResults = Boolean(
     playCountResults?.length || idResults?.length || revenueResults?.length
   );
+  const visibleHistoryEntries =
+    hasAnyResults && currentHistoryEntryId
+      ? historyEntries.filter((entry) => entry.id !== currentHistoryEntryId)
+      : historyEntries;
+  const hasHistoryEntries = Boolean(visibleHistoryEntries?.length);
 
-  if (!isRunning && !hasAnyResults) {
+  if (!isRunning && !hasAnyResults && !hasHistoryEntries) {
     return null;
   }
 
   return (
     <Card className="border-border/80 bg-card shadow-[0_24px_52px_-42px_rgba(15,23,42,0.22)]">
       <CardContent className="flex flex-col gap-5 p-4 sm:p-5">
-        <div className="grid gap-3 rounded-lg border border-border/80 bg-background/70 p-3 sm:p-4">
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <div className="flex min-w-0 flex-col gap-1">
-              <div className="text-base font-semibold text-foreground sm:text-lg">{currentAction || "等待执行操作"}</div>
-              <div className="text-[11px] text-muted-foreground sm:text-xs">
-                <div>处理用时：{formatElapsed(elapsedMs)}</div>
+        {isRunning || hasAnyResults ? (
+          <div className="grid gap-3 rounded-lg border border-border/80 bg-background/70 p-3 sm:p-4">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="text-base font-semibold text-foreground sm:text-lg">{currentAction || "等待执行操作"}</div>
+                <div className="text-[11px] text-muted-foreground sm:text-xs">
+                  <div>处理用时：{formatElapsed(elapsedMs)}</div>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center justify-end gap-2 text-right">
+                <div className="text-lg font-semibold text-foreground sm:text-xl">{progress}%</div>
+                {isRunning ? (
+                  <Badge className="px-3 py-1 text-[11px] sm:text-xs">进行中</Badge>
+                ) : (
+                  <Badge variant="secondary" className="px-3 py-1 text-[11px] sm:text-xs">空闲</Badge>
+                )}
+                {isRunning ? (
+                  <Button variant="secondary" size="sm" className="text-[11px] sm:text-xs" onClick={onCancelStatistics}>
+                    <PauseCircleIcon data-icon="inline-start" />
+                    取消
+                  </Button>
+                ) : null}
               </div>
             </div>
-            <div className="flex shrink-0 items-center justify-end gap-2 text-right">
-              <div className="text-lg font-semibold text-foreground sm:text-xl">{progress}%</div>
-              {isRunning ? (
-                <Badge className="px-3 py-1 text-[11px] sm:text-xs">进行中</Badge>
-              ) : (
-                <Badge variant="secondary" className="px-3 py-1 text-[11px] sm:text-xs">空闲</Badge>
-              )}
-              {isRunning ? (
-                <Button variant="secondary" size="sm" className="text-[11px] sm:text-xs" onClick={onCancelStatistics}>
-                  <PauseCircleIcon data-icon="inline-start" />
-                  取消
-                </Button>
-              ) : null}
-            </div>
+            <Progress value={progress} className="h-3 rounded-full bg-muted" indicatorClassName="bg-primary" />
           </div>
-          <Progress value={progress} className="h-3 rounded-full bg-muted" indicatorClassName="bg-primary" />
-        </div>
+        ) : null}
 
         {playCountResults?.length ? (
           <div className="grid gap-3">
-            <ResultCard
-              title={`汇总 / 已选 ${playCountSelectedEpisodeCount} 集`}
-              insetInverted
-              metrics={[
-                {
-                  label: "总播放量",
-                  value: formatPlayCountDisplay(playCountTotal, playCountFailed),
-                },
-              ]}
-            />
+            {playCountResults.length > 1 ? (
+              <ResultCard
+                title={`汇总 / 已选 ${playCountSelectedEpisodeCount} 集`}
+                insetInverted
+                metrics={[
+                  {
+                    label: "总播放量",
+                    value: formatPlayCountDisplay(playCountTotal, playCountFailed),
+                  },
+                ]}
+              />
+            ) : null}
             {playCountResults.map((drama) => (
               <ResultCard
                 key={`play-${drama.title}`}
@@ -284,23 +399,25 @@ export function OutputPanel({
 
         {idResults?.length ? (
           <div className="grid gap-3">
-            <ResultCard
-              title={`汇总 / 已选 ${idSelectedEpisodeCount} 集`}
-              metrics={[]}
-              footer={
-                <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                  {[
-                    { label: "总弹幕数", value: formatPlainNumber(totalDanmaku) },
-                    { label: "总去重", value: formatPlainNumber(totalUsers) },
-                  ].map((metric, metricIndex) => (
-                    <div key={`summary-${metric.label}`} className={`min-w-0 rounded-[calc(var(--radius)-0.12rem)] border px-2 py-2 text-center sm:px-3 ${getMetricToneClass(metricIndex + idResults.length)}`}>
-                      <div className={`text-[10px] sm:text-xs ${getMetricLabelClass(metricIndex + idResults.length)}`}>{metric.label}</div>
-                      <div className="mt-1 break-words text-sm font-semibold leading-tight sm:text-lg">{metric.value}</div>
-                    </div>
-                  ))}
-                </div>
-              }
-            />
+            {idResults.length > 1 ? (
+              <ResultCard
+                title={`汇总 / 已选 ${idSelectedEpisodeCount} 集`}
+                metrics={[]}
+                footer={
+                  <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                    {[
+                      { label: "总弹幕数", value: formatPlainNumber(totalDanmaku) },
+                      { label: "总去重", value: formatPlainNumber(totalUsers) },
+                    ].map((metric, metricIndex) => (
+                      <div key={`summary-${metric.label}`} className={`min-w-0 rounded-[calc(var(--radius)-0.12rem)] border px-2 py-2 text-center sm:px-3 ${getMetricToneClass(metricIndex + idResults.length)}`}>
+                        <div className={`text-[10px] sm:text-xs ${getMetricLabelClass(metricIndex + idResults.length)}`}>{metric.label}</div>
+                        <div className="mt-1 break-words text-sm font-semibold leading-tight sm:text-lg">{metric.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                }
+              />
+            ) : null}
             {idResults.map((drama) => (
               <ResultCard
                 key={`id-${drama.dramaId || drama.title}`}
@@ -332,7 +449,7 @@ export function OutputPanel({
 
         {revenueResults?.length ? (
           <div className="grid gap-3">
-            {resolvedRevenueSummary ? (
+            {resolvedRevenueSummary && revenueResults.length > 1 ? (
               <ResultCard
                 title={resolvedRevenueSummary.summaryTitle || `汇总 / 已选 ${resolvedRevenueSummary.selectedDramaCount} 部`}
                 insetInverted={false}
@@ -365,9 +482,11 @@ export function OutputPanel({
                     label: getRevenueLabel(resolvedRevenueSummary),
                     value: resolvedRevenueSummary.failed
                       ? "预估失败"
-                      : shouldShowRevenueRange(resolvedRevenueSummary)
-                        ? formatUnitlessMetricRange(resolvedRevenueSummary.minRevenueYuan, resolvedRevenueSummary.maxRevenueYuan)
-                        : formatUnitlessMetricValue(resolvedRevenueSummary.estimatedRevenueYuan),
+                      : formatRevenueDisplayValue(
+                          resolvedRevenueSummary,
+                          formatUnitlessMetricValue,
+                          (minValue, maxValue) => formatUnitlessMetricRange(minValue, maxValue)
+                        ),
                   },
                 ]}
               />
@@ -397,9 +516,11 @@ export function OutputPanel({
                       label: getRevenueLabel(drama),
                       value: drama.failed
                         ? "预估失败"
-                        : shouldShowRevenueRange(drama)
-                          ? formatUnitlessMetricRange(drama.minRevenueYuan, drama.maxRevenueYuan)
-                          : formatUnitlessMetricValue(drama.estimatedRevenueYuan),
+                        : formatRevenueDisplayValue(
+                            drama,
+                            formatUnitlessMetricValue,
+                            (minValue, maxValue) => formatUnitlessMetricRange(minValue, maxValue)
+                          ),
                     },
                   ]}
                   footer={<OverflowEpisodeList titles={overflowTitles} />}
@@ -408,6 +529,8 @@ export function OutputPanel({
             })}
           </div>
         ) : null}
+
+        <ResultHistory entries={visibleHistoryEntries} onDeleteHistoryEntry={onDeleteHistoryEntry} onClearHistory={onClearHistory} />
       </CardContent>
     </Card>
   );

@@ -4,21 +4,19 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ChevronUpIcon,
-  ChevronsLeftIcon,
-  ChevronsRightIcon,
-  CoinsIcon,
+  ChevronsDownIcon,
+  EraserIcon,
   GemIcon,
+  HandCoinsIcon,
   HashIcon,
   HeartIcon,
   ImportIcon,
   ListChecksIcon,
+  MicIcon,
   PlayCircleIcon,
-  RadioTowerIcon,
   ShoppingCartIcon,
   StarIcon,
-  StepBackIcon,
-  StepForwardIcon,
-  UsersIcon,
+  UserSearchIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,9 +24,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { formatPlainNumber } from "@/app/app-utils";
+import { formatPlainNumber, selectDramaEpisodesByMode } from "@/app/app-utils";
 import { isMemberEpisode, isPaidEpisode } from "@/utils/episodeRules";
 
 function buildProxyImageUrl(url) {
@@ -152,13 +149,14 @@ export function SearchResults({
   onSelectionChange,
   onAddDramas,
   onStartRevenueEstimate,
+  onStartDramaPaidIdStatistics,
   onStartPlayCountStatistics,
   onStartIdStatistics,
-  onLoadSearchPage,
+  onLoadMoreResults,
+  hasMoreResults = false,
+  loadedResultCount = 0,
   allResults = [],
-  currentPage = 1,
   isLoadingMoreResults = false,
-  pageSize = 5,
   totalResults = 0,
 }) {
   const idLabel = "作品ID";
@@ -169,21 +167,11 @@ export function SearchResults({
   const importedDramaCount = dramas.length;
   const selectedEpisodeCount = selectedEpisodes.length;
   const visibleResults = results;
-  const totalPages = resultSource === "search" ? Math.max(1, Math.ceil(Number(totalResults || results.length) / Math.max(1, Number(pageSize || 5)))) : 1;
-  const showPagination = resultSource === "search" && totalPages > 1;
-  const safeCurrentPage = Math.min(totalPages, Math.max(1, Number(currentPage) || 1));
+  const showLoadMore = resultSource === "search" && Boolean(hasMoreResults);
+  const loadedCount = Number(loadedResultCount || visibleResults.length || 0);
+  const totalCount = Number(totalResults || 0);
   const selectedDramaIdSet = new Set(actionResults.filter((result) => result.checked).map((result) => String(result.id)));
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
-  const isFirstPage = safeCurrentPage <= 1;
-  const isLastPage = safeCurrentPage >= totalPages;
-
-  function goToPage(page) {
-    const safeTargetPage = Math.min(totalPages, Math.max(1, Number(page) || 1));
-    if (isLoadingMoreResults || safeTargetPage === safeCurrentPage) {
-      return;
-    }
-    onLoadSearchPage?.(safeTargetPage);
-  }
 
   function getTitleClassName(title) {
     const length = String(title ?? "").trim().length;
@@ -234,6 +222,14 @@ export function SearchResults({
   }
 
   function areSelectedDramaPaidEpisodesSelected() {
+    if (!selectedDramaIdSet.size) {
+      return false;
+    }
+    for (const dramaId of selectedDramaIdSet) {
+      if (!getImportedDrama(dramaId)) {
+        return false;
+      }
+    }
     let hasPaidEpisode = false;
     let allPaidSelected = true;
     dramas.forEach((drama) => {
@@ -285,6 +281,15 @@ export function SearchResults({
       .map((result) => (platform === "manbo" ? String(result.id) : Number(result.id)));
   }
 
+  function getFirstSelectedDramaId() {
+    const firstSelected = actionResults.find((result) => result.checked);
+    return firstSelected ? getResultDramaId(firstSelected) : null;
+  }
+
+  function getResultDramaId(item) {
+    return platform === "manbo" ? String(item.id) : Number(item.id);
+  }
+
   function getSelectedEpisodeIds() {
     return selectedEpisodes.map((episode) => episode.sound_id);
   }
@@ -301,6 +306,18 @@ export function SearchResults({
     setResultsMutator((nextResults) => {
       nextResults.forEach((result) => {
         result.checked = false;
+      });
+    });
+  }
+
+  function clearAllSelections() {
+    clearAllResults();
+    setDramasMutator((nextDramas) => {
+      nextDramas.forEach((drama) => {
+        const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
+        episodes.forEach((episode) => {
+          episode.selected = false;
+        });
       });
     });
   }
@@ -333,17 +350,12 @@ export function SearchResults({
     });
   }
 
-  function setSelectedEpisodes(dramaId, predicate) {
+  function setSelectedEpisodes(dramaId, checked) {
     setDramasMutator((nextDramas) => {
-      nextDramas.forEach((drama) => {
-        if (String(drama?.drama?.id) !== String(dramaId)) {
-          return;
-        }
-        const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
-        episodes.forEach((episode) => {
-          episode.selected = Boolean(predicate(episode));
-        });
-        drama.expanded = true;
+      selectDramaEpisodesByMode(nextDramas, [dramaId], {
+        mode: "all",
+        checked,
+        expand: true,
       });
     });
   }
@@ -366,48 +378,85 @@ export function SearchResults({
 
   function setPaidEpisodesSelected(dramaId, checked) {
     setDramasMutator((nextDramas) => {
-      nextDramas.forEach((drama) => {
-        if (String(drama?.drama?.id) !== String(dramaId)) {
-          return;
-        }
-        const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
-        episodes.forEach((episode) => {
-          if (isPaidOrMemberEpisode(episode)) {
-            episode.selected = checked;
-          }
-        });
-        drama.expanded = true;
+      selectDramaEpisodesByMode(nextDramas, [dramaId], {
+        mode: "paid",
+        checked,
+        expand: true,
+        isSelectableEpisode: isPaidOrMemberEpisode,
       });
     });
   }
 
-  function setSelectedDramaPaidEpisodesSelected(checked) {
+  function restoreWindowScroll(scrollY) {
+    if (typeof window === "undefined" || !Number.isFinite(scrollY)) {
+      return;
+    }
+    const restore = () => window.scrollTo({ top: scrollY, left: window.scrollX, behavior: "auto" });
+    restore();
+    window.requestAnimationFrame(() => {
+      restore();
+      window.requestAnimationFrame(restore);
+    });
+    window.setTimeout(restore, 120);
+    window.setTimeout(restore, 420);
+  }
+
+  function setSelectedDramaPaidEpisodesSelected(checked, options = {}) {
+    const scrollY = options?.preserveViewport && typeof window !== "undefined" ? window.scrollY : NaN;
     if (!selectedDramaIdSet.size) {
       if (checked) {
         toast.warning("请先选择作品。");
       }
       return;
     }
-    let hasPaidEpisode = false;
+    if (checked) {
+      onAddDramas?.(getSelectedDramaIds(), {
+        autoCheck: true,
+        expandImported: true,
+        selectMode: "paid",
+        preserveScroll: true,
+      })?.finally?.(() => restoreWindowScroll(scrollY));
+      restoreWindowScroll(scrollY);
+      return;
+    }
     setDramasMutator((nextDramas) => {
-      nextDramas.forEach((drama) => {
-        let dramaHasPaidEpisode = false;
-        if (!selectedDramaIdSet.has(String(drama?.drama?.id))) {
-          return;
-        }
-        const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
-        episodes.forEach((episode) => {
-          if (isPaidOrMemberEpisode(episode)) {
-            hasPaidEpisode = true;
-            dramaHasPaidEpisode = true;
-            episode.selected = checked;
-          }
-        });
-        drama.expanded = dramaHasPaidEpisode;
+      selectDramaEpisodesByMode(nextDramas, Array.from(selectedDramaIdSet), {
+        mode: "paid",
+        checked: false,
+        expand: false,
+        isSelectableEpisode: isPaidOrMemberEpisode,
       });
     });
-    if (checked && !hasPaidEpisode) {
-      toast.warning("没有所选分集。");
+    restoreWindowScroll(scrollY);
+  }
+
+  function setResultAllEpisodesSelected(item, checked) {
+    if (getImportedDrama(item.id)) {
+      setSelectedEpisodes(item.id, Boolean(checked));
+      return;
+    }
+    if (checked) {
+      onAddDramas?.([item.id], {
+        autoCheck: true,
+        expandImported: true,
+        selectMode: "all",
+        preserveScroll: true,
+      });
+    }
+  }
+
+  function setResultPaidEpisodesSelected(item, checked) {
+    if (getImportedDrama(item.id)) {
+      setPaidEpisodesSelected(item.id, Boolean(checked));
+      return;
+    }
+    if (checked) {
+      onAddDramas?.([item.id], {
+        autoCheck: true,
+        expandImported: true,
+        selectMode: "paid",
+        preserveScroll: true,
+      });
     }
   }
 
@@ -457,8 +506,13 @@ export function SearchResults({
     ].filter(Boolean);
   }
 
-  const actionButtonBaseClass = "h-9 w-full justify-start px-2.5 text-xs";
-  const mobileActionButtonClass = "h-9 min-w-0 gap-1 px-1.5 text-[0.64rem] sm:px-2 sm:text-xs";
+  const actionButtonBaseClass = "h-9 w-full justify-start px-2.5 text-[14px]!";
+  const mobileBatchTextClass = "text-[14px]! font-medium";
+  const mobileActionButtonClass = `h-9 min-w-fit gap-1 px-2 ${mobileBatchTextClass}`;
+  const batchSwitchControlClass = "flex h-8 min-w-fit items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
+  const desktopBatchControlClass = "flex h-9 w-full items-center justify-start gap-2 rounded-md border border-border/75 bg-background px-2.5 text-[14px]! font-medium";
+  const resultActionControlClass = "flex h-8 items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
+  const resultActionButtonClass = "h-8 gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-[0.7rem] sm:gap-1.5 sm:px-2.5 sm:text-xs";
 
   function runMobileAction(callback) {
     setMobileActionsOpen(false);
@@ -469,41 +523,51 @@ export function SearchResults({
     if (variant === "mobile") {
       return (
         <div className="grid gap-2 rounded-lg border border-border/80 bg-card/98 p-2 shadow-[0_18px_48px_-30px_rgba(15,23,42,0.42)] backdrop-blur-xl">
-          <div className="grid grid-cols-3 gap-2">
-            <label className="flex h-9 min-w-0 items-center justify-between gap-1 rounded-md border border-border/75 bg-background px-2 text-[0.68rem] font-medium">
-              <span className="truncate">作品全选</span>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <label className={batchSwitchControlClass}>
               <Switch
                 aria-label="切换全选作品"
+                size="sm"
                 checked={areAllResultsSelected()}
                 onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
                 className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
               />
+              <span>作品</span>
             </label>
-            <label className="flex h-9 min-w-0 items-center justify-between gap-1 rounded-md border border-border/75 bg-background px-2 text-[0.68rem] font-medium">
-              <span className="truncate">付费全选</span>
+            <label className={batchSwitchControlClass}>
               <Switch
                 aria-label="切换全选付费"
+                size="sm"
                 checked={areSelectedDramaPaidEpisodesSelected()}
-                onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked))}
+                onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked), { preserveViewport: true })}
                 className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
               />
+              <span>付费</span>
             </label>
             <Button
               variant="outline"
               className={mobileActionButtonClass}
-              onClick={() => runMobileAction(() => onAddDramas?.(getSelectedDramaIds()))}
+              onClick={clearAllSelections}
+            >
+              <EraserIcon data-icon="inline-start" />
+              清空
+            </Button>
+            <Button
+              variant="outline"
+              className={mobileActionButtonClass}
+              onClick={() => runMobileAction(() => onAddDramas?.(getSelectedDramaIds(), { scrollToDramaId: getFirstSelectedDramaId() }))}
             >
               <ListChecksIcon data-icon="inline-start" />
               批量导入
             </Button>
           </div>
-          <div className="grid gap-2 grid-cols-3">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <Button
               variant="secondary"
               className={mobileActionButtonClass}
               onClick={() => runMobileAction(() => onStartRevenueEstimate?.(getSelectedDramaIds()))}
             >
-              <CoinsIcon data-icon="inline-start" />
+              <HandCoinsIcon data-icon="inline-start" />
               收益预估
             </Button>
             <Button
@@ -519,7 +583,7 @@ export function SearchResults({
               className={mobileActionButtonClass}
               onClick={() => runMobileAction(() => onStartIdStatistics?.(getSelectedEpisodeIds()))}
             >
-              <RadioTowerIcon data-icon="inline-start" />
+              <UserSearchIcon data-icon="inline-start" />
               统计弹幕ID
             </Button>
           </div>
@@ -527,7 +591,7 @@ export function SearchResults({
       );
     }
 
-    const statClass = "rounded-md border border-border/75 bg-background px-2.5 py-2";
+    const statClass = "flex min-h-9 items-center justify-between gap-2 rounded-md border border-border/75 bg-background px-2.5 py-1.5";
 
     return (
       <div className="grid gap-3">
@@ -539,33 +603,44 @@ export function SearchResults({
           ].map((item) => (
             <div key={item.label} className={statClass}>
               <div className="text-[0.68rem] text-muted-foreground">{item.label}</div>
-              <div className="mt-0.5 text-base font-semibold text-foreground">{item.value}</div>
+              <div className="text-sm font-semibold text-foreground">{item.value}</div>
             </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
-          <label className="flex h-9 items-center justify-between gap-2 rounded-md border border-border/75 bg-background px-2.5 text-xs font-medium">
-            <span>作品全选</span>
+        <div className="grid gap-2">
+          <label className={desktopBatchControlClass}>
             <Switch
               aria-label="切换全选作品"
               checked={areAllResultsSelected()}
               onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
               className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
             />
+            <span>作品全选</span>
           </label>
-          <label className="flex h-9 items-center justify-between gap-2 rounded-md border border-border/75 bg-background px-2.5 text-xs font-medium">
-            <span>付费全选</span>
+          <label className={desktopBatchControlClass}>
             <Switch
               aria-label="切换全选付费"
               checked={areSelectedDramaPaidEpisodesSelected()}
               onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked))}
               className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
             />
+            <span>付费全选</span>
           </label>
         </div>
 
-        <div className={`grid gap-2 ${platform !== "manbo" ? "grid-cols-2 lg:grid-cols-1" : "grid-cols-1"}`}>
+        <div className="grid gap-2">
+          <Button
+            variant="outline"
+            className={actionButtonBaseClass}
+            onClick={() => {
+              setMobileActionsOpen(false);
+              clearAllSelections();
+            }}
+          >
+            <EraserIcon data-icon="inline-start" />
+            清空选择
+          </Button>
           <Button
             variant="outline"
             className={actionButtonBaseClass}
@@ -577,6 +652,9 @@ export function SearchResults({
             <ListChecksIcon data-icon="inline-start" />
             批量导入
           </Button>
+        </div>
+
+        <div className="grid gap-2">
           <Button
             variant="secondary"
             className={actionButtonBaseClass}
@@ -585,7 +663,7 @@ export function SearchResults({
               onStartRevenueEstimate?.(getSelectedDramaIds());
             }}
           >
-            <CoinsIcon data-icon="inline-start" />
+            <HandCoinsIcon data-icon="inline-start" />
             收益预估
           </Button>
           <Button
@@ -607,7 +685,7 @@ export function SearchResults({
               onStartIdStatistics?.(getSelectedEpisodeIds());
             }}
           >
-            <RadioTowerIcon data-icon="inline-start" />
+            <UserSearchIcon data-icon="inline-start" />
             统计弹幕 ID
           </Button>
         </div>
@@ -621,7 +699,7 @@ export function SearchResults({
       <Card className="min-w-0 border-border/80 bg-card shadow-[0_24px_52px_-42px_rgba(15,23,42,0.24)]">
         <CardContent className="pt-5">
         {results.length ? (
-          <div className="grid gap-3 sm:gap-4">
+          <div className="divide-y divide-border/75">
             {visibleResults.map((item) => {
               const importedDrama = getImportedDrama(item.id);
               const coverUrl = buildProxyImageUrl(item.cover);
@@ -631,7 +709,7 @@ export function SearchResults({
               const metrics = getResultMetrics(item);
 
               return (
-                <div key={item.id} className="rounded-lg border border-border/75 bg-card p-3.5 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)] sm:p-4">
+                <div key={item.id} data-search-result-id={String(item.id)} className="px-0 py-3.5 first:pt-0 last:pb-0 sm:py-4">
                   <div className="flex flex-col gap-2.5">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="flex min-w-0 gap-3">
@@ -648,7 +726,7 @@ export function SearchResults({
                               variant="ghost"
                               size="icon-sm"
                               className="bg-background/84"
-                              onClick={() => onAddDramas?.([item.id], { autoCheck: true, expandImported: true })}
+                              onClick={() => onAddDramas?.([item.id], { autoCheck: true, expandImported: true, preserveScroll: true })}
                             >
                               <ImportIcon />
                             </Button>
@@ -692,7 +770,7 @@ export function SearchResults({
                             <span className="min-w-0 break-all">{item.id}</span>
                           </div>
                           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                            <UsersIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
+                            <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
                             <span className="min-w-0 break-words">{mainCvText.replace(/^主要CV：/, "") || "暂无"}</span>
                           </div>
                           <div className="mt-1 hidden min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm lg:flex">
@@ -713,30 +791,46 @@ export function SearchResults({
                         </div>
                       </div>
 
-                      {importedDrama ? (
-                        <div className="hidden flex-wrap gap-2 lg:flex lg:max-w-[14rem] lg:justify-end">
-                          <div className="flex h-8 items-center gap-2 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-2.5 text-xs font-medium text-foreground">
-                            <Switch
-                              aria-label="切换当前作品全选"
-                              size="sm"
-                              checked={areAllEpisodesSelected(item.id)}
-                              onCheckedChange={(checked) => setSelectedEpisodes(item.id, () => Boolean(checked))}
-                              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
-                            />
-                            <span>全选</span>
-                          </div>
-                          <div className="flex h-8 items-center gap-2 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-2.5 text-xs font-medium text-foreground">
-                            <Switch
-                              aria-label="切换当前作品付费分集"
-                              size="sm"
-                              checked={arePaidEpisodesSelected(item.id)}
-                              onCheckedChange={(checked) => setPaidEpisodesSelected(item.id, Boolean(checked))}
-                              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
-                            />
-                            <span>付费</span>
-                          </div>
+                      <div className="hidden flex-nowrap gap-2 lg:flex lg:justify-end">
+                        <div className={resultActionControlClass}>
+                          <Switch
+                            aria-label="切换当前作品全选"
+                            size="sm"
+                            checked={areAllEpisodesSelected(item.id)}
+                            onCheckedChange={(checked) => setResultAllEpisodesSelected(item, Boolean(checked))}
+                            className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                          />
+                          <span>全选</span>
                         </div>
-                      ) : null}
+                        <div className={resultActionControlClass}>
+                          <Switch
+                            aria-label="切换当前作品付费分集"
+                            size="sm"
+                            checked={arePaidEpisodesSelected(item.id)}
+                            onCheckedChange={(checked) => setResultPaidEpisodesSelected(item, Boolean(checked))}
+                            className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                          />
+                          <span>付费</span>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className={resultActionButtonClass}
+                          onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
+                        >
+                          <UserSearchIcon data-icon="inline-start" />
+                          付费ID
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className={resultActionButtonClass}
+                          onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
+                        >
+                          <HandCoinsIcon data-icon="inline-start" />
+                          收益
+                        </Button>
+                      </div>
                     </div>
 
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm lg:hidden">
@@ -755,40 +849,56 @@ export function SearchResults({
                         ))}
                     </div>
 
-                    {importedDrama ? (
-                      <div className="flex flex-wrap gap-2 lg:hidden">
-                        <div className="flex h-8 items-center gap-2 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-2.5 text-xs font-medium text-foreground">
-                          <Switch
-                            aria-label="切换当前作品全选"
-                            size="sm"
-                            checked={areAllEpisodesSelected(item.id)}
-                            onCheckedChange={(checked) => setSelectedEpisodes(item.id, () => Boolean(checked))}
-                            className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
-                          />
-                          <span>全选</span>
-                        </div>
-                        <div className="flex h-8 items-center gap-2 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-2.5 text-xs font-medium text-foreground">
-                          <Switch
-                            aria-label="切换当前作品付费分集"
-                            size="sm"
-                            checked={arePaidEpisodesSelected(item.id)}
-                            onCheckedChange={(checked) => setPaidEpisodesSelected(item.id, Boolean(checked))}
-                            className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
-                          />
-                          <span>付费</span>
-                        </div>
+                    <div className="flex flex-wrap gap-1.5 lg:hidden">
+                      <div className={resultActionControlClass}>
+                        <Switch
+                          aria-label="切换当前作品全选"
+                          size="sm"
+                          checked={areAllEpisodesSelected(item.id)}
+                          onCheckedChange={(checked) => setResultAllEpisodesSelected(item, Boolean(checked))}
+                          className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                        />
+                        <span>全选</span>
                       </div>
-                    ) : null}
+                      <div className={resultActionControlClass}>
+                        <Switch
+                          aria-label="切换当前作品付费分集"
+                          size="sm"
+                          checked={arePaidEpisodesSelected(item.id)}
+                          onCheckedChange={(checked) => setResultPaidEpisodesSelected(item, Boolean(checked))}
+                          className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                        />
+                        <span>付费</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className={resultActionButtonClass}
+                        onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
+                      >
+                        <UserSearchIcon data-icon="inline-start" />
+                        付费ID
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className={resultActionButtonClass}
+                        onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
+                      >
+                        <HandCoinsIcon data-icon="inline-start" />
+                        收益
+                      </Button>
+                    </div>
 
                     {importedDrama?.expanded ? (
                       <>
-                        <Separator className="my-0" />
-                        <div className="rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/12">
-                          <div className="grid max-h-[22rem] gap-px overflow-y-auto bg-border sm:max-h-[28rem]">
+                        <div className="border-t border-dotted border-border/80" />
+                        <div className="border-y border-border/70 lg:rounded-[calc(var(--radius)-0.05rem)] lg:border lg:bg-muted/12">
+                          <div className="max-h-[22rem] divide-y divide-border overflow-y-auto sm:max-h-[28rem] lg:grid lg:gap-px lg:divide-y-0 lg:bg-border">
                             {getEpisodes(item.id).map((episode) => (
                             <div
                               key={episode.sound_id}
-                              className="flex flex-col gap-2 bg-background/94 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+                              className="flex flex-col gap-2 bg-background px-1 py-2.5 sm:flex-row sm:items-center sm:justify-between lg:bg-background/94 lg:px-3"
                             >
                               <label className="flex min-w-0 flex-1 items-start gap-3">
                                 <Checkbox
@@ -799,12 +909,13 @@ export function SearchResults({
                                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium leading-5">
                                       <span className="break-words">{episode.name}</span>
                                       {getEpisodeTagText(episode) ? (
-                                        <Badge variant={isMemberEpisode(platform, episode) ? "info" : "coral"} className="shrink-0">
+                                        <Badge variant={isMemberEpisode(platform, episode) ? "info" : "coral"} className={`${metaBadgeClassName} shrink-0`}>
                                           {getEpisodeTagText(episode)}
                                         </Badge>
                                       ) : null}
-                                      <span className="text-xs font-normal text-muted-foreground sm:text-[0.82rem]">
-                                        {episodeIdLabel}: {episode.sound_id}
+                                      <span className="inline-flex min-w-0 items-center gap-1 text-xs font-normal text-muted-foreground sm:text-[0.82rem]">
+                                        <HashIcon aria-label={episodeIdLabel} className="size-3.5 shrink-0" title={episodeIdLabel} />
+                                        <span className="min-w-0 break-all">{episode.sound_id}</span>
                                       </span>
                                   </div>
                                 </div>
@@ -819,62 +930,22 @@ export function SearchResults({
                 </div>
               );
             })}
-            {showPagination ? (
-              <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1 text-sm">
+            {showLoadMore ? (
+              <div className="flex flex-row flex-wrap items-center justify-center gap-2 pt-2 text-sm">
                 <Button
-                  aria-label="跳到第一页"
+                  aria-label="加载更多搜索结果"
                   variant="outline"
-                  size="icon-sm"
-                  disabled={isLoadingMoreResults || isFirstPage}
-                  onClick={() => goToPage(1)}
-                >
-                  <StepBackIcon />
-                </Button>
-                <Button
-                  aria-label="跳到上一页"
-                  variant="outline"
-                  size="icon-sm"
-                  disabled={isLoadingMoreResults || isFirstPage}
-                  onClick={() => goToPage(safeCurrentPage - 1)}
-                >
-                  <ChevronsLeftIcon />
-                </Button>
-                <label className="sr-only" htmlFor="search-result-page-select">
-                  选择搜索结果页码
-                </label>
-                <select
-                  id="search-result-page-select"
-                  className="h-8 min-w-24 rounded-[calc(var(--radius)-0.12rem)] border border-input bg-background px-2 text-sm text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-9 min-w-36 gap-2 px-4 text-sm"
                   disabled={isLoadingMoreResults}
-                  value={safeCurrentPage}
-                  onChange={(event) => goToPage(Number(event.target.value) || 1)}
+                  onClick={() => onLoadMoreResults?.()}
                 >
-                  {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
-                    <option key={`search-page-option-${page}`} value={page}>
-                      第 {page} 页
-                    </option>
-                  ))}
-                </select>
-                <Button
-                  aria-label="跳到下一页"
-                  variant="outline"
-                  size="icon-sm"
-                  disabled={isLoadingMoreResults || isLastPage}
-                  onClick={() => goToPage(safeCurrentPage + 1)}
-                >
-                  <ChevronsRightIcon />
+                  {isLoadingMoreResults ? "加载中" : "加载更多"}
+                  <ChevronsDownIcon data-icon="inline-end" />
                 </Button>
-                <Button
-                  aria-label="跳到最后一页"
-                  variant="outline"
-                  size="icon-sm"
-                  disabled={isLoadingMoreResults || isLastPage}
-                  onClick={() => goToPage(totalPages)}
-                >
-                  <StepForwardIcon />
-                </Button>
-                {isLoadingMoreResults ? (
-                  <span className="text-xs text-muted-foreground">加载中</span>
+                {totalCount > 0 ? (
+                  <div className="whitespace-nowrap text-xs text-muted-foreground">
+                    已显示 {Math.min(loadedCount, totalCount)} / {totalCount}
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -914,7 +985,7 @@ export function SearchResults({
           ) : null}
           <div className="fixed inset-x-3 bottom-3 z-40 lg:hidden">
             {mobileActionsOpen ? (
-              <div className="mb-2">
+              <div>
                 <ActionPanel variant="mobile" />
               </div>
             ) : null}
@@ -930,8 +1001,8 @@ export function SearchResults({
                   <div className="text-sm font-semibold">{item.value}</div>
                 </div>
               ))}
-              <Button size="sm" className="h-10 px-3" onClick={() => setMobileActionsOpen((current) => !current)}>
-                统计
+              <Button size="sm" className="h-10 px-3 text-[14px]!" onClick={() => setMobileActionsOpen((current) => !current)}>
+                批量
                 <ChevronUpIcon className={mobileActionsOpen ? "rotate-180 transition-transform" : "transition-transform"} data-icon="inline-end" />
               </Button>
             </div>

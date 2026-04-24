@@ -15,6 +15,7 @@ import {
   collectSelectedEpisodesFromDramas,
   createPlatformState,
   createRuntimeMeta,
+  createStatsHistoryEntry,
   createStatsState,
   extractResponseItems,
   getBackendVersionFromResponse,
@@ -23,14 +24,20 @@ import {
   getSummaryRevenueMode,
   getSummaryRevenueTotals,
   isAbortError,
+  loadPersistedHistoryEntries,
   mergeAppConfig,
   normalizeOptionalNumber,
   normalizeVersion,
+  resolveRevenueSummaryForHistory,
+  savePersistedHistoryEntries,
+  selectDramaEpisodesByMode,
+  STATS_HISTORY_LIMIT,
 } from "@/app/app-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { isMemberEpisode, isPaidEpisode } from "@/utils/episodeRules";
 
 export function ToolView({ initialAppConfig }) {
   const [currentPlatform, setCurrentPlatform] = useState("missevan");
@@ -38,9 +45,18 @@ export function ToolView({ initialAppConfig }) {
     ...getDefaultAppConfig(),
     ...(initialAppConfig || {}),
   });
-  const [platformStates, setPlatformStates] = useState({
-    missevan: createPlatformState(),
-    manbo: createPlatformState(),
+  const [platformStates, setPlatformStates] = useState(() => {
+    const persistedHistory = loadPersistedHistoryEntries();
+    return {
+      missevan: {
+        ...createPlatformState(),
+        historyEntries: persistedHistory.missevan,
+      },
+      manbo: {
+        ...createPlatformState(),
+        historyEntries: persistedHistory.manbo,
+      },
+    };
   });
   const [notice, setNotice] = useState(null);
 
@@ -68,6 +84,13 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     platformStatesRef.current = platformStates;
   }, [platformStates]);
+
+  useEffect(() => {
+    savePersistedHistoryEntries({
+      missevan: platformStates.missevan?.historyEntries || [],
+      manbo: platformStates.manbo?.historyEntries || [],
+    });
+  }, [platformStates.missevan?.historyEntries, platformStates.manbo?.historyEntries]);
 
   const visiblePlatforms = [
     { key: "missevan", label: "Missevan" },
@@ -102,7 +125,22 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
     window.requestAnimationFrame(() => {
-      ref.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      window.requestAnimationFrame(() => {
+        ref.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      });
+    });
+  }
+
+  function scrollToDramaResult(dramaId) {
+    if (typeof window === "undefined" || dramaId == null) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-search-result-id="${CSS.escape(String(dramaId))}"]`)
+          ?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      });
     });
   }
 
@@ -291,6 +329,87 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
+  function appendHistoryEntry(platform, entry, taskId = "") {
+    if (!entry) {
+      return "";
+    }
+
+    const meta = runtimeMetaRef.current[platform];
+    const normalizedTaskId = String(taskId || "").trim();
+    if (normalizedTaskId) {
+      meta.completedHistoryTaskIds ||= new Set();
+      if (meta.completedHistoryTaskIds.has(normalizedTaskId)) {
+        return "";
+      }
+      meta.completedHistoryTaskIds.add(normalizedTaskId);
+    }
+
+    updatePlatformState(platform, (state) => {
+      const nextEntries = [entry, ...(Array.isArray(state.historyEntries) ? state.historyEntries : [])];
+      return {
+        ...state,
+        historyEntries: nextEntries.slice(0, STATS_HISTORY_LIMIT),
+      };
+    });
+
+    return entry.id;
+  }
+
+  function recordCompletedStatsHistory(platform, taskType, taskId, snapshot) {
+    const normalizedTaskId = String(taskId || snapshot?.taskId || "").trim();
+    const result = snapshot?.result || {};
+    const baseStats = platformStatesRef.current[platform]?.stats || createStatsState();
+    const completedStats = {
+      ...baseStats,
+      activeTaskType: taskType,
+      totalDanmaku: Number(snapshot?.totalDanmaku ?? baseStats.totalDanmaku ?? 0),
+      totalUsers: Number(snapshot?.totalUsers ?? baseStats.totalUsers ?? 0),
+      playCountResults: Array.isArray(result.playCountResults) ? result.playCountResults : baseStats.playCountResults,
+      playCountSelectedEpisodeCount: Array.isArray(result.playCountResults)
+        ? Number(result.playCountSelectedEpisodeCount ?? baseStats.playCountSelectedEpisodeCount ?? 0)
+        : baseStats.playCountSelectedEpisodeCount,
+      playCountTotal: Array.isArray(result.playCountResults) ? Number(result.playCountTotal ?? 0) : baseStats.playCountTotal,
+      playCountFailed: Array.isArray(result.playCountResults) ? Boolean(result.playCountFailed) : baseStats.playCountFailed,
+      idResults: Array.isArray(result.idResults) ? result.idResults : baseStats.idResults,
+      idSelectedEpisodeCount: Array.isArray(result.idResults)
+        ? Number(result.idSelectedEpisodeCount ?? baseStats.idSelectedEpisodeCount ?? 0)
+        : baseStats.idSelectedEpisodeCount,
+      revenueResults: Array.isArray(result.revenueResults) ? result.revenueResults : baseStats.revenueResults,
+      revenueSummary: Array.isArray(result.revenueResults)
+        ? resolveRevenueSummaryForHistory(result.revenueResults, platform, result.revenueSummary || null)
+        : baseStats.revenueSummary,
+    };
+
+    const historyEntry = createStatsHistoryEntry(platform, completedStats, {
+      taskType,
+      createdAt: Date.now(),
+    });
+    const historyEntryId = appendHistoryEntry(platform, historyEntry, normalizedTaskId);
+    if (historyEntryId) {
+      updatePlatformState(platform, (state) => ({
+        ...state,
+        stats: {
+          ...state.stats,
+          currentHistoryEntryId: historyEntryId,
+        },
+      }));
+    }
+  }
+
+  function deleteHistoryEntry(platform, entryId) {
+    updatePlatformState(platform, (state) => ({
+      ...state,
+      historyEntries: (Array.isArray(state.historyEntries) ? state.historyEntries : []).filter((entry) => entry.id !== entryId),
+    }));
+  }
+
+  function clearHistoryEntries(platform) {
+    updatePlatformState(platform, (state) => ({
+      ...state,
+      historyEntries: [],
+    }));
+  }
+
   function getAllSearchResults(state) {
     if (state?.searchResultSource !== "search") {
       return state?.searchResults || [];
@@ -337,6 +456,22 @@ export function ToolView({ initialAppConfig }) {
         };
       }),
     }));
+  }
+
+  function mergeSearchResults(existingResults = [], incomingResults = []) {
+    const existingById = new Map(existingResults.map((item) => [String(item.id), item]));
+    const mergedById = new Map();
+    existingResults.forEach((item) => {
+      mergedById.set(String(item.id), item);
+    });
+    incomingResults.forEach((item) => {
+      const previous = existingById.get(String(item.id));
+      mergedById.set(String(item.id), {
+        ...item,
+        checked: previous?.checked ?? item.checked,
+      });
+    });
+    return Array.from(mergedById.values());
   }
 
   async function parseVersionedJsonResponse(response) {
@@ -613,12 +748,13 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
     const taskId = String(task.taskId ?? "").trim();
+    const resolvedTaskType = task.taskType || taskType;
     updatePlatformState(platform, (state) => ({
       ...state,
       stats: {
         ...state.stats,
         activeTaskId: taskId,
-        activeTaskType: task.taskType || taskType,
+        activeTaskType: resolvedTaskType,
       },
     }));
     applyTaskSnapshot(platform, task);
@@ -632,6 +768,9 @@ export function ToolView({ initialAppConfig }) {
     }
     applyTaskSnapshot(platform, initialSnapshot);
     if (initialSnapshot.status === "completed" || initialSnapshot.status === "cancelled") {
+      if (initialSnapshot.status === "completed") {
+        recordCompletedStatsHistory(platform, resolvedTaskType, taskId, initialSnapshot);
+      }
       return;
     }
     if (initialSnapshot.status === "failed") {
@@ -646,6 +785,9 @@ export function ToolView({ initialAppConfig }) {
       }
       applyTaskSnapshot(platform, snapshot);
       if (snapshot.status === "completed" || snapshot.status === "cancelled") {
+        if (snapshot.status === "completed") {
+          recordCompletedStatsHistory(platform, resolvedTaskType, taskId, snapshot);
+        }
         return;
       }
       if (snapshot.status === "failed") {
@@ -773,11 +915,16 @@ export function ToolView({ initialAppConfig }) {
     }
     const shouldAutoCheck = options?.autoCheck === true;
     const shouldExpandImported = options?.expandImported === true;
+    const selectMode = ["all", "paid"].includes(options?.selectMode) ? options.selectMode : "";
+    const shouldSelectImportedEpisodes = Boolean(selectMode);
+    const shouldPreserveScroll = options?.preserveScroll === true;
+    const scrollToDramaId = options?.scrollToDramaId;
     let hasAccessDenied = false;
     const currentState = platformStatesRef.current[platform];
     const existingDramaMap = new Map(currentState.dramas.map((drama) => [String(drama?.drama?.id), drama]));
     const mergedDramas = [...currentState.dramas];
     const importedIdSet = new Set();
+    const requestedIdSet = new Set(ids.map((id) => String(id)));
 
     try {
       await registerFallbackMissevanDramaIds(platform, ids);
@@ -803,12 +950,21 @@ export function ToolView({ initialAppConfig }) {
         }
       }
 
+      if (shouldSelectImportedEpisodes) {
+        selectDramaEpisodesByMode(mergedDramas, Array.from(requestedIdSet), {
+          mode: selectMode,
+          checked: true,
+          expand: shouldExpandImported,
+          isSelectableEpisode: (episode) => isPaidEpisode(platform, episode) || isMemberEpisode(platform, episode),
+        });
+      }
+
       updatePlatformState(platform, (state) => ({
         ...state,
         searchResults: shouldAutoCheck
           ? state.searchResults.map((item) => ({
               ...item,
-              checked: importedIdSet.has(String(item.id)) ? true : item.checked,
+              checked: requestedIdSet.has(String(item.id)) || importedIdSet.has(String(item.id)) ? true : item.checked,
             }))
           : state.searchResults,
         searchPageCache: shouldAutoCheck
@@ -818,7 +974,7 @@ export function ToolView({ initialAppConfig }) {
                 Array.isArray(pageResults)
                   ? pageResults.map((item) => ({
                       ...item,
-                      checked: importedIdSet.has(String(item.id)) ? true : item.checked,
+                      checked: requestedIdSet.has(String(item.id)) || importedIdSet.has(String(item.id)) ? true : item.checked,
                     }))
                   : pageResults,
               ])
@@ -830,12 +986,110 @@ export function ToolView({ initialAppConfig }) {
       if (hasAccessDenied) {
         await showMissevanAccessHint();
       }
-      if (mergedDramas.length > 0) {
+      if (scrollToDramaId != null) {
+        scrollToDramaResult(scrollToDramaId);
+      } else if (mergedDramas.length > 0 && !shouldPreserveScroll) {
         scrollToPanel(resultsPanelRef);
       }
+      return {
+        dramas: mergedDramas,
+        importedIds: Array.from(importedIdSet),
+        requestedIds: Array.from(requestedIdSet),
+      };
     } catch (error) {
       console.error("Failed to import dramas", error);
       toast.error("导入作品失败，请稍后重试。");
+      return {
+        dramas: platformStatesRef.current[platform]?.dramas || [],
+        importedIds: [],
+        requestedIds: Array.from(requestedIdSet),
+      };
+    }
+  }
+
+  async function loadMoreSearchResults(platform = currentPlatformRef.current) {
+    const state = platformStatesRef.current[platform];
+    const keyword = String(state?.searchKeyword ?? "").trim();
+    const pageSize = Number(state?.searchPageSize ?? 5) || 5;
+    const offset = Number(state?.searchNextOffset ?? state?.searchResults?.length ?? 0) || 0;
+    if (!keyword || state?.searchResultSource === "manual" || state?.isLoadingMoreResults || !state?.searchHasMore) {
+      return;
+    }
+
+    updatePlatformState(platform, (current) => ({
+      ...current,
+      isLoadingMoreResults: true,
+    }));
+
+    try {
+      const endpoint =
+        platform === "manbo"
+          ? `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`
+          : `/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`;
+      const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
+        cache: "no-store",
+      });
+      const data = await parseVersionedJsonResponse(response);
+
+      if (!data?.success) {
+        if (platform === "missevan" && data?.accessDenied) {
+          resetSearchFlow(platform);
+          await showMissevanAccessHint();
+        } else if (platform === "manbo" && data?.unavailable) {
+          toast.error("漫播搜索不可用，请改用 ID 或链接导入。");
+          updatePlatformState(platform, (current) => ({
+            ...current,
+            isLoadingMoreResults: false,
+          }));
+        } else {
+          toast.error("加载搜索结果失败，请稍后重试。");
+          updatePlatformState(platform, (current) => ({
+            ...current,
+            isLoadingMoreResults: false,
+          }));
+        }
+        return;
+      }
+
+      const incomingResults = Array.isArray(data.results) ? data.results.map((item) => ({ ...item })) : [];
+      const nextOffset = Number(data.meta?.nextOffset ?? offset + incomingResults.length) || 0;
+      const totalMatched = Number(data.meta?.matchedCount ?? data.meta?.totalMatched ?? state.searchTotalMatched ?? 0) || 0;
+      const page = Math.floor(offset / Math.max(1, pageSize)) + 1;
+
+      updatePlatformState(platform, (current) => {
+        const mergedResults = mergeSearchResults(current.searchResults || [], incomingResults);
+        return {
+          ...current,
+          searchNextOffset: nextOffset,
+          searchHasMore: Boolean(data.meta?.hasMore) && (!totalMatched || mergedResults.length < totalMatched),
+          searchCurrentPage: page,
+          searchPageSize: pageSize,
+          searchTotalMatched: totalMatched,
+          searchPageCache: {
+            ...current.searchPageCache,
+            [page]: incomingResults.map((item) => {
+              const previous = (current.searchResults || []).find((cached) => String(cached.id) === String(item.id));
+              return {
+                ...item,
+                checked: previous?.checked ?? item.checked,
+              };
+            }),
+          },
+          isLoadingMoreResults: false,
+          searchResults: mergedResults,
+        };
+      });
+    } catch (error) {
+      console.error("Failed to load more search results", error);
+      if (platform === "missevan" && error?.accessDenied) {
+        await showMissevanAccessHint();
+      } else {
+        toast.error("加载搜索结果失败，请稍后重试。");
+      }
+      updatePlatformState(platform, (current) => ({
+        ...current,
+        isLoadingMoreResults: false,
+      }));
     }
   }
 
@@ -879,16 +1133,13 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  async function startIdStatisticsConcurrent(soundIds) {
+  async function startIdStatisticsForEpisodes(selectedEpisodes, emptyMessage = "请先选择分集。") {
     const platform = currentPlatformRef.current;
-    const selectedEpisodes = platformStatesRef.current[platform].selectedEpisodesSnapshot.filter((episode) =>
-      soundIds.includes(episode.sound_id)
-    );
     await cancelActiveRun(platform);
     resetOutputs(platform);
     const { runId, signal } = beginRun(platform);
     if (!selectedEpisodes.length) {
-      toast.warning("请先选择分集。");
+      toast.warning(emptyMessage);
       finishRun(platform, runId);
       return;
     }
@@ -917,6 +1168,48 @@ export function ToolView({ initialAppConfig }) {
     } finally {
       finishRun(platform, runId);
     }
+  }
+
+  async function startIdStatisticsConcurrent(soundIds) {
+    const platform = currentPlatformRef.current;
+    const selectedEpisodes = platformStatesRef.current[platform].selectedEpisodesSnapshot.filter((episode) =>
+      soundIds.includes(episode.sound_id)
+    );
+    await startIdStatisticsForEpisodes(selectedEpisodes);
+  }
+
+  async function startDramaPaidIdStatistics(dramaId) {
+    const normalizedDramaId = String(dramaId ?? "").trim();
+    if (!normalizedDramaId) {
+      toast.warning("请先选择作品。");
+      return;
+    }
+    const platform = currentPlatformRef.current;
+    const importResult = await addDramas([dramaId], {
+      autoCheck: true,
+      expandImported: true,
+      preserveScroll: true,
+      selectMode: "paid",
+    });
+    const nextDramas = importResult?.dramas || platformStatesRef.current[platform]?.dramas || [];
+    const drama = nextDramas.find((item) => String(item?.drama?.id) === normalizedDramaId);
+    const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
+    const paidEpisodes = episodes.filter((episode) => isPaidEpisode(platform, episode) || isMemberEpisode(platform, episode));
+
+    if (!paidEpisodes.length) {
+      toast.warning("没有可统计的付费分集。");
+      return;
+    }
+
+    const dramaTitle = drama?.drama?.name || "";
+    const selectedPaidEpisodes = paidEpisodes.map((episode) => ({
+      drama_id: normalizedDramaId,
+      sound_id: episode.sound_id,
+      drama_title: dramaTitle,
+      episode_title: episode.name,
+      duration: Number(episode.duration ?? 0),
+    }));
+    await startIdStatisticsForEpisodes(selectedPaidEpisodes, "没有可统计的付费分集。");
   }
 
   async function startRevenueEstimate(dramaIds) {
@@ -1073,13 +1366,14 @@ export function ToolView({ initialAppConfig }) {
               onSetDramas={setDramas}
               onSetResults={setResults}
               onStartIdStatistics={startIdStatisticsConcurrent}
+              onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
               onStartPlayCountStatistics={startPlayCountStatistics}
               onStartRevenueEstimate={startRevenueEstimate}
-              onLoadSearchPage={(page) => loadSearchPage(page, currentPlatform)}
+              onLoadMoreResults={() => loadMoreSearchResults(currentPlatform)}
               allResults={getAllSearchResults(currentBrowseState)}
-              currentPage={Number(currentBrowseState?.searchCurrentPage ?? 1) || 1}
+              hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
               isLoadingMoreResults={Boolean(currentBrowseState?.isLoadingMoreResults)}
-              pageSize={Number(currentBrowseState?.searchPageSize ?? 5) || 5}
+              loadedResultCount={Number(currentBrowseState?.searchResults?.length ?? 0) || 0}
               platform={currentPlatform}
               resultSource={currentBrowseState?.searchResultSource || "search"}
               results={currentBrowseState?.searchResults || []}
@@ -1091,11 +1385,15 @@ export function ToolView({ initialAppConfig }) {
           <section ref={outputPanelRef} className="grid gap-3">
             <OutputPanel
               currentAction={currentStatsState?.currentAction}
+              currentHistoryEntryId={currentStatsState?.currentHistoryEntryId}
               elapsedMs={currentStatsState?.elapsedMs}
+              historyEntries={currentBrowseState?.historyEntries || []}
               idResults={currentStatsState?.idResults}
               idSelectedEpisodeCount={currentStatsState?.idSelectedEpisodeCount}
               isRunning={currentStatsState?.isRunning}
               onCancelStatistics={cancelCurrentStatistics}
+              onClearHistory={() => clearHistoryEntries(currentPlatform)}
+              onDeleteHistoryEntry={(entryId) => deleteHistoryEntry(currentPlatform, entryId)}
               platform={currentPlatform}
               playCountFailed={currentStatsState?.playCountFailed}
               playCountResults={currentStatsState?.playCountResults}
