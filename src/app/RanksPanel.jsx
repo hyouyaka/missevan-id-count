@@ -12,10 +12,27 @@ import {
   StarIcon,
   TrophyIcon,
   UsersRoundIcon,
+  XIcon,
 } from "lucide-react";
 
 import { buildVersionedUrl, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
+import {
+  canShowRankTrend,
+  fetchRankTrendData as fetchSharedRankTrendData,
+  logRankTrendOpen,
+  rankTrendTagVariants,
+  RankTrendButton,
+  RankTrendDialog as SharedRankTrendDialog,
+} from "@/app/rankTrendUi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -32,7 +49,8 @@ const ranksClientCache = {
   frontendVersion: "",
   promise: null,
 };
-
+const RANK_TREND_CLIENT_SCHEMA_VERSION = 4;
+const rankTrendClientCache = new Map();
 function formatRankUpdatedAt(value) {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -110,13 +128,17 @@ const metricLegendItems = [
 
 const metricIconMap = {
   总播放量: PlayCircleIcon,
+  播放量: PlayCircleIcon,
   追剧数: HeartIcon,
+  追剧人数: HeartIcon,
   收藏数: StarIcon,
   打赏人数: GemIcon,
   打赏榜总和: CoinsIcon,
   付费集弹幕ID数: UsersRoundIcon,
+  弹幕ID数: UsersRoundIcon,
   投喂总数: BeanIcon,
   "购买人数/收听人数": ShoppingCartIcon,
+  收听人数: ShoppingCartIcon,
   排行值: TrophyIcon,
 };
 
@@ -147,6 +169,8 @@ function MetricLegend() {
 }
 
 const rankTagVariants = {
+  猫耳: rankTrendTagVariants.猫耳,
+  漫播: rankTrendTagVariants.漫播,
   免费: "free",
   会员: "member",
   付费: "paid",
@@ -205,6 +229,9 @@ function getRankMetrics(platform, item, rankKey = "") {
   if (item.diamond_value != null) {
     metrics.push({ label: "投喂总数", value: formatPlainNumber(item.diamond_value) });
   }
+  if (rankKey !== "peak" && item.danmaku_uid_count != null) {
+    metrics.push({ label: "付费集弹幕ID数", value: formatPlainNumber(item.danmaku_uid_count) });
+  }
   if (Number(item.pay_count) > 0) {
     metrics.push({ label: "购买人数/收听人数", value: formatPlainNumber(item.pay_count) });
   }
@@ -218,7 +245,7 @@ function getRankMetrics(platform, item, rankKey = "") {
   return metrics;
 }
 
-function RankItemCard({ item, platform, rankKey = "" }) {
+function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0", handleVersionResponse }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const metrics = getRankMetrics(platform, item, rankKey);
   const isMissevanPeak = platform === "missevan" && item.type === "peak";
@@ -228,9 +255,69 @@ function RankItemCard({ item, platform, rankKey = "" }) {
   const titleTags = getRankTitleTags(item);
   const detailIdText = isMissevanPeak ? dramaIdText : item.id;
   const mainCvText = String(item.main_cv_text ?? "").replace(/^主要CV：/, "");
-  const displayMetrics = isMissevanPeak
-    ? [{ label: "系列总播放量", iconLabel: "总播放量", value: formatPlainNumber(item.view_count) }]
-    : metrics;
+  const peakPlayMetric = isMissevanPeak
+    ? { label: "系列总播放量", iconLabel: "总播放量", value: formatPlainNumber(item.view_count) }
+    : null;
+  const displayMetrics = isMissevanPeak ? [] : metrics;
+  const canShowTrend = canShowRankTrend({ platform, rankKey, item, isMissevanPeak, detailIdText });
+  const [isTrendOpen, setIsTrendOpen] = useState(false);
+  const [trendState, setTrendState] = useState({
+    isLoading: false,
+    error: "",
+    data: null,
+  });
+
+  async function openTrendDialog() {
+    if (!canShowTrend) {
+      return;
+    }
+    setIsTrendOpen(true);
+    logRankTrendOpen({
+      platform,
+      id: detailIdText,
+      name: item.name,
+      source: "ranks",
+      rankKey,
+      frontendVersion,
+    });
+    setTrendState((current) => ({
+      ...current,
+      isLoading: !current.data,
+      error: "",
+    }));
+    try {
+      const { response, data } = await fetchSharedRankTrendData({
+        platform,
+        id: detailIdText,
+        frontendVersion,
+      });
+      handleVersionResponse?.({
+        ...data,
+        backendVersion: getBackendVersionFromResponse(response, data),
+        frontendVersion,
+      });
+      if (!response.ok || !data?.success) {
+        setTrendState({
+          isLoading: false,
+          error: data?.message || "趋势数据暂不可用。",
+          data: null,
+        });
+        return;
+      }
+      setTrendState({
+        isLoading: false,
+        error: "",
+        data,
+      });
+    } catch (error) {
+      console.error("Failed to load rank trend", error);
+      setTrendState({
+        isLoading: false,
+        error: "趋势数据暂不可用。",
+        data: null,
+      });
+    }
+  }
 
   return (
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
@@ -280,6 +367,16 @@ function RankItemCard({ item, platform, rankKey = "" }) {
               <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
               <span className="min-w-0 break-words">{mainCvText || "暂无"}</span>
             </div>
+            {peakPlayMetric ? (
+              <div
+                aria-label={`${peakPlayMetric.label}: ${peakPlayMetric.value}`}
+                title={`${peakPlayMetric.label}: ${peakPlayMetric.value}`}
+                className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <MetricIcon label={peakPlayMetric.iconLabel} className={metaIconClassName} />
+                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">{peakPlayMetric.value}</span>
+              </div>
+            ) : null}
             {recentUpdatedDate ? (
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <RefreshCwIcon aria-label="最近更新" className={metaIconClassName} title="最近更新" />
@@ -289,30 +386,48 @@ function RankItemCard({ item, platform, rankKey = "" }) {
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm lg:ml-10">
-          {displayMetrics.map((metric) => (
-              <div
-                key={`${item.id}-${metric.label}`}
-                aria-label={`${metric.label}: ${metric.value}`}
-                title={`${metric.label}: ${metric.value}`}
-                className="max-w-full text-foreground"
-              >
-                <span className="flex max-w-full items-center gap-1">
-                  <MetricIcon label={metric.iconLabel || metric.label} className="size-3.5 shrink-0 text-muted-foreground" />
-                  {metric.iconLabel === "排行值" && metric.label !== "排行值" ? (
-                    <span className="shrink-0 text-[0.68rem] text-muted-foreground">{metric.label}</span>
-                  ) : null}
-                  <span className="max-w-full break-all text-[0.74rem] font-medium tabular-nums sm:text-sm">{metric.value}</span>
-                </span>
-              </div>
-            ))}
-        </div>
+        {displayMetrics.length || canShowTrend ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm lg:ml-10">
+            {displayMetrics.map((metric) => (
+                <div
+                  key={`${item.id}-${metric.label}`}
+                  aria-label={`${metric.label}: ${metric.value}`}
+                  title={`${metric.label}: ${metric.value}`}
+                  className="max-w-full text-foreground"
+                >
+                  <span className="flex max-w-full items-center gap-1">
+                    <MetricIcon label={metric.iconLabel || metric.label} className="size-3.5 shrink-0 text-muted-foreground" />
+                    {metric.iconLabel === "排行值" && metric.label !== "排行值" ? (
+                      <span className="shrink-0 text-[0.68rem] text-muted-foreground">{metric.label}</span>
+                    ) : null}
+                    <span className="max-w-full break-all text-[0.74rem] font-medium tabular-nums sm:text-sm">{metric.value}</span>
+                  </span>
+                </div>
+              ))}
+            {canShowTrend ? (
+              <RankTrendButton
+                onClick={openTrendDialog}
+                aria-label={`查看${item.name}趋势`}
+                title="查看趋势"
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {canShowTrend ? (
+          <SharedRankTrendDialog
+            open={isTrendOpen}
+            onOpenChange={setIsTrendOpen}
+            item={item}
+            platform={platform}
+            trendState={trendState}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );
 }
 
-function RankColumn({ rank, platform }) {
+function RankColumn({ rank, platform, frontendVersion = "0.0.0", handleVersionResponse }) {
   return (
     <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -325,7 +440,14 @@ function RankColumn({ rank, platform }) {
       {rank.items.length ? (
         <div className="grid gap-3">
           {rank.items.map((item) => (
-            <RankItemCard key={`${rank.key}-${item.rank}-${item.id}`} item={item} platform={platform} rankKey={rank.key} />
+            <RankItemCard
+              key={`${rank.key}-${item.rank}-${item.id}`}
+              item={item}
+              platform={platform}
+              rankKey={rank.key}
+              frontendVersion={frontendVersion}
+              handleVersionResponse={handleVersionResponse}
+            />
           ))}
         </div>
       ) : (
@@ -385,6 +507,474 @@ async function fetchRanksData(frontendVersion) {
   })();
 
   return ranksClientCache.promise;
+}
+
+async function fetchRankTrendData({ platform, id, frontendVersion }) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedId = String(id ?? "").trim();
+  const normalizedVersion = String(frontendVersion ?? "").trim();
+  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedPlatform}:${normalizedId}`;
+  const cached = rankTrendClientCache.get(cacheKey);
+  if (cached?.data) {
+    return cached.data;
+  }
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const params = new URLSearchParams({
+    platform: normalizedPlatform,
+    id: normalizedId,
+    schema: String(RANK_TREND_CLIENT_SCHEMA_VERSION),
+  });
+  const promise = (async () => {
+    try {
+      const response = await fetch(buildVersionedUrl(`/ranks/trends?${params.toString()}`, frontendVersion), {
+        cache: "no-cache",
+      });
+      const data = await response.json();
+      const payload = {
+        response,
+        data,
+      };
+      if (response.ok && data?.success) {
+        rankTrendClientCache.set(cacheKey, { data: payload, promise: null });
+      }
+      return payload;
+    } finally {
+      const current = rankTrendClientCache.get(cacheKey);
+      if (current?.promise === promise) {
+        rankTrendClientCache.set(cacheKey, { data: current.data || null, promise: null });
+      }
+    }
+  })();
+
+  rankTrendClientCache.set(cacheKey, { data: null, promise });
+  return promise;
+}
+
+const trendMetricStyles = {
+  view_count: {
+    color: "var(--chart-1)",
+    background: "rgba(36, 74, 134, 0.1)",
+  },
+  danmaku_uid_count: {
+    color: "var(--chart-3)",
+    background: "rgba(31, 157, 138, 0.1)",
+  },
+  subscription_num: {
+    color: "var(--chart-2)",
+    background: "rgba(230, 107, 79, 0.11)",
+  },
+  pay_count: {
+    color: "var(--chart-2)",
+    background: "rgba(230, 107, 79, 0.11)",
+  },
+};
+
+function getTrendMetricStyle(metric) {
+  return trendMetricStyles[metric?.key] || trendMetricStyles.view_count;
+}
+
+function getTrendNumber(value) {
+  if (value == null || String(value).trim() === "") {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function shouldDisplayTrendMetric(metric, platform) {
+  if (platform !== "manbo" || metric?.key !== "pay_count") {
+    return true;
+  }
+  const values = [metric.fromValue, metric.toValue, metric.delta]
+    .map((value) => getTrendNumber(value))
+    .filter((value) => value != null);
+  return values.some((value) => value !== 0);
+}
+
+function getDisplayTrendMetrics(metrics, platform) {
+  return (Array.isArray(metrics) ? metrics : []).filter((metric) =>
+    shouldDisplayTrendMetric(metric, platform)
+  );
+}
+
+function isEmptyPaidDanmakuTrendMetric(metric) {
+  if (metric?.key !== "danmaku_uid_count") {
+    return false;
+  }
+  const fromValue = getTrendNumber(metric.fromValue);
+  const toValue = getTrendNumber(metric.toValue);
+  return fromValue != null && toValue != null && fromValue === 0 && toValue === 0;
+}
+
+function getChartTrendMetrics(metrics) {
+  return (Array.isArray(metrics) ? metrics : []).filter(
+    (metric) => !isEmptyPaidDanmakuTrendMetric(metric)
+  );
+}
+
+function getTrendMetaTags(item, platform) {
+  const platformLabel = platform === "missevan" ? "猫耳" : "漫播";
+  return [platformLabel, getRankPaymentTag(item), ...getRankTitleTags(item)]
+    .map((label) => String(label ?? "").trim())
+    .filter(Boolean);
+}
+
+function getTrendPointPosition(point, index, points, minValue, maxValue) {
+  const width = 320;
+  const height = 170;
+  const left = 18;
+  const right = 18;
+  const top = 20;
+  const bottom = 30;
+  const value = getTrendNumber(point.value);
+  const x = points.length <= 1 ? width / 2 : left + (index / (points.length - 1)) * (width - left - right);
+  const range = maxValue - minValue;
+  const normalized = range === 0 || value == null ? 0.5 : (value - minValue) / range;
+  const y = top + (1 - normalized) * (height - top - bottom);
+  return { x, y };
+}
+
+function clampTrendY(value) {
+  return Math.min(144, Math.max(18, value));
+}
+
+function clampTrendX(value) {
+  return Math.min(304, Math.max(16, value));
+}
+
+function offsetTrendPositions(positions, offset) {
+  if (!offset || positions.length < 2) {
+    return positions;
+  }
+  const first = positions[0];
+  const last = positions.at(-1);
+  const dx = last.x - first.x;
+  const dy = last.y - first.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const normalX = -dy / length;
+  const normalY = dx / length;
+  return positions.map((point) => ({
+    ...point,
+    x: clampTrendX(point.x + normalX * offset),
+    y: clampTrendY(point.y + normalY * offset),
+  }));
+}
+
+function buildTrendPolyline(metric) {
+  const points = Array.isArray(metric?.history) ? metric.history : [];
+  const values = points
+    .map((point) => getTrendNumber(point.value))
+    .filter((value) => value != null);
+  if (values.length < 2) {
+    return null;
+  }
+
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const positions = points.map((point, index) =>
+    getTrendPointPosition(point, index, points, minValue, maxValue)
+  );
+  const segment = points
+    .map((point, index) => ({ point, position: positions[index] }))
+    .filter(({ point }) => getTrendNumber(point.value) != null);
+
+  if (segment.length < 2) {
+    return null;
+  }
+
+  return {
+    points,
+    positions,
+    segments: [segment],
+  };
+}
+
+function buildTrendChartLines(metrics) {
+  const signatureCounts = new Map();
+  return metrics
+    .map((metric) => {
+      const line = buildTrendPolyline(metric);
+      if (!line) {
+        return null;
+      }
+
+      const renderedEntries = line.segments.flatMap((segment) => segment);
+      const signature = renderedEntries
+        .map(({ position }) => position)
+        .map((point) => `${Math.round(point.x)}:${Math.round(point.y)}`)
+        .join("|");
+      const seenCount = signatureCounts.get(signature) || 0;
+      signatureCounts.set(signature, seenCount + 1);
+      const offset = seenCount * 8;
+      const positions = offsetTrendPositions(
+        renderedEntries.map(({ position }) => position),
+        offset
+      );
+      const positionByDate = new Map(
+        renderedEntries.map(({ point }, index) => [String(point?.date ?? ""), positions[index]])
+      );
+      const segments = line.segments
+        .map((segment) =>
+          segment
+            .map(({ point }) => ({
+              point,
+              position: positionByDate.get(String(point?.date ?? "")),
+            }))
+            .filter((segmentPoint) => segmentPoint.position)
+        )
+        .filter((segment) => segment.length > 1);
+
+      return {
+        ...line,
+        metric,
+        positions,
+        segments,
+      };
+    })
+    .filter(Boolean);
+}
+
+function RankTrendLineChart({ metrics }) {
+  const availableMetrics = Array.isArray(metrics) ? metrics : [];
+  const chartLines = buildTrendChartLines(availableMetrics);
+  const axisPoints =
+    availableMetrics.find((metric) => Array.isArray(metric.history) && metric.history.length)?.history || [];
+
+  return (
+    <div className="rounded-lg border border-border/80 bg-background/82 p-2.5 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.22)]">
+      <div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        {availableMetrics.map((metric) => {
+          const style = getTrendMetricStyle(metric);
+          return (
+            <span key={metric.key} className="inline-flex items-center gap-1 text-[0.7rem] font-medium text-foreground">
+              <span
+                aria-hidden="true"
+                className="size-2 rounded-full"
+                style={{ backgroundColor: style.color }}
+              />
+              {metric.label}
+            </span>
+          );
+        })}
+      </div>
+      <div className="relative h-48 w-full overflow-hidden rounded-md bg-card sm:h-52">
+        <svg aria-label="趋势折线图" className="size-full" preserveAspectRatio="none" viewBox="0 0 320 170">
+          {[35, 65, 95, 125].map((y) => (
+            <line
+              key={y}
+              x1="18"
+              x2="302"
+              y1={y}
+              y2={y}
+              stroke="var(--border)"
+              strokeDasharray="4 6"
+              strokeWidth="1"
+            />
+          ))}
+          {chartLines.map((line) => {
+            const metric = line.metric;
+            const style = getTrendMetricStyle(metric);
+            return (
+              <g key={metric.key}>
+                {line.segments.map((segment, index) => (
+                  <polyline
+                    key={`${metric.key}-${index}`}
+                    fill="none"
+                    points={segment.map(({ position }) => `${position.x},${position.y}`).join(" ")}
+                    stroke={style.color}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2.5"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+        {chartLines.flatMap((line) => {
+          const style = getTrendMetricStyle(line.metric);
+          return line.segments.flatMap((segment) => segment).map(({ point, position }) => (
+            <span
+              key={`${line.metric.key}-${point.date}`}
+              aria-hidden="true"
+              className="pointer-events-none absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-card"
+              style={{
+                borderColor: style.color,
+                left: `${(position.x / 320) * 100}%`,
+                top: `${(position.y / 170) * 100}%`,
+              }}
+            />
+          ));
+        })}
+        <div className="pointer-events-none absolute inset-x-3 bottom-2 flex justify-between text-[0.65rem] font-medium text-muted-foreground">
+          {axisPoints.map((point) => (
+            <span key={point.date}>{formatTrendDate(point.date)}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrendMetricRow({ metric }) {
+  const style = getTrendMetricStyle(metric);
+  const emptyPaidEpisodes = isEmptyPaidDanmakuTrendMetric(metric);
+  const hasDelta =
+    !emptyPaidEpisodes && metric?.available && metric.delta != null && Number.isFinite(Number(metric.delta));
+  const deltaStyle = hasDelta
+    ? {
+        backgroundColor: style.color,
+        borderColor: style.color,
+        color: "white",
+      }
+    : undefined;
+  return (
+    <div className="flex items-center justify-between gap-2.5 rounded-lg border border-border/70 bg-background/82 p-2.5">
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          className="flex size-7 shrink-0 items-center justify-center rounded-md border"
+          style={{
+            backgroundColor: style.background,
+            borderColor: style.color,
+            color: style.color,
+            boxShadow: `inset 0 0 0 1px ${style.color}`,
+          }}
+        >
+          <MetricIcon label={metric.label} className="size-3.5" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[0.82rem] font-medium leading-4">{metric.label}</div>
+          <div className="text-[0.7rem] text-muted-foreground">
+            当前：<span className="tabular-nums text-foreground">{formatTrendValue(metric.toValue)}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center justify-end pl-2">
+        <Badge
+          variant={hasDelta ? "outline" : "outline"}
+          className={hasDelta ? "h-6 border-transparent px-2 text-xs shadow-none" : "h-6 px-2 text-xs"}
+          style={deltaStyle}
+        >
+          {formatTrendDelta(emptyPaidEpisodes ? { ...metric, emptyPaidEpisodes } : metric)}
+        </Badge>
+      </div>
+    </div>
+  );
+}
+
+function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
+  const [selectedWindow, setSelectedWindow] = useState("3d");
+  const data = trendState.data;
+  const windows = data?.windows || {};
+  const metaTags = getTrendMetaTags(item, platform);
+  const latestRankHistory = Array.isArray(data?.rankHistory) ? data.rankHistory.at(-1) : null;
+  const availableWindows = ["3d", "7d", "30d"].filter((key) => windows[key]);
+  const activeWindowKey = availableWindows.includes(selectedWindow)
+    ? selectedWindow
+    : availableWindows[0] || "3d";
+  const activeWindow = windows[activeWindowKey];
+  const activeMetrics = getDisplayTrendMetrics(activeWindow?.metrics, platform);
+  const chartMetrics = getChartTrendMetrics(activeMetrics);
+
+  useEffect(() => {
+    if (open) {
+      setSelectedWindow("3d");
+    }
+  }, [open, item?.id]);
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent
+        scrollable
+        className="w-[calc(100vw-1.5rem)] max-w-[30rem] gap-3 overflow-visible p-3 pt-4 sm:max-w-[32rem] sm:p-4 sm:pt-5"
+      >
+        <AlertDialogCancel
+          aria-label="关闭趋势弹窗"
+          className="absolute right-3 top-3"
+          size="icon-xs"
+          title="关闭"
+          variant="secondary"
+        >
+          <XIcon />
+        </AlertDialogCancel>
+        <AlertDialogHeader className="gap-1 place-items-start pr-8 text-left">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <AlertDialogTitle className="text-base">{data?.name || item?.name || "作品"}</AlertDialogTitle>
+            {metaTags.map((label) => (
+              <Badge
+                key={`${item?.id || data?.id || data?.name}-${label}`}
+                variant={rankTagVariants[label] || "outline"}
+                className={metaBadgeClassName}
+              >
+                {label}
+              </Badge>
+            ))}
+          </div>
+          <AlertDialogDescription className="flex items-center gap-1 text-left text-xs">
+            <HashIcon aria-hidden="true" className="size-3.5 shrink-0" />
+            <span className="break-all">{item?.id}</span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        {trendState.isLoading ? (
+          <Alert>
+            <RefreshCwIcon className="size-4 animate-spin" />
+            <AlertTitle>正在读取趋势</AlertTitle>
+            <AlertDescription>正在从榜单快照中计算指标变化。</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {!trendState.isLoading && trendState.error ? (
+          <Alert className="border-destructive/30 bg-destructive/10">
+            <AlertTitle>趋势暂不可用</AlertTitle>
+            <AlertDescription>{trendState.error}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {!trendState.isLoading && !trendState.error && data?.success ? (
+          <div className="grid min-w-0 gap-2.5">
+            <Tabs value={activeWindowKey} onValueChange={setSelectedWindow}>
+              <TabsList className="grid h-8 w-full grid-cols-3 p-1">
+                {availableWindows.map((key) => (
+                  <TabsTrigger key={key} className="h-6 min-w-0 px-2 text-[12px]" value={key}>
+                    {windows[key].label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            {activeWindow ? (
+              <div className="grid min-w-0 gap-2.5">
+                <div className="text-xs leading-5 text-muted-foreground">
+                  {formatTrendDate(activeWindow.fromDate)} → {formatTrendDate(activeWindow.toDate)}
+                  {activeWindow.insufficientData ? "，数据不足" : ""}
+                </div>
+                {latestRankHistory?.ranks?.length ? (
+                  <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                    {latestRankHistory.ranks.map((rank) => (
+                      <Badge key={`${latestRankHistory.date}-${rank.key}`} variant="outline">
+                        {rank.name} #{rank.position}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null}
+                <RankTrendLineChart metrics={chartMetrics} />
+                <div className="grid gap-1.5">
+                  {activeMetrics.map((metric) => (
+                    <TrendMetricRow key={`${activeWindow.key}-${metric.key}`} metric={metric} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse }) {
@@ -582,12 +1172,25 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse })
 
           <div className="hidden gap-3 lg:grid lg:grid-cols-[repeat(auto-fit,minmax(21rem,1fr))]">
             {(category?.ranks || []).map((rank) => (
-              <RankColumn key={rank.key} platform={selectedPlatform} rank={rank} />
+              <RankColumn
+                key={rank.key}
+                platform={selectedPlatform}
+                rank={rank}
+                frontendVersion={frontendVersion}
+                handleVersionResponse={handleVersionResponse}
+              />
             ))}
           </div>
 
           <div className="grid gap-3 lg:hidden">
-            {activeRank ? <RankColumn platform={selectedPlatform} rank={activeRank} /> : null}
+            {activeRank ? (
+              <RankColumn
+                platform={selectedPlatform}
+                rank={activeRank}
+                frontendVersion={frontendVersion}
+                handleVersionResponse={handleVersionResponse}
+              />
+            ) : null}
           </div>
         </>
       ) : null}

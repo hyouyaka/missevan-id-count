@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BeanIcon,
   ChevronDownIcon,
@@ -25,7 +25,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { formatPlainNumber, selectDramaEpisodesByMode } from "@/app/app-utils";
+import { formatPlainNumber, getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
+import {
+  buildSearchTrendEligibleIdSet,
+  fetchRanksTrendLookupData,
+  fetchRankTrendData,
+  logRankTrendOpen,
+  rankTrendTagVariants,
+  RankTrendButton,
+  RankTrendDialog,
+} from "@/app/rankTrendUi";
 import { isMemberEpisode, isPaidEpisode } from "@/utils/episodeRules";
 
 function buildProxyImageUrl(url) {
@@ -101,6 +110,8 @@ function MetricLegend({ className = "" }) {
 }
 
 const searchResultTagVariants = {
+  猫耳: rankTrendTagVariants.猫耳,
+  漫播: rankTrendTagVariants.漫播,
   免费: "free",
   会员: "member",
   付费: "paid",
@@ -140,6 +151,8 @@ const metaIconClassName = "size-3.5 shrink-0 text-muted-foreground";
 
 export function SearchResults({
   platform = "missevan",
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
   resultSource = "search",
   results = [],
   dramas = [],
@@ -171,7 +184,76 @@ export function SearchResults({
   const loadedCount = Number(loadedResultCount || visibleResults.length || 0);
   const totalCount = Number(totalResults || 0);
   const selectedDramaIdSet = new Set(actionResults.filter((result) => result.checked).map((result) => String(result.id)));
+  const trendLookupKey = useMemo(() => {
+    const sourceResults = Array.isArray(allResults) && allResults.length > 0 ? allResults : results;
+    return sourceResults
+      .map((item) => String(item?.id ?? "").trim())
+      .filter(Boolean)
+      .join("|");
+  }, [allResults, results]);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const [trendEligibility, setTrendEligibility] = useState({
+    platform: "",
+    ids: new Set(),
+    isLoaded: false,
+  });
+  const [trendDialog, setTrendDialog] = useState({
+    open: false,
+    item: null,
+  });
+  const [trendState, setTrendState] = useState({
+    isLoading: false,
+    error: "",
+    data: null,
+  });
+  const trendRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!trendLookupKey || (platform !== "missevan" && platform !== "manbo")) {
+      setTrendEligibility((current) => {
+        if (current.platform === platform && !current.isLoaded && current.ids.size === 0) {
+          return current;
+        }
+        return { platform, ids: new Set(), isLoaded: false };
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setTrendEligibility((current) => ({
+      platform,
+      ids: current.platform === platform ? current.ids : new Set(),
+      isLoaded: current.platform === platform ? current.isLoaded : false,
+    }));
+
+    fetchRanksTrendLookupData(frontendVersion)
+      .then(({ response, data }) => {
+        if (cancelled) {
+          return;
+        }
+        if (!response.ok || !data?.success) {
+          setTrendEligibility({ platform, ids: new Set(), isLoaded: true });
+          return;
+        }
+        setTrendEligibility({
+          platform,
+          ids: buildSearchTrendEligibleIdSet(data, platform),
+          isLoaded: true,
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load rank trend eligibility", error);
+          setTrendEligibility({ platform, ids: new Set(), isLoaded: true });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [frontendVersion, platform, trendLookupKey]);
 
   function getTitleClassName(title) {
     const length = String(title ?? "").trim().length;
@@ -288,6 +370,81 @@ export function SearchResults({
 
   function getResultDramaId(item) {
     return platform === "manbo" ? String(item.id) : Number(item.id);
+  }
+
+  function canShowSearchTrend(item) {
+    if (!trendEligibility.isLoaded || trendEligibility.platform !== platform) {
+      return false;
+    }
+    const id = String(item?.id ?? "").trim();
+    return Boolean(id && trendEligibility.ids.has(id));
+  }
+
+  async function openTrendDialog(item) {
+    if (!canShowSearchTrend(item)) {
+      return;
+    }
+    const id = String(item?.id ?? "").trim();
+    const requestId = trendRequestIdRef.current + 1;
+    trendRequestIdRef.current = requestId;
+    setTrendDialog({ open: true, item });
+    logRankTrendOpen({
+      platform,
+      id,
+      name: item?.name,
+      source: "search",
+      frontendVersion,
+    });
+    setTrendState((current) => ({
+      ...current,
+      isLoading: !current.data || String(current.data?.id ?? "") !== id,
+      error: "",
+    }));
+    try {
+      const { response, data } = await fetchRankTrendData({
+        platform,
+        id,
+        frontendVersion,
+      });
+      if (trendRequestIdRef.current !== requestId) {
+        return;
+      }
+      handleVersionResponse?.({
+        ...data,
+        backendVersion: getBackendVersionFromResponse(response, data),
+        frontendVersion,
+      });
+      if (!response.ok || !data?.success) {
+        setTrendState({
+          isLoading: false,
+          error: data?.message || "趋势数据暂不可用。",
+          data: null,
+        });
+        return;
+      }
+      setTrendState({
+        isLoading: false,
+        error: "",
+        data,
+      });
+    } catch (error) {
+      console.error("Failed to load search result trend", error);
+      if (trendRequestIdRef.current !== requestId) {
+        return;
+      }
+      setTrendState({
+        isLoading: false,
+        error: "趋势数据暂不可用。",
+        data: null,
+      });
+    }
+  }
+
+  function closeTrendDialog(open) {
+    setTrendDialog((current) => ({
+      ...current,
+      open,
+    }));
   }
 
   function getSelectedEpisodeIds() {
@@ -707,6 +864,7 @@ export function SearchResults({
               const paymentTag = getSearchResultPaymentTag(item);
               const titleTags = getSearchResultTitleTags(item);
               const metrics = getResultMetrics(item);
+              const canShowTrend = canShowSearchTrend(item);
 
               return (
                 <div key={item.id} data-search-result-id={String(item.id)} className="px-0 py-3.5 first:pt-0 last:pb-0 sm:py-4">
@@ -787,6 +945,13 @@ export function SearchResults({
                                 </span>
                               </div>
                             ))}
+                            {canShowTrend ? (
+                              <RankTrendButton
+                                onClick={() => openTrendDialog(item)}
+                                aria-label={`查看${item.name}趋势`}
+                                title="查看趋势"
+                              />
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -847,7 +1012,24 @@ export function SearchResults({
                             </span>
                           </div>
                         ))}
+                      {canShowTrend ? (
+                        <RankTrendButton
+                          onClick={() => openTrendDialog(item)}
+                          aria-label={`查看${item.name}趋势`}
+                          title="查看趋势"
+                        />
+                      ) : null}
                     </div>
+
+                    {canShowTrend ? (
+                      <RankTrendDialog
+                        open={trendDialog.open && String(trendDialog.item?.id) === String(item.id)}
+                        onOpenChange={closeTrendDialog}
+                        item={item}
+                        platform={platform}
+                        trendState={trendState}
+                      />
+                    ) : null}
 
                     <div className="flex flex-wrap gap-1.5 lg:hidden">
                       <div className={resultActionControlClass}>

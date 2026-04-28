@@ -16,6 +16,10 @@ const badgeVariants = cva(
           "border-[rgba(59,62,122,0.18)] bg-[rgb(59,62,122)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(59,62,122)_90%,black)]",
         coral:
           "border-[rgba(239,131,95,0.18)] bg-[rgb(239,131,95)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(239,131,95)_90%,black)]",
+        missevanPlatform:
+          "border-[rgba(107,114,128,0.2)] bg-[rgb(107,114,128)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(107,114,128)_90%,black)]",
+        manboPlatform:
+          "border-[rgba(122,93,199,0.2)] bg-[rgb(122,93,199)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(122,93,199)_90%,black)]",
         free:
           "border-[rgba(31,157,138,0.18)] bg-[rgb(31,157,138)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(31,157,138)_90%,black)]",
         member:

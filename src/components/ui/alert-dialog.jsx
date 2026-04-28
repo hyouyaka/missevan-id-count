@@ -41,20 +41,51 @@ function AlertDialogOverlay({
 
 function AlertDialogContent({
   className,
+  scrollable = false,
   size = "default",
   ...props
 }) {
+  if (scrollable) {
+    return (
+      <AlertDialogPortal>
+        <AlertDialogOverlay />
+        <AlertDialogPrimitive.Content
+          data-slot="alert-dialog-content"
+          data-size={size}
+          className="fixed inset-0 z-50 h-[100dvh] overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-[max(1rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))] duration-100 outline-none [-webkit-overflow-scrolling:touch] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+          {...props}
+        >
+          <div className="flex min-h-full w-full items-start justify-center">
+            <div
+              className={cn(
+                "group/alert-dialog-content relative z-50 grid w-full gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-[rgba(30,32,41,0.1)] bg-[rgba(255,250,243,0.98)] p-4 text-popover-foreground shadow-[0_24px_60px_-34px_rgba(30,32,41,0.24)] ring-1 ring-[rgba(255,255,255,0.58)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+                className
+              )}
+            >
+              {props.children}
+            </div>
+          </div>
+        </AlertDialogPrimitive.Content>
+      </AlertDialogPortal>
+    );
+  }
+
+  const content = (
+    <AlertDialogPrimitive.Content
+      data-slot="alert-dialog-content"
+      data-size={size}
+      className={cn(
+        "group/alert-dialog-content z-50 grid w-full gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-[rgba(30,32,41,0.1)] bg-[rgba(255,250,243,0.98)] p-4 text-popover-foreground shadow-[0_24px_60px_-34px_rgba(30,32,41,0.24)] ring-1 ring-[rgba(255,255,255,0.58)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+        className
+      )}
+      {...props} />
+  );
+
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
-      <AlertDialogPrimitive.Content
-        data-slot="alert-dialog-content"
-        data-size={size}
-        className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-[rgba(30,32,41,0.1)] bg-[rgba(255,250,243,0.98)] p-4 text-popover-foreground shadow-[0_24px_60px_-34px_rgba(30,32,41,0.24)] ring-1 ring-[rgba(255,255,255,0.58)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          className
-        )}
-        {...props} />
+      {content}
     </AlertDialogPortal>
   );
 }

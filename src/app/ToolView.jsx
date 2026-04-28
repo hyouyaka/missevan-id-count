@@ -1361,6 +1361,8 @@ export function ToolView({ initialAppConfig }) {
           <section ref={resultsPanelRef} className="grid gap-3">
             <SearchResults
               dramas={currentBrowseState?.dramas || []}
+              frontendVersion={appConfig.frontendVersion}
+              handleVersionResponse={updateVersionStatusFromResponse}
               onAddDramas={addDramas}
               onSelectionChange={updateSelection}
               onSetDramas={setDramas}

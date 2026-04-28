@@ -13,6 +13,10 @@ import {
 } from "./manboIndexStore.js";
 import { loadLocalEnv } from "./envConfig.js";
 import { isMissevanLikelyDanmakuOverflow } from "./shared/episodeRules.js";
+import {
+  buildRankTrendResponse,
+  normalizeRankTrendDates,
+} from "./shared/ranksTrendUtils.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("./package.json");
@@ -80,6 +84,7 @@ const MANBO_INFO_KEY = "manbo:info:v1";
 const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks";
+const RANKS_INDEX_KEY = "ranks:index";
 const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
   5000,
   Number(process.env.INFO_STORE_SYNC_INTERVAL_MS ?? 30000) || 30000
@@ -139,7 +144,9 @@ const ranksCache = {
   loadedAt: 0,
   loadPromise: null,
 };
-const RANKS_RESPONSE_SCHEMA_VERSION = 2;
+const rankTrendsCache = new Map();
+const RANKS_RESPONSE_SCHEMA_VERSION = 3;
+const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 4;
 
 function getFiniteNumberEnv(name, fallbackValue) {
   const rawValue = process.env[name];
@@ -1191,7 +1198,6 @@ function buildMissevanRankCard(rankKey, item, index, dramas) {
   }
 
   const mainCvs = normalizeStringArray(drama.maincvs, 20);
-  const isNewRank = rankKey === "new_daily" || rankKey === "new_weekly";
   const rankCatalogName = normalizeRankCatalogName({
     ...drama,
     catalogName: normalizeTextValue(item?.catalogName) || drama.catalogName,
@@ -1222,11 +1228,11 @@ function buildMissevanRankCard(rankKey, item, index, dramas) {
     main_cv_text: buildRankMainCvText(mainCvs),
     platform: "missevan",
     type: "drama",
-    ...(isNewRank ? { danmaku_uid_count: normalizeRankNumber(drama.danmaku_uid_count) } : {}),
+    danmaku_uid_count: normalizeRankNumber(drama.danmaku_uid_count),
   };
 }
 
-function buildManboRankCard(rank, item, index, dramas) {
+function buildManboRankCard(rankKey, rank, item, index, dramas) {
   const dramaId = String(item?.dramaId ?? "").trim();
   if (!isNumericId(dramaId)) {
     return null;
@@ -1275,6 +1281,7 @@ function buildManboRankCard(rank, item, index, dramas) {
     main_cvs: mainCvs,
     main_cv_text: buildRankMainCvText(mainCvs),
     platform: "manbo",
+    ...(rankKey !== "peak" ? { danmaku_uid_count: normalizeRankNumber(drama.danmaku_uid_count) } : {}),
   };
 }
 
@@ -1292,7 +1299,7 @@ function buildNormalizedRank(rankKey, rankConfig, rank, platformPayload, platfor
     .map((item, index) =>
       platform === "missevan"
         ? buildMissevanRankCard(rankKey, item, index, dramas)
-        : buildManboRankCard(rank, item, index, dramas)
+        : buildManboRankCard(rankKey, rank, item, index, dramas)
     )
     .filter(Boolean);
 
@@ -1378,6 +1385,18 @@ async function readRanksSnapshot() {
   return typeof raw === "string" ? JSON.parse(raw) : raw;
 }
 
+async function readRanksJsonKey(key) {
+  if (!upstashClient.enabled) {
+    throw new Error("Upstash Redis is not configured");
+  }
+
+  const raw = await upstashClient.command(["GET", key]);
+  if (!raw) {
+    return null;
+  }
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
 async function getCachedRanksResponse() {
   const now = Date.now();
   if (
@@ -1405,6 +1424,75 @@ async function getCachedRanksResponse() {
   })();
 
   return ranksCache.loadPromise;
+}
+
+function getRankTrendCacheKey(platform, dramaId) {
+  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}`;
+}
+
+async function getCachedRankTrendResponse(platform, dramaId) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  const cacheKey = getRankTrendCacheKey(normalizedPlatform, normalizedDramaId);
+  const now = Date.now();
+  const cached = rankTrendsCache.get(cacheKey);
+  if (cached?.response && now - cached.loadedAt < RANKS_CACHE_TTL_MS) {
+    return cached.response;
+  }
+  if (cached?.loadPromise) {
+    return cached.loadPromise;
+  }
+
+  const loadPromise = (async () => {
+    const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
+    const dates = normalizeRankTrendDates(indexSnapshot);
+    const [metricEntries, listEntries] = await Promise.all([
+      dates.map(async (date) => [
+        date,
+        await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
+      ]),
+      dates.map(async (date) => [
+        date,
+        await readRanksJsonKey(`ranks:list:${date}:${normalizedPlatform}`),
+      ]),
+    ].map((commands) => Promise.all(commands)));
+    const metricSnapshotsByDate = Object.fromEntries(
+      metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
+    );
+    const listSnapshotsByDate = Object.fromEntries(
+      listEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
+    );
+
+    const response = buildRankTrendResponse({
+      platform: normalizedPlatform,
+      id: normalizedDramaId,
+      indexSnapshot,
+      metricSnapshotsByDate,
+      listSnapshotsByDate,
+    });
+    if (response && typeof response === "object") {
+      response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
+    }
+    rankTrendsCache.set(cacheKey, {
+      response,
+      loadedAt: Date.now(),
+      loadPromise: null,
+    });
+    return response;
+  })();
+
+  rankTrendsCache.set(cacheKey, {
+    response: null,
+    loadedAt: 0,
+    loadPromise,
+  });
+
+  try {
+    return await loadPromise;
+  } catch (error) {
+    rankTrendsCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey = "") {
@@ -5279,6 +5367,39 @@ async function executeStatsTask(task) {
   }
 }
 
+app.get("/ranks/trends", async (req, res) => {
+  const platform = String(req.query.platform ?? "").trim();
+  const dramaId = String(req.query.id ?? "").trim();
+  if (!["missevan", "manbo"].includes(platform) || !isNumericId(dramaId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid rank trend request",
+    });
+  }
+
+  try {
+    const response = await getCachedRankTrendResponse(platform, dramaId);
+    if (!response.success) {
+      return res.status(response.status || 404).json(response);
+    }
+    res.setHeader("Cache-Control", `public, max-age=${Math.floor(RANKS_CACHE_TTL_MS / 1000)}`);
+    if (response.latestDate) {
+      res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
+      res.setHeader(
+        "ETag",
+        `"ranks-trend-${platform}-${Buffer.from(`${dramaId}:${response.latestDate}`).toString("base64url")}"`
+      );
+    }
+    return res.json(response);
+  } catch (error) {
+    console.error("Failed to read ranks trend", error);
+    return res.status(503).json({
+      success: false,
+      message: "Rank trends are unavailable",
+    });
+  }
+});
+
 app.get("/ranks", async (req, res) => {
   try {
     const response = await getCachedRanksResponse();
@@ -5472,6 +5593,39 @@ app.post("/usage-log", async (req, res) => {
     const platform = String(payload.platform ?? "").trim();
     const action = String(payload.action ?? "").trim();
     const error = String(payload.error ?? "").trim();
+
+    if (action === "trend") {
+      if (!["missevan", "manbo"].includes(platform)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid usage log payload",
+        });
+      }
+
+      const dramaId = String(payload.dramaId ?? payload.id ?? "").trim().slice(0, 80);
+      if (!isNumericId(dramaId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing trend drama id",
+        });
+      }
+
+      const source = normalizeTextValue(payload.source).slice(0, 40);
+      await writeUsageLog({
+        platform,
+        action,
+        dramaId,
+        ...(normalizeTextValue(payload.dramaName).slice(0, 200)
+          ? { dramaName: normalizeTextValue(payload.dramaName).slice(0, 200) }
+          : {}),
+        ...(source ? { source } : {}),
+        ...(normalizeTextValue(payload.rankKey).slice(0, 80)
+          ? { rankKey: normalizeTextValue(payload.rankKey).slice(0, 80) }
+          : {}),
+        success: true,
+      });
+      return res.json({ success: true });
+    }
 
     if (action === "ranks") {
       if (!["missevan", "manbo"].includes(platform)) {
