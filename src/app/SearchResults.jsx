@@ -35,7 +35,7 @@ import {
   RankTrendButton,
   RankTrendDialog,
 } from "@/app/rankTrendUi";
-import { isMemberEpisode, isPaidEpisode } from "@/utils/episodeRules";
+import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";

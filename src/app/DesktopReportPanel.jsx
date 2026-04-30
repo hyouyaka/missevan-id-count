@@ -6,9 +6,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { isMainEpisode, isMemberEpisode, isPaidEpisode } from "@/utils/episodeRules";
 import { getBackendVersionFromResponse, normalizeVersion } from "@/app/app-utils";
 import { createEmptyGroupedRows, getOutputSheetName } from "../../shared/excelReportMeta.js";
+import { isMainEpisode, isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 function createDefaultState() {
   return {

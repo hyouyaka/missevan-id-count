@@ -67,7 +67,7 @@ const metricIconMap = {
   弹幕ID数: UsersRoundIcon,
   投喂总数: BeanIcon,
   "购买人数/收听人数": ShoppingCartIcon,
-  "付费人数/收听人数": ShoppingCartIcon,
+  "付费/收听人数": ShoppingCartIcon,
   收听人数: ShoppingCartIcon,
   排行值: TrophyIcon,
 };
@@ -662,7 +662,7 @@ function getSnapshotColumns(metrics, platform) {
   if (finalMetric && hasTrendMetricValues(finalMetric)) {
     columns.push({
       key: finalMetricKey,
-      label: platform === "missevan" ? "追剧人数" : "付费人数/收听人数",
+      label: platform === "missevan" ? "追剧人数" : "付费/收听人数",
       metric: finalMetric,
     });
   }

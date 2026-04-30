@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { DesktopReportPanel } from "@/app/DesktopReportPanel";
 import { MessageDialog } from "@/app/MessageDialog";
+import { OngoingPanel } from "@/app/OngoingPanel";
 import { OutputPanel } from "@/app/OutputPanel";
 import { RanksPanel } from "@/app/RanksPanel";
 import { SearchPanel } from "@/app/SearchPanel";
@@ -37,7 +38,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { isMemberEpisode, isPaidEpisode } from "@/utils/episodeRules";
+import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 export function ToolView({ initialAppConfig }) {
   const [currentPlatform, setCurrentPlatform] = useState("missevan");
@@ -93,9 +94,10 @@ export function ToolView({ initialAppConfig }) {
   }, [platformStates.missevan?.historyEntries, platformStates.manbo?.historyEntries]);
 
   const visiblePlatforms = [
-    { key: "missevan", label: "Missevan" },
-    { key: "manbo", label: "Manbo" },
-    { key: "ranks", label: "Ranks" },
+    { key: "missevan", label: "猫耳" },
+    { key: "manbo", label: "漫播" },
+    { key: "ongoing", label: "连载中" },
+    { key: "ranks", label: "榜单" },
     { key: "report", label: "Excel 报表" },
   ].filter((platform) => {
     if (platform.key === "report") {
@@ -104,7 +106,10 @@ export function ToolView({ initialAppConfig }) {
     return platform.key !== "missevan" || appConfig.missevanEnabled;
   });
 
-  const currentBrowseState = currentPlatform === "report" || currentPlatform === "ranks" ? null : platformStates[currentPlatform];
+  const currentBrowseState =
+    currentPlatform === "report" || currentPlatform === "ranks" || currentPlatform === "ongoing"
+      ? null
+      : platformStates[currentPlatform];
   const currentStatsState = currentBrowseState?.stats || null;
   const currentRevenueSummary = currentStatsState?.revenueSummary || buildRevenueSummary(currentStatsState?.revenueResults || [], currentPlatform);
   const stepOneHint =
@@ -1291,9 +1296,12 @@ export function ToolView({ initialAppConfig }) {
                 </Button>
               ) : null}
               <Tabs value={currentPlatform} onValueChange={setCurrentPlatform}>
-                <TabsList className="inline-flex w-full justify-start overflow-x-auto sm:w-fit">
+                <TabsList
+                  className="grid h-9 w-full overflow-hidden p-0.5 sm:inline-flex sm:w-fit"
+                  style={{ gridTemplateColumns: `repeat(${visiblePlatforms.length}, minmax(0, 1fr))` }}
+                >
                   {visiblePlatforms.map((platform) => (
-                    <TabsTrigger key={platform.key} className="px-3" value={platform.key}>
+                    <TabsTrigger key={platform.key} className="h-[30px] px-2 text-sm sm:px-3" value={platform.key}>
                       {platform.label}
                     </TabsTrigger>
                   ))}
@@ -1316,6 +1324,8 @@ export function ToolView({ initialAppConfig }) {
 
       {currentPlatform === "ranks" ? (
         <RanksPanel frontendVersion={appConfig.frontendVersion} handleVersionResponse={updateVersionStatusFromResponse} />
+      ) : currentPlatform === "ongoing" ? (
+        <OngoingPanel frontendVersion={appConfig.frontendVersion} handleVersionResponse={updateVersionStatusFromResponse} />
       ) : currentPlatform !== "report" ? (
         <div className="grid gap-4 sm:gap-5">
           {currentPlatform === "missevan" ? (

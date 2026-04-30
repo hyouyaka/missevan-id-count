@@ -38,6 +38,7 @@ export default defineConfig({
       "/usage-log": backendTarget,
       "/register-new-drama-ids": backendTarget,
       "/stat-tasks": backendTarget,
+      "/ongoing": backendTarget,
       "/ranks/trends": backendTarget,
       "/ranks": backendTarget,
       "/landing": backendTarget,

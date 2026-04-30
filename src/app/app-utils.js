@@ -1,7 +1,6 @@
-export function normalizeVersion(value) {
-  const normalized = String(value ?? "").trim();
-  return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : "0.0.0";
-}
+import { normalizeVersion } from "../../shared/versionUtils.js";
+
+export { normalizeVersion };
 
 export function normalizeRegionBaseUrl(value) {
   return String(value ?? "").trim().replace(/\/+$/, "");
@@ -660,11 +659,6 @@ export function formatPlayCountWanFixed(value) {
   return `${(count / 10000).toFixed(1)}万`;
 }
 
-function formatRewardValue(platform, value) {
-  const amount = Number(value ?? 0);
-  return platform === "manbo" ? `${amount} 红豆` : `${amount} 钻石`;
-}
-
 function formatRevenue(value) {
   const amount = Number(value ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -680,10 +674,6 @@ function formatRevenue(value) {
     return `${amount} 元`;
   }
   return `${amount.toFixed(2).replace(/\.?0+$/, "")} 元`;
-}
-
-function formatRevenueRange(minValue, maxValue) {
-  return `${formatRevenue(minValue)} - ${formatRevenue(maxValue)}`;
 }
 
 export function shouldShowRevenueRange(result) {

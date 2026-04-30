@@ -161,7 +161,7 @@ test("buildRankTrendResponse preserves Manbo big integer ids and pay count metri
     [
       ["view_count", "播放量", 300],
       ["danmaku_uid_count", "付费ID数", 6],
-      ["pay_count", "付费人数/收听人数", 30],
+      ["pay_count", "付费/收听人数", 30],
     ]
   );
 });

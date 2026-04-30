@@ -14,9 +14,14 @@ import {
 import { loadLocalEnv } from "./envConfig.js";
 import { isMissevanLikelyDanmakuOverflow } from "./shared/episodeRules.js";
 import {
+  buildOngoingResponse,
+  normalizeOngoingIdList,
+} from "./shared/ongoingUtils.js";
+import {
   buildRankTrendResponse,
   normalizeRankTrendDates,
 } from "./shared/ranksTrendUtils.js";
+import { normalizeVersion } from "./shared/versionUtils.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("./package.json");
@@ -85,6 +90,7 @@ const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks";
 const RANKS_INDEX_KEY = "ranks:index";
+const ONGOING_KEY_PREFIX = "ongoing";
 const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
   5000,
   Number(process.env.INFO_STORE_SYNC_INTERVAL_MS ?? 30000) || 30000
@@ -145,8 +151,10 @@ const ranksCache = {
   loadPromise: null,
 };
 const rankTrendsCache = new Map();
+const ongoingCache = new Map();
 const RANKS_RESPONSE_SCHEMA_VERSION = 3;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 4;
+const ONGOING_RESPONSE_SCHEMA_VERSION = 3;
 
 function getFiniteNumberEnv(name, fallbackValue) {
   const rawValue = process.env[name];
@@ -185,6 +193,10 @@ const MANBO_DANMAKU_CACHE_MAX_ENTRIES = Math.max(
 const RANKS_CACHE_TTL_MS = Math.max(
   60 * 1000,
   Number(process.env.RANKS_CACHE_TTL_MS ?? 30 * 60 * 1000) || 30 * 60 * 1000
+);
+const ONGOING_CACHE_TTL_MS = Math.max(
+  10 * 1000,
+  Number(process.env.ONGOING_CACHE_TTL_MS ?? 60 * 1000) || 60 * 1000
 );
 const MANBO_DANMAKU_PAGE_CONCURRENCY = Math.max(
   1,
@@ -235,11 +247,6 @@ app.use((error, req, res, next) => {
     message: "Request payload too large",
   });
 });
-
-function normalizeVersion(value) {
-  const normalized = String(value ?? "").trim();
-  return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : "0.0.0";
-}
 
 function getFrontendVersionFromRequest(req) {
   return normalizeVersion(
@@ -1137,8 +1144,7 @@ function normalizeRankNumber(value) {
 }
 
 function buildRankMainCvText(mainCvs) {
-  const names = normalizeStringArray(mainCvs, 20);
-  return names.length ? `主要CV：${names.join("，")}` : "";
+  return buildMainCvText(mainCvs);
 }
 
 function normalizeRankCatalogName(drama) {
@@ -1397,6 +1403,25 @@ async function readRanksJsonKey(key) {
   return typeof raw === "string" ? JSON.parse(raw) : raw;
 }
 
+async function readOngoingIds(platform) {
+  if (!upstashClient.enabled) {
+    throw new Error("Upstash Redis is not configured");
+  }
+
+  const raw = await upstashClient.command(["GET", `${ONGOING_KEY_PREFIX}:${platform}`]);
+  if (!raw) {
+    return [];
+  }
+  if (typeof raw !== "string") {
+    return normalizeOngoingIdList(raw);
+  }
+  try {
+    return normalizeOngoingIdList(JSON.parse(raw));
+  } catch (_) {
+    return normalizeOngoingIdList(raw);
+  }
+}
+
 async function getCachedRanksResponse() {
   const now = Date.now();
   if (
@@ -1428,6 +1453,68 @@ async function getCachedRanksResponse() {
 
 function getRankTrendCacheKey(platform, dramaId) {
   return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}`;
+}
+
+function getOngoingCacheKey(platform) {
+  return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${platform}`;
+}
+
+async function getCachedOngoingResponse(platform) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const cacheKey = getOngoingCacheKey(normalizedPlatform);
+  const now = Date.now();
+  const cached = ongoingCache.get(cacheKey);
+  if (cached?.response && now - cached.loadedAt < ONGOING_CACHE_TTL_MS) {
+    return cached.response;
+  }
+  if (cached?.loadPromise) {
+    return cached.loadPromise;
+  }
+
+  const loadPromise = (async () => {
+    const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
+    const dates = normalizeRankTrendDates(indexSnapshot);
+    const [ongoingIds, metricEntries] = await Promise.all([
+      readOngoingIds(normalizedPlatform),
+      Promise.all(
+        dates.map(async (date) => [
+          date,
+          await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
+        ])
+      ),
+    ]);
+    const metricSnapshotsByDate = Object.fromEntries(
+      metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
+    );
+    const response = buildOngoingResponse({
+      platform: normalizedPlatform,
+      ongoingIds,
+      indexSnapshot,
+      metricSnapshotsByDate,
+    });
+    if (response && typeof response === "object") {
+      response.schemaVersion = ONGOING_RESPONSE_SCHEMA_VERSION;
+    }
+    ongoingCache.set(cacheKey, {
+      response,
+      loadedAt: Date.now(),
+      loadPromise: null,
+    });
+    return response;
+  })();
+
+  ongoingCache.set(cacheKey, {
+    response: null,
+    loadedAt: 0,
+    loadPromise,
+  });
+
+  try {
+    return await loadPromise;
+  } catch (error) {
+    ongoingCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 async function getCachedRankTrendResponse(platform, dramaId) {
@@ -5396,6 +5483,50 @@ app.get("/ranks/trends", async (req, res) => {
     return res.status(503).json({
       success: false,
       message: "Rank trends are unavailable",
+    });
+  }
+});
+
+app.get("/ongoing", async (req, res) => {
+  const platform = String(req.query.platform ?? "").trim();
+  if (!["missevan", "manbo"].includes(platform)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ongoing platform",
+    });
+  }
+
+  try {
+    const response = await getCachedOngoingResponse(platform);
+    if (!response.success) {
+      return res.status(response.status || 404).json(response);
+    }
+    res.setHeader("Cache-Control", "no-store");
+    if (response.latestDate) {
+      res.setHeader("X-Ongoing-Latest-Date", response.latestDate);
+      const etagSource = [
+        ONGOING_RESPONSE_SCHEMA_VERSION,
+        platform,
+        response.latestDate,
+        response.updatedAt || "",
+        Array.isArray(response.items) ? response.items.length : 0,
+      ].join(":");
+      res.setHeader(
+        "ETag",
+        `"ongoing-${Buffer.from(etagSource).toString("base64url")}"`
+      );
+    }
+    return res.json(response);
+  } catch (error) {
+    console.error("Failed to read ongoing dramas", error);
+    return res.status(503).json({
+      success: false,
+      platform,
+      updatedAt: "",
+      latestDate: "",
+      windows: {},
+      items: [],
+      message: "Ongoing dramas are unavailable",
     });
   }
 });

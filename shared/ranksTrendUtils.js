@@ -15,7 +15,7 @@ const TREND_METRICS = Object.freeze({
   manbo: [
     { key: "view_count", label: "播放量" },
     { key: "danmaku_uid_count", label: "付费ID数" },
-    { key: "pay_count", label: "付费人数/收听人数" },
+    { key: "pay_count", label: "付费/收听人数" },
   ],
 });
 

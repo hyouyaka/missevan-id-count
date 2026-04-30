@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { buildVersionedUrl, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
+import { RankBadge } from "@/app/RankBadge";
 import {
   canShowRankTrend,
   fetchRankTrendData as fetchSharedRankTrendData,
@@ -323,9 +324,7 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
       <CardContent className="px-3.5">
         <div className="flex gap-3">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-xs font-semibold tabular-nums text-foreground">
-            {item.rank}
-          </div>
+          <RankBadge rank={item.rank} />
           <div className="relative size-20 shrink-0 overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
             {coverUrl ? (
               <img alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
