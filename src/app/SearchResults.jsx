@@ -27,7 +27,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { formatPlainNumber, getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
 import {
+  buildOngoingTrendEligibleIdSet,
   buildSearchTrendEligibleIdSet,
+  fetchOngoingTrendLookupData,
   fetchRanksTrendLookupData,
   fetchRankTrendData,
   logRankTrendOpen,
@@ -228,24 +230,39 @@ export function SearchResults({
       isLoaded: current.platform === platform ? current.isLoaded : false,
     }));
 
-    fetchRanksTrendLookupData(frontendVersion)
-      .then(({ response, data }) => {
+    Promise.allSettled([
+      fetchRanksTrendLookupData(frontendVersion),
+      fetchOngoingTrendLookupData({ platform, frontendVersion }),
+    ])
+      .then(([ranksResult, ongoingResult]) => {
         if (cancelled) {
           return;
         }
-        if (!response.ok || !data?.success) {
-          setTrendEligibility({ platform, ids: new Set(), isLoaded: true });
-          return;
+
+        const ids = new Set();
+        if (ranksResult.status === "fulfilled") {
+          const { response, data } = ranksResult.value || {};
+          if (response?.ok && data?.success) {
+            buildSearchTrendEligibleIdSet(data, platform).forEach((id) => ids.add(id));
+          }
         }
+
+        if (ongoingResult.status === "fulfilled") {
+          const { response, data } = ongoingResult.value || {};
+          if (response?.ok && data?.success) {
+            buildOngoingTrendEligibleIdSet(data).forEach((id) => ids.add(id));
+          }
+        }
+
         setTrendEligibility({
           platform,
-          ids: buildSearchTrendEligibleIdSet(data, platform),
+          ids,
           isLoaded: true,
         });
       })
       .catch((error) => {
         if (!cancelled) {
-          console.error("Failed to load rank trend eligibility", error);
+          console.error("Failed to load search trend eligibility", error);
           setTrendEligibility({ platform, ids: new Set(), isLoaded: true });
         }
       });

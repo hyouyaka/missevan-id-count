@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const RANK_TREND_CLIENT_SCHEMA_VERSION = 4;
+export const ONGOING_TREND_LOOKUP_SCHEMA_VERSION = 3;
 export const trendActionButtonClassName =
   "w-fit border-[rgba(20,121,111,0.32)] bg-[rgb(20,121,111)] px-2.5 text-white shadow-[0_12px_24px_-16px_rgba(20,121,111,0.72)] hover:bg-[rgb(17,104,96)] hover:text-white";
 
@@ -42,6 +43,8 @@ const ranksTrendLookupCache = {
   promise: null,
 };
 const RANKS_TREND_LOOKUP_TTL_MS = 30 * 60 * 1000;
+const ongoingTrendLookupCache = new Map();
+const ONGOING_TREND_LOOKUP_TTL_MS = 5 * 60 * 1000;
 
 export const rankTrendTagVariants = {
   猫耳: "missevanPlatform",
@@ -212,6 +215,63 @@ export async function fetchRanksTrendLookupData(frontendVersion) {
   return ranksTrendLookupCache.promise;
 }
 
+export async function fetchOngoingTrendLookupData({ platform, frontendVersion } = {}) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  if (normalizedPlatform !== "missevan" && normalizedPlatform !== "manbo") {
+    return { response: { ok: false }, data: null };
+  }
+
+  const normalizedVersion = String(frontendVersion ?? "").trim();
+  const cacheKey = `${ONGOING_TREND_LOOKUP_SCHEMA_VERSION}:${normalizedVersion}:${normalizedPlatform}`;
+  const now = Date.now();
+  const cached = ongoingTrendLookupCache.get(cacheKey);
+  if (cached?.data && now - cached.loadedAt < ONGOING_TREND_LOOKUP_TTL_MS) {
+    return cached.data;
+  }
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const params = new URLSearchParams({
+    platform: normalizedPlatform,
+    schema: String(ONGOING_TREND_LOOKUP_SCHEMA_VERSION),
+    _: String(Date.now()),
+  });
+  const promise = (async () => {
+    try {
+      const response = await fetch(buildVersionedUrl(`/ongoing?${params.toString()}`, frontendVersion), {
+        cache: "no-store",
+      });
+      const data = await response.json();
+      const payload = { response, data };
+      if (response.ok && data?.success) {
+        ongoingTrendLookupCache.set(cacheKey, {
+          data: payload,
+          loadedAt: Date.now(),
+          promise: null,
+        });
+      }
+      return payload;
+    } finally {
+      const current = ongoingTrendLookupCache.get(cacheKey);
+      if (current?.promise === promise) {
+        ongoingTrendLookupCache.set(cacheKey, {
+          data: current.data || null,
+          loadedAt: current.loadedAt || 0,
+          promise: null,
+        });
+      }
+    }
+  })();
+
+  ongoingTrendLookupCache.set(cacheKey, {
+    data: cached?.data || null,
+    loadedAt: cached?.loadedAt || 0,
+    promise,
+  });
+  return promise;
+}
+
 export function logRankTrendOpen({
   platform,
   id,
@@ -275,15 +335,39 @@ export function buildSearchTrendEligibleIdSet(ranksPayload, platform) {
   return idSet;
 }
 
-function getGenericPaymentTag(item) {
+export function buildOngoingTrendEligibleIdSet(ongoingPayload) {
+  const idSet = new Set();
+  const items = Array.isArray(ongoingPayload?.items)
+    ? ongoingPayload.items
+    : Array.isArray(ongoingPayload?.data?.items)
+      ? ongoingPayload.data.items
+      : [];
+  items.forEach((item) => {
+    const id = getRankItemId(item);
+    if (id) {
+      idSet.add(id);
+    }
+  });
+  return idSet;
+}
+
+function getGenericPaymentTag(item, platform) {
+  const explicitLabel = String(item?.payment_label ?? "").trim();
+  if (["付费", "会员", "免费"].includes(explicitLabel)) {
+    return explicitLabel;
+  }
+  const payStatus = String(item?.payStatus ?? item?.paystatus ?? item?.pay_status ?? "").trim();
+  if (["付费", "会员", "免费"].includes(payStatus)) {
+    return payStatus;
+  }
   if (item?.is_member) {
     return "会员";
   }
-  return String(item?.payment_label ?? "").trim();
+  return "";
 }
 
 function getGenericTitleTags(item) {
-  return [item?.content_type_label || item?.catalogName || item?.catalog_name]
+  return [item?.content_type_label || item?.catalogName || item?.catalog_name || item?.catalog_name_label]
     .map((label) => String(label ?? "").trim())
     .map((label) => (label === "有声书" ? "有声剧" : label))
     .filter(Boolean);
@@ -291,9 +375,9 @@ function getGenericTitleTags(item) {
 
 function getTrendMetaTags(item, platform) {
   const platformLabel = platform === "missevan" ? "猫耳" : "漫播";
-  return [platformLabel, getGenericPaymentTag(item), ...getGenericTitleTags(item)]
+  return [...new Set([platformLabel, getGenericPaymentTag(item, platform), ...getGenericTitleTags(item)]
     .map((label) => String(label ?? "").trim())
-    .filter(Boolean);
+    .filter(Boolean))];
 }
 
 const trendMetricStyles = {
@@ -898,9 +982,9 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
         {!trendState.isLoading && !trendState.error && data?.success ? (
           <div className="grid min-w-0 gap-2.5">
             <Tabs value={activeWindowKey} onValueChange={setSelectedWindow}>
-              <TabsList className="grid h-8 w-full grid-cols-3 p-1">
+              <TabsList className="grid w-full grid-cols-3">
                 {availableWindows.map((key) => (
-                  <TabsTrigger key={key} className="h-6 min-w-0 px-2 text-[12px]" value={key}>
+                  <TabsTrigger key={key} className="min-w-0 px-2" value={key}>
                     {windows[key].label}
                   </TabsTrigger>
                 ))}

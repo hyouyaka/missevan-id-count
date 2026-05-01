@@ -23,7 +23,7 @@ const badgeVariants = cva(
         free:
           "border-[rgba(31,157,138,0.18)] bg-[rgb(31,157,138)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(31,157,138)_90%,black)]",
         member:
-          "border-[rgba(59,62,122,0.18)] bg-[rgb(59,62,122)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(59,62,122)_90%,black)]",
+          "border-[rgba(165,120,36,0.24)] bg-[rgb(245,201,93)] text-[rgb(102,63,14)] shadow-[inset_0_1px_0_rgba(255,255,255,0.24)] [a]:hover:bg-[color-mix(in_srgb,rgb(245,201,93)_90%,white)]",
         paid:
           "border-[rgba(239,131,95,0.18)] bg-[rgb(239,131,95)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(239,131,95)_90%,black)]",
         radioDrama:

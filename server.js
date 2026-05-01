@@ -88,7 +88,7 @@ const MANBO_API_HOST = "www.kilamanbo.com";
 const MANBO_INFO_KEY = "manbo:info:v1";
 const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
-const RANKS_KEY = "ranks";
+const RANKS_KEY = "ranks:latest";
 const RANKS_INDEX_KEY = "ranks:index";
 const ONGOING_KEY_PREFIX = "ongoing";
 const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
@@ -1165,11 +1165,27 @@ function getRankContentTypeLabel(drama) {
 }
 
 function getRankPaymentLabel(drama) {
+  const payStatus = normalizeTextValue(
+    drama?.payStatus ?? drama?.paystatus ?? drama?.pay_status
+  );
+  if (["免费", "付费", "会员"].includes(payStatus)) {
+    return payStatus;
+  }
+  const paymentLabel = normalizeTextValue(drama?.payment_label);
+  if (["免费", "付费", "会员"].includes(paymentLabel)) {
+    return paymentLabel;
+  }
   if (drama?.isVIP === true || drama?.is_member === true) {
     return "会员";
   }
-  const payStatus = normalizeTextValue(drama?.payStatus);
-  return ["付费", "免费"].includes(payStatus) ? payStatus : "";
+  return "";
+}
+
+function normalizeDramaCardUsageAction(value) {
+  const action = normalizeTextValue(value);
+  return ["ranks_open_search_result", "ongoing_open_search_result"].includes(action)
+    ? action
+    : "manual_import";
 }
 
 function buildMissevanRankCard(rankKey, item, index, dramas) {
@@ -2294,6 +2310,11 @@ function buildMissevanSearchFallbackCard(record) {
     ...card,
     payment_label: getMissevanPaymentLabel(card),
   };
+}
+
+function getMissevanPrimarySoundIdFromRecord(record) {
+  const primarySoundId = normalizeStringIdArray(record?.soundIds, 1)[0] || "";
+  return Number(primarySoundId) || null;
 }
 
 function normalizeMissevanApiSearchCandidate(item) {
@@ -5783,6 +5804,31 @@ app.post("/usage-log", async (req, res) => {
       return res.json({ success: true });
     }
 
+    if (action === "ongoing") {
+      if (!["missevan", "manbo"].includes(platform)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid usage log payload",
+        });
+      }
+
+      const keyword = normalizeKeyword(payload.keyword);
+      if (!keyword) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing ongoing keyword",
+        });
+      }
+
+      await writeUsageLog({
+        platform,
+        action,
+        keyword,
+        success: true,
+      });
+      return res.json({ success: true });
+    }
+
     if (
       platform !== "missevan" ||
       !["search", "manual_import"].includes(action) ||
@@ -5837,6 +5883,7 @@ app.post("/getdramacards", async (req, res) => {
     return;
   }
   const ids = normalizeDramaIds(req.body.drama_ids || []);
+  const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
   const results = [];
   const failedIds = [];
   let accessDenied = false;
@@ -5844,7 +5891,7 @@ app.post("/getdramacards", async (req, res) => {
   if (ids.length) {
     void writeUsageLog({
       platform: "missevan",
-      action: "manual_import",
+      action: usageAction,
       dramaIds: ids,
       count: ids.length,
     });
@@ -5855,11 +5902,17 @@ app.post("/getdramacards", async (req, res) => {
   const newDramaIds = [];
   for (const id of ids) {
     try {
-      const info = await fetchDramaInfo(id);
+      const libraryRecord = missevanInfoStore.byDramaId.get(String(id));
+      const preferredSoundId = getMissevanPrimarySoundIdFromRecord(libraryRecord);
+      const info = await fetchDramaInfo(id, preferredSoundId);
 
       if (info?.drama) {
-        const libraryRecord = missevanInfoStore.byDramaId.get(String(info.drama.id));
-        const mainCvs = libraryRecord ? getMissevanMainCvNames(libraryRecord) : [];
+        const resolvedLibraryRecord = libraryRecord || missevanInfoStore.byDramaId.get(String(info.drama.id));
+        const primarySoundId =
+          preferredSoundId ||
+          Number(info?.episodes?.episode?.[0]?.sound_id ?? 0) ||
+          null;
+        const mainCvs = resolvedLibraryRecord ? getMissevanMainCvNames(resolvedLibraryRecord) : [];
         let rewardNum = null;
         try {
           const rewardMeta = await fetchRewardDetailMeta(id);
@@ -5882,14 +5935,16 @@ app.post("/getdramacards", async (req, res) => {
           price: Number(info.drama.price ?? 0),
           member_price: Number(info.drama.member_price ?? 0),
           is_member: Boolean(info.drama.is_member),
+          sound_id: primarySoundId,
+          subscription_num: normalizeOptionalFiniteNumber(info.drama.subscription_num),
           reward_num: rewardNum,
           checked: true,
           platform: "missevan",
         };
-        if (libraryRecord && mainCvs.length > 0) {
+        if (resolvedLibraryRecord && mainCvs.length > 0) {
           nextCard.main_cvs = mainCvs;
           nextCard.main_cv_text = buildMainCvText(mainCvs);
-        } else if (!libraryRecord) {
+        } else if (!resolvedLibraryRecord) {
           newDramaIds.push(String(info.drama.id));
         }
         results.push(nextCard);
@@ -6252,6 +6307,7 @@ app.get("/manbo/index/meta", async (req, res) => {
 
 app.post("/manbo/getdramacards", async (req, res) => {
   const items = normalizeRawInputItems(req.body.items || []);
+  const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
   const results = [];
   const failedItems = [];
   let accessDenied = false;
@@ -6259,7 +6315,7 @@ app.post("/manbo/getdramacards", async (req, res) => {
   if (items.length) {
     void writeUsageLog({
       platform: "manbo",
-      action: "manual_import",
+      action: usageAction,
       items: items.map((item) => item.raw),
       count: items.length,
     });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   HashIcon,
   HeartIcon,
@@ -14,10 +14,12 @@ import {
   formatPlainNumber,
   getBackendVersionFromResponse,
 } from "@/app/app-utils";
+import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
   fetchRankTrendData,
   logRankTrendOpen,
+  RankTrendButton,
   RankTrendDialog,
 } from "@/app/rankTrendUi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -36,6 +38,9 @@ const platformLabels = {
   missevan: "猫耳",
   manbo: "漫播",
 };
+
+const mobileMenuTabsListClassName =
+  "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
 
 const tagVariants = {
   猫耳: "missevanPlatform",
@@ -206,7 +211,7 @@ function OngoingMetric({ item, windowKey, metricKey }) {
   );
 }
 
-function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0", handleVersionResponse }) {
+function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const baseMetricKeys = platform === "missevan"
     ? ["view_count", "subscription_num", "danmaku_uid_count"]
@@ -275,45 +280,60 @@ function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0
     }
   }
 
-  function handleCardKeyDown(event) {
-    if (event.key !== "Enter" && event.key !== " ") {
+  function openSearchResult() {
+    if (!platform || !item?.id) {
       return;
     }
-    event.preventDefault();
-    openTrendDialog();
+    onOpenSearchResult?.({
+      platform,
+      id: item.id,
+      name: item.name,
+      paymentLabel: item.payment_label,
+      contentTypeLabel: item.content_type_label,
+      usageAction: "ongoing_open_search_result",
+    });
   }
 
   return (
     <>
       <Card
-        className="overflow-hidden border-border/75 bg-card py-0 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.22)] transition-shadow hover:shadow-[0_22px_48px_-34px_rgba(15,23,42,0.34)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        onClick={openTrendDialog}
-        onKeyDown={handleCardKeyDown}
-        role={canOpenTrend ? "button" : undefined}
-        tabIndex={canOpenTrend ? 0 : undefined}
+        className="overflow-hidden border-border/75 bg-card py-0 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.22)] transition-shadow hover:shadow-[0_22px_48px_-34px_rgba(15,23,42,0.34)]"
       >
         <CardContent className="p-0">
           <div className="flex h-[9.5rem] gap-3 overflow-hidden p-3.5 sm:h-[10.25rem]">
             <RankBadge rank={rank} />
-            <div className="relative size-[5.35rem] shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/50 sm:size-24">
-              {coverUrl ? (
-                <img alt={item.name} className="size-full object-cover" src={coverUrl} />
-              ) : (
-                <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
-                  暂无封面
-                </div>
-              )}
-              {paymentTag ? (
-                <Badge variant={tagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>
-                  {paymentTag}
-                </Badge>
+            <div className="flex w-[5.35rem] shrink-0 flex-col items-center gap-1.5 sm:w-24">
+              <div className="relative size-[5.35rem] overflow-hidden rounded-md border border-border/70 bg-muted/50 sm:size-24">
+                {coverUrl ? (
+                  <img alt={item.name} className="size-full object-cover" src={coverUrl} />
+                ) : (
+                  <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+                    暂无封面
+                  </div>
+                )}
+                {paymentTag ? (
+                  <Badge variant={tagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>
+                    {paymentTag}
+                  </Badge>
+                ) : null}
+              </div>
+              {canOpenTrend ? (
+                <RankTrendButton
+                  onClick={openTrendDialog}
+                  aria-label={`查看${item.name}趋势`}
+                  title="查看趋势"
+                />
               ) : null}
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-0.5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <h2 className="line-clamp-2 min-w-0 break-words text-base font-semibold leading-5 text-foreground sm:text-lg">
+                <button
+                  type="button"
+                  className="line-clamp-2 min-w-0 break-words rounded-sm text-left text-lg! font-semibold! leading-6! text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  onClick={openSearchResult}
+                >
                   {item.name || "未命名剧集"}
-                </h2>
+                </button>
                 {titleTags.map((label) => (
                   <Badge
                     key={`${item.id}-${label}`}
@@ -358,12 +378,13 @@ function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0
   );
 }
 
-export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse }) {
+export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
   const [selectedPlatform, setSelectedPlatform] = useState("missevan");
   const [selectedWindow, setSelectedWindow] = useState("3d");
   const [ongoingData, setOngoingData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const loggedOngoingRef = useRef(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -409,6 +430,32 @@ export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse 
     };
   }, [frontendVersion, selectedPlatform]);
 
+  useEffect(() => {
+    if (isLoading || errorMessage || !ongoingData?.success) {
+      return;
+    }
+
+    const logKey = selectedPlatform;
+    if (loggedOngoingRef.current.has(logKey)) {
+      return;
+    }
+    loggedOngoingRef.current.add(logKey);
+
+    const platformLabel = platformLabels[selectedPlatform] || selectedPlatform;
+    fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: selectedPlatform,
+        action: "ongoing",
+        keyword: `${platformLabel}连载中`,
+        success: true,
+      }),
+    }).catch((error) => {
+      console.error("Failed to log ongoing view", error);
+    });
+  }, [errorMessage, frontendVersion, isLoading, ongoingData?.success, selectedPlatform]);
+
   const windows = ongoingData?.windows || {};
   const availableWindows = ["3d", "7d", "30d"].filter((key) => windows[key]);
   const activeWindow = availableWindows.includes(selectedWindow)
@@ -432,21 +479,44 @@ export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse 
               数据更新：{formatOngoingUpdatedAt(ongoingData?.updatedAt)}
             </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-            <Tabs value={activeWindow} onValueChange={setSelectedWindow}>
-              <TabsList aria-label="选择增量周期" className="grid h-9 w-full grid-cols-3 p-0.5 sm:w-fit">
-                {["3d", "7d", "30d"].map((key) => (
-                  <TabsTrigger key={key} className="h-8 px-3 text-xs" value={key}>
-                    {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
+          <div className="grid gap-0 overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-sm sm:hidden">
+            <div className="flex h-10 items-center gap-1.5 px-1.5">
+              <Tabs value={selectedPlatform} onValueChange={setSelectedPlatform} className="min-w-0 flex-[1.35] gap-0">
+                <TabsList aria-label="选择平台" className={`${mobileMenuTabsListClassName} grid-cols-2`}>
+                  {["missevan", "manbo"].map((platform) => (
+                    <TabsTrigger key={platform} className="min-w-0 px-1.5" value={platform}>
+                      <PlatformTabLabel platform={platform} />
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <div className="h-6 w-px shrink-0 bg-border/80" />
+              <Tabs value={activeWindow} onValueChange={setSelectedWindow} className="min-w-0 flex-[0.85] gap-0">
+                <TabsList aria-label="选择增量周期" className={`${mobileMenuTabsListClassName} grid-cols-3`}>
+                  {["3d", "7d", "30d"].map((key) => (
+                    <TabsTrigger key={key} className="min-w-0 px-1 text-[12px]! leading-none" value={key}>
+                      {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </div>
+          </div>
+          <div className="hidden flex-col gap-1 sm:flex sm:flex-row sm:items-center sm:justify-end lg:flex-row">
+            <Tabs value={selectedPlatform} onValueChange={setSelectedPlatform}>
+              <TabsList aria-label="选择平台" className="grid w-full grid-cols-2 sm:w-fit">
+                {["missevan", "manbo"].map((platform) => (
+                  <TabsTrigger key={platform} className="px-4" value={platform}>
+                    <PlatformTabLabel platform={platform} />
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
-            <Tabs value={selectedPlatform} onValueChange={setSelectedPlatform}>
-              <TabsList aria-label="选择平台" className="grid h-9 w-full grid-cols-2 p-0.5 sm:w-fit">
-                {["missevan", "manbo"].map((platform) => (
-                  <TabsTrigger key={platform} className="h-8 px-4 text-xs" value={platform}>
-                    {platformLabels[platform]}
+            <Tabs value={activeWindow} onValueChange={setSelectedWindow}>
+              <TabsList aria-label="选择增量周期" className="grid w-full grid-cols-3 sm:w-fit">
+                {["3d", "7d", "30d"].map((key) => (
+                  <TabsTrigger key={key} className="px-3" value={key}>
+                    {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -488,6 +558,7 @@ export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse 
               windowKey={activeWindow}
               frontendVersion={frontendVersion}
               handleVersionResponse={handleVersionResponse}
+              onOpenSearchResult={onOpenSearchResult}
             />
           ))}
         </div>

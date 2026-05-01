@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangleIcon, MessageSquarePlusIcon } from "lucide-react";
+import {
+  RefreshCwIcon,
+  AlertTriangleIcon,
+  ChartNoAxesColumnIncreasingIcon,
+  Clock3Icon,
+  MessageSquarePlusIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { DesktopReportPanel } from "@/app/DesktopReportPanel";
@@ -34,11 +40,39 @@ import {
   selectDramaEpisodesByMode,
   STATS_HISTORY_LIMIT,
 } from "@/app/app-utils";
+import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
+
+const mainNavigationIconMap = {
+  ongoing: Clock3Icon,
+  ranks: ChartNoAxesColumnIncreasingIcon,
+};
+
+function MainNavigationTabLabel({ platform }) {
+  if (platform.key === "missevan" || platform.key === "manbo") {
+    return <PlatformTabLabel platform={platform.key} iconClassName="size-3.5 sm:size-4" />;
+  }
+
+  const Icon = mainNavigationIconMap[platform.key];
+  return (
+    <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
+      {Icon ? <Icon aria-hidden="true" className="size-3.5 shrink-0 sm:size-4" /> : null}
+      <span className="min-w-0 truncate">{platform.label}</span>
+    </span>
+  );
+}
 
 export function ToolView({ initialAppConfig }) {
   const [currentPlatform, setCurrentPlatform] = useState("missevan");
@@ -60,6 +94,7 @@ export function ToolView({ initialAppConfig }) {
     };
   });
   const [notice, setNotice] = useState(null);
+  const [searchJumpStatus, setSearchJumpStatus] = useState(null);
 
   const currentPlatformRef = useRef(currentPlatform);
   const appConfigRef = useRef(appConfig);
@@ -96,7 +131,7 @@ export function ToolView({ initialAppConfig }) {
   const visiblePlatforms = [
     { key: "missevan", label: "猫耳" },
     { key: "manbo", label: "漫播" },
-    { key: "ongoing", label: "连载中" },
+    { key: "ongoing", label: "连载" },
     { key: "ranks", label: "榜单" },
     { key: "report", label: "Excel 报表" },
   ].filter((platform) => {
@@ -306,6 +341,28 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
+  function setManualSearchResults(platform, results, meta = {}) {
+    const normalizedResults = Array.isArray(results) ? results.map((item) => ({ ...item })) : [];
+    updatePlatformState(platform, (state) => ({
+      ...state,
+      searchResultSource: "manual",
+      searchKeyword: "",
+      searchNextOffset: 0,
+      searchHasMore: false,
+      searchCurrentPage: 1,
+      searchPageSize: Math.max(1, Number(meta?.limit ?? normalizedResults.length ?? 1) || 1),
+      searchTotalMatched: 0,
+      searchPageCache: {},
+      isLoadingMoreResults: false,
+      searchResults: normalizedResults,
+      dramas: [],
+      selectedEpisodesSnapshot: [],
+    }));
+    if (normalizedResults.length > 0 && meta?.scroll !== false) {
+      scrollToPanel(resultsPanelRef);
+    }
+  }
+
   function setResults(nextResults) {
     updatePlatformState(currentPlatformRef.current, (state) => ({
       ...state,
@@ -487,6 +544,91 @@ export function ToolView({ initialAppConfig }) {
       versionMismatch: data?.versionMismatch,
     });
     return data;
+  }
+
+  async function openDramaInSearch({ platform, id, name, paymentLabel, contentTypeLabel, usageAction }) {
+    const targetPlatform = platform === "manbo" ? "manbo" : "missevan";
+    const dramaId = String(id ?? "").trim();
+    const dramaName = String(name ?? "").trim();
+    const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result"].includes(String(usageAction ?? "").trim())
+      ? String(usageAction).trim()
+      : "";
+    if (!dramaId) {
+      toast.error("打开搜索结果失败，请稍后重试。");
+      return;
+    }
+
+    if (targetPlatform === "missevan" && !appConfigRef.current.desktopApp && Number(appConfigRef.current.cooldownUntil ?? 0) > Date.now()) {
+      updatePlatformState("missevan", (state) => ({
+        ...state,
+        stats: {
+          ...state.stats,
+          currentAction: getCooldownMessage(),
+        },
+      }));
+      toast.error("打开搜索结果失败，请稍后重试。");
+      return;
+    }
+
+    setSearchJumpStatus({
+      platform: targetPlatform,
+      name: dramaName,
+    });
+
+    try {
+      const endpoint = targetPlatform === "manbo" ? "/manbo/getdramacards" : "/getdramacards";
+      const body = targetPlatform === "manbo"
+        ? { items: [{ raw: dramaId }], ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) }
+        : { drama_ids: [dramaId], ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) };
+      const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await parseVersionedJsonResponse(response);
+      const results = Array.isArray(data?.results)
+        ? data.results.map((item) => ({
+            ...item,
+            platform: item?.platform || targetPlatform,
+            payment_label: item?.payment_label || paymentLabel,
+            content_type_label: item?.content_type_label || contentTypeLabel,
+          }))
+        : [];
+
+      if (!response.ok || !data?.success || !results.length) {
+        if (targetPlatform === "missevan" && data?.accessDenied) {
+          if (!appConfigRef.current.desktopApp) {
+            await refreshCooldownState();
+          }
+          updatePlatformState("missevan", (state) => ({
+            ...state,
+            stats: {
+              ...state.stats,
+              currentAction: appConfigRef.current.desktopApp ? "访问受限，请先打开猫耳主页验证" : getCooldownMessage(),
+            },
+          }));
+        }
+        toast.error("打开搜索结果失败，请稍后重试。");
+        return;
+      }
+
+      updatePlatformState(targetPlatform, (state) => ({
+        ...state,
+        searchForm: {
+          ...state.searchForm,
+          keyword: String(name ?? "").trim(),
+          manualInput: dramaId,
+        },
+      }));
+      setManualSearchResults(targetPlatform, results, { limit: 1, scroll: false });
+      setCurrentPlatform(targetPlatform);
+      scrollToPanel(resultsPanelRef);
+    } catch (error) {
+      console.error("Failed to open drama in search", error);
+      toast.error("打开搜索结果失败，请稍后重试。");
+    } finally {
+      setSearchJumpStatus(null);
+    }
   }
 
   async function loadSearchPage(page, platform = currentPlatformRef.current) {
@@ -1275,11 +1417,21 @@ export function ToolView({ initialAppConfig }) {
         <div className="mx-auto flex max-w-7xl flex-col gap-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-primary">{appConfig.brandName}</div>
-                <Badge variant="coral" className="h-5 px-2 text-[0.68rem]">
-                  v{appConfig.frontendVersion}
-                </Badge>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-primary">{appConfig.brandName}</div>
+                  <Badge variant="coral" className="h-5 px-2 text-[0.68rem]">
+                    v{appConfig.frontendVersion}
+                  </Badge>
+                </div>
+                {appConfig.featureSuggestionUrl ? (
+                  <Button variant="outline" size="xs" className="sm:hidden" asChild>
+                    <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
+                      <MessageSquarePlusIcon data-icon="inline-start" />
+                      功能建议
+                    </a>
+                  </Button>
+                ) : null}
               </div>
               <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-3">
                 <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{appConfig.titleZh}</h1>
@@ -1288,7 +1440,7 @@ export function ToolView({ initialAppConfig }) {
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
               {appConfig.featureSuggestionUrl ? (
-                <Button variant="outline" size="sm" asChild>
+                <Button variant="outline" size="sm" className="hidden sm:inline-flex" asChild>
                   <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
                     <MessageSquarePlusIcon data-icon="inline-start" />
                     功能建议
@@ -1301,8 +1453,8 @@ export function ToolView({ initialAppConfig }) {
                   style={{ gridTemplateColumns: `repeat(${visiblePlatforms.length}, minmax(0, 1fr))` }}
                 >
                   {visiblePlatforms.map((platform) => (
-                    <TabsTrigger key={platform.key} className="h-[30px] px-2 text-sm sm:px-3" value={platform.key}>
-                      {platform.label}
+                    <TabsTrigger key={platform.key} className="h-[30px] px-1.5 text-[13px] sm:px-3 sm:text-sm" value={platform.key}>
+                      <MainNavigationTabLabel platform={platform} />
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -1323,9 +1475,17 @@ export function ToolView({ initialAppConfig }) {
       </header>
 
       {currentPlatform === "ranks" ? (
-        <RanksPanel frontendVersion={appConfig.frontendVersion} handleVersionResponse={updateVersionStatusFromResponse} />
+        <RanksPanel
+          frontendVersion={appConfig.frontendVersion}
+          handleVersionResponse={updateVersionStatusFromResponse}
+          onOpenSearchResult={openDramaInSearch}
+        />
       ) : currentPlatform === "ongoing" ? (
-        <OngoingPanel frontendVersion={appConfig.frontendVersion} handleVersionResponse={updateVersionStatusFromResponse} />
+        <OngoingPanel
+          frontendVersion={appConfig.frontendVersion}
+          handleVersionResponse={updateVersionStatusFromResponse}
+          onOpenSearchResult={openDramaInSearch}
+        />
       ) : currentPlatform !== "report" ? (
         <div className="grid gap-4 sm:gap-5">
           {currentPlatform === "missevan" ? (
@@ -1425,6 +1585,22 @@ export function ToolView({ initialAppConfig }) {
       )}
 
       <MessageDialog notice={notice} onClose={() => setNotice(null)} />
+
+      <AlertDialog open={Boolean(searchJumpStatus)} onOpenChange={() => {}}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <RefreshCwIcon aria-hidden="true" className="size-5 animate-spin" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>正在查询</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-wrap">
+              {searchJumpStatus?.name
+                ? `正在查询《${searchJumpStatus.name}》，稍后将跳转到搜索结果。`
+                : "正在查询目标剧集，稍后将跳转到搜索结果。"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

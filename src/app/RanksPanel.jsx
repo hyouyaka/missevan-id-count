@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { buildVersionedUrl, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
+import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
   canShowRankTrend,
@@ -52,6 +53,21 @@ const ranksClientCache = {
 };
 const RANK_TREND_CLIENT_SCHEMA_VERSION = 4;
 const rankTrendClientCache = new Map();
+const mobileRankTabClassName = "min-w-0 px-1.5 text-[12px]! leading-none";
+const mobileMenuTabsListClassName =
+  "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
+
+function formatMobileRankMenuLabel(label) {
+  const normalized = String(label ?? "").trim();
+  if (normalized === "会员剧") {
+    return "会员";
+  }
+  if (normalized === "付费剧") {
+    return "付费";
+  }
+  return normalized.replace(/榜$/, "");
+}
+
 function formatRankUpdatedAt(value) {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -107,12 +123,12 @@ function isRanksClientCacheFresh(frontendVersion) {
 function getTitleClassName(title) {
   const length = String(title ?? "").trim().length;
   if (length >= 34) {
-    return "text-sm font-semibold leading-5 sm:text-[15px]";
+    return "text-sm! font-semibold! leading-5! sm:text-[15px]!";
   }
   if (length >= 22) {
-    return "text-[15px] font-semibold leading-5 sm:text-base";
+    return "text-[15px]! font-semibold! leading-5! sm:text-base!";
   }
-  return "text-base font-semibold leading-6 sm:text-lg";
+  return "text-base! font-semibold! leading-6! sm:text-lg!";
 }
 
 const metricLegendItems = [
@@ -187,10 +203,18 @@ const coverPaymentBadgeClassName =
 const metaIconClassName = "size-3.5 shrink-0 text-muted-foreground";
 
 function getRankPaymentTag(item) {
+  const explicitLabel = String(item?.payment_label ?? "").trim();
+  if (["付费", "会员", "免费"].includes(explicitLabel)) {
+    return explicitLabel;
+  }
+  const payStatus = String(item?.payStatus ?? item?.paystatus ?? item?.pay_status ?? "").trim();
+  if (["付费", "会员", "免费"].includes(payStatus)) {
+    return payStatus;
+  }
   if (item?.is_member) {
     return "会员";
   }
-  return String(item?.payment_label ?? "").trim();
+  return "";
 }
 
 function getRankTitleTags(item) {
@@ -246,15 +270,19 @@ function getRankMetrics(platform, item, rankKey = "") {
   return metrics;
 }
 
-function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0", handleVersionResponse }) {
+function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const metrics = getRankMetrics(platform, item, rankKey);
   const isMissevanPeak = platform === "missevan" && item.type === "peak";
+  const isPeakRank = rankKey === "peak" || item.type === "peak";
   const dramaIdText = Array.isArray(item.drama_ids) && item.drama_ids.length ? item.drama_ids.join("，") : "";
   const recentUpdatedDate = isMissevanPeak ? "" : formatRankUpdatedDate(item.updated_at);
   const paymentTag = getRankPaymentTag(item);
+  const trendItem = paymentTag ? { ...item, payment_label: paymentTag, payStatus: paymentTag } : item;
   const titleTags = getRankTitleTags(item);
   const detailIdText = isMissevanPeak ? dramaIdText : item.id;
+  const searchDramaId = isPeakRank ? "" : item.id;
+  const canOpenSearchResult = Boolean(onOpenSearchResult && platform && searchDramaId && !isPeakRank);
   const mainCvText = String(item.main_cv_text ?? "").replace(/^主要CV：/, "");
   const peakPlayMetric = isMissevanPeak
     ? { label: "系列总播放量", iconLabel: "总播放量", value: formatPlainNumber(item.view_count) }
@@ -320,6 +348,20 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
     }
   }
 
+  function openSearchResult() {
+    if (!canOpenSearchResult) {
+      return;
+    }
+    onOpenSearchResult?.({
+      platform,
+      id: searchDramaId,
+      name: item.name,
+      paymentLabel: paymentTag,
+      contentTypeLabel: titleTags[0],
+      usageAction: "ranks_open_search_result",
+    });
+  }
+
   return (
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
       <CardContent className="px-3.5">
@@ -341,7 +383,19 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <div className="hidden min-w-0 flex-wrap items-center gap-1.5 lg:flex">
-              <span className={`min-w-0 break-words ${getTitleClassName(item.name)}`}>{item.name}</span>
+              {canOpenSearchResult ? (
+                <button
+                  type="button"
+                  className={`min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
+                  onClick={openSearchResult}
+                >
+                  {item.name}
+                </button>
+              ) : (
+                <span className={`min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`}>
+                  {item.name}
+                </span>
+              )}
               {titleTags.map((label) => (
                 <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={metaBadgeClassName}>
                   {label}
@@ -349,7 +403,19 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
               ))}
             </div>
             <div className="min-w-0 lg:hidden">
-              <span className={`break-words ${getTitleClassName(item.name)}`}>{item.name}</span>
+              {canOpenSearchResult ? (
+                <button
+                  type="button"
+                  className={`break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
+                  onClick={openSearchResult}
+                >
+                  {item.name}
+                </button>
+              ) : (
+                <span className={`break-words text-foreground ${getTitleClassName(item.name)}`}>
+                  {item.name}
+                </span>
+              )}
               {titleTags.map((label) => (
                 <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
                   {label}
@@ -416,7 +482,7 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
           <SharedRankTrendDialog
             open={isTrendOpen}
             onOpenChange={setIsTrendOpen}
-            item={item}
+            item={trendItem}
             platform={platform}
             trendState={trendState}
           />
@@ -426,7 +492,7 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
   );
 }
 
-function RankColumn({ rank, platform, frontendVersion = "0.0.0", handleVersionResponse }) {
+function RankColumn({ rank, platform, frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
   return (
     <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -446,6 +512,7 @@ function RankColumn({ rank, platform, frontendVersion = "0.0.0", handleVersionRe
               rankKey={rank.key}
               frontendVersion={frontendVersion}
               handleVersionResponse={handleVersionResponse}
+              onOpenSearchResult={onOpenSearchResult}
             />
           ))}
         </div>
@@ -937,9 +1004,9 @@ function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
         {!trendState.isLoading && !trendState.error && data?.success ? (
           <div className="grid min-w-0 gap-2.5">
             <Tabs value={activeWindowKey} onValueChange={setSelectedWindow}>
-              <TabsList className="grid h-8 w-full grid-cols-3 p-1">
+              <TabsList className="grid w-full grid-cols-3">
                 {availableWindows.map((key) => (
-                  <TabsTrigger key={key} className="h-6 min-w-0 px-2 text-[12px]" value={key}>
+                  <TabsTrigger key={key} className="min-w-0 px-2" value={key}>
                     {windows[key].label}
                   </TabsTrigger>
                 ))}
@@ -976,7 +1043,7 @@ function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
   );
 }
 
-export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse }) {
+export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -1134,39 +1201,82 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse })
 
       {!isLoading && !errorMessage && hasRanks ? (
         <>
-          <div className="grid gap-3">
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-3">
             <MetricLegend />
-            <Tabs value={selectedPlatform} onValueChange={updatePlatform}>
-              <TabsList className="inline-flex w-full justify-start overflow-x-auto sm:w-fit">
-                {availablePlatforms.map((platform) => (
-                  <TabsTrigger key={platform.key} className="px-3" value={platform.key}>
-                    {platform.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-            {platformData?.categories?.length ? (
-              <Tabs value={category?.key || ""} onValueChange={updateCategory}>
-                <TabsList className="inline-flex w-full justify-start overflow-x-auto sm:w-fit">
-                  {platformData.categories.map((item) => (
-                    <TabsTrigger key={item.key} className="px-3" value={item.key}>
-                      {item.label}
+            <div className="hidden lg:flex lg:justify-end lg:gap-2">
+              <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
+                <TabsList className="grid w-full grid-cols-2 justify-stretch sm:w-fit lg:inline-flex lg:justify-start">
+                  {availablePlatforms.map((platform) => (
+                    <TabsTrigger key={platform.key} className="px-3" value={platform.key}>
+                      <PlatformTabLabel platform={platform} />
                     </TabsTrigger>
                   ))}
                 </TabsList>
               </Tabs>
-            ) : null}
-            {category?.ranks?.length > 1 ? (
-              <Tabs value={activeRank?.key || ""} onValueChange={setSelectedRank}>
-                <TabsList className="inline-flex w-full justify-start overflow-x-auto sm:w-fit lg:hidden">
-                  {category.ranks.map((rank) => (
-                    <TabsTrigger key={rank.key} className="px-3" value={rank.key}>
-                      {rank.label}
+              {platformData?.categories?.length ? (
+                <Tabs value={category?.key || ""} onValueChange={updateCategory} className="gap-0">
+                  <TabsList className="grid w-full grid-cols-4 justify-stretch sm:w-fit lg:inline-flex lg:justify-start">
+                    {platformData.categories.map((item) => (
+                      <TabsTrigger key={item.key} className="px-3" value={item.key}>
+                        {item.label}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              ) : null}
+            </div>
+            <div className="grid gap-0 overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-sm lg:hidden">
+              <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
+                <TabsList className={`${mobileMenuTabsListClassName} grid-cols-2`}>
+                  {availablePlatforms.map((platform) => (
+                    <TabsTrigger key={platform.key} className="min-w-0 px-2" value={platform.key}>
+                      <PlatformTabLabel platform={platform} />
                     </TabsTrigger>
                   ))}
                 </TabsList>
               </Tabs>
-            ) : null}
+              {platformData?.categories?.length ? (
+                <>
+                  <div className="h-px bg-border/70" />
+                  <div className="flex h-9 items-center gap-2 px-1.5">
+                    <Tabs
+                      value={category?.key || ""}
+                      onValueChange={updateCategory}
+                      className="min-w-0 flex-1 gap-0"
+                    >
+                      <TabsList className={`${mobileMenuTabsListClassName} grid-cols-4`}>
+                        {platformData.categories.map((item) => (
+                          <TabsTrigger key={item.key} className={mobileRankTabClassName} value={item.key}>
+                            {formatMobileRankMenuLabel(item.label)}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </Tabs>
+                    {category?.ranks?.length > 1 ? (
+                      <>
+                        <div className="h-7 w-px shrink-0 bg-border/80" />
+                        <Tabs
+                          value={activeRank?.key || ""}
+                          onValueChange={setSelectedRank}
+                          className="w-[38%] min-w-[6.5rem] max-w-[8.75rem] shrink-0 gap-0"
+                        >
+                          <TabsList
+                            className={mobileMenuTabsListClassName}
+                            style={{ gridTemplateColumns: `repeat(${category.ranks.length}, minmax(0, 1fr))` }}
+                          >
+                            {category.ranks.map((rank) => (
+                              <TabsTrigger key={rank.key} className={mobileRankTabClassName} value={rank.key}>
+                                {formatMobileRankMenuLabel(rank.label)}
+                              </TabsTrigger>
+                            ))}
+                          </TabsList>
+                        </Tabs>
+                      </>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+            </div>
           </div>
 
           <div className="hidden gap-3 lg:grid lg:grid-cols-[repeat(auto-fit,minmax(21rem,1fr))]">
@@ -1177,6 +1287,7 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse })
                 rank={rank}
                 frontendVersion={frontendVersion}
                 handleVersionResponse={handleVersionResponse}
+                onOpenSearchResult={onOpenSearchResult}
               />
             ))}
           </div>
@@ -1188,6 +1299,7 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse })
                 rank={activeRank}
                 frontendVersion={frontendVersion}
                 handleVersionResponse={handleVersionResponse}
+                onOpenSearchResult={onOpenSearchResult}
               />
             ) : null}
           </div>

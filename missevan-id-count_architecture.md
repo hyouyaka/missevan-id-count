@@ -164,7 +164,7 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | `newDramaIdsStore` | Upstash `new:dramaIDs` | `runtime/new-drama-ids.json` | Captured new IDs |
 | `manboIndexStore` | Upstash-backed sync model | runtime-backed local state | Manbo search index and metadata |
 | cooldown state | Upstash `missevan:cooldown:v1` and region keys | in-memory only when persistence disabled | Access-denial recovery state |
-| ranks and ongoing snapshots | Upstash `ranks`, `ranks:index`, `ranks:metrics:*`, `ranks:list:*`, `ongoing:*` | none | Rank, trend, and ongoing APIs |
+| ranks and ongoing snapshots | Upstash `ranks:latest`, `ranks:index`, `ranks:metrics:*`, `ranks:list:*`, `ongoing:*` | none | Rank, trend, and ongoing APIs |
 
 ### Multi-Region Cooldown State
 - The landing page exposes three region snapshots: `area1`, `area2`, and `area3`.
