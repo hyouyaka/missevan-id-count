@@ -131,7 +131,7 @@ export function ToolView({ initialAppConfig }) {
   const visiblePlatforms = [
     { key: "missevan", label: "猫耳" },
     { key: "manbo", label: "漫播" },
-    { key: "ongoing", label: "连载" },
+    { key: "ongoing", label: "更新" },
     { key: "ranks", label: "榜单" },
     { key: "report", label: "Excel 报表" },
   ].filter((platform) => {

@@ -448,7 +448,7 @@ export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse,
       body: JSON.stringify({
         platform: selectedPlatform,
         action: "ongoing",
-        keyword: `${platformLabel}连载中`,
+        keyword: `${platformLabel}一周内更新`,
         success: true,
       }),
     }).catch((error) => {
@@ -473,7 +473,7 @@ export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse,
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <h1 className="text-base font-normal leading-6 tracking-tight">
-              {platformLabel}连载中：共{sortedItems.length}部
+              {platformLabel}一周内更新：共{sortedItems.length}部
             </h1>
             <div className="mt-1 text-xs leading-5 text-muted-foreground">
               数据更新：{formatOngoingUpdatedAt(ongoingData?.updatedAt)}
