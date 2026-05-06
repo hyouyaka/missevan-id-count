@@ -18,7 +18,9 @@ import {
   normalizeOngoingIdList,
 } from "./shared/ongoingUtils.js";
 import {
+  buildPeakSeriesTrendResponse,
   buildRankTrendResponse,
+  getPeakSeriesDailyViewDelta,
   normalizeRankTrendDates,
 } from "./shared/ranksTrendUtils.js";
 import { normalizeVersion } from "./shared/versionUtils.js";
@@ -90,6 +92,7 @@ const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
 const RANKS_INDEX_KEY = "ranks:index";
+const MISSEVAN_PEAK_SERIES_TREND_KEY = "ranks:trend:peak:missevan";
 const ONGOING_KEY_PREFIX = "ongoing";
 const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
   5000,
@@ -1181,6 +1184,22 @@ function getRankPaymentLabel(drama) {
   return "";
 }
 
+function getMissevanPeakSeriesRecord(peakTrendSnapshot, seriesName) {
+  const normalizedName = normalizeTextValue(seriesName);
+  const series = peakTrendSnapshot?.series && typeof peakTrendSnapshot.series === "object"
+    ? peakTrendSnapshot.series
+    : {};
+  if (!normalizedName) {
+    return null;
+  }
+  if (series[normalizedName] && typeof series[normalizedName] === "object") {
+    return series[normalizedName];
+  }
+  return Object.values(series).find((record) =>
+    record && typeof record === "object" && normalizeTextValue(record.name) === normalizedName
+  ) || null;
+}
+
 function normalizeDramaCardUsageAction(value) {
   const action = normalizeTextValue(value);
   return ["ranks_open_search_result", "ongoing_open_search_result"].includes(action)
@@ -1188,7 +1207,7 @@ function normalizeDramaCardUsageAction(value) {
     : "manual_import";
 }
 
-function buildMissevanRankCard(rankKey, item, index, dramas) {
+function buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot = null) {
   if (rankKey === "peak") {
     const name = normalizeTextValue(item?.name);
     if (!name) {
@@ -1196,11 +1215,13 @@ function buildMissevanRankCard(rankKey, item, index, dramas) {
     }
     const dramaIds = normalizeStringIds(item?.dramaIds, 100);
     const mainCvs = normalizeStringArray(item?.cvs, 20);
+    const peakSeriesRecord = getMissevanPeakSeriesRecord(peakTrendSnapshot, name);
     return {
       rank: index + 1,
       name,
       cover: normalizeTextValue(item?.cover),
       view_count: normalizeRankNumber(item?.view_count) ?? 0,
+      daily_view_delta: getPeakSeriesDailyViewDelta(peakSeriesRecord),
       drama_ids: dramaIds,
       main_cvs: mainCvs,
       main_cv_text: buildRankMainCvText(mainCvs),
@@ -1307,7 +1328,7 @@ function buildManboRankCard(rankKey, rank, item, index, dramas) {
   };
 }
 
-function buildNormalizedRank(rankKey, rankConfig, rank, platformPayload, platform) {
+function buildNormalizedRank(rankKey, rankConfig, rank, platformPayload, platform, peakTrendSnapshot = null) {
   if (!rank || typeof rank !== "object") {
     return null;
   }
@@ -1320,7 +1341,7 @@ function buildNormalizedRank(rankKey, rankConfig, rank, platformPayload, platfor
   const items = sourceItems
     .map((item, index) =>
       platform === "missevan"
-        ? buildMissevanRankCard(rankKey, item, index, dramas)
+        ? buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot)
         : buildManboRankCard(rankKey, rank, item, index, dramas)
     )
     .filter(Boolean);
@@ -1335,7 +1356,7 @@ function buildNormalizedRank(rankKey, rankConfig, rank, platformPayload, platfor
   };
 }
 
-function buildNormalizedRankPlatform(snapshot, platform) {
+function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = null) {
   const platformPayload =
     snapshot?.[platform] && typeof snapshot[platform] === "object"
       ? snapshot[platform]
@@ -1354,7 +1375,8 @@ function buildNormalizedRankPlatform(snapshot, platform) {
             rankConfig,
             ranks[rankConfig.key],
             platformPayload,
-            platform
+            platform,
+            peakTrendSnapshot
           )
         )
         .filter(Boolean);
@@ -1378,7 +1400,7 @@ function buildNormalizedRankPlatform(snapshot, platform) {
   };
 }
 
-function buildNormalizedRanksResponse(snapshot) {
+function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null) {
   const safeSnapshot =
     snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
       ? snapshot
@@ -1389,7 +1411,7 @@ function buildNormalizedRanksResponse(snapshot) {
     schemaVersion: RANKS_RESPONSE_SCHEMA_VERSION,
     updatedAt: normalizeTextValue(safeSnapshot?._meta?.updated_at),
     platforms: {
-      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan"),
+      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan", peakTrendSnapshot),
       manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo"),
     },
   };
@@ -1454,8 +1476,11 @@ async function getCachedRanksResponse() {
 
   ranksCache.loadPromise = (async () => {
     try {
-      const snapshot = await readRanksSnapshot();
-      const response = buildNormalizedRanksResponse(snapshot);
+      const [snapshot, peakTrendSnapshot] = await Promise.all([
+        readRanksSnapshot(),
+        readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY).catch(() => null),
+      ]);
+      const response = buildNormalizedRanksResponse(snapshot, peakTrendSnapshot);
       ranksCache.response = response;
       ranksCache.loadedAt = Date.now();
       return response;
@@ -1547,6 +1572,23 @@ async function getCachedRankTrendResponse(platform, dramaId) {
   }
 
   const loadPromise = (async () => {
+    if (normalizedPlatform === "missevan" && !isNumericId(normalizedDramaId)) {
+      const peakSnapshot = await readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY);
+      const response = buildPeakSeriesTrendResponse({
+        id: normalizedDramaId,
+        peakSnapshot,
+      });
+      if (response && typeof response === "object") {
+        response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
+      }
+      rankTrendsCache.set(cacheKey, {
+        response,
+        loadedAt: Date.now(),
+        loadPromise: null,
+      });
+      return response;
+    }
+
     const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
     const dates = normalizeRankTrendDates(indexSnapshot);
     const [metricEntries, listEntries] = await Promise.all([
@@ -5478,7 +5520,10 @@ async function executeStatsTask(task) {
 app.get("/ranks/trends", async (req, res) => {
   const platform = String(req.query.platform ?? "").trim();
   const dramaId = String(req.query.id ?? "").trim();
-  if (!["missevan", "manbo"].includes(platform) || !isNumericId(dramaId)) {
+  const isValidDramaId =
+    (platform === "missevan" && dramaId) ||
+    (platform === "manbo" && isNumericId(dramaId));
+  if (!["missevan", "manbo"].includes(platform) || !isValidDramaId) {
     return res.status(400).json({
       success: false,
       message: "Invalid rank trend request",
@@ -5755,7 +5800,9 @@ app.post("/usage-log", async (req, res) => {
       }
 
       const dramaId = String(payload.dramaId ?? payload.id ?? "").trim().slice(0, 80);
-      if (!isNumericId(dramaId)) {
+      const rankKey = normalizeTextValue(payload.rankKey).slice(0, 80);
+      const isPeakSeriesTrend = platform === "missevan" && rankKey === "peak" && dramaId;
+      if (!isNumericId(dramaId) && !isPeakSeriesTrend) {
         return res.status(400).json({
           success: false,
           message: "Missing trend drama id",
@@ -5771,8 +5818,8 @@ app.post("/usage-log", async (req, res) => {
           ? { dramaName: normalizeTextValue(payload.dramaName).slice(0, 200) }
           : {}),
         ...(source ? { source } : {}),
-        ...(normalizeTextValue(payload.rankKey).slice(0, 80)
-          ? { rankKey: normalizeTextValue(payload.rankKey).slice(0, 80) }
+        ...(rankKey
+          ? { rankKey }
           : {}),
         success: true,
       });

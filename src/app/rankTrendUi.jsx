@@ -130,13 +130,19 @@ function formatTrendDeltaWithPercent(metric) {
 }
 
 export function canShowRankTrend({ platform, rankKey, item, isMissevanPeak, detailIdText }) {
-  if (!detailIdText || isMissevanPeak || rankKey === "peak") {
+  if (!detailIdText) {
     return false;
   }
   if (platform === "missevan") {
+    if (isMissevanPeak) {
+      return true;
+    }
+    if (rankKey === "peak" || item?.type === "peak") {
+      return false;
+    }
     return true;
   }
-  return platform === "manbo";
+  return platform === "manbo" && rankKey !== "peak" && item?.type !== "peak";
 }
 
 export async function fetchRankTrendData({ platform, id, frontendVersion }) {
@@ -451,7 +457,7 @@ function getChartTrendMetrics(metrics) {
   );
 }
 
-function getTrendPointPosition(point, index, points, minPercent, maxPercent) {
+function getTrendPointPosition(point, index, points, minValue, maxValue, valueKey = "percent") {
   const width = 320;
   const height = 170;
   const left = 44;
@@ -459,8 +465,8 @@ function getTrendPointPosition(point, index, points, minPercent, maxPercent) {
   const top = 20;
   const bottom = 30;
   const x = points.length <= 1 ? width / 2 : left + (index / (points.length - 1)) * (width - left - right);
-  const range = maxPercent - minPercent;
-  const normalized = range === 0 ? 0.5 : (Number(point.percent) - minPercent) / range;
+  const range = maxValue - minValue;
+  const normalized = range === 0 ? 0.5 : (Number(point[valueKey]) - minValue) / range;
   const y = top + (1 - normalized) * (height - top - bottom);
   return { x, y };
 }
@@ -505,6 +511,26 @@ function buildTrendPercentPoints(metric) {
   }));
 }
 
+function isPeakSeriesChart(metrics) {
+  return (
+    Array.isArray(metrics) &&
+    metrics.length === 1 &&
+    metrics[0]?.key === "view_count" &&
+    metrics[0]?.label === "系列总播放量"
+  );
+}
+
+function buildTrendValuePoints(metric) {
+  const history = Array.isArray(metric?.history) ? metric.history : [];
+  return history.map((point) => {
+    const value = getTrendNumber(point.value);
+    return {
+      ...point,
+      axisValue: value == null ? null : value / 10000,
+    };
+  });
+}
+
 function buildTrendPercentDomain(percentValues) {
   if (!percentValues.length) {
     return { min: -5, max: 5 };
@@ -544,6 +570,45 @@ function buildTrendPercentTicks(domain) {
   return ticks;
 }
 
+function buildTrendValueDomain(values) {
+  if (!values.length) {
+    return { min: 0, max: 1, step: 1 };
+  }
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const spread = maxValue - minValue;
+  const padding = spread === 0 ? Math.max(Math.abs(maxValue) * 0.001, 1) : spread * 0.15;
+  const paddedMin = Math.max(0, minValue - padding);
+  const paddedMax = maxValue + padding;
+  const rawStep = (paddedMax - paddedMin || 1) / 4;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const normalizedStep = rawStep / magnitude;
+  const stepMultiplier = normalizedStep <= 1 ? 1 : normalizedStep <= 2 ? 2 : normalizedStep <= 5 ? 5 : 10;
+  const step = stepMultiplier * magnitude;
+  let min = Math.floor(paddedMin / step) * step;
+  let max = Math.ceil(paddedMax / step) * step;
+  if (min === max) {
+    max = min + step;
+  }
+  return {
+    min: Number(min.toFixed(4)),
+    max: Number(max.toFixed(4)),
+    step,
+  };
+}
+
+function buildTrendValueTicks(domain) {
+  const ticks = [];
+  const step = domain.step || 1;
+  for (let value = domain.min; value <= domain.max + step / 1000; value += step) {
+    ticks.push(Number(value.toFixed(4)));
+  }
+  if (ticks.at(-1) !== domain.max) {
+    ticks.push(domain.max);
+  }
+  return ticks;
+}
+
 function formatAxisPercent(value) {
   const percent = Number(value);
   if (!Number.isFinite(percent)) {
@@ -553,27 +618,39 @@ function formatAxisPercent(value) {
   return `${prefix}${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(1)}%`;
 }
 
-function getTrendPercentY(percent, domain) {
+function formatAxisWan(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "";
+  }
+  const digits = Math.abs(number) >= 1000 ? 0 : Math.abs(number) >= 100 ? 1 : 2;
+  return `${number.toLocaleString("zh-CN", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: 0,
+  })}万`;
+}
+
+function getTrendAxisY(value, domain) {
   const top = 20;
   const bottom = 30;
   const height = 170;
   const range = domain.max - domain.min || 1;
-  return top + (1 - (percent - domain.min) / range) * (height - top - bottom);
+  return top + (1 - (value - domain.min) / range) * (height - top - bottom);
 }
 
-function buildTrendPolyline(metric, domain) {
-  const points = buildTrendPercentPoints(metric);
-  const validPointCount = points.filter((point) => getTrendNumber(point.percent) != null).length;
+function buildTrendPolyline(metric, domain, { pointBuilder = buildTrendPercentPoints, valueKey = "percent" } = {}) {
+  const points = pointBuilder(metric);
+  const validPointCount = points.filter((point) => getTrendNumber(point[valueKey]) != null).length;
   if (validPointCount < 2) {
     return null;
   }
 
   const positions = points.map((point, index) =>
-    getTrendPointPosition(point, index, points, domain.min, domain.max)
+    getTrendPointPosition(point, index, points, domain.min, domain.max, valueKey)
   );
   const segment = points
     .map((point, index) => ({ point, position: positions[index] }))
-    .filter(({ point }) => getTrendNumber(point.percent) != null);
+    .filter(({ point }) => getTrendNumber(point[valueKey]) != null);
 
   if (segment.length < 2) {
     return null;
@@ -587,16 +664,19 @@ function buildTrendPolyline(metric, domain) {
 }
 
 function buildTrendChartLines(metrics) {
-  const percentValues = metrics
-    .flatMap((metric) => buildTrendPercentPoints(metric))
-    .map((point) => point.percent)
+  const useValueAxis = isPeakSeriesChart(metrics);
+  const pointBuilder = useValueAxis ? buildTrendValuePoints : buildTrendPercentPoints;
+  const valueKey = useValueAxis ? "axisValue" : "percent";
+  const axisValues = metrics
+    .flatMap((metric) => pointBuilder(metric))
+    .map((point) => point[valueKey])
     .filter((value) => Number.isFinite(value));
-  const domain = buildTrendPercentDomain(percentValues);
-  const ticks = buildTrendPercentTicks(domain);
+  const domain = useValueAxis ? buildTrendValueDomain(axisValues) : buildTrendPercentDomain(axisValues);
+  const ticks = useValueAxis ? buildTrendValueTicks(domain) : buildTrendPercentTicks(domain);
   const signatureCounts = new Map();
   const lines = metrics
     .map((metric) => {
-      const line = buildTrendPolyline(metric, domain);
+      const line = buildTrendPolyline(metric, domain, { pointBuilder, valueKey });
       if (!line) {
         return null;
       }
@@ -635,15 +715,31 @@ function buildTrendChartLines(metrics) {
       };
     })
     .filter(Boolean);
-  return { lines, domain, ticks };
+  return {
+    lines,
+    domain,
+    ticks,
+    formatTick: useValueAxis ? formatAxisWan : formatAxisPercent,
+  };
 }
 
-function RankTrendLineChart({ metrics }) {
+function getTrendAxisLabelPoints(points, windowKey) {
+  const axisPoints = Array.isArray(points) ? points : [];
+  if (windowKey !== "30d") {
+    return axisPoints;
+  }
+
+  const lastIndex = axisPoints.length - 1;
+  return axisPoints.filter((point, index) => index % 5 === 0 || index === lastIndex);
+}
+
+function RankTrendLineChart({ metrics, windowKey }) {
   const availableMetrics = Array.isArray(metrics) ? metrics : [];
   const chartData = buildTrendChartLines(availableMetrics);
   const chartLines = chartData.lines;
   const axisPoints =
     availableMetrics.find((metric) => Array.isArray(metric.history) && metric.history.length)?.history || [];
+  const axisLabelPoints = getTrendAxisLabelPoints(axisPoints, windowKey);
 
   return (
     <div className="rounded-lg border border-border/80 bg-background/82 p-2.5 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.22)]">
@@ -669,8 +765,8 @@ function RankTrendLineChart({ metrics }) {
               key={tick}
               x1="44"
               x2="302"
-              y1={getTrendPercentY(tick, chartData.domain)}
-              y2={getTrendPercentY(tick, chartData.domain)}
+              y1={getTrendAxisY(tick, chartData.domain)}
+              y2={getTrendAxisY(tick, chartData.domain)}
               stroke="var(--border)"
               strokeDasharray="4 6"
               strokeWidth="1"
@@ -697,14 +793,14 @@ function RankTrendLineChart({ metrics }) {
             );
           })}
         </svg>
-        <div className="pointer-events-none absolute inset-y-0 left-1 top-0 w-9 text-[0.58rem] font-medium text-muted-foreground">
+        <div className="pointer-events-none absolute inset-y-0 left-1 top-0 w-12 text-[0.52rem] font-medium text-muted-foreground">
           {chartData.ticks.map((tick) => (
             <span
               key={tick}
               className="absolute right-1 -translate-y-1/2 tabular-nums"
-              style={{ top: `${(getTrendPercentY(tick, chartData.domain) / 170) * 100}%` }}
+              style={{ top: `${(getTrendAxisY(tick, chartData.domain) / 170) * 100}%` }}
             >
-              {formatAxisPercent(tick)}
+              {chartData.formatTick(tick)}
             </span>
           ))}
         </div>
@@ -724,7 +820,7 @@ function RankTrendLineChart({ metrics }) {
           ));
         })}
         <div className="pointer-events-none absolute inset-x-3 bottom-2 flex justify-between text-[0.65rem] font-medium text-muted-foreground">
-          {axisPoints.map((point) => (
+          {axisLabelPoints.map((point) => (
             <span key={point.date}>{formatTrendDate(point.date)}</span>
           ))}
         </div>
@@ -735,11 +831,22 @@ function RankTrendLineChart({ metrics }) {
 
 function getSnapshotColumns(metrics, platform) {
   const metricMap = new Map((Array.isArray(metrics) ? metrics : []).map((metric) => [metric.key, metric]));
+  const viewMetric = metricMap.get("view_count") || null;
+  const isPeakSeriesTrend =
+    metricMap.size === 1 &&
+    viewMetric?.label === "系列总播放量";
+  if (isPeakSeriesTrend) {
+    return [
+      { key: "date", label: "日期", metric: null },
+      { key: "view_count", label: "系列总播放量", metric: viewMetric },
+    ];
+  }
+
   const finalMetricKey = platform === "missevan" ? "subscription_num" : "pay_count";
   const finalMetric = metricMap.get(finalMetricKey);
   const columns = [
     { key: "date", label: "日期", metric: null },
-    { key: "view_count", label: "播放量", metric: metricMap.get("view_count") || null },
+    { key: "view_count", label: "播放量", metric: viewMetric },
     { key: "danmaku_uid_count", label: "付费ID数", metric: metricMap.get("danmaku_uid_count") || null },
   ];
 
@@ -848,7 +955,7 @@ function TrendSnapshotDetails({ metrics, platform }) {
   );
 }
 
-function TrendMetricRow({ metric, windowLabel }) {
+export function RankTrendDeltaBadge({ metric, children, className = "" }) {
   const style = getTrendMetricStyle(metric);
   const emptyPaidEpisodes = isEmptyPaidDanmakuTrendMetric(metric);
   const hasDelta =
@@ -860,6 +967,24 @@ function TrendMetricRow({ metric, windowLabel }) {
         color: "white",
       }
     : undefined;
+  return (
+    <Badge
+      variant="outline"
+      className={`${hasDelta ? "h-6 border-transparent px-2 text-xs shadow-none" : "h-6 px-2 text-xs"} ${className}`.trim()}
+      style={deltaStyle}
+    >
+      {children ?? formatTrendDeltaWithPercent(emptyPaidEpisodes ? { ...metric, emptyPaidEpisodes } : metric)}
+    </Badge>
+  );
+}
+
+export function formatRankTrendDelta(metric) {
+  return formatTrendDelta(metric);
+}
+
+function TrendMetricRow({ metric, windowLabel }) {
+  const style = getTrendMetricStyle(metric);
+  const emptyPaidEpisodes = isEmptyPaidDanmakuTrendMetric(metric);
   return (
     <div className="flex items-center justify-between gap-2.5 rounded-lg border border-border/70 bg-background/82 p-2.5">
       <div className="flex min-w-0 items-center gap-2">
@@ -883,13 +1008,7 @@ function TrendMetricRow({ metric, windowLabel }) {
       </div>
       <div className="flex shrink-0 items-center justify-end gap-1.5 pl-2">
         <span className="text-[0.68rem] font-medium text-muted-foreground">{windowLabel}</span>
-        <Badge
-          variant="outline"
-          className={hasDelta ? "h-6 border-transparent px-2 text-xs shadow-none" : "h-6 px-2 text-xs"}
-          style={deltaStyle}
-        >
-          {formatTrendDeltaWithPercent(emptyPaidEpisodes ? { ...metric, emptyPaidEpisodes } : metric)}
-        </Badge>
+        <RankTrendDeltaBadge metric={emptyPaidEpisodes ? { ...metric, emptyPaidEpisodes } : metric} />
       </div>
     </div>
   );
@@ -923,6 +1042,9 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
   const activeWindow = windows[activeWindowKey];
   const activeMetrics = getDisplayTrendMetrics(activeWindow?.metrics, platform);
   const chartMetrics = getChartTrendMetrics(activeMetrics);
+  const detailIdText = Array.isArray(data?.dramaIds) && data.dramaIds.length
+    ? data.dramaIds.join("，")
+    : item?.id ?? data?.id;
 
   useEffect(() => {
     if (open) {
@@ -958,9 +1080,12 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
               </Badge>
             ))}
           </div>
-          <AlertDialogDescription className="flex items-center gap-1 text-left text-xs">
+          <AlertDialogDescription
+            className="flex w-full max-w-none justify-self-stretch items-start gap-1 text-left text-xs"
+            style={{ textWrap: "wrap" }}
+          >
             <HashIcon aria-hidden="true" className="size-3.5 shrink-0" />
-            <span className="break-all">{item?.id ?? data?.id}</span>
+            <span className="min-w-0 flex-1 break-words" style={{ textWrap: "wrap" }}>{detailIdText}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -1006,7 +1131,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                     ))}
                   </div>
                 ) : null}
-                <RankTrendLineChart metrics={chartMetrics} />
+                <RankTrendLineChart metrics={chartMetrics} windowKey={activeWindowKey} />
                 <TrendSnapshotDetails metrics={activeMetrics} platform={platform} />
                 <div className="grid gap-1.5">
                   {activeMetrics.map((metric) => (

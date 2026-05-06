@@ -21,8 +21,10 @@ import { RankBadge } from "@/app/RankBadge";
 import {
   canShowRankTrend,
   fetchRankTrendData as fetchSharedRankTrendData,
+  formatRankTrendDelta,
   logRankTrendOpen,
   rankTrendTagVariants,
+  RankTrendDeltaBadge,
   RankTrendButton,
   RankTrendDialog as SharedRankTrendDialog,
 } from "@/app/rankTrendUi";
@@ -278,17 +280,27 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
   const dramaIdText = Array.isArray(item.drama_ids) && item.drama_ids.length ? item.drama_ids.join("，") : "";
   const recentUpdatedDate = isMissevanPeak ? "" : formatRankUpdatedDate(item.updated_at);
   const paymentTag = getRankPaymentTag(item);
-  const trendItem = paymentTag ? { ...item, payment_label: paymentTag, payStatus: paymentTag } : item;
   const titleTags = getRankTitleTags(item);
   const detailIdText = isMissevanPeak ? dramaIdText : item.id;
+  const trendLookupId = isMissevanPeak ? item.name : item.id;
+  const trendItemBase = paymentTag ? { ...item, payment_label: paymentTag, payStatus: paymentTag } : item;
+  const trendItem = isMissevanPeak ? { ...trendItemBase, id: trendLookupId } : trendItemBase;
   const searchDramaId = isPeakRank ? "" : item.id;
   const canOpenSearchResult = Boolean(onOpenSearchResult && platform && searchDramaId && !isPeakRank);
   const mainCvText = String(item.main_cv_text ?? "").replace(/^主要CV：/, "");
   const peakPlayMetric = isMissevanPeak
     ? { label: "系列总播放量", iconLabel: "总播放量", value: formatPlainNumber(item.view_count) }
     : null;
+  const peakDailyDeltaMetric = isMissevanPeak
+    ? {
+        key: "view_count",
+        label: "系列总播放量",
+        available: Boolean(item.daily_view_delta?.available),
+        delta: item.daily_view_delta?.delta ?? null,
+      }
+    : null;
   const displayMetrics = isMissevanPeak ? [] : metrics;
-  const canShowTrend = canShowRankTrend({ platform, rankKey, item, isMissevanPeak, detailIdText });
+  const canShowTrend = canShowRankTrend({ platform, rankKey, item, isMissevanPeak, detailIdText: trendLookupId });
   const [isTrendOpen, setIsTrendOpen] = useState(false);
   const [trendState, setTrendState] = useState({
     isLoading: false,
@@ -303,7 +315,7 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
     setIsTrendOpen(true);
     logRankTrendOpen({
       platform,
-      id: detailIdText,
+      id: trendLookupId,
       name: item.name,
       source: "ranks",
       rankKey,
@@ -317,7 +329,7 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
     try {
       const { response, data } = await fetchSharedRankTrendData({
         platform,
-        id: detailIdText,
+        id: trendLookupId,
         frontendVersion,
       });
       handleVersionResponse?.({
@@ -436,10 +448,23 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
               <div
                 aria-label={`${peakPlayMetric.label}: ${peakPlayMetric.value}`}
                 title={`${peakPlayMetric.label}: ${peakPlayMetric.value}`}
-                className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+                className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
               >
                 <MetricIcon label={peakPlayMetric.iconLabel} className={metaIconClassName} />
                 <span className="min-w-0 break-all font-medium tabular-nums text-foreground">{peakPlayMetric.value}</span>
+                <RankTrendDeltaBadge
+                  metric={peakDailyDeltaMetric}
+                  className="h-[1.35rem] px-1.5 text-[0.68rem]"
+                >
+                  日增：{formatRankTrendDelta(peakDailyDeltaMetric)}
+                </RankTrendDeltaBadge>
+                {canShowTrend ? (
+                  <RankTrendButton
+                    onClick={openTrendDialog}
+                    aria-label={`查看${item.name}趋势`}
+                    title="查看趋势"
+                  />
+                ) : null}
               </div>
             ) : null}
             {recentUpdatedDate ? (
@@ -451,7 +476,7 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
           </div>
         </div>
 
-        {displayMetrics.length || canShowTrend ? (
+        {displayMetrics.length || (!isMissevanPeak && canShowTrend) ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm lg:ml-10">
             {displayMetrics.map((metric) => (
                 <div
@@ -469,7 +494,7 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
                   </span>
                 </div>
               ))}
-            {canShowTrend ? (
+            {!isMissevanPeak && canShowTrend ? (
               <RankTrendButton
                 onClick={openTrendDialog}
                 aria-label={`查看${item.name}趋势`}

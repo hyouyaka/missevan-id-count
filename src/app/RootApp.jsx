@@ -18,8 +18,8 @@ function getCurrentPath() {
   return String(window.location.pathname || "/").replace(/\/+$/, "") || "/";
 }
 
-function isToolPath() {
-  return getCurrentPath() === "/tool";
+function isNodesPath() {
+  return getCurrentPath() === "/nodes";
 }
 
 function isProbablyDesktopShell() {
@@ -54,7 +54,7 @@ export function RootApp() {
       } catch (_) {
       } finally {
         if (!cancelled) {
-          setResolvedView(isToolPath() || isProbablyDesktopShell() ? "tool" : "landing");
+          setResolvedView(isNodesPath() && !isProbablyDesktopShell() ? "landing" : "tool");
         }
       }
     }

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildRankTrendResponse } from "./ranksTrendUtils.js";
+import {
+  buildPeakSeriesTrendResponse,
+  buildRankTrendResponse,
+  getPeakSeriesDailyViewDelta,
+} from "./ranksTrendUtils.js";
 
 const sampleIndex = {
   version: 1,
@@ -272,4 +276,131 @@ test("buildRankTrendResponse returns not found when a drama has no metric snapsh
 
   assert.equal(response.success, false);
   assert.equal(response.status, 404);
+});
+
+test("buildPeakSeriesTrendResponse builds playback-only windows from series samples", () => {
+  const response = buildPeakSeriesTrendResponse({
+    id: "魔道祖师",
+    peakSnapshot: {
+      dates: ["2026-05-02", "2026-05-04"],
+      series: {
+        魔道祖师: {
+          name: "魔道祖师",
+          dramaIds: ["15861", "19059", "22602"],
+          samples: {
+            "2026-05-02": {
+              view_count: 722137429,
+              position: 1,
+            },
+            "2026-05-04": {
+              view_count: 722208818,
+              position: 1,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.platform, "missevan");
+  assert.equal(response.id, "魔道祖师");
+  assert.equal(response.name, "系列：魔道祖师");
+  assert.deepEqual(response.dramaIds, ["15861", "19059", "22602"]);
+  assert.equal(response.latestDate, "2026-05-04");
+  assert.deepEqual(response.rankHistory, [
+    {
+      date: "2026-05-02",
+      ranks: [{ key: "peak", name: "巅峰榜", position: 1 }],
+    },
+    {
+      date: "2026-05-04",
+      ranks: [{ key: "peak", name: "巅峰榜", position: 1 }],
+    },
+  ]);
+
+  for (const windowKey of ["3d", "7d", "30d"]) {
+    const window = response.windows[windowKey];
+    assert.equal(window.fromDate, "2026-05-02");
+    assert.equal(window.toDate, "2026-05-04");
+    assert.equal(window.insufficientData, false);
+    assert.deepEqual(
+      window.metrics.map((metric) => ({
+        key: metric.key,
+        label: metric.label,
+        fromValue: metric.fromValue,
+        toValue: metric.toValue,
+        delta: metric.delta,
+        available: metric.available,
+        history: metric.history,
+      })),
+      [
+        {
+          key: "view_count",
+          label: "系列总播放量",
+          fromValue: 722137429,
+          toValue: 722208818,
+          delta: 71389,
+          available: true,
+          history: [
+            { date: "2026-05-02", value: 722137429 },
+            { date: "2026-05-04", value: 722208818 },
+          ],
+        },
+      ]
+    );
+  }
+});
+
+test("getPeakSeriesDailyViewDelta uses latest minus previous available sample", () => {
+  const delta = getPeakSeriesDailyViewDelta({
+    name: "虚拟偶像声音综艺系列",
+    samples: {
+      "2026-05-02": {
+        view_count: 360655306,
+      },
+      "2026-05-04": {
+        view_count: 361012978,
+      },
+    },
+  });
+
+  assert.deepEqual(delta, {
+    available: true,
+    fromDate: "2026-05-02",
+    toDate: "2026-05-04",
+    fromValue: 360655306,
+    toValue: 361012978,
+    delta: 357672,
+  });
+});
+
+test("buildPeakSeriesTrendResponse matches by series display name and reports missing series", () => {
+  const peakSnapshot = {
+    dates: ["2026-05-02", "2026-05-04"],
+    series: {
+      mdzs: {
+        name: "魔道祖师",
+        samples: {
+          "2026-05-02": { view_count: 100, position: 2 },
+          "2026-05-04": { view_count: 130, position: 1 },
+        },
+      },
+    },
+  };
+
+  const matched = buildPeakSeriesTrendResponse({
+    id: "魔道祖师",
+    peakSnapshot,
+  });
+  assert.equal(matched.success, true);
+  assert.equal(matched.id, "魔道祖师");
+  assert.equal(matched.windows["3d"].metrics[0].delta, 30);
+
+  const missing = buildPeakSeriesTrendResponse({
+    id: "不存在的系列",
+    peakSnapshot,
+  });
+  assert.equal(missing.success, false);
+  assert.equal(missing.status, 404);
 });

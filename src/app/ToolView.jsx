@@ -1496,8 +1496,8 @@ export function ToolView({ initialAppConfig }) {
                 <>
                   {stepOneHint} 也可前往
                   {" "}
-                  <a className="font-medium text-primary underline underline-offset-4" href="/">
-                    首页
+                  <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
+                    节点页
                   </a>
                   {" "}选择其他节点，或直接使用
                   {appConfig.desktopAppUrl ? (
