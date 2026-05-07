@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { ChangelogButton, ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { DesktopReportPanel } from "@/app/DesktopReportPanel";
 import { MessageDialog } from "@/app/MessageDialog";
 import { OngoingPanel } from "@/app/OngoingPanel";
@@ -59,6 +60,7 @@ const mainNavigationIconMap = {
   ongoing: Clock3Icon,
   ranks: ChartNoAxesColumnIncreasingIcon,
 };
+const headerActionButtonStyle = { fontSize: 14 };
 
 function MainNavigationTabLabel({ platform }) {
   if (platform.key === "missevan" || platform.key === "manbo") {
@@ -95,6 +97,7 @@ export function ToolView({ initialAppConfig }) {
   });
   const [notice, setNotice] = useState(null);
   const [searchJumpStatus, setSearchJumpStatus] = useState(null);
+  const { changelogOpen, openChangelog, setChangelogOpen } = useChangelogDialog(appConfig.frontendVersion);
 
   const currentPlatformRef = useRef(currentPlatform);
   const appConfigRef = useRef(appConfig);
@@ -546,14 +549,21 @@ export function ToolView({ initialAppConfig }) {
     return data;
   }
 
-  async function openDramaInSearch({ platform, id, name, paymentLabel, contentTypeLabel, usageAction }) {
+  async function openDramaInSearch({ platform, id, ids, name, paymentLabel, contentTypeLabel, usageAction }) {
     const targetPlatform = platform === "manbo" ? "manbo" : "missevan";
-    const dramaId = String(id ?? "").trim();
+    const dramaIds = Array.from(
+      new Set(
+        (Array.isArray(ids) && ids.length ? ids : [id])
+          .map((item) => String(item ?? "").trim())
+          .filter((item) => /^\d+$/.test(item))
+      )
+    );
+    const manualInput = dramaIds.join("\n");
     const dramaName = String(name ?? "").trim();
     const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result"].includes(String(usageAction ?? "").trim())
       ? String(usageAction).trim()
       : "";
-    if (!dramaId) {
+    if (!dramaIds.length) {
       toast.error("打开搜索结果失败，请稍后重试。");
       return;
     }
@@ -578,8 +588,8 @@ export function ToolView({ initialAppConfig }) {
     try {
       const endpoint = targetPlatform === "manbo" ? "/manbo/getdramacards" : "/getdramacards";
       const body = targetPlatform === "manbo"
-        ? { items: [{ raw: dramaId }], ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) }
-        : { drama_ids: [dramaId], ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) };
+        ? { items: dramaIds.map((dramaId) => ({ raw: dramaId })), ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) }
+        : { drama_ids: dramaIds, ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) };
       const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -617,10 +627,10 @@ export function ToolView({ initialAppConfig }) {
         searchForm: {
           ...state.searchForm,
           keyword: String(name ?? "").trim(),
-          manualInput: dramaId,
+          manualInput,
         },
       }));
-      setManualSearchResults(targetPlatform, results, { limit: 1, scroll: false });
+      setManualSearchResults(targetPlatform, results, { limit: dramaIds.length, scroll: false });
       setCurrentPlatform(targetPlatform);
       scrollToPanel(resultsPanelRef);
     } catch (error) {
@@ -1424,14 +1434,17 @@ export function ToolView({ initialAppConfig }) {
                     v{appConfig.frontendVersion}
                   </Badge>
                 </div>
-                {appConfig.featureSuggestionUrl ? (
-                  <Button variant="outline" size="xs" className="sm:hidden" asChild>
-                    <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
-                      <MessageSquarePlusIcon data-icon="inline-start" />
-                      功能建议
-                    </a>
-                  </Button>
-                ) : null}
+                <div className="flex shrink-0 items-center gap-2 sm:hidden">
+                  {appConfig.featureSuggestionUrl ? (
+                    <Button variant="outline" size="default" style={headerActionButtonStyle} asChild>
+                      <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
+                        <MessageSquarePlusIcon data-icon="inline-start" />
+                        功能建议
+                      </a>
+                    </Button>
+                  ) : null}
+                  <ChangelogButton onClick={openChangelog} style={headerActionButtonStyle} />
+                </div>
               </div>
               <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-3">
                 <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{appConfig.titleZh}</h1>
@@ -1440,13 +1453,14 @@ export function ToolView({ initialAppConfig }) {
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
               {appConfig.featureSuggestionUrl ? (
-                <Button variant="outline" size="sm" className="hidden sm:inline-flex" asChild>
+                <Button variant="outline" size="default" className="hidden sm:inline-flex" style={headerActionButtonStyle} asChild>
                   <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
                     <MessageSquarePlusIcon data-icon="inline-start" />
                     功能建议
                   </a>
                 </Button>
               ) : null}
+              <ChangelogButton className="hidden sm:inline-flex" onClick={openChangelog} style={headerActionButtonStyle} />
               <Tabs value={currentPlatform} onValueChange={setCurrentPlatform}>
                 <TabsList
                   className="grid h-9 w-full overflow-hidden p-0.5 sm:inline-flex sm:w-fit"
@@ -1585,6 +1599,7 @@ export function ToolView({ initialAppConfig }) {
       )}
 
       <MessageDialog notice={notice} onClose={() => setNotice(null)} />
+      <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
 
       <AlertDialog open={Boolean(searchJumpStatus)} onOpenChange={() => {}}>
         <AlertDialogContent size="sm">

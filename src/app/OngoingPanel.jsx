@@ -326,23 +326,23 @@ function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0
               ) : null}
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-0.5">
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <div className="min-w-0">
                 <button
                   type="button"
                   className="line-clamp-2 min-w-0 break-words rounded-sm text-left text-lg! font-semibold! leading-6! text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   onClick={openSearchResult}
                 >
-                  {item.name || "未命名剧集"}
+                  <span>{item.name || "未命名剧集"}</span>
+                  {titleTags.map((label) => (
+                    <Badge
+                      key={`${item.id}-${label}`}
+                      variant={tagVariants[label] || "outline"}
+                      className="ml-1 inline-flex h-[1.05rem] px-1.5 align-[0.12em] text-[0.6rem] leading-none"
+                    >
+                      {label}
+                    </Badge>
+                  ))}
                 </button>
-                {titleTags.map((label) => (
-                  <Badge
-                    key={`${item.id}-${label}`}
-                    variant={tagVariants[label] || "outline"}
-                    className="h-[1.05rem] px-1.5 text-[0.6rem] leading-none"
-                  >
-                    {label}
-                  </Badge>
-                ))}
               </div>
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <HashIcon aria-label="作品ID" className="size-3.5 shrink-0" />

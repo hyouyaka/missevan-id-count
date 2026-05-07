@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MessageSquarePlusIcon, RefreshCcwIcon } from "lucide-react";
 
+import { ChangelogButton, ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -47,6 +48,7 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
     createRegionState("area2", "节点2", normalizeRegionBaseUrl(import.meta.env.VITE_REGION_AREA2_URL)),
     createRegionState("area3", "节点3", normalizeRegionBaseUrl(import.meta.env.VITE_REGION_AREA3_URL)),
   ]);
+  const { changelogOpen, openChangelog, setChangelogOpen } = useChangelogDialog(frontendVersion);
 
   async function refreshAllRegions() {
     setLoading(true);
@@ -192,6 +194,7 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
                   </a>
                 </Button>
               ) : null}
+              <ChangelogButton className="h-10 min-w-fit px-3 sm:px-4" size="default" onClick={openChangelog} />
               <Button variant="outline" className="h-10 min-w-fit px-3 sm:px-4" disabled={loading} onClick={refreshAllRegions}>
                 <RefreshCcwIcon data-icon="inline-start" className={loading ? "animate-spin" : ""} />
                 {loading ? "正在刷新..." : "刷新状态"}
@@ -200,6 +203,7 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
           </div>
         </CardContent>
       </Card>
+      <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
     </div>
   );
 }

@@ -285,8 +285,12 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
   const trendLookupId = isMissevanPeak ? item.name : item.id;
   const trendItemBase = paymentTag ? { ...item, payment_label: paymentTag, payStatus: paymentTag } : item;
   const trendItem = isMissevanPeak ? { ...trendItemBase, id: trendLookupId } : trendItemBase;
-  const searchDramaId = isPeakRank ? "" : item.id;
-  const canOpenSearchResult = Boolean(onOpenSearchResult && platform && searchDramaId && !isPeakRank);
+  const searchDramaIds = isMissevanPeak
+    ? (Array.isArray(item.drama_ids) ? item.drama_ids : [])
+    : item.id != null
+      ? [item.id]
+      : [];
+  const canOpenSearchResult = Boolean(onOpenSearchResult && platform && searchDramaIds.length);
   const mainCvText = String(item.main_cv_text ?? "").replace(/^主要CV：/, "");
   const peakPlayMetric = isMissevanPeak
     ? { label: "系列总播放量", iconLabel: "总播放量", value: formatPlainNumber(item.view_count) }
@@ -366,7 +370,8 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
     }
     onOpenSearchResult?.({
       platform,
-      id: searchDramaId,
+      id: searchDramaIds[0],
+      ids: searchDramaIds,
       name: item.name,
       paymentLabel: paymentTag,
       contentTypeLabel: titleTags[0],
@@ -394,25 +399,30 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
             ) : null}
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="hidden min-w-0 flex-wrap items-center gap-1.5 lg:flex">
+            <div className="hidden min-w-0 lg:block">
               {canOpenSearchResult ? (
                 <button
                   type="button"
                   className={`min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
                   onClick={openSearchResult}
                 >
-                  {item.name}
+                  <span>{item.name}</span>
+                  {titleTags.map((label) => (
+                    <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
+                      {label}
+                    </Badge>
+                  ))}
                 </button>
               ) : (
                 <span className={`min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`}>
-                  {item.name}
+                  <span>{item.name}</span>
+                  {titleTags.map((label) => (
+                    <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
+                      {label}
+                    </Badge>
+                  ))}
                 </span>
               )}
-              {titleTags.map((label) => (
-                <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={metaBadgeClassName}>
-                  {label}
-                </Badge>
-              ))}
             </div>
             <div className="min-w-0 lg:hidden">
               {canOpenSearchResult ? (
@@ -421,18 +431,23 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
                   className={`break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
                   onClick={openSearchResult}
                 >
-                  {item.name}
+                  <span>{item.name}</span>
+                  {titleTags.map((label) => (
+                    <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
+                      {label}
+                    </Badge>
+                  ))}
                 </button>
               ) : (
                 <span className={`break-words text-foreground ${getTitleClassName(item.name)}`}>
-                  {item.name}
+                  <span>{item.name}</span>
+                  {titleTags.map((label) => (
+                    <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
+                      {label}
+                    </Badge>
+                  ))}
                 </span>
               )}
-              {titleTags.map((label) => (
-                <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
-                  {label}
-                </Badge>
-              ))}
             </div>
             {detailIdText ? (
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
