@@ -11,7 +11,6 @@ Last updated: 2026-05-06
   - `src/` for the browser UI
   - `shared/` for code shared across backend and frontend feature domains
   - `electron/` for the desktop shell and Excel export IPC workflow
-  - `manboIndexStore.js` for Manbo index synchronization and lookup
   - `envConfig.js` for controlled environment loading
 
 This document describes the current implementation, not the historical evolution of the repo. Generated outputs and temporary notes that happen to live in the repository are called out separately under **Repository Boundaries** and are not treated as source architecture.
@@ -91,8 +90,7 @@ The backend currently exposes these route families.
 
 ### Manbo Search and Content APIs
 - `POST /manbo/resolve-input`: normalize shared links, URLs, and raw IDs
-- `GET /manbo/search`: index-backed Manbo search
-- `GET /manbo/index/meta`: index metadata for the UI
+- `GET /manbo/search`: info-store-backed Manbo search
 - `POST /manbo/getdramacards`: normalized Manbo drama cards
 - `POST /manbo/getdramas`: full drama detail plus episode/set metadata
 - `POST /manbo/getsetsummary`: per-set play counts
@@ -137,7 +135,7 @@ The backend currently exposes these route families.
 
 ### Manbo
 - Inputs can start as raw IDs, app share payloads, or URLs and are normalized by `/manbo/resolve-input`.
-- Search uses the Manbo index built by `manboIndexStore.js`.
+- Search uses Manbo metadata from `manboInfoStore.records`.
 - Detail fetches combine legacy and v530 API shapes into a normalized UI contract.
 - Danmaku is paginated and fetched concurrently, with a dedicated in-memory cache and in-flight deduplication.
 
@@ -162,7 +160,6 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | `manboInfoStore` | Upstash `manbo:info:v1` | `runtime/manbo-drama-info.json` | Searchable Manbo title metadata |
 | `missevanInfoStore` | Upstash `missevan:info:v1` | `runtime/missevan-drama-info.json` | Searchable Missevan title metadata |
 | `newDramaIdsStore` | Upstash `new:dramaIDs` | `runtime/new-drama-ids.json` | Captured new IDs |
-| `manboIndexStore` | Upstash-backed sync model | runtime-backed local state | Manbo search index and metadata |
 | cooldown state | Upstash `missevan:cooldown:v1` and region keys | in-memory only when persistence disabled | Access-denial recovery state |
 | ranks and ongoing snapshots | Upstash `ranks:latest`, `ranks:index`, `ranks:metrics:*`, `ranks:list:*`, `ongoing:*` | none | Rank, trend, and ongoing APIs |
 
@@ -270,7 +267,7 @@ The desktop report workflow is only active inside the Electron shell.
 - feature links: `MISSEVAN_DESKTOP_APP_URL`, `FEATURE_SUGGESTION_URL`
 - persistence: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
 - cooldown: `MISSEVAN_PERSISTENT_COOLDOWN`, `MISSEVAN_COOLDOWN_KEY`, `MISSEVAN_COOLDOWN_HOURS`
-- cache and sync tuning: `INFO_STORE_SYNC_INTERVAL_MS`, `MANBO_INDEX_SYNC_INTERVAL_MS`, `RANKS_CACHE_TTL_MS`
+- cache and sync tuning: `INFO_STORE_SYNC_INTERVAL_MS`, `RANKS_CACHE_TTL_MS`
 - Manbo runtime tuning: `MANBO_FETCH_TIMEOUT_MS`, `MANBO_DANMAKU_PAGE_CONCURRENCY`, `MANBO_STATS_EPISODE_CONCURRENCY`
 
 ### Environment Resolution Order

@@ -4,6 +4,14 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.5.3",
+    changes: [
+      "优化猫耳单集付费剧集的收益预估",
+      "优化搜索结果排序",
+      "清理旧版本残留bug",
+    ],
+  },
+  {
     version: "1.5.2",
     changes: ["增加巅峰榜标题跳转。"],
   },

@@ -7,12 +7,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
   buildRevenueSummary,
+  buildRevenuePaidMetricSegments,
   formatElapsed,
   formatPlainNumber,
   formatPlayCountDisplay,
   formatPlayCountWanFixed,
+  getHistoryMetricIconKey,
+  getRevenueDisplayLabel,
   formatRevenueDisplayValue,
-  shouldShowRevenueRange,
 } from "@/app/app-utils";
 
 function getMetricToneClass(index) {
@@ -137,7 +139,7 @@ function getHistoryMetricIcon(metric, platform) {
   if (metric?.key === "rewardTotal") {
     return platform === "manbo" ? BeanIcon : CoinsIcon;
   }
-  return HISTORY_METRIC_ICON_MAP[metric?.key] || null;
+  return HISTORY_METRIC_ICON_MAP[getHistoryMetricIconKey(metric)] || null;
 }
 
 function HistoryMetric({ metric, platform }) {
@@ -258,13 +260,6 @@ export function OutputPanel({
 }) {
   const resolvedRevenueSummary = revenueSummary || buildRevenueSummary(revenueResults, platform);
 
-  function getPaidCountLabel(drama) {
-    if (drama?.platform === "manbo" && drama?.paidCountSource === "pay_count") {
-      return "付费人数";
-    }
-    return "付费用户 ID 数";
-  }
-
   function getSummaryPaidCountLabel(summary) {
     if (summary?.platform === "manbo" && summary?.paidCountSourceSummary === "pay_count") {
       return "总付费人次";
@@ -290,37 +285,8 @@ export function OutputPanel({
     return drama?.platform === "missevan" && drama?.rewardNum != null && Number.isFinite(Number(drama?.rewardNum));
   }
 
-  function isManboRewardOnlyRevenue(drama) {
-    if (drama?.platform !== "manbo") {
-      return false;
-    }
-    if (drama?.summaryRevenueMode === "member_reward" || drama?.revenueType === "member") {
-      return true;
-    }
-    const rewardValue = Number(drama?.diamondValue ?? drama?.rewardTotal ?? 0);
-    const titlePrice = Number(drama?.titlePrice ?? drama?.titlePriceTotal ?? 0);
-    return rewardValue > 0 && titlePrice <= 0 && !shouldShowRevenueRange(drama);
-  }
-
-  function isMissevanRewardOnlyRevenue(drama) {
-    if (drama?.platform !== "missevan") {
-      return false;
-    }
-    return Boolean(
-      drama?.vipOnlyReward ||
-        drama?.summaryRevenueMode === "member_reward" ||
-        (!drama?.failed && !drama?.hasSummaryPrice && Number(drama?.rewardTotal ?? 0) > 0)
-    );
-  }
-
   function getRevenueLabel(drama) {
-    if (isManboRewardOnlyRevenue(drama)) {
-      return "收益预估（仅计算投喂，元）";
-    }
-    if (isMissevanRewardOnlyRevenue(drama)) {
-      return "收益预估（仅计算打赏，元）";
-    }
-    return "收益预估（元）";
+    return getRevenueDisplayLabel(drama);
   }
 
   const hasAnyResults = Boolean(
@@ -501,10 +467,10 @@ export function OutputPanel({
                   title={drama.subtitle || `${drama.title} / 单价 ${drama.price || 0} 钻石`}
                   insetInverted={false}
                   metrics={[
-                    {
-                      label: getPaidCountLabel(drama),
-                      value: drama.failed ? "访问失败" : formatPlainNumber(drama.paidUserCount),
-                    },
+                    ...buildRevenuePaidMetricSegments(drama).map((segment) => ({
+                      label: segment.label,
+                      value: drama.failed ? "访问失败" : segment.value,
+                    })),
                     {
                       label: getRewardLabel(drama),
                       value: drama.failed ? "访问失败" : formatRewardMetricValue(drama),

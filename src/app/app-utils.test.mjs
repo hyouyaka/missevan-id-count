@@ -2,8 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildRevenuePaidMetricSegments,
   buildRevenueSummary,
   createStatsHistoryEntry,
+  getHistoryMetricIconKey,
+  formatRevenueDisplayValue,
+  getRevenueDisplayLabel,
+  getRevenuePaidCountLabel,
   loadPersistedHistoryEntries,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
@@ -119,6 +124,151 @@ test("createStatsHistoryEntry includes total danmaku in id summary for multi-dra
     { key: "danmakuCount", label: "总弹幕数", value: "12345" },
     { key: "uniqueUsers", label: "去重 ID", value: "23" },
   ]);
+});
+
+test("getRevenuePaidCountLabel names Missevan pay_type=1 summed paid episode IDs", () => {
+  assert.equal(
+    getRevenuePaidCountLabel({
+      platform: "missevan",
+      payType: 1,
+      revenueType: "episode",
+    }),
+    "付费集总ID数"
+  );
+});
+
+test("getRevenuePaidCountLabel names Missevan pay_type=2 deduped paid episode IDs", () => {
+  assert.equal(
+    getRevenuePaidCountLabel({
+      platform: "missevan",
+      payType: 2,
+      revenueType: "season",
+    }),
+    "付费集去重ID数"
+  );
+});
+
+test("getRevenueDisplayLabel keeps Missevan reward-only wording", () => {
+  assert.equal(
+    getRevenueDisplayLabel({
+      platform: "missevan",
+      revenueType: "reward_only",
+      summaryRevenueMode: "member_reward",
+      vipOnlyReward: true,
+    }),
+    "收益预估（仅计算打赏，元）"
+  );
+});
+
+test("Missevan pay_type=1 revenue summary and display use range values", () => {
+  const drama = createRevenueDrama({
+    payType: 1,
+    revenueType: "episode",
+    summaryRevenueMode: "range",
+    paidUserCount: 5,
+    episodePaidUserCountTotal: 5,
+    seasonPaidUserCount: 4,
+    paidEpisodeCount: 2,
+    rewardCoinTotal: 100,
+    estimatedRevenueYuan: 20,
+    minRevenueYuan: 20,
+    maxRevenueYuan: 26,
+  });
+
+  const summary = buildRevenueSummary([drama], "missevan");
+
+  assert.equal(summary.summaryRevenueMode, "range");
+  assert.equal(summary.estimatedRevenueYuan, 20);
+  assert.equal(summary.minRevenueYuan, 20);
+  assert.equal(summary.maxRevenueYuan, 26);
+  assert.equal(formatRevenueDisplayValue(drama), "20-26");
+});
+
+test("Missevan pay_type=1 paid metrics include summed and deduped paid episode IDs", () => {
+  const segments = buildRevenuePaidMetricSegments({
+    platform: "missevan",
+    payType: 1,
+    revenueType: "episode",
+    paidUserCount: 5,
+    seasonPaidUserCount: 4,
+  });
+
+  assert.deepEqual(segments, [
+    { key: "episodePaidUserCountTotal", kind: "metric", metricKey: "episodePaidUserCountTotal", label: "付费集总ID数", value: "5", unit: "ID" },
+    { key: "seasonPaidUserCount", kind: "metric", metricKey: "seasonPaidUserCount", label: "付费集去重ID数", value: "4", unit: "ID" },
+  ]);
+});
+
+test("Missevan pay_type=1 paid history metrics use the ID icon key", () => {
+  const segments = buildRevenuePaidMetricSegments({
+    platform: "missevan",
+    payType: 1,
+    revenueType: "episode",
+    paidUserCount: 1995,
+    seasonPaidUserCount: 1393,
+  });
+
+  assert.deepEqual(
+    segments.map((segment) => getHistoryMetricIconKey(segment)),
+    ["uniqueUsers", "uniqueUsers"]
+  );
+});
+
+test("Missevan pay_type=1 revenue history shows both ID metrics but summary keeps one deduped ID metric", () => {
+  const firstDrama = createRevenueDrama({
+    title: "单集付费一",
+    payType: 1,
+    revenueType: "episode",
+    summaryRevenueMode: "range",
+    paidUserCount: 5,
+    paidUserIds: [101, 202, 303, 404],
+    seasonPaidUserCount: 4,
+    rewardCoinTotal: 100,
+    estimatedRevenueYuan: 20,
+    minRevenueYuan: 20,
+    maxRevenueYuan: 26,
+  });
+  const secondDrama = createRevenueDrama({
+    title: "单集付费二",
+    payType: 1,
+    revenueType: "episode",
+    summaryRevenueMode: "range",
+    paidUserCount: 3,
+    paidUserIds: [303, 505],
+    seasonPaidUserCount: 2,
+    rewardCoinTotal: 50,
+    estimatedRevenueYuan: 11,
+    minRevenueYuan: 11,
+    maxRevenueYuan: 13,
+  });
+  const stats = {
+    activeTaskType: "revenue",
+    revenueResults: [firstDrama, secondDrama],
+    revenueSummary: buildRevenueSummary([firstDrama, secondDrama], "missevan"),
+  };
+
+  const historyEntry = createStatsHistoryEntry("missevan", stats, {
+    taskType: "revenue",
+    createdAt: 1710000000000,
+  });
+
+  assert.deepEqual(
+    historyEntry.items[0].segments.slice(0, 2).map((segment) => ({
+      label: segment.label,
+      value: segment.value,
+      unit: segment.unit,
+    })),
+    [
+      { label: "付费集总ID数", value: "5", unit: "ID" },
+      { label: "付费集去重ID数", value: "4", unit: "ID" },
+    ]
+  );
+  assert.deepEqual(
+    historyEntry.summaryMetrics
+      .filter((metric) => ["uniqueUsers", "episodePaidUserCountTotal", "seasonPaidUserCount"].includes(metric.key))
+      .map((metric) => ({ key: metric.key, label: metric.label, value: metric.value, unit: metric.unit })),
+    [{ key: "uniqueUsers", label: "总和去重 ID", value: "5", unit: "ID" }]
+  );
 });
 
 test("loadPersistedHistoryEntries returns empty platform histories when storage is unavailable", () => {

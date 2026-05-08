@@ -21,18 +21,18 @@ function createStorageMock(initialEntries = []) {
 }
 
 test("getShouldAutoOpenChangelog opens when current version has not been seen", () => {
-  const storage = createStorageMock([[CHANGELOG_SEEN_VERSION_STORAGE_KEY, "1.5.1"]]);
+  const storage = createStorageMock([[CHANGELOG_SEEN_VERSION_STORAGE_KEY, "1.5.2"]]);
 
-  assert.equal(getShouldAutoOpenChangelog("1.5.2", storage), true);
+  assert.equal(getShouldAutoOpenChangelog("1.5.3", storage), true);
 });
 
 test("getShouldAutoOpenChangelog stays closed after current version is marked seen", () => {
   const storage = createStorageMock();
 
-  markChangelogVersionSeen("1.5.2", storage);
+  markChangelogVersionSeen("1.5.3", storage);
 
-  assert.equal(storage.getItem(CHANGELOG_SEEN_VERSION_STORAGE_KEY), "1.5.2");
-  assert.equal(getShouldAutoOpenChangelog("1.5.2", storage), false);
+  assert.equal(storage.getItem(CHANGELOG_SEEN_VERSION_STORAGE_KEY), "1.5.3");
+  assert.equal(getShouldAutoOpenChangelog("1.5.3", storage), false);
 });
 
 test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
@@ -45,12 +45,25 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
     },
   };
 
-  assert.equal(getShouldAutoOpenChangelog("1.5.2", blockedStorage), false);
-  assert.doesNotThrow(() => markChangelogVersionSeen("1.5.2", blockedStorage));
+  assert.equal(getShouldAutoOpenChangelog("1.5.3", blockedStorage), false);
+  assert.doesNotThrow(() => markChangelogVersionSeen("1.5.3", blockedStorage));
 });
 
-test("changelog contains 1.5.2 peak rank title jump entry", () => {
+test("changelog contains 1.5.3 summary entry", () => {
   assert.deepEqual(CHANGELOG_ENTRIES[0], {
+    version: "1.5.3",
+    changes: [
+      "优化猫耳单集付费剧集的收益预估",
+      "优化搜索结果排序",
+      "清理旧版本残留bug",
+    ],
+  });
+});
+
+test("changelog keeps 1.5.2 peak rank title jump entry", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.5.2");
+
+  assert.deepEqual(entry, {
     version: "1.5.2",
     changes: ["增加巅峰榜标题跳转。"],
   });

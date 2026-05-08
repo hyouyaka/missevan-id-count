@@ -1,6 +1,6 @@
 {
   "name": "missevan-counter",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "M&M Toolkit for Missevan and Manbo statistics.",
   "author": "M&M Toolkit",
   "type": "module",
@@ -52,7 +52,6 @@
       "dist/**/*",
       "electron/**/*",
       "server.js",
-      "manboIndexStore.js",
       "envConfig.js",
       "shared/**/*",
       "package.json"

@@ -6,7 +6,7 @@
 
 | 功能 | Missevan | Manbo |
 |------|----------|-------|
-| 搜索与导入 | 关键词搜索 + ID / 链接导入 | 本地索引搜索 + ID / 链接导入 |
+| 搜索与导入 | 关键词搜索 + ID / 链接导入 | 资料库搜索 + ID / 链接导入 |
 | 分集分类 | 付费 / 免费 / 会员 | 付费 / 免费 / 会员 |
 | 弹幕统计 | 弹幕抓取与去重 ID 统计 | 弹幕抓取与去重 ID 统计 |
 | 播放量统计 | 各集播放量汇总 | 各集播放量汇总 |
@@ -76,7 +76,7 @@ Windows 桌面版会直接在界面中提示这一步。
 
 | 变量 | 说明 |
 |------|------|
-| `UPSTASH_REDIS_REST_URL` | Upstash Redis 地址，用于持久化 Manbo 索引和 Missevan cooldown |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis 地址，用于持久化 Manbo/Missevan 资料库、榜单和 cooldown |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis Token |
 
 未配置 Upstash 或不可用时，猫耳搜索会直接调用猫耳搜索 API，Manbo 搜索会提示不可用并仅支持通过 ID / 链接导入。
@@ -85,7 +85,6 @@ Windows 桌面版会直接在界面中提示这一步。
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `MANBO_INDEX_SYNC_INTERVAL_MS` | 多实例环境下刷新远端索引快照的间隔 | `30000` |
 | `MANBO_DANMAKU_PAGE_CONCURRENCY` | 弹幕分页抓取并发数 | `12` |
 | `MANBO_STATS_EPISODE_CONCURRENCY` | 统计任务分集并发数 | `4` |
 | `MANBO_FETCH_TIMEOUT_MS` | 请求超时毫秒数 | `10000` |
@@ -113,7 +112,6 @@ Windows 桌面版会直接在界面中提示这一步。
 ```env
 UPSTASH_REDIS_REST_URL=https://your-upstash-endpoint.upstash.io
 UPSTASH_REDIS_REST_TOKEN=your-upstash-token
-MANBO_INDEX_SYNC_INTERVAL_MS=30000
 MISSEVAN_PERSISTENT_COOLDOWN=false
 MISSEVAN_COOLDOWN_KEY=missevan:cooldown:v1
 FEATURE_SUGGESTION_URL=https://your-feedback-form.example.com

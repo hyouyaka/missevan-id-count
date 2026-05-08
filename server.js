@@ -7,16 +7,22 @@ import { createRequire } from "module";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
-  createManboIndexStore,
-  createUpstashRestClient,
-  normalizeManboIndexName,
-} from "./manboIndexStore.js";
+  extractSearchSortKey,
+  isCompleteSearchTermPrefix,
+  normalizeSearchText,
+} from "./shared/searchUtils.js";
+import { createUpstashRestClient } from "./shared/upstashRestClient.js";
 import { loadLocalEnv } from "./envConfig.js";
 import { isMissevanLikelyDanmakuOverflow } from "./shared/episodeRules.js";
 import {
   buildOngoingResponse,
   normalizeOngoingIdList,
 } from "./shared/ongoingUtils.js";
+import {
+  computeMissevanRevenueMetrics,
+  normalizeMissevanPayType,
+  resolveMissevanRevenueType,
+} from "./shared/missevanRevenueUtils.js";
 import {
   buildPeakSeriesTrendResponse,
   buildRankTrendResponse,
@@ -114,7 +120,6 @@ const manboSetV530Cache = new Map();
 const manboDanmakuCache = new Map();
 const manboDanmakuInFlight = new Map();
 const manboStatsTaskStore = new Map();
-const manboIndexStore = createManboIndexStore({ runtimeDir });
 const upstashClient = createUpstashRestClient();
 const manboInfoStore = {
   platform: "manbo",
@@ -1064,7 +1069,7 @@ function normalizeManboLibraryRecord(record) {
   return {
     dramaId,
     name,
-    normalizedName: normalizeManboIndexName(record?.normalizedName || name),
+    normalizedName: normalizeSearchText(record?.normalizedName || name),
     aliases: normalizeStringArray(record?.aliases, 30),
     cover: normalizeTextValue(record?.cover),
     mainCvNicknames: normalizeStringArray(record?.mainCvNicknames, 20),
@@ -1749,6 +1754,13 @@ function applyInfoStoreSnapshot(store, snapshot) {
   store.lastLoadedAt = Date.now();
 }
 
+export function getInfoStoreReadFailureSnapshot(store) {
+  if (store?.loaded && store?.snapshot) {
+    return cloneJson(store.snapshot);
+  }
+  return null;
+}
+
 async function readInfoStoreSnapshot(store) {
   if (upstashClient.enabled) {
     try {
@@ -1758,8 +1770,12 @@ async function readInfoStoreSnapshot(store) {
         return JSON.parse(raw);
       }
     } catch (error) {
-      store.remoteAvailable = false;
       console.error(`Failed to read Upstash info snapshot key=${store.key}`, error);
+      const fallbackSnapshot = getInfoStoreReadFailureSnapshot(store);
+      if (fallbackSnapshot) {
+        return fallbackSnapshot;
+      }
+      store.remoteAvailable = false;
     }
   } else {
     store.remoteAvailable = false;
@@ -1946,12 +1962,18 @@ function getSearchFieldScore(value, rawKeyword, normalizedKeyword) {
     return 900;
   }
 
-  const normalizedValue = normalizeManboIndexName(rawValue);
+  const normalizedValue = normalizeSearchText(rawValue);
   if (!normalizedValue || !normalizedKeyword) {
     return 0;
   }
   if (normalizedValue === normalizedKeyword) {
     return 780;
+  }
+  if (
+    normalizedValue.startsWith(normalizedKeyword) &&
+    isCompleteSearchTermPrefix(rawValue, rawKeyword)
+  ) {
+    return 700;
   }
   if (normalizedValue.startsWith(normalizedKeyword)) {
     return 620;
@@ -2067,10 +2089,10 @@ function buildSearchBranches(keyword) {
     return branches;
   }
 
-  const normalizedKeyword = normalizeManboIndexName(rawKeyword);
+  const normalizedKeyword = normalizeSearchText(rawKeyword);
   for (const category of SEARCH_CATEGORY_TERMS) {
     for (const term of category.terms) {
-      const normalizedTerm = normalizeManboIndexName(term);
+      const normalizedTerm = normalizeSearchText(term);
       if (!normalizedTerm || !normalizedKeyword.includes(normalizedTerm)) {
         continue;
       }
@@ -2078,7 +2100,7 @@ function buildSearchBranches(keyword) {
       const splitKeyword = normalizeTextValue(
         rawKeyword.replace(new RegExp(escapeRegExp(term), "g"), "")
       );
-      if (!splitKeyword || normalizeManboIndexName(splitKeyword) === normalizedKeyword) {
+      if (!splitKeyword || normalizeSearchText(splitKeyword) === normalizedKeyword) {
         continue;
       }
 
@@ -2095,14 +2117,14 @@ function buildSearchBranches(keyword) {
 
 function recordTextIncludesAny(values, terms) {
   const normalizedTerms = (Array.isArray(terms) ? terms : [])
-    .map((term) => normalizeManboIndexName(term))
+    .map((term) => normalizeSearchText(term))
     .filter(Boolean);
   if (!normalizedTerms.length) {
     return false;
   }
 
   return (Array.isArray(values) ? values : [values]).some((value) => {
-    const normalizedValue = normalizeManboIndexName(value);
+    const normalizedValue = normalizeSearchText(value);
     return normalizedValue && normalizedTerms.some((term) => normalizedValue.includes(term));
   });
 }
@@ -2139,7 +2161,7 @@ function matchesMissevanSearchCategory(record, category) {
 
 function scoreManboLibraryRecord(record, keyword) {
   const rawKeyword = normalizeTextValue(keyword);
-  const normalizedKeyword = normalizeManboIndexName(rawKeyword);
+  const normalizedKeyword = normalizeSearchText(rawKeyword);
   if (!rawKeyword) {
     return 0;
   }
@@ -2163,7 +2185,7 @@ function scoreManboLibraryRecord(record, keyword) {
 
 function scoreMissevanLibraryRecord(record, keyword) {
   const rawKeyword = normalizeTextValue(keyword);
-  const normalizedKeyword = normalizeManboIndexName(rawKeyword);
+  const normalizedKeyword = normalizeSearchText(rawKeyword);
   if (!rawKeyword) {
     return 0;
   }
@@ -2193,7 +2215,7 @@ function buildScoredManboLibraryMatches(records, keyword, category = null) {
       record,
       score: scoreManboLibraryRecord(record, keyword),
     }))
-    .filter((item) => item.score > 0));
+    .filter((item) => item.score > 0), keyword);
 }
 
 function buildScoredMissevanLibraryMatches(records, keyword, category = null) {
@@ -2203,7 +2225,7 @@ function buildScoredMissevanLibraryMatches(records, keyword, category = null) {
       record,
       score: scoreMissevanLibraryRecord(record, keyword),
     }))
-    .filter((item) => item.score > 0));
+    .filter((item) => item.score > 0), keyword);
 }
 
 function applyOptionalSearchLimit(records, limit) {
@@ -2223,17 +2245,118 @@ function compareDramaIdsDesc(left, right) {
   return String(right?.dramaId ?? "").localeCompare(String(left?.dramaId ?? ""));
 }
 
-function sortScoredDramaRecords(items) {
-  return [...(Array.isArray(items) ? items : [])].sort((left, right) => {
+function getSearchSortTitle(record) {
+  return normalizeTextValue(record?.title || record?.name || record?.seriesTitle || "");
+}
+
+function getSearchSortGroupKey(sortKey) {
+  return sortKey?.baseKey ? normalizeSearchText(sortKey.baseKey) : "";
+}
+
+function getSearchSortKindRank(sortKey) {
+  if (sortKey?.kind === 0) {
+    return 0;
+  }
+  if (sortKey?.kind === 2) {
+    return 1;
+  }
+  if (sortKey?.kind === 1) {
+    return 2;
+  }
+  return 3;
+}
+
+function compareSearchSortKeys(left, right) {
+  const kindDelta = getSearchSortKindRank(left) - getSearchSortKindRank(right);
+  if (kindDelta !== 0) {
+    return kindDelta;
+  }
+
+  if (left?.kind === 0 && right?.kind === 0) {
+    const leftSeason = Number(left?.seasonNumber ?? Number.MAX_SAFE_INTEGER);
+    const rightSeason = Number(right?.seasonNumber ?? Number.MAX_SAFE_INTEGER);
+    const seasonDelta = leftSeason - rightSeason;
+    if (seasonDelta !== 0) {
+      return seasonDelta;
+    }
+
+    const partDelta = Number(left?.partRank ?? 0) - Number(right?.partRank ?? 0);
+    if (partDelta !== 0) {
+      return partDelta;
+    }
+  }
+
+  return 0;
+}
+
+function decorateSearchSortItems(items, keyword) {
+  const decoratedItems = [...(Array.isArray(items) ? items : [])].map((item) => {
+    const sortKey = extractSearchSortKey(getSearchSortTitle(item?.record), keyword);
+    return {
+      ...item,
+      searchSortKey: sortKey,
+      searchSortGroupKey: getSearchSortGroupKey(sortKey),
+      searchSortGroupRecord: null,
+    };
+  });
+  const groupBestRecords = new Map();
+  decoratedItems.forEach((item) => {
+    if (!item.searchSortGroupKey) {
+      return;
+    }
+    const key = `${Number(item?.score ?? 0)}::${item.searchSortGroupKey}`;
+    const currentRecord = groupBestRecords.get(key);
+    if (!currentRecord || compareDramaIdsDesc(item.record, currentRecord) < 0) {
+      groupBestRecords.set(key, item.record);
+    }
+  });
+
+  return decoratedItems.map((item) => {
+    if (!item.searchSortGroupKey) {
+      return item;
+    }
+    return {
+      ...item,
+      searchSortGroupRecord: groupBestRecords.get(
+        `${Number(item?.score ?? 0)}::${item.searchSortGroupKey}`
+      ) || null,
+    };
+  });
+}
+
+function compareSearchSortGroups(left, right) {
+  if (!left?.searchSortGroupKey || !right?.searchSortGroupKey) {
+    return 0;
+  }
+  if (left.searchSortGroupKey === right.searchSortGroupKey) {
+    return compareSearchSortKeys(left.searchSortKey, right.searchSortKey);
+  }
+
+  const groupDelta = compareDramaIdsDesc(
+    left.searchSortGroupRecord,
+    right.searchSortGroupRecord
+  );
+  if (groupDelta !== 0) {
+    return groupDelta;
+  }
+  return left.searchSortGroupKey.localeCompare(right.searchSortGroupKey, "zh-Hans-CN");
+}
+
+function sortScoredDramaRecords(items, keyword) {
+  return decorateSearchSortItems(items, keyword).sort((left, right) => {
     const scoreDelta = Number(right?.score ?? 0) - Number(left?.score ?? 0);
     if (scoreDelta !== 0) {
       return scoreDelta;
+    }
+    const searchSortDelta = compareSearchSortGroups(left, right);
+    if (searchSortDelta !== 0) {
+      return searchSortDelta;
     }
     return compareDramaIdsDesc(left?.record, right?.record);
   });
 }
 
-function searchManboLibraryRecords(records, keyword, limit = null) {
+export function searchManboLibraryRecords(records, keyword, limit = null) {
   const branches = buildSearchBranches(keyword);
   const matchedRecords = Array.from(
     branches
@@ -2255,7 +2378,7 @@ function searchManboLibraryRecords(records, keyword, limit = null) {
   return applyOptionalSearchLimit(matchedRecords, limit);
 }
 
-function searchMissevanLibraryRecords(records, keyword, limit = null) {
+export function searchMissevanLibraryRecords(records, keyword, limit = null) {
   const branches = buildSearchBranches(keyword);
   const matchedRecords = Array.from(
     branches
@@ -2894,6 +3017,7 @@ function normalizeMissevanDramaInfo(info) {
       view_count: Number(drama.view_count ?? 0),
       subscription_num: Number(drama.subscription_num ?? 0),
       platform: "missevan",
+      pay_type: normalizeMissevanPayType(drama.pay_type ?? drama.payType),
     },
     episodes: {
       episode: episodes.map((episode) => ({
@@ -3450,37 +3574,6 @@ function resolveMissevanMemberPrice(priceValue, vipDiscountPriceValue) {
     return price;
   }
   return 0;
-}
-
-function buildManboIndexRecordFromDramaInfo(info) {
-  const drama = info?.drama || {};
-  if (!isNumericId(drama?.id)) {
-    return null;
-  }
-
-  const name = String(drama.name ?? "").trim();
-  if (!name) {
-    return null;
-  }
-
-  return {
-    dramaId: String(drama.id),
-    name,
-    normalizedName: normalizeManboIndexName(name),
-    aliases: [],
-    cover: String(drama.cover ?? "").trim(),
-  };
-}
-
-function buildManboIndexSearchCard(record) {
-  return {
-    id: String(record.dramaId),
-    name: record.name,
-    cover: record.cover || "",
-    checked: true,
-    platform: "manbo",
-    source_type: "index",
-  };
 }
 
 function isManboMemberDramaInfo(info) {
@@ -4985,15 +5078,24 @@ async function executeMissevanRevenueTask(task) {
       const rewardMeta = await fetchRewardDetailMeta(dramaId).catch(() => null);
       const rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
       const isMember = Boolean(dramaInfo?.drama?.is_member) || Number(dramaInfo?.drama?.vip ?? 0) === 1;
-      const vipOnlyReward = isMember;
-      const paidEpisodes = dramaInfo?.episodes?.episode?.filter((episode) => {
-        return Number(episode.need_pay ?? 0) === 1 || Number(episode.price ?? 0) > 0;
-      }) || [];
+      const payType = normalizeMissevanPayType(dramaInfo?.drama?.pay_type ?? dramaInfo?.drama?.payType);
+      const revenueInfo = resolveMissevanRevenueType({
+        payTypeRaw: payType,
+        vip: dramaInfo?.drama?.vip,
+        isMember,
+      });
+      const shouldCollectPaidEpisodeUsers = revenueInfo.revenueType !== "reward_only";
+      const paidEpisodes = shouldCollectPaidEpisodeUsers
+        ? dramaInfo?.episodes?.episode?.filter((episode) => {
+            return Number(episode.need_pay ?? 0) === 1 || Number(episode.price ?? 0) > 0;
+          }) || []
+        : [];
       dramaUnit = createRevenueDramaUnit(task, title, paidEpisodes.length, 2);
       task.progressTotalUnits += Math.max(0, dramaUnit.totalUnits - 1);
       advanceRevenueProgress(task, 1, `正在统计收益：${title} / 详情`);
 
       const userSet = new Set();
+      let episodePaidUserCountTotal = 0;
       let failed = false;
       let accessDenied = false;
       let rewardCoinTotal = 0;
@@ -5021,9 +5123,12 @@ async function executeMissevanRevenueTask(task) {
           }
           break;
         }
+        const episodeUserSet = new Set();
         (Array.isArray(danmakuResult.users) ? danmakuResult.users : []).forEach((uid) => {
           userSet.add(uid);
+          episodeUserSet.add(uid);
         });
+        episodePaidUserCountTotal += episodeUserSet.size;
         if (isMissevanLikelyDanmakuOverflow({
           durationMs: Number(episode?.duration ?? 0),
           danmaku: danmakuResult.danmaku,
@@ -5063,29 +5168,49 @@ async function executeMissevanRevenueTask(task) {
       }
       advanceRevenueProgress(task, 1, `正在统计收益：${title} / 打赏汇总`);
 
+      const revenueMetrics = computeMissevanRevenueMetrics({
+        payTypeRaw: payType,
+        vip: dramaInfo?.drama?.vip,
+        isMember,
+        price,
+        rewardCoinTotal,
+        seasonPaidUserCount: userSet.size,
+        episodePaidUserCountTotal,
+        paidEpisodeCount: paidEpisodes.length,
+      });
+
       results.push({
         dramaId,
         platform: "missevan",
         title,
-        subtitle: isMember
-          ? `${title} / ${price}（会员${memberPrice}）钻石`
-          : `${title} / ${price} 钻石`,
+        subtitle: revenueMetrics.revenueType === "reward_only"
+          ? `${title} / 仅计算打赏`
+          : revenueMetrics.revenueType === "episode"
+            ? `${title} / 单集付费 ${price} 钻石`
+            : isMember
+              ? `${title} / ${price}（会员${memberPrice}）钻石`
+              : `${title} / ${price} 钻石`,
         viewCount,
         price,
         memberPrice,
         titlePrice: price > 0 ? price : null,
         titleMemberPrice: memberPrice > 0 ? memberPrice : null,
-        includeInSummaryPrice: price > 0,
+        includeInSummaryPrice: price > 0 && revenueMetrics.revenueType !== "reward_only",
         currencyUnit: "钻石",
-        summaryRevenueMode: vipOnlyReward ? "member_reward" : "single",
+        summaryRevenueMode: revenueMetrics.summaryRevenueMode,
+        payType: revenueMetrics.payType,
+        revenueType: revenueMetrics.revenueType,
         paidUserIds: Array.from(userSet),
-        paidUserCount: userSet.size,
+        paidUserCount: revenueMetrics.paidUserCount,
+        episodePaidUserCountTotal: revenueMetrics.episodePaidUserCountTotal,
+        seasonPaidUserCount: revenueMetrics.seasonPaidUserCount,
+        paidEpisodeCount: revenueMetrics.paidEpisodeCount,
         rewardCoinTotal,
         rewardNum,
-        vipOnlyReward,
-        estimatedRevenueYuan: vipOnlyReward
-          ? rewardCoinTotal / 10
-          : (userSet.size * price + rewardCoinTotal) / 10,
+        vipOnlyReward: revenueMetrics.vipOnlyReward,
+        estimatedRevenueYuan: revenueMetrics.estimatedRevenueYuan,
+        minRevenueYuan: revenueMetrics.minRevenueYuan,
+        maxRevenueYuan: revenueMetrics.maxRevenueYuan,
         failed,
         accessDenied,
       });
@@ -5113,12 +5238,19 @@ async function executeMissevanRevenueTask(task) {
         includeInSummaryPrice: false,
         currencyUnit: "钻石",
         summaryRevenueMode: "single",
+        payType: null,
+        revenueType: "legacy",
         paidUserIds: [],
         paidUserCount: 0,
+        episodePaidUserCountTotal: 0,
+        seasonPaidUserCount: 0,
+        paidEpisodeCount: 0,
         rewardCoinTotal: 0,
         rewardNum: null,
         vipOnlyReward: false,
         estimatedRevenueYuan: 0,
+        minRevenueYuan: null,
+        maxRevenueYuan: null,
         failed: true,
         accessDenied,
       });
@@ -6319,7 +6451,7 @@ app.get("/manbo/search", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(`Failed to search Manbo index keyword=${keyword}`, error);
+    console.error(`Failed to search Manbo library keyword=${keyword}`, error);
     return res.status(500).json({
       success: false,
       results: [],
@@ -6329,25 +6461,6 @@ app.get("/manbo/search", async (req, res) => {
         hydratedCount: 0,
       },
       error: error instanceof Error ? error.message : String(error),
-    });
-  }
-});
-
-app.get("/manbo/index/meta", async (req, res) => {
-  try {
-    const meta = await manboIndexStore.getMeta();
-    return res.json({
-      success: true,
-      ...meta,
-    });
-  } catch (error) {
-    console.error("Failed to load Manbo index meta", error);
-    return res.status(500).json({
-      success: false,
-      version: 0,
-      updatedAt: 0,
-      recordCount: 0,
-      persistence: "unknown",
     });
   }
 });
@@ -6439,10 +6552,6 @@ app.post("/manbo/getdramas", async (req, res) => {
     try {
       const info = await fetchManboDramaDetail(id);
       if (info) {
-        const indexRecord = buildManboIndexRecordFromDramaInfo(info);
-        if (indexRecord) {
-          await manboIndexStore.upsert(indexRecord);
-        }
         results.push({
           success: true,
           id,
@@ -6730,7 +6839,6 @@ export async function startServer(port = defaultPort) {
 
   await loadAccessDeniedCooldown();
   await persistCurrentAppVersionToCooldownState();
-  await manboIndexStore.ensureLoaded();
 
   serverInstance = await new Promise((resolve, reject) => {
     const listener = app.listen(port, () => {

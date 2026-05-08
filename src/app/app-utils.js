@@ -402,6 +402,56 @@ export function buildUniqueUserIds(collections) {
   return Array.from(userSet);
 }
 
+export function getRevenuePaidCountLabel(result) {
+  if (result?.platform === "missevan") {
+    const payType = Number(result?.payType ?? -1);
+    if (result?.revenueType === "episode" || payType === 1) {
+      return "付费集总ID数";
+    }
+    if (result?.revenueType === "season" || payType === 2) {
+      return "付费集去重ID数";
+    }
+  }
+  if (result?.platform === "manbo" && result?.paidCountSource === "pay_count") {
+    return "付费人数";
+  }
+  return "付费用户 ID 数";
+}
+
+function isManboRewardOnlyRevenueResult(result) {
+  if (result?.platform !== "manbo") {
+    return false;
+  }
+  if (result?.summaryRevenueMode === "member_reward" || result?.revenueType === "member") {
+    return true;
+  }
+  const rewardValue = Number(result?.diamondValue ?? result?.rewardTotal ?? 0);
+  const titlePrice = Number(result?.titlePrice ?? result?.titlePriceTotal ?? 0);
+  return rewardValue > 0 && titlePrice <= 0 && !shouldShowRevenueRange(result);
+}
+
+function isMissevanRewardOnlyRevenueResult(result) {
+  if (result?.platform !== "missevan") {
+    return false;
+  }
+  return Boolean(
+    result?.revenueType === "reward_only" ||
+      result?.vipOnlyReward ||
+      result?.summaryRevenueMode === "member_reward" ||
+      (!result?.failed && !result?.hasSummaryPrice && Number(result?.rewardTotal ?? 0) > 0)
+  );
+}
+
+export function getRevenueDisplayLabel(result) {
+  if (isManboRewardOnlyRevenueResult(result)) {
+    return "收益预估（仅计算投喂，元）";
+  }
+  if (isMissevanRewardOnlyRevenueResult(result)) {
+    return "收益预估（仅计算打赏，元）";
+  }
+  return "收益预估（元）";
+}
+
 function hasRevenueRange(result) {
   if (!result || result.summaryRevenueMode === "single" || result.summaryRevenueMode === "member_reward") {
     return false;
@@ -764,15 +814,50 @@ function buildHistoryMetricSegment(metricKey, label, value, unit = "") {
   };
 }
 
+export function getHistoryMetricIconKey(metric) {
+  const metricKey = metric?.key || metric?.metricKey || "";
+  if (metricKey === "episodePaidUserCountTotal" || metricKey === "seasonPaidUserCount") {
+    return "uniqueUsers";
+  }
+  return metricKey;
+}
+
 function hasFiniteOptionalNumber(value) {
   return value != null && Number.isFinite(Number(value));
 }
 
-function buildRevenuePaidMetricSegment(drama) {
+function isMissevanEpisodeRevenueResult(drama) {
+  return drama?.platform === "missevan" && (
+    drama?.revenueType === "episode" || Number(drama?.payType ?? -1) === 1
+  );
+}
+
+export function buildRevenuePaidMetricSegments(drama) {
   if (drama?.platform === "manbo" && drama?.paidCountSource === "pay_count") {
-    return buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.paidUserCount));
+    return [buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.paidUserCount))];
   }
-  return buildHistoryMetricSegment("uniqueUsers", "付费用户 ID 数", formatPlainNumber(drama?.paidUserCount), "ID");
+  if (isMissevanEpisodeRevenueResult(drama)) {
+    const seasonPaidUserCount =
+      drama?.seasonPaidUserCount ?? (Array.isArray(drama?.paidUserIds) ? drama.paidUserIds.length : 0);
+    return [
+      buildHistoryMetricSegment(
+        "episodePaidUserCountTotal",
+        "付费集总ID数",
+        formatPlainNumber(drama?.paidUserCount),
+        "ID"
+      ),
+      buildHistoryMetricSegment(
+        "seasonPaidUserCount",
+        "付费集去重ID数",
+        formatPlainNumber(seasonPaidUserCount),
+        "ID"
+      ),
+    ];
+  }
+  if (drama?.platform === "missevan" && (drama?.revenueType === "season" || Number(drama?.payType ?? -1) === 2)) {
+    return [buildHistoryMetricSegment("uniqueUsers", "付费集去重ID数", formatPlainNumber(drama?.paidUserCount), "ID")];
+  }
+  return [buildHistoryMetricSegment("uniqueUsers", "付费用户 ID 数", formatPlainNumber(drama?.paidUserCount), "ID")];
 }
 
 function buildRevenueSummaryPaidMetricSegments(summary) {
@@ -912,7 +997,7 @@ function buildRevenueHistoryEntry(platform, stats, createdAt) {
           id: String(drama?.dramaId ?? drama?.title ?? `revenue-${index}`),
           title: drama?.title || "未知作品",
           segments: [
-            buildRevenuePaidMetricSegment(drama),
+            ...buildRevenuePaidMetricSegments(drama),
             buildHistoryMetricSegment("rewardTotal", getHistoryRewardLabel(platform), formatHistoryRewardMetric(platform, rewardValue), platform === "manbo" ? "红豆" : "钻石"),
             ...(hasFiniteOptionalNumber(drama?.rewardNum)
               ? [buildHistoryMetricSegment("rewardNum", "打赏人数", formatPlainNumber(drama.rewardNum))]
