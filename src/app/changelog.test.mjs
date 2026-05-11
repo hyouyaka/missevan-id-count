@@ -21,18 +21,18 @@ function createStorageMock(initialEntries = []) {
 }
 
 test("getShouldAutoOpenChangelog opens when current version has not been seen", () => {
-  const storage = createStorageMock([[CHANGELOG_SEEN_VERSION_STORAGE_KEY, "1.5.2"]]);
+  const storage = createStorageMock([[CHANGELOG_SEEN_VERSION_STORAGE_KEY, "1.5.3"]]);
 
-  assert.equal(getShouldAutoOpenChangelog("1.5.3", storage), true);
+  assert.equal(getShouldAutoOpenChangelog("1.5.4", storage), true);
 });
 
 test("getShouldAutoOpenChangelog stays closed after current version is marked seen", () => {
   const storage = createStorageMock();
 
-  markChangelogVersionSeen("1.5.3", storage);
+  markChangelogVersionSeen("1.5.4", storage);
 
-  assert.equal(storage.getItem(CHANGELOG_SEEN_VERSION_STORAGE_KEY), "1.5.3");
-  assert.equal(getShouldAutoOpenChangelog("1.5.3", storage), false);
+  assert.equal(storage.getItem(CHANGELOG_SEEN_VERSION_STORAGE_KEY), "1.5.4");
+  assert.equal(getShouldAutoOpenChangelog("1.5.4", storage), false);
 });
 
 test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
@@ -45,12 +45,24 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
     },
   };
 
-  assert.equal(getShouldAutoOpenChangelog("1.5.3", blockedStorage), false);
-  assert.doesNotThrow(() => markChangelogVersionSeen("1.5.3", blockedStorage));
+  assert.equal(getShouldAutoOpenChangelog("1.5.4", blockedStorage), false);
+  assert.doesNotThrow(() => markChangelogVersionSeen("1.5.4", blockedStorage));
 });
 
-test("changelog contains 1.5.3 summary entry", () => {
+test("changelog contains 1.5.4 merged search entry", () => {
   assert.deepEqual(CHANGELOG_ENTRIES[0], {
+    version: "1.5.4",
+    changes: [
+      "合并搜索和导入输入，新版输入框支持各类关键词，分享链接，剧集和分集ID搜索和导入",
+      "优化搜索逻辑",
+    ],
+  });
+});
+
+test("changelog keeps 1.5.3 summary entry", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.5.3");
+
+  assert.deepEqual(entry, {
     version: "1.5.3",
     changes: [
       "优化猫耳单集付费剧集的收益预估",

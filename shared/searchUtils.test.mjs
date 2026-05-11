@@ -5,6 +5,8 @@ import {
   extractSearchSeasonNumber,
   extractSearchSortKey,
   isCompleteSearchTermPrefix,
+  isSearchKeywordLongEnough,
+  parseMissevanInputToken,
   normalizeManboIndexName,
   normalizeSearchText,
 } from "./searchUtils.js";
@@ -13,6 +15,73 @@ test("normalizeSearchText removes common symbols and keeps compatibility alias",
   assert.equal(normalizeSearchText("彼得·潘"), normalizeSearchText("彼得潘"));
   assert.equal(normalizeSearchText("A•B・C…D—E"), "abcde");
   assert.equal(normalizeManboIndexName("彼得·潘"), normalizeSearchText("彼得潘"));
+});
+
+test("isSearchKeywordLongEnough requires two Han chars or three normalized non-Han chars", () => {
+  assert.equal(isSearchKeywordLongEnough("猫"), false);
+  assert.equal(isSearchKeywordLongEnough("猫耳"), true);
+  assert.equal(isSearchKeywordLongEnough("a猫"), false);
+  assert.equal(isSearchKeywordLongEnough("ab"), false);
+  assert.equal(isSearchKeywordLongEnough("abc"), true);
+  assert.equal(isSearchKeywordLongEnough("12"), false);
+  assert.equal(isSearchKeywordLongEnough("123"), true);
+});
+
+test("parseMissevanInputToken extracts drama IDs from mdrama share links", () => {
+  assert.deepEqual(
+    parseMissevanInputToken("https://www.missevan.com/mdrama/93420?share_channel=wechat"),
+    {
+      raw: "https://www.missevan.com/mdrama/93420?share_channel=wechat",
+      type: "drama",
+      id: "93420",
+    }
+  );
+  assert.deepEqual(parseMissevanInputToken("https://missevan.com/mdrama/93420#share"), {
+    raw: "https://missevan.com/mdrama/93420#share",
+    type: "drama",
+    id: "93420",
+  });
+});
+
+test("parseMissevanInputToken extracts sound IDs from sound share links", () => {
+  assert.deepEqual(
+    parseMissevanInputToken("https://www.missevan.com/sound/12681701?share_channel=copy"),
+    {
+      raw: "https://www.missevan.com/sound/12681701?share_channel=copy",
+      type: "sound",
+      id: "12681701",
+    }
+  );
+});
+
+test("parseMissevanInputToken treats short bare numeric tokens as drama IDs", () => {
+  assert.deepEqual(parseMissevanInputToken("93420"), {
+    raw: "93420",
+    type: "drama",
+    id: "93420",
+  });
+});
+
+test("parseMissevanInputToken treats 6-8 digit bare numeric tokens as sound IDs", () => {
+  assert.deepEqual(parseMissevanInputToken("12681701"), {
+    raw: "12681701",
+    type: "sound",
+    id: "12681701",
+  });
+  assert.deepEqual(parseMissevanInputToken("123456"), {
+    raw: "123456",
+    type: "sound",
+    id: "123456",
+  });
+});
+
+test("parseMissevanInputToken rejects unsupported hosts, paths, and IDs", () => {
+  assert.equal(parseMissevanInputToken("https://example.com/mdrama/93420"), null);
+  assert.equal(parseMissevanInputToken("https://www.missevan.com/sound/0?share_channel=copy"), null);
+  assert.equal(parseMissevanInputToken("https://www.missevan.com/users/93420"), null);
+  assert.equal(parseMissevanInputToken("https://www.missevan.com/mdrama/93420/extra"), null);
+  assert.equal(parseMissevanInputToken("123456789"), null);
+  assert.equal(parseMissevanInputToken("not-a-link"), null);
 });
 
 test("isCompleteSearchTermPrefix distinguishes season prefixes from version prefixes", () => {

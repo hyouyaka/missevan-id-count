@@ -11,6 +11,7 @@ import {
 
 import {
   buildVersionedUrl,
+  formatDeviceDateTime,
   formatPlainNumber,
   getBackendVersionFromResponse,
 } from "@/app/app-utils";
@@ -93,31 +94,7 @@ function formatOngoingDate(value) {
 }
 
 function formatOngoingUpdatedAt(value) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    return "未知";
-  }
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return normalized;
-  }
-
-  const parts = new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-    .formatToParts(date)
-    .reduce((map, part) => {
-      map[part.type] = part.value;
-      return map;
-    }, {});
-
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+  return formatDeviceDateTime(value);
 }
 
 function formatWanNumber(value, options = {}) {

@@ -28,6 +28,7 @@ test("buildRankTrendResponse uses available snapshots for every window", () => {
             view_count: 100,
             danmaku_uid_count: 10,
             subscription_num: 1000,
+            generated_at: "2026-04-24T01:00:00.000Z",
           },
         },
       },
@@ -40,6 +41,7 @@ test("buildRankTrendResponse uses available snapshots for every window", () => {
             view_count: 150,
             danmaku_uid_count: 14,
             subscription_num: 1200,
+            generated_at: "2026-04-26T01:06:48.925Z",
           },
         },
       },
@@ -62,7 +64,9 @@ test("buildRankTrendResponse uses available snapshots for every window", () => {
     );
     assert.equal(response.windows[windowKey].fromDate, "2026-04-24");
     assert.equal(response.windows[windowKey].toDate, "2026-04-26");
+    assert.equal(response.windows[windowKey].generatedAt, "2026-04-26T01:06:48.925Z");
     assert.equal(response.windows[windowKey].insufficientData, false);
+    assert.equal(response.windows[windowKey].metrics[0].history.at(-1).generatedAt, "2026-04-26T01:06:48.925Z");
     assert.deepEqual(
       response.windows[windowKey].metrics.map((metric) => ({
         key: metric.key,

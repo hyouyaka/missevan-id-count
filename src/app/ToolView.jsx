@@ -16,6 +16,7 @@ import { OutputPanel } from "@/app/OutputPanel";
 import { RanksPanel } from "@/app/RanksPanel";
 import { SearchPanel } from "@/app/SearchPanel";
 import { SearchResults } from "@/app/SearchResults";
+import { canParseShareUrl, decryptShareUrl, extractResolvedId } from "@/utils/manboCrypto";
 import {
   buildRevenueSummary,
   buildUniqueUserIds,
@@ -295,6 +296,16 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
+  function updateSearchFormForPlatform(platform, patch) {
+    updatePlatformState(platform, (state) => ({
+      ...state,
+      searchForm: {
+        ...state.searchForm,
+        ...patch,
+      },
+    }));
+  }
+
   function resetOutputs(platform) {
     updatePlatformState(platform, (state) => ({
       ...state,
@@ -547,6 +558,194 @@ export function ToolView({ initialAppConfig }) {
       versionMismatch: data?.versionMismatch,
     });
     return data;
+  }
+
+  async function buildManboImportItems(rawItems) {
+    return Promise.all(
+      rawItems.map(async (raw) => {
+        if (!canParseShareUrl(raw)) {
+          return { raw };
+        }
+        const payload = await decryptShareUrl(raw);
+        const resolved = extractResolvedId(payload, raw);
+        if (resolved?.dramaId) {
+          return {
+            raw: String(resolved.dramaId),
+            resolvedShareData: resolved.payload || payload,
+          };
+        }
+        if (resolved?.setId) {
+          return {
+            raw: String(resolved.setId),
+            resolvedShareData: resolved.payload || payload,
+          };
+        }
+        return {
+          raw,
+          resolvedShareData: resolved?.payload || payload,
+        };
+      })
+    );
+  }
+
+  function showMissevanEmptyResultNotice(emptyResultNotice = "not_found") {
+    if (emptyResultNotice === "short_keyword") {
+      setNotice({
+        title: "关键词太短",
+        description: "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。",
+      });
+      return;
+    }
+
+    setNotice({
+      title: "",
+      description: "未找到猫耳结果，请检查输入内容。",
+    });
+  }
+
+  async function searchMissevanLibraryWithoutApiFallback(keyword) {
+    const response = await fetch(
+      buildVersionedUrl(
+        `/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5&apiFallback=0`,
+        appConfigRef.current.frontendVersion
+      ),
+      { cache: "no-store" }
+    );
+    const data = await parseVersionedJsonResponse(response);
+    const results = Array.isArray(data?.results)
+      ? data.results.map((item) => ({
+          ...item,
+          platform: item?.platform || "missevan",
+        }))
+      : [];
+    return { data, results };
+  }
+
+  async function importRawItemsIntoPlatform(targetPlatform, rawItems, options = {}) {
+    const normalizedPlatform = targetPlatform === "manbo" ? "manbo" : "missevan";
+    const sourcePlatform = options?.sourcePlatform === "manbo" ? "manbo" : "";
+    const allowMissevanApiFallback = options?.allowMissevanApiFallback === true;
+    const emptyResultNotice = options?.emptyResultNotice || "not_found";
+    const normalizedRawItems = Array.from(
+      new Set(
+        (Array.isArray(rawItems) ? rawItems : [])
+          .map((item) => String(item ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (!normalizedRawItems.length) {
+      toast.error("导入失败，请检查输入内容。");
+      return;
+    }
+
+    if (
+      normalizedPlatform === "missevan" &&
+      sourcePlatform !== "manbo" &&
+      !appConfigRef.current.desktopApp &&
+      Number(appConfigRef.current.cooldownUntil ?? 0) > Date.now()
+    ) {
+      await refreshCooldownState();
+      toast.error("猫耳当前受限，暂时无法导入。");
+      return;
+    }
+
+    setSearchJumpStatus({
+      platform: normalizedPlatform,
+      name: "",
+    });
+
+    try {
+      const items =
+        normalizedPlatform === "manbo"
+          ? await buildManboImportItems(normalizedRawItems)
+          : normalizedRawItems.map((raw) => ({ raw }));
+      const endpoint = normalizedPlatform === "manbo" ? "/manbo/getdramacards" : "/getdramacards";
+      const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const data = await parseVersionedJsonResponse(response);
+      const results = Array.isArray(data?.results)
+        ? data.results.map((item) => ({
+            ...item,
+            platform: item?.platform || normalizedPlatform,
+          }))
+        : [];
+
+      if (!response.ok || !data?.success || !results.length) {
+        if (normalizedPlatform === "missevan" && data?.accessDenied) {
+          await refreshCooldownState();
+        }
+        if (normalizedPlatform === "missevan" && sourcePlatform === "manbo" && !allowMissevanApiFallback) {
+          if (emptyResultNotice === "short_keyword") {
+            showMissevanEmptyResultNotice(emptyResultNotice);
+            return;
+          }
+          try {
+            const keyword = normalizedRawItems.join(" ");
+            const fallback = await searchMissevanLibraryWithoutApiFallback(keyword);
+            if (fallback.data?.success && fallback.results.length > 0) {
+              updateSearchFormForPlatform("missevan", {
+                keyword,
+                manualInput: "",
+              });
+              setSearchResults("missevan", fallback.results, "search", {
+                ...(fallback.data.meta || {}),
+                keyword,
+              });
+              setCurrentPlatform("missevan");
+              scrollToPanel(resultsPanelRef);
+              return;
+            }
+          } catch (fallbackError) {
+            console.error("Missevan no-API fallback search failed", fallbackError);
+          }
+          showMissevanEmptyResultNotice(emptyResultNotice);
+          return;
+        }
+        toast.error(normalizedPlatform === "manbo" ? "Manbo 导入失败，请检查输入内容。" : "猫耳导入失败，请检查输入内容。");
+        return;
+      }
+
+      updateSearchFormForPlatform(normalizedPlatform, {
+        keyword: normalizedRawItems.join("\n"),
+        manualInput: normalizedRawItems.join("\n"),
+      });
+      setManualSearchResults(normalizedPlatform, results, { limit: normalizedRawItems.length, scroll: false });
+      setCurrentPlatform(normalizedPlatform);
+      scrollToPanel(resultsPanelRef);
+      if (data.failedItems?.length) {
+        toast.warning(`以下内容导入失败：${data.failedItems.join(" | ")}`);
+      } else if (data.failedIds?.length) {
+        toast.warning(`以下作品ID导入失败：${data.failedIds.join(", ")}`);
+      }
+    } catch (error) {
+      console.error("Failed to cross import items", error);
+      toast.error("导入失败，请检查输入内容或稍后重试。");
+    } finally {
+      setSearchJumpStatus(null);
+    }
+  }
+
+  function confirmMissevanFallbackSearch({ keyword, results, meta }) {
+    setNotice({
+      title: "",
+      description: "未找到漫播剧集，是否显示猫耳搜索结果？",
+      actionLabel: "是",
+      cancelLabel: "取消",
+      onAction: () => {
+        updateSearchFormForPlatform("missevan", {
+          keyword,
+          manualInput: "",
+        });
+        setSearchResults("missevan", results, "search", {
+          ...(meta || {}),
+          keyword,
+        });
+        setCurrentPlatform("missevan");
+      },
+    });
   }
 
   async function openDramaInSearch({ platform, id, ids, name, paymentLabel, contentTypeLabel, usageAction }) {
@@ -1535,6 +1734,14 @@ export function ToolView({ initialAppConfig }) {
             frontendVersion={appConfig.frontendVersion}
             handleVersionResponse={updateVersionStatusFromResponse}
             isDesktopApp={appConfig.desktopApp}
+            onCrossPlatformImport={({ targetPlatform, rawItems, sourcePlatform, emptyResultNotice }) =>
+              importRawItemsIntoPlatform(targetPlatform, rawItems, {
+                sourcePlatform,
+                allowMissevanApiFallback: false,
+                emptyResultNotice,
+              })
+            }
+            onMissevanFallbackResults={confirmMissevanFallbackSearch}
             onNotice={setNotice}
             onResetState={() => resetSearchFlow(currentPlatform)}
             onUpdateFormState={updateSearchForm}

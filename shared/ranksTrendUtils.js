@@ -44,6 +44,23 @@ function normalizeFiniteNumber(value) {
   return Number.isFinite(normalized) ? normalized : null;
 }
 
+function normalizeGeneratedAt(record) {
+  return String(
+    record?.generated_at ??
+      record?.generatedAt ??
+      record?.fetched_at ??
+      record?.fetchedAt ??
+      record?.updated_at ??
+      record?.updatedAt ??
+      ""
+  ).trim();
+}
+
+function withGeneratedAt(payload, record) {
+  const generatedAt = normalizeGeneratedAt(record);
+  return generatedAt ? { ...payload, generatedAt } : payload;
+}
+
 function normalizeStringIdList(value) {
   return (Array.isArray(value) ? value : [])
     .map((item) => String(item ?? "").trim())
@@ -128,10 +145,15 @@ function buildPeakSeriesMetric(config, fromSample, toSample, history) {
     delta,
     deltaPercent,
     available,
-    history: history.map((sample) => ({
-      date: sample.date,
-      value: normalizeFiniteNumber(sample?.[config.key]),
-    })),
+    history: history.map((sample) =>
+      withGeneratedAt(
+        {
+          date: sample.date,
+          value: normalizeFiniteNumber(sample?.[config.key]),
+        },
+        sample
+      )
+    ),
   };
 }
 
@@ -147,7 +169,7 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
     .filter(Boolean);
 
   if (history.length < 2) {
-    return {
+    return withGeneratedAt({
       key: windowConfig.key,
       label: windowConfig.label,
       days: windowConfig.days,
@@ -157,12 +179,12 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
       metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
         buildPeakSeriesMetric(config, history[0] || null, history.at(-1) || null, history)
       ),
-    };
+    }, history.at(-1));
   }
 
   const fromSample = history[0];
   const toSample = history.at(-1);
-  return {
+  return withGeneratedAt({
     key: windowConfig.key,
     label: windowConfig.label,
     days: windowConfig.days,
@@ -172,7 +194,7 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
     metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
       buildPeakSeriesMetric(config, fromSample, toSample, history)
     ),
-  };
+  }, toSample);
 }
 
 function buildPeakSeriesRankHistory(samples) {
@@ -279,10 +301,15 @@ function buildMetric(config, fromDrama, toDrama, history) {
     delta,
     deltaPercent,
     available,
-    history: history.map((point) => ({
-      date: point.date,
-      value: normalizeFiniteNumber(point.drama?.[config.key]),
-    })),
+    history: history.map((point) =>
+      withGeneratedAt(
+        {
+          date: point.date,
+          value: normalizeFiniteNumber(point.drama?.[config.key]),
+        },
+        point.drama
+      )
+    ),
   };
 }
 
@@ -301,7 +328,7 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
     .filter((point) => point.drama);
 
   if (history.length < 2) {
-    return {
+    return withGeneratedAt({
       key: windowConfig.key,
       label: windowConfig.label,
       days: windowConfig.days,
@@ -311,12 +338,12 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
       metrics: getRankTrendMetricConfigs(platform).map((config) =>
         buildMetric(config, history[0]?.drama || null, history.at(-1)?.drama || null, history)
       ),
-    };
+    }, history.at(-1)?.drama);
   }
 
   const fromPoint = history[0];
   const toPoint = history.at(-1);
-  return {
+  return withGeneratedAt({
     key: windowConfig.key,
     label: windowConfig.label,
     days: windowConfig.days,
@@ -326,7 +353,7 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
     metrics: getRankTrendMetricConfigs(platform).map((config) =>
       buildMetric(config, fromPoint.drama, toPoint.drama, history)
     ),
-  };
+  }, toPoint.drama);
 }
 
 export function buildRankTrendResponse({

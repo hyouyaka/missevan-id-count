@@ -4,6 +4,13 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.5.4",
+    changes: [
+      "合并搜索和导入输入，新版输入框支持各类关键词，分享链接，剧集和分集ID搜索和导入",
+      "优化搜索逻辑",
+    ],
+  },
+  {
     version: "1.5.3",
     changes: [
       "优化猫耳单集付费剧集的收益预估",

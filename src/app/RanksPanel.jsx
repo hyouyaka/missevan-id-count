@@ -15,7 +15,12 @@ import {
   XIcon,
 } from "lucide-react";
 
-import { buildVersionedUrl, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
+import {
+  buildVersionedUrl,
+  formatDeviceDateTime,
+  formatPlainNumber,
+  getBackendVersionFromResponse,
+} from "@/app/app-utils";
 import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
@@ -71,32 +76,7 @@ function formatMobileRankMenuLabel(label) {
 }
 
 function formatRankUpdatedAt(value) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    return "未知";
-  }
-
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return normalized;
-  }
-
-  const parts = new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-    .formatToParts(date)
-    .reduce((map, part) => {
-      map[part.type] = part.value;
-      return map;
-    }, {});
-
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+  return formatDeviceDateTime(value);
 }
 
 function formatRankUpdatedDate(value) {
@@ -1214,7 +1194,7 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse, o
   return (
     <div className="grid gap-4 sm:gap-5">
       <div className="px-1 text-sm leading-6 text-muted-foreground">
-        同步猫耳和漫播榜单，每日更新。此次榜单刷新于：{formatRankUpdatedAt(rankData?.updatedAt)}（北京时间）
+        同步猫耳和漫播榜单，每日更新。此次榜单刷新于：{formatRankUpdatedAt(rankData?.updatedAt)}
       </div>
 
       {isLoading ? (

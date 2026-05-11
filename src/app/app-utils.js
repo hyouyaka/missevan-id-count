@@ -1,4 +1,8 @@
 import { normalizeVersion } from "../../shared/versionUtils.js";
+import {
+  isSearchKeywordLongEnough,
+  parseMissevanInputToken,
+} from "../../shared/searchUtils.js";
 
 export { normalizeVersion };
 
@@ -766,6 +770,58 @@ export function formatHistoryTimestamp(value = Date.now()) {
   return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
 }
 
+export function formatDeviceDateTime(value, options = {}) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "未知";
+  }
+
+  const date = value instanceof Date ? value : new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return normalized;
+  }
+
+  const dateTimeOptions = {
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  };
+  if (options.timeZone) {
+    dateTimeOptions.timeZone = options.timeZone;
+  }
+
+  const parts = new Intl.DateTimeFormat("zh-CN", dateTimeOptions)
+    .formatToParts(date)
+    .reduce((map, part) => {
+      map[part.type] = part.value;
+      return map;
+    }, {});
+
+  let timeZoneLabel = "";
+  try {
+    const timeZoneOptions = {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    };
+    if (options.timeZone) {
+      timeZoneOptions.timeZone = options.timeZone;
+    }
+    timeZoneLabel =
+      new Intl.DateTimeFormat("en-US", timeZoneOptions)
+        .formatToParts(date)
+        .find((part) => part.type === "timeZoneName")?.value || "";
+  } catch {
+    timeZoneLabel = "";
+  }
+
+  const suffix = timeZoneLabel ? `（${timeZoneLabel}）` : "";
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}${suffix}`;
+}
+
 function trimTrailingZero(value) {
   return value.replace(/\.?0+$/, "");
 }
@@ -1080,4 +1136,167 @@ export function parseRawItems(rawValue) {
         .filter(Boolean)
     )
   );
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(String(value ?? "").trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
+function isManboHostUrl(value) {
+  const raw = String(value ?? "").trim();
+  if (!isHttpUrl(raw)) {
+    return false;
+  }
+
+  try {
+    const url = new URL(raw);
+    return (
+      /manbo/i.test(url.hostname) ||
+      /(^|\.)kilamanbo\.(com|world)$/i.test(url.hostname) ||
+      /(^|\.)hongdoulive\.com$/i.test(url.hostname)
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+function isManboImportToken(value) {
+  const raw = String(value ?? "").trim();
+  if (/^\d+$/.test(raw)) {
+    return /^\d{18,20}$/.test(raw);
+  }
+
+  return isManboHostUrl(raw);
+}
+
+function isMissevanHostUrl(value) {
+  const raw = String(value ?? "").trim();
+  if (!isHttpUrl(raw)) {
+    return false;
+  }
+
+  try {
+    const url = new URL(raw);
+    return /(^|\.)missevan\.com$/i.test(url.hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+function isManboCrossImportToken(value) {
+  const raw = String(value ?? "").trim();
+  return /^\d{18,20}$/.test(raw) || isManboHostUrl(raw);
+}
+
+function isMissevanCrossImportToken(value) {
+  const raw = String(value ?? "").trim();
+  return Boolean(parseMissevanInputToken(raw));
+}
+
+function areAllTokensImportable(tokens, platform) {
+  if (!tokens.length) {
+    return false;
+  }
+  if (platform === "manbo") {
+    return tokens.every(isManboImportToken);
+  }
+  return tokens.every((token) => Boolean(parseMissevanInputToken(token)));
+}
+
+function getNumericEmptyResultNotice(value) {
+  return String(value ?? "").trim().length < 3 ? "short_keyword" : "not_found";
+}
+
+export function classifyMergedSearchInput(rawValue, platform = "missevan", options = {}) {
+  const keyword = String(rawValue ?? "").trim();
+  if (!keyword) {
+    return {
+      action: "empty",
+      keyword: "",
+      rawItems: [],
+    };
+  }
+
+  const rawItems = parseRawItems(keyword);
+  const normalizedPlatform = platform === "manbo" ? "manbo" : "missevan";
+  const isSingleNumericToken = rawItems.length === 1 && /^\d+$/.test(rawItems[0]);
+  if (
+    isSingleNumericToken &&
+    options?.numericLookup !== false &&
+    isSearchKeywordLongEnough(rawItems[0])
+  ) {
+    return {
+      action: "numeric_lookup",
+      keyword: rawItems[0],
+      rawItems,
+    };
+  }
+
+  if (normalizedPlatform === "missevan" && rawItems.every(isManboCrossImportToken)) {
+    return {
+      action: "cross_import",
+      targetPlatform: "manbo",
+      keyword: "",
+      rawItems,
+    };
+  }
+
+  if (normalizedPlatform === "manbo" && isSingleNumericToken) {
+    if (isManboImportToken(rawItems[0])) {
+      return {
+        action: "import",
+        keyword: "",
+        rawItems,
+        fallbackTargetPlatform: "missevan",
+        allowMissevanApiFallback: false,
+        emptyResultNotice: "not_found",
+      };
+    }
+    return {
+      action: "cross_import",
+      targetPlatform: "missevan",
+      keyword: "",
+      rawItems,
+      allowMissevanApiFallback: false,
+      emptyResultNotice: getNumericEmptyResultNotice(rawItems[0]),
+    };
+  }
+
+  if (normalizedPlatform === "manbo" && rawItems.every(isMissevanCrossImportToken)) {
+    return {
+      action: "cross_import",
+      targetPlatform: "missevan",
+      keyword: "",
+      rawItems,
+      allowMissevanApiFallback: false,
+      emptyResultNotice: "not_found",
+    };
+  }
+
+  if (areAllTokensImportable(rawItems, normalizedPlatform)) {
+    return {
+      action: "import",
+      keyword: "",
+      rawItems,
+    };
+  }
+
+  if (!isSearchKeywordLongEnough(keyword)) {
+    return {
+      action: "keyword_too_short",
+      keyword,
+      rawItems: [],
+    };
+  }
+
+  return {
+    action: "search",
+    keyword,
+    rawItems: [],
+  };
 }

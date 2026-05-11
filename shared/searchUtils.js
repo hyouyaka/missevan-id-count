@@ -13,6 +13,92 @@ export function normalizeSearchText(value) {
 
 export const normalizeManboIndexName = normalizeSearchText;
 
+export function isSearchKeywordLongEnough(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return false;
+  }
+
+  const hanChars = raw.match(/\p{Script=Han}/gu) || [];
+  if (hanChars.length > 0) {
+    return hanChars.length >= 2;
+  }
+
+  return normalizeSearchText(raw).length >= 3;
+}
+
+const MISSEVAN_SHARE_HOSTS = new Set(["missevan.com", "www.missevan.com"]);
+
+function isPositiveNumericId(value) {
+  return /^[1-9]\d*$/.test(String(value ?? "").trim());
+}
+
+function getMissevanBareNumericTokenType(value) {
+  const text = String(value ?? "").trim();
+  if (/^[1-9]\d{0,4}$/.test(text)) {
+    return "drama";
+  }
+  if (/^[1-9]\d{5,7}$/.test(text)) {
+    return "sound";
+  }
+  return "";
+}
+
+export function parseMissevanInputToken(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  const bareNumericType = getMissevanBareNumericTokenType(raw);
+  if (bareNumericType) {
+    return {
+      raw,
+      type: bareNumericType,
+      id: raw,
+    };
+  }
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch (_) {
+    return null;
+  }
+
+  if (!["http:", "https:"].includes(url.protocol) || !MISSEVAN_SHARE_HOSTS.has(url.hostname.toLowerCase())) {
+    return null;
+  }
+
+  const pathSegments = url.pathname.split("/").filter(Boolean);
+  if (pathSegments.length !== 2) {
+    return null;
+  }
+
+  const [kind, id] = pathSegments;
+  if (!isPositiveNumericId(id)) {
+    return null;
+  }
+
+  if (kind === "mdrama") {
+    return {
+      raw,
+      type: "drama",
+      id,
+    };
+  }
+
+  if (kind === "sound") {
+    return {
+      raw,
+      type: "sound",
+      id,
+    };
+  }
+
+  return null;
+}
+
 const SEARCH_TERM_BOUNDARY_PATTERN =
   /^[\s\/／\\＼|｜,_\-+~`!@#$%^&*()[\]{}:;"'<>.?，。！？、：；（）《》“”‘’【】·•‧・—–…]/u;
 const SEARCH_TERM_BOUNDARY_TRIM_PATTERN =

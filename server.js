@@ -9,6 +9,8 @@ import { fileURLToPath } from "url";
 import {
   extractSearchSortKey,
   isCompleteSearchTermPrefix,
+  isSearchKeywordLongEnough,
+  parseMissevanInputToken,
   normalizeSearchText,
 } from "./shared/searchUtils.js";
 import { createUpstashRestClient } from "./shared/upstashRestClient.js";
@@ -800,6 +802,112 @@ function normalizeIds(values, limit = 200) {
 
 function normalizeDramaIds(ids) {
   return normalizeIds(ids, 200);
+}
+
+export function normalizeMissevanDramaCardItems(input = {}) {
+  const normalizedItems = [];
+  const seenResolvedItems = new Set();
+  const seenInvalidItems = new Set();
+
+  const pushItem = (item) => {
+    if (!item || typeof item !== "object") {
+      return;
+    }
+    if (item.type === "invalid") {
+      const invalidKey = `invalid:${item.raw}`;
+      if (!seenInvalidItems.has(invalidKey)) {
+        seenInvalidItems.add(invalidKey);
+        normalizedItems.push(item);
+      }
+      return;
+    }
+
+    const resolvedKey = `${item.type}:${item.id}`;
+    if (!seenResolvedItems.has(resolvedKey)) {
+      seenResolvedItems.add(resolvedKey);
+      normalizedItems.push(item);
+    }
+  };
+
+  normalizeDramaIds(input.dramaIds || []).forEach((id) => {
+    pushItem({
+      raw: String(id),
+      type: "drama",
+      id: String(id),
+    });
+  });
+
+  (Array.isArray(input.items) ? input.items : []).forEach((item) => {
+    const raw = typeof item === "string" ? item : item?.raw;
+    const normalizedRaw = String(raw ?? "").trim();
+    if (!normalizedRaw) {
+      return;
+    }
+    pushItem(
+      parseMissevanInputToken(normalizedRaw) || {
+        raw: normalizedRaw,
+        type: "invalid",
+        id: "",
+      }
+    );
+  });
+
+  return normalizedItems.slice(0, 200);
+}
+
+export function dedupeMissevanDramaCardResults(cards = []) {
+  return Array.from(
+    (Array.isArray(cards) ? cards : [])
+      .filter(Boolean)
+      .reduce((map, card) => {
+        const key = String(card?.id ?? "").trim();
+        if (key && !map.has(key)) {
+          map.set(key, card);
+        }
+        return map;
+      }, new Map())
+      .values()
+  );
+}
+
+export function normalizeMissevanDirectSearchInput(keyword) {
+  const raw = String(keyword ?? "").trim();
+  if (!/^https?:\/\//i.test(raw)) {
+    return null;
+  }
+  return parseMissevanInputToken(raw);
+}
+
+export function shouldUseMissevanApiFallback(value) {
+  return String(value ?? "").trim() !== "0";
+}
+
+function buildKeywordTooShortSearchResponse(keyword, offset, limit, extraMeta = {}) {
+  return {
+    success: false,
+    results: [],
+    message: "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。",
+    meta: {
+      ...buildSearchPageMeta(keyword, 0, offset, limit),
+      keywordTooShort: true,
+      ...extraMeta,
+    },
+  };
+}
+
+export function buildMissevanSearchApiUsageLog(keyword, options = {}) {
+  const matchedCount = Math.max(0, Math.floor(Number(options.matchedCount ?? 0) || 0));
+  const error = options.error || null;
+  const message = error ? String(error?.message || error) : "";
+  return {
+    platform: "missevan",
+    action: "missevan_search_api",
+    keyword: normalizeKeyword(keyword),
+    success: !error && matchedCount > 0,
+    matchedCount,
+    cached: false,
+    ...(error ? { accessDenied: isMissevanAccessDenied(error), error: message } : {}),
+  };
 }
 
 function normalizeStringIds(values, limit = 200) {
@@ -2584,7 +2692,7 @@ function collectMissevanSearchCandidateArrays(payload) {
   return arrays;
 }
 
-async function searchMissevanApiRecords(keyword, limit = 70) {
+async function searchMissevanApiRecords(keyword, limit = 70, options = {}) {
   const cacheKey = normalizeTextValue(keyword);
   const cached = getCachedValue(
     missevanSearchApiCache,
@@ -2595,38 +2703,51 @@ async function searchMissevanApiRecords(keyword, limit = 70) {
     return cached;
   }
 
-  const payload = await fetchJsonWithRetry(
-    `https://www.missevan.com/dramaapi/search?s=${encodeURIComponent(cacheKey)}`,
-    2,
-    250,
-    { missevan: true }
-  );
+  try {
+    const payload = await fetchJsonWithRetry(
+      `https://www.missevan.com/dramaapi/search?s=${encodeURIComponent(cacheKey)}`,
+      2,
+      250,
+      { missevan: true }
+    );
 
-  if (!payload?.success) {
-    const infoMessage = normalizeTextValue(payload?.info);
-    if (payload?.code === 100010007 || infoMessage.includes("木有找到")) {
-      setCachedValue(missevanSearchApiCache, cacheKey, []);
-      return [];
-    }
-  }
-
-  const normalized = Array.from(
-    collectMissevanSearchCandidateArrays(payload)
-      .flat()
-      .map(normalizeMissevanApiSearchCandidate)
-      .filter(Boolean)
-      .reduce((map, item) => {
-        const key = String(item.dramaId);
-        if (!map.has(key)) {
-          map.set(key, item);
+    if (!payload?.success) {
+      const infoMessage = normalizeTextValue(payload?.info);
+      if (payload?.code === 100010007 || infoMessage.includes("木有找到")) {
+        setCachedValue(missevanSearchApiCache, cacheKey, []);
+        if (options?.logApiCall) {
+          void writeUsageLog(buildMissevanSearchApiUsageLog(cacheKey, { matchedCount: 0 }));
         }
-        return map;
-      }, new Map())
-      .values()
-  ).slice(0, limit);
+        return [];
+      }
+    }
 
-  setCachedValue(missevanSearchApiCache, cacheKey, normalized);
-  return normalized;
+    const normalized = Array.from(
+      collectMissevanSearchCandidateArrays(payload)
+        .flat()
+        .map(normalizeMissevanApiSearchCandidate)
+        .filter(Boolean)
+        .reduce((map, item) => {
+          const key = String(item.dramaId);
+          if (!map.has(key)) {
+            map.set(key, item);
+          }
+          return map;
+        }, new Map())
+        .values()
+    ).slice(0, limit);
+
+    setCachedValue(missevanSearchApiCache, cacheKey, normalized);
+    if (options?.logApiCall) {
+      void writeUsageLog(buildMissevanSearchApiUsageLog(cacheKey, { matchedCount: normalized.length }));
+    }
+    return normalized;
+  } catch (error) {
+    if (options?.logApiCall) {
+      void writeUsageLog(buildMissevanSearchApiUsageLog(cacheKey, { matchedCount: 0, error }));
+    }
+    throw error;
+  }
 }
 
 function getMissevanApiCvNames(info, limit = 2) {
@@ -2809,6 +2930,84 @@ async function hydrateMissevanApiSearchRecord(record) {
     }
     return fallbackCard;
   }
+}
+
+async function buildMissevanDramaCardFromInput(item) {
+  if (!item || item.type === "invalid") {
+    return null;
+  }
+
+  const requestedDramaId = item.type === "drama" ? Number(item.id) : null;
+  const requestedSoundId = item.type === "sound" ? Number(item.id) : null;
+  const libraryRecord = requestedDramaId
+    ? missevanInfoStore.byDramaId.get(String(requestedDramaId))
+    : null;
+  const preferredSoundId =
+    requestedSoundId || getMissevanPrimarySoundIdFromRecord(libraryRecord);
+  const info = await fetchDramaInfo(requestedDramaId, preferredSoundId || null);
+
+  if (!info?.drama) {
+    return null;
+  }
+
+  const resolvedDramaId = Number(info.drama.id ?? requestedDramaId ?? 0);
+  const resolvedLibraryRecord =
+    libraryRecord || missevanInfoStore.byDramaId.get(String(resolvedDramaId));
+  const primarySoundId =
+    preferredSoundId ||
+    Number(info?.episodes?.episode?.[0]?.sound_id ?? 0) ||
+    null;
+  const mainCvs = resolvedLibraryRecord
+    ? getMissevanMainCvNames(resolvedLibraryRecord)
+    : [];
+  let rewardNum = null;
+
+  try {
+    const rewardMeta = await fetchRewardDetailMeta(resolvedDramaId);
+    rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
+  } catch (error) {
+    if (isMissevanAccessDenied(error)) {
+      throw error;
+    }
+    console.error(
+      `Failed to fetch Missevan reward detail drama_id=${resolvedDramaId}`,
+      error
+    );
+  }
+
+  const card = {
+    id: resolvedDramaId,
+    name: info.drama.name,
+    cover: info.drama.cover || "",
+    view_count: Number(info.drama.view_count ?? 0),
+    playCountWan: formatPlayCountWan(info.drama.view_count),
+    vip: Number(info.drama.vip ?? 0),
+    price: Number(info.drama.price ?? 0),
+    member_price: Number(info.drama.member_price ?? 0),
+    is_member: Boolean(info.drama.is_member),
+    sound_id: primarySoundId,
+    subscription_num: normalizeOptionalFiniteNumber(info.drama.subscription_num),
+    reward_num: rewardNum,
+    checked: true,
+    platform: "missevan",
+    content_type_label:
+      getMissevanContentTypeLabel(info.drama) ||
+      (resolvedLibraryRecord ? getMissevanContentTypeLabel(resolvedLibraryRecord) : ""),
+  };
+
+  if (mainCvs.length > 0) {
+    card.main_cvs = mainCvs;
+    card.main_cv_text = buildMainCvText(mainCvs);
+  }
+
+  return {
+    card: {
+      ...card,
+      payment_label: getMissevanPaymentLabel(card),
+    },
+    isNewDrama: !resolvedLibraryRecord,
+    dramaId: String(resolvedDramaId),
+  };
 }
 
 async function hydrateManboSearchRecord(record) {
@@ -5799,9 +5998,14 @@ app.get("/search", async (req, res) => {
   const normalizedKeyword = normalizeKeyword(keyword);
   const offset = normalizeSearchOffset(req.query.offset);
   const limit = normalizeSearchLimit(req.query.limit, 5, 5);
+  const useApiFallback = shouldUseMissevanApiFallback(req.query.apiFallback);
 
   if (!normalizedKeyword) {
     return res.json({ success: false, message: "Missing keyword" });
+  }
+
+  if (!isSearchKeywordLongEnough(normalizedKeyword)) {
+    return res.json(buildKeywordTooShortSearchResponse(normalizedKeyword, offset, limit));
   }
 
   void writeUsageLog({
@@ -5813,6 +6017,27 @@ app.get("/search", async (req, res) => {
   try {
     await ensureInfoStoreLoaded(missevanInfoStore);
     await refreshMissevanCooldownState();
+
+    const directInput = normalizeMissevanDirectSearchInput(normalizedKeyword);
+    if (directInput) {
+      const resolvedCard = await buildMissevanDramaCardFromInput(directInput);
+      const results = resolvedCard?.card ? [resolvedCard.card] : [];
+      const meta = {
+        ...buildSearchPageMeta(
+          normalizedKeyword,
+          results.length,
+          offset,
+          limit
+        ),
+        source: "direct_link",
+      };
+
+      return res.json({
+        success: results.length > 0,
+        results,
+        meta,
+      });
+    }
 
     let source = "missevan_api";
     let totalMatched = 0;
@@ -5837,11 +6062,12 @@ app.get("/search", async (req, res) => {
       }
     }
 
-    if (!results.length && totalMatched === 0) {
+    if (!results.length && totalMatched === 0 && useApiFallback) {
       source = "missevan_api";
       const apiRecords = await searchMissevanApiRecords(
         normalizedKeyword,
-        SEARCH_RESULT_LIMIT
+        SEARCH_RESULT_LIMIT,
+        { logApiCall: true }
       );
       totalMatched = apiRecords.length;
       const pagedRecords = apiRecords.slice(offset, offset + limit);
@@ -5850,6 +6076,8 @@ app.get("/search", async (req, res) => {
         4,
         hydrateMissevanApiSearchRecord
       );
+    } else if (!results.length && totalMatched === 0 && !useApiFallback) {
+      source = "library_only";
     }
 
     const meta = {
@@ -6061,81 +6289,62 @@ app.post("/getdramacards", async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
-  const ids = normalizeDramaIds(req.body.drama_ids || []);
+  const inputItems = normalizeMissevanDramaCardItems({
+    dramaIds: req.body?.drama_ids || [],
+    items: req.body?.items || [],
+  });
   const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
   const results = [];
   const failedIds = [];
+  const failedItems = [];
   let accessDenied = false;
 
-  if (ids.length) {
+  if (inputItems.length) {
     void writeUsageLog({
       platform: "missevan",
       action: usageAction,
-      dramaIds: ids,
-      count: ids.length,
+      dramaIds: inputItems
+        .filter((item) => item.type === "drama")
+        .map((item) => Number(item.id)),
+      soundIds: inputItems
+        .filter((item) => item.type === "sound")
+        .map((item) => Number(item.id)),
+      count: inputItems.length,
     });
   }
 
   await ensureInfoStoreLoaded(missevanInfoStore);
   await refreshMissevanCooldownState();
   const newDramaIds = [];
-  for (const id of ids) {
+  for (const item of inputItems) {
+    if (item.type === "invalid") {
+      failedItems.push(item.raw);
+      continue;
+    }
+
     try {
-      const libraryRecord = missevanInfoStore.byDramaId.get(String(id));
-      const preferredSoundId = getMissevanPrimarySoundIdFromRecord(libraryRecord);
-      const info = await fetchDramaInfo(id, preferredSoundId);
+      const resolved = await buildMissevanDramaCardFromInput(item);
 
-      if (info?.drama) {
-        const resolvedLibraryRecord = libraryRecord || missevanInfoStore.byDramaId.get(String(info.drama.id));
-        const primarySoundId =
-          preferredSoundId ||
-          Number(info?.episodes?.episode?.[0]?.sound_id ?? 0) ||
-          null;
-        const mainCvs = resolvedLibraryRecord ? getMissevanMainCvNames(resolvedLibraryRecord) : [];
-        let rewardNum = null;
-        try {
-          const rewardMeta = await fetchRewardDetailMeta(id);
-          rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
-        } catch (error) {
-          if (isMissevanAccessDenied(error)) {
-            accessDenied = true;
-            throw error;
-          }
-          console.error(`Failed to fetch Missevan reward detail drama_id=${id}`, error);
+      if (resolved?.card) {
+        if (resolved.isNewDrama) {
+          newDramaIds.push(resolved.dramaId);
         }
-
-        const nextCard = {
-          id: info.drama.id,
-          name: info.drama.name,
-          cover: info.drama.cover || "",
-          view_count: Number(info.drama.view_count ?? 0),
-          playCountWan: formatPlayCountWan(info.drama.view_count),
-          vip: Number(info.drama.vip ?? 0),
-          price: Number(info.drama.price ?? 0),
-          member_price: Number(info.drama.member_price ?? 0),
-          is_member: Boolean(info.drama.is_member),
-          sound_id: primarySoundId,
-          subscription_num: normalizeOptionalFiniteNumber(info.drama.subscription_num),
-          reward_num: rewardNum,
-          checked: true,
-          platform: "missevan",
-        };
-        if (resolvedLibraryRecord && mainCvs.length > 0) {
-          nextCard.main_cvs = mainCvs;
-          nextCard.main_cv_text = buildMainCvText(mainCvs);
-        } else if (!resolvedLibraryRecord) {
-          newDramaIds.push(String(info.drama.id));
-        }
-        results.push(nextCard);
+        results.push(resolved.card);
       } else {
-        failedIds.push(Number(id));
+        if (item.type === "drama") {
+          failedIds.push(Number(item.id));
+        }
+        failedItems.push(item.raw);
       }
     } catch (error) {
       accessDenied =
         accessDenied ||
         isMissevanAccessDenied(error);
-      console.error(`Failed to fetch Missevan drama card drama_id=${id}`, error);
-      failedIds.push(Number(id));
+      console.error(`Failed to fetch Missevan drama card item=${item.raw}`, error);
+      if (item.type === "drama") {
+        failedIds.push(Number(item.id));
+      }
+      failedItems.push(item.raw);
       if (accessDenied) {
         break;
       }
@@ -6151,10 +6360,13 @@ app.post("/getdramacards", async (req, res) => {
     });
   }
 
+  const dedupedResults = dedupeMissevanDramaCardResults(results);
+
   return res.json({
-    success: results.length > 0,
-    results,
+    success: dedupedResults.length > 0,
+    results: dedupedResults,
     failedIds,
+    failedItems,
     accessDenied,
   });
 });
@@ -6400,6 +6612,14 @@ app.get("/manbo/search", async (req, res) => {
         recordCount: 0,
       },
     });
+  }
+
+  if (!isSearchKeywordLongEnough(keyword)) {
+    return res.json(
+      buildKeywordTooShortSearchResponse(keyword, offset, limit, {
+        hydratedCount: 0,
+      })
+    );
   }
 
   void writeUsageLog({

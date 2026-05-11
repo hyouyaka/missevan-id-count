@@ -4,12 +4,15 @@ import assert from "node:assert/strict";
 import {
   buildRevenuePaidMetricSegments,
   buildRevenueSummary,
+  classifyMergedSearchInput,
   createStatsHistoryEntry,
   getHistoryMetricIconKey,
+  formatDeviceDateTime,
   formatRevenueDisplayValue,
   getRevenueDisplayLabel,
   getRevenuePaidCountLabel,
   loadPersistedHistoryEntries,
+  parseRawItems,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
   selectDramaEpisodesByMode,
@@ -71,6 +74,218 @@ test("resolveRevenueSummaryForHistory rebuilds underpopulated summaries from res
   assert.equal(resolvedSummary.estimatedRevenueYuan, 88);
   assert.equal(resolvedSummary.totalViewCount, 56000);
   assert.equal(resolvedSummary.rewardTotal, 180);
+});
+
+test("parseRawItems preserves Missevan share URL tokens", () => {
+  assert.deepEqual(
+    parseRawItems(
+      "https://www.missevan.com/mdrama/93420?share_channel=wechat\nhttps://www.missevan.com/sound/12681701?share_channel=copy 93420"
+    ),
+    [
+      "https://www.missevan.com/mdrama/93420?share_channel=wechat",
+      "https://www.missevan.com/sound/12681701?share_channel=copy",
+      "93420",
+    ]
+  );
+});
+
+test("classifyMergedSearchInput routes Missevan keywords to search", () => {
+  assert.deepEqual(classifyMergedSearchInput("撒野 CV", "missevan"), {
+    action: "search",
+    keyword: "撒野 CV",
+    rawItems: [],
+  });
+});
+
+test("classifyMergedSearchInput routes Missevan drama and sound IDs to import", () => {
+  assert.deepEqual(classifyMergedSearchInput("93420 12681701", "missevan"), {
+    action: "import",
+    keyword: "",
+    rawItems: ["93420", "12681701"],
+  });
+});
+
+test("classifyMergedSearchInput routes single numeric input to library lookup first", () => {
+  assert.deepEqual(classifyMergedSearchInput("2401", "missevan"), {
+    action: "numeric_lookup",
+    keyword: "2401",
+    rawItems: ["2401"],
+  });
+  assert.deepEqual(classifyMergedSearchInput("1467142227078676553", "manbo"), {
+    action: "numeric_lookup",
+    keyword: "1467142227078676553",
+    rawItems: ["1467142227078676553"],
+  });
+});
+
+test("classifyMergedSearchInput can bypass numeric lookup for fallback ID handling", () => {
+  assert.deepEqual(classifyMergedSearchInput("2401", "missevan", { numericLookup: false }), {
+    action: "import",
+    keyword: "",
+    rawItems: ["2401"],
+  });
+});
+
+test("classifyMergedSearchInput imports short Missevan numeric IDs instead of rejecting as short keywords", () => {
+  assert.deepEqual(classifyMergedSearchInput("12", "missevan"), {
+    action: "import",
+    keyword: "",
+    rawItems: ["12"],
+  });
+});
+
+test("classifyMergedSearchInput rejects short keyword searches", () => {
+  assert.deepEqual(classifyMergedSearchInput("猫", "missevan"), {
+    action: "keyword_too_short",
+    keyword: "猫",
+    rawItems: [],
+  });
+  assert.deepEqual(classifyMergedSearchInput("ab", "manbo"), {
+    action: "keyword_too_short",
+    keyword: "ab",
+    rawItems: [],
+  });
+  assert.equal(classifyMergedSearchInput("猫耳", "missevan").action, "search");
+  assert.equal(classifyMergedSearchInput("abc", "manbo").action, "search");
+});
+
+test("classifyMergedSearchInput treats mixed Missevan import tokens and text as search", () => {
+  assert.deepEqual(classifyMergedSearchInput("93420 撒野", "missevan"), {
+    action: "search",
+    keyword: "93420 撒野",
+    rawItems: [],
+  });
+});
+
+test("classifyMergedSearchInput routes Missevan share links to import", () => {
+  assert.deepEqual(
+    classifyMergedSearchInput(
+      "https://www.missevan.com/mdrama/93420?share_channel=wechat https://www.missevan.com/sound/12681701?share_channel=copy",
+      "missevan"
+    ),
+    {
+      action: "import",
+      keyword: "",
+      rawItems: [
+        "https://www.missevan.com/mdrama/93420?share_channel=wechat",
+        "https://www.missevan.com/sound/12681701?share_channel=copy",
+      ],
+    }
+  );
+});
+
+test("classifyMergedSearchInput routes Manbo numeric IDs and links to import", () => {
+  assert.deepEqual(
+    classifyMergedSearchInput("1467142227078676553 https://manbo.hongdoulive.com/Activecard/radioplay?id=1", "manbo"),
+    {
+      action: "import",
+      keyword: "",
+      rawItems: ["1467142227078676553", "https://manbo.hongdoulive.com/Activecard/radioplay?id=1"],
+    }
+  );
+});
+
+test("classifyMergedSearchInput accepts 18 to 20 digit Manbo IDs after keyword lookup", () => {
+  [
+    "123456789012345678",
+    "1467142227078676553",
+    "12345678901234567890",
+  ].forEach((id) => {
+    assert.deepEqual(classifyMergedSearchInput(id, "manbo", { numericLookup: false }), {
+      action: "import",
+      keyword: "",
+      rawItems: [id],
+      fallbackTargetPlatform: "missevan",
+      allowMissevanApiFallback: false,
+      emptyResultNotice: "not_found",
+    });
+  });
+});
+
+test("classifyMergedSearchInput routes non-Manbo numeric IDs on Manbo to Missevan without API fallback", () => {
+  [
+    ["12", "short_keyword"],
+    ["123", "not_found"],
+    ["12345678901234567", "not_found"],
+    ["123456789012345678901", "not_found"],
+  ].forEach(([id, emptyResultNotice]) => {
+    assert.deepEqual(classifyMergedSearchInput(id, "manbo", { numericLookup: false }), {
+      action: "cross_import",
+      targetPlatform: "missevan",
+      keyword: "",
+      rawItems: [id],
+      allowMissevanApiFallback: false,
+      emptyResultNotice,
+    });
+  });
+});
+
+test("classifyMergedSearchInput routes Manbo-looking input on Missevan to cross import", () => {
+  assert.deepEqual(
+    classifyMergedSearchInput("12345678901234567890 https://manbo.hongdoulive.com/Activecard/radioplay?id=1", "missevan"),
+    {
+      action: "cross_import",
+      targetPlatform: "manbo",
+      keyword: "",
+      rawItems: ["12345678901234567890", "https://manbo.hongdoulive.com/Activecard/radioplay?id=1"],
+    }
+  );
+});
+
+test("classifyMergedSearchInput keeps mixed Manbo-looking input on Missevan as search", () => {
+  assert.deepEqual(classifyMergedSearchInput("2087206604062588962 撒野", "missevan"), {
+    action: "search",
+    keyword: "2087206604062588962 撒野",
+    rawItems: [],
+  });
+});
+
+test("classifyMergedSearchInput routes Missevan-looking input on Manbo to cross import", () => {
+  assert.deepEqual(
+    classifyMergedSearchInput("93420 https://www.missevan.com/sound/12681701?share_channel=copy", "manbo"),
+    {
+      action: "cross_import",
+      targetPlatform: "missevan",
+      keyword: "",
+      rawItems: ["93420", "https://www.missevan.com/sound/12681701?share_channel=copy"],
+      allowMissevanApiFallback: false,
+      emptyResultNotice: "not_found",
+    }
+  );
+});
+
+test("classifyMergedSearchInput routes short Missevan drama IDs on Manbo to cross import after lookup", () => {
+  assert.deepEqual(classifyMergedSearchInput("2401", "manbo", { numericLookup: false }), {
+    action: "cross_import",
+    targetPlatform: "missevan",
+    keyword: "",
+    rawItems: ["2401"],
+    allowMissevanApiFallback: false,
+    emptyResultNotice: "not_found",
+  });
+});
+
+test("classifyMergedSearchInput keeps mixed Missevan-looking input on Manbo as search", () => {
+  assert.deepEqual(classifyMergedSearchInput("93420 广播剧", "manbo"), {
+    action: "search",
+    keyword: "93420 广播剧",
+    rawItems: [],
+  });
+});
+
+test("classifyMergedSearchInput routes empty input separately", () => {
+  assert.deepEqual(classifyMergedSearchInput("   ", "missevan"), {
+    action: "empty",
+    keyword: "",
+    rawItems: [],
+  });
+});
+
+test("formatDeviceDateTime formats 24-hour local time with timezone label", () => {
+  assert.equal(
+    formatDeviceDateTime("2026-05-11T00:26:00.000Z", { timeZone: "America/New_York" }),
+    "2026-05-10 20:26（EDT）"
+  );
 });
 
 test("createStatsHistoryEntry keeps successful revenue items when some dramas fail", () => {

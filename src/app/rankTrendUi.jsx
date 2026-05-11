@@ -16,7 +16,7 @@ import {
   XIcon,
 } from "lucide-react";
 
-import { buildVersionedUrl, formatPlainNumber } from "@/app/app-utils";
+import { buildVersionedUrl, formatDeviceDateTime, formatPlainNumber } from "@/app/app-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -88,6 +88,28 @@ function formatTrendDate(value) {
     return normalized || "未知";
   }
   return `${normalized.slice(5, 7)}/${normalized.slice(8, 10)}`;
+}
+
+function getTrendWindowGeneratedAt(activeWindow, activeMetrics) {
+  const directValue = String(activeWindow?.generatedAt ?? "").trim();
+  if (directValue) {
+    return directValue;
+  }
+
+  const targetDate = String(activeWindow?.toDate ?? "").trim();
+  for (const metric of activeMetrics || []) {
+    const history = Array.isArray(metric?.history) ? metric.history : [];
+    const matchedPoint = targetDate
+      ? history.find((point) => point?.date === targetDate && point?.generatedAt)
+      : null;
+    const fallbackPoint = [...history].reverse().find((point) => point?.generatedAt);
+    const generatedAt = String((matchedPoint || fallbackPoint)?.generatedAt ?? "").trim();
+    if (generatedAt) {
+      return generatedAt;
+    }
+  }
+
+  return "";
 }
 
 function formatTrendValue(value) {
@@ -1041,6 +1063,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
     : availableWindows[0] || "3d";
   const activeWindow = windows[activeWindowKey];
   const activeMetrics = getDisplayTrendMetrics(activeWindow?.metrics, platform);
+  const activeWindowGeneratedAt = getTrendWindowGeneratedAt(activeWindow, activeMetrics);
   const chartMetrics = getChartTrendMetrics(activeMetrics);
   const detailIdText = Array.isArray(data?.dramaIds) && data.dramaIds.length
     ? data.dramaIds.join("，")
@@ -1121,6 +1144,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                 <div className="text-xs leading-5 text-muted-foreground">
                   {formatTrendDate(activeWindow.fromDate)} → {formatTrendDate(activeWindow.toDate)}
                   {activeWindow.insufficientData ? "，数据不足" : ""}
+                  {activeWindowGeneratedAt ? `，数据刷新于：${formatDeviceDateTime(activeWindowGeneratedAt)}` : ""}
                 </div>
                 {latestRankHistory?.ranks?.length ? (
                   <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">

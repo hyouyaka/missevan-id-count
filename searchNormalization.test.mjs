@@ -1,16 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeManboIndexName } from "./shared/searchUtils.js";
-
-test("normalizeManboIndexName removes common middle-dot and separator symbols", () => {
-  assert.equal(normalizeManboIndexName("彼得·潘"), normalizeManboIndexName("彼得潘"));
-  assert.equal(normalizeManboIndexName("A•B"), "ab");
-  assert.equal(normalizeManboIndexName("A・B"), "ab");
-  assert.equal(normalizeManboIndexName("A…B"), "ab");
-  assert.equal(normalizeManboIndexName("A—B"), "ab");
-});
-
 test("library search matches Missevan titles when query omits common symbols", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords } = await import("./server.js");
@@ -74,6 +64,160 @@ test("library search keeps numeric Missevan drama and sound ID matching", async 
 
   assert.equal(searchMissevanLibraryRecords(records, "101")[0]?.dramaId, "101");
   assert.equal(searchMissevanLibraryRecords(records, "9001")[0]?.dramaId, "101");
+});
+
+test("library search does not partially match numeric Missevan drama or sound IDs", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "60282",
+      soundIds: ["7039650"],
+      title: "无符号标题",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+  ];
+
+  assert.equal(searchMissevanLibraryRecords(records, "602").length, 0);
+  assert.equal(searchMissevanLibraryRecords(records, "703").length, 0);
+});
+
+test("library search keeps numeric Manbo drama ID matching exact only", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchManboLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "1467142227078676553",
+      name: "神明今夜想你",
+      aliases: [],
+      mainCvNicknames: [],
+      mainCvNames: [],
+      mainCvRoleNames: [],
+      seriesTitle: "",
+      author: "",
+      catalogName: "",
+    },
+  ];
+
+  assert.equal(searchManboLibraryRecords(records, "1467142227078676553")[0]?.dramaId, "1467142227078676553");
+  assert.equal(searchManboLibraryRecords(records, "146714").length, 0);
+});
+
+test("Missevan manual input normalization preserves drama and sound link intent", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeMissevanDramaCardItems } = await import("./server.js");
+
+  const items = normalizeMissevanDramaCardItems({
+    dramaIds: [101],
+    items: [
+      { raw: "https://www.missevan.com/mdrama/93420?share_channel=wechat" },
+      { raw: "https://www.missevan.com/sound/12681701?share_channel=copy" },
+      { raw: "123456" },
+      { raw: "bad-link" },
+    ],
+  });
+
+  assert.deepEqual(items, [
+    { raw: "101", type: "drama", id: "101" },
+    {
+      raw: "https://www.missevan.com/mdrama/93420?share_channel=wechat",
+      type: "drama",
+      id: "93420",
+    },
+    {
+      raw: "https://www.missevan.com/sound/12681701?share_channel=copy",
+      type: "sound",
+      id: "12681701",
+    },
+    { raw: "123456", type: "sound", id: "123456" },
+    { raw: "bad-link", type: "invalid", id: "" },
+  ]);
+});
+
+test("Missevan drama card result dedupe keeps one card per resolved drama ID", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { dedupeMissevanDramaCardResults } = await import("./server.js");
+
+  assert.deepEqual(
+    dedupeMissevanDramaCardResults([
+      { id: 93420, name: "撒野" },
+      { id: "93420", name: "撒野 分集链接重复" },
+      { id: 101, name: "其他作品" },
+    ]),
+    [
+      { id: 93420, name: "撒野" },
+      { id: 101, name: "其他作品" },
+    ]
+  );
+});
+
+test("Missevan direct search normalization detects share links before keyword search", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeMissevanDirectSearchInput } = await import("./server.js");
+
+  assert.deepEqual(
+    normalizeMissevanDirectSearchInput("https://www.missevan.com/mdrama/93420?share_channel=wechat"),
+    {
+      raw: "https://www.missevan.com/mdrama/93420?share_channel=wechat",
+      type: "drama",
+      id: "93420",
+    }
+  );
+  assert.deepEqual(
+    normalizeMissevanDirectSearchInput("https://www.missevan.com/sound/12681701?share_channel=copy"),
+    {
+      raw: "https://www.missevan.com/sound/12681701?share_channel=copy",
+      type: "sound",
+      id: "12681701",
+    }
+  );
+  assert.equal(normalizeMissevanDirectSearchInput("普通关键词"), null);
+});
+
+test("Missevan API fallback option is disabled only by apiFallback=0", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { shouldUseMissevanApiFallback } = await import("./server.js");
+
+  assert.equal(shouldUseMissevanApiFallback(undefined), true);
+  assert.equal(shouldUseMissevanApiFallback(""), true);
+  assert.equal(shouldUseMissevanApiFallback("1"), true);
+  assert.equal(shouldUseMissevanApiFallback("false"), true);
+  assert.equal(shouldUseMissevanApiFallback("0"), false);
+  assert.equal(shouldUseMissevanApiFallback(0), false);
+});
+
+test("Missevan API search usage log entries describe real external calls", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildMissevanSearchApiUsageLog } = await import("./server.js");
+
+  assert.deepEqual(buildMissevanSearchApiUsageLog("撒野", { matchedCount: 2 }), {
+    platform: "missevan",
+    action: "missevan_search_api",
+    keyword: "撒野",
+    success: true,
+    matchedCount: 2,
+    cached: false,
+  });
+  assert.deepEqual(
+    buildMissevanSearchApiUsageLog("撒野", {
+      matchedCount: 0,
+      error: new Error("ACCESS_DENIED_COOLDOWN:test"),
+    }),
+    {
+      platform: "missevan",
+      action: "missevan_search_api",
+      keyword: "撒野",
+      success: false,
+      matchedCount: 0,
+      cached: false,
+      accessDenied: true,
+      error: "ACCESS_DENIED_COOLDOWN:test",
+    }
+  );
 });
 
 test("Missevan library search ranks complete term prefixes above ordinary prefixes", async () => {
