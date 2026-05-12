@@ -243,7 +243,7 @@ export function ToolView({ initialAppConfig }) {
     const url = `/stat-tasks/${taskId}/cancel`;
     try {
       if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
-        navigator.sendBeacon(url, new Blob(["{}"], { type: "application/json" }));
+        navigator.sendBeacon(url);
         return;
       }
     } catch (_) {

@@ -241,6 +241,25 @@ app.use(cors());
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.use((error, req, res, next) => {
+  if (error?.type === "request.aborted" || error?.code === "ECONNABORTED") {
+    console.warn("Request body aborted before parsing completed", {
+      method: req.method,
+      url: req.originalUrl || req.url,
+      contentLength: req.get("content-length") || "",
+      expected: error?.expected ?? "",
+      received: error?.received ?? "",
+      userAgent: req.get("user-agent") || "",
+    });
+
+    if (!res.headersSent) {
+      return res.status(400).json({
+        success: false,
+        message: "Request aborted",
+      });
+    }
+    return;
+  }
+
   if (error?.type !== "entity.too.large") {
     return next(error);
   }

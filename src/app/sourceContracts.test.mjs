@@ -52,7 +52,7 @@ test("merged search textarea submits on plain Enter and keeps Shift Enter for ne
 });
 
 test("ongoing title content-type badge is rendered inside the title button", () => {
-  const titleButtonStart = ongoingPanelSource.indexOf('<button\n                  type="button"');
+  const titleButtonStart = ongoingPanelSource.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
   assert.notEqual(titleButtonStart, -1, "title button markup should exist");
 
   const titleButtonEnd = ongoingPanelSource.indexOf("</button>", titleButtonStart);
@@ -73,16 +73,20 @@ test("ongoing refresh timestamp uses device timezone display", () => {
 });
 
 test("rank desktop title content-type badge is rendered inside the clickable title", () => {
-  const desktopTitleStart = ranksPanelSource.indexOf("-desktop-${label}");
+  const desktopTitleStart = ranksPanelSource.indexOf('<div className="hidden min-w-0 lg:block">');
   assert.notEqual(desktopTitleStart, -1, "desktop title row markup should exist");
 
-  const titleButtonStart = ranksPanelSource.lastIndexOf('<button\n                  type="button"', desktopTitleStart);
+  const desktopTitleEnd = ranksPanelSource.indexOf('<div className="min-w-0 lg:hidden">', desktopTitleStart);
+  assert.notEqual(desktopTitleEnd, -1, "desktop title row should end before mobile title row");
+
+  const desktopTitleMarkup = ranksPanelSource.slice(desktopTitleStart, desktopTitleEnd);
+  const titleButtonStart = desktopTitleMarkup.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
   assert.notEqual(titleButtonStart, -1, "desktop clickable title button should exist");
 
-  const titleButtonEnd = ranksPanelSource.indexOf("</button>", titleButtonStart);
+  const titleButtonEnd = desktopTitleMarkup.indexOf("</button>", titleButtonStart);
   assert.notEqual(titleButtonEnd, -1, "desktop clickable title button should have a closing tag");
 
-  const titleButtonMarkup = ranksPanelSource.slice(titleButtonStart, titleButtonEnd);
+  const titleButtonMarkup = desktopTitleMarkup.slice(titleButtonStart, titleButtonEnd);
   assert.match(titleButtonMarkup, /titleTags\.map/, "desktop title tags should be part of the clickable title inline flow");
 });
 
@@ -90,13 +94,17 @@ test("rank mobile title content-type badge is rendered inside the clickable titl
   const mobileTitleStart = ranksPanelSource.indexOf('<div className="min-w-0 lg:hidden">');
   assert.notEqual(mobileTitleStart, -1, "mobile title row markup should exist");
 
-  const titleButtonStart = ranksPanelSource.indexOf('<button\n                  type="button"', mobileTitleStart);
+  const mobileTitleEnd = ranksPanelSource.indexOf("{detailIdText ? (", mobileTitleStart);
+  assert.notEqual(mobileTitleEnd, -1, "mobile title row should end before detail id row");
+
+  const mobileTitleMarkup = ranksPanelSource.slice(mobileTitleStart, mobileTitleEnd);
+  const titleButtonStart = mobileTitleMarkup.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
   assert.notEqual(titleButtonStart, -1, "mobile clickable title button should exist");
 
-  const titleButtonEnd = ranksPanelSource.indexOf("</button>", titleButtonStart);
+  const titleButtonEnd = mobileTitleMarkup.indexOf("</button>", titleButtonStart);
   assert.notEqual(titleButtonEnd, -1, "mobile clickable title button should have a closing tag");
 
-  const titleButtonMarkup = ranksPanelSource.slice(titleButtonStart, titleButtonEnd);
+  const titleButtonMarkup = mobileTitleMarkup.slice(titleButtonStart, titleButtonEnd);
   assert.match(titleButtonMarkup, /titleTags\.map/, "mobile title tags should be part of the clickable title inline flow");
 });
 
