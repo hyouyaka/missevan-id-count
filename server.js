@@ -94,6 +94,7 @@ const MISSEVAN_REPEAT_COOLDOWN_MS =
 
 const MANBO_API_BASE = "https://www.kilamanbo.com/web_manbo";
 const MANBO_API_V530_BASE = "https://api.kilamanbo.com/api/v530/radio/drama";
+const MANBO_SEARCH_API_BASE = "https://api.kilamanbo.com/api/v530/search/page/content/new";
 const MANBO_API_HOST = "www.kilamanbo.com";
 const MANBO_INFO_KEY = "manbo:info:v1";
 const MISSEVAN_INFO_KEY = "missevan:info:v1";
@@ -116,6 +117,7 @@ const soundSummaryCache = new Map();
 const rewardSummaryCache = new Map();
 const rewardDetailCache = new Map();
 const missevanSearchApiCache = new Map();
+const manboSearchApiCache = new Map();
 const manboDramaCache = new Map();
 const manboSetCache = new Map();
 const manboSetV530Cache = new Map();
@@ -926,6 +928,21 @@ export function buildMissevanSearchApiUsageLog(keyword, options = {}) {
     matchedCount,
     cached: false,
     ...(error ? { accessDenied: isMissevanAccessDenied(error), error: message } : {}),
+  };
+}
+
+export function buildManboSearchApiUsageLog(keyword, options = {}) {
+  const matchedCount = Math.max(0, Math.floor(Number(options.matchedCount ?? 0) || 0));
+  const error = options.error || null;
+  const message = error ? String(error?.message || error) : "";
+  return {
+    platform: "manbo",
+    action: "manbo_search_api",
+    keyword: normalizeKeyword(keyword),
+    success: !error && matchedCount > 0,
+    matchedCount,
+    cached: false,
+    ...(error ? { error: message } : {}),
   };
 }
 
@@ -2197,8 +2214,8 @@ function getManboPaymentLabel(card) {
   if (card?.is_member) {
     return "会员";
   }
-  if (Number(card?.price ?? 0) === 100) {
-    return "免费";
+  if (card?.search_source === "manbo_api") {
+    return Number(card?.price ?? 0) > 100 ? "付费" : "免费";
   }
   return ["season", "episode"].includes(String(card?.revenue_type ?? ""))
     ? "付费"
@@ -2607,6 +2624,203 @@ function buildMissevanSearchFallbackCard(record) {
 function getMissevanPrimarySoundIdFromRecord(record) {
   const primarySoundId = normalizeStringIdArray(record?.soundIds, 1)[0] || "";
   return Number(primarySoundId) || null;
+}
+
+function normalizeManboApiCategoryLabel(value) {
+  if (typeof value === "string") {
+    return normalizeTextValue(value);
+  }
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  return normalizeTextValue(value.name ?? value.label ?? value.title ?? value.categoryName);
+}
+
+function normalizeManboApiContentTypeLabel(drama) {
+  const categoryName = normalizeTextValue(
+    drama?.category ??
+      drama?.categoryName ??
+      drama?.category_name ??
+      drama?.catalogName ??
+      drama?.catalog_name
+  );
+  if (categoryName === "有声书") {
+    return CONTENT_TYPE_LABEL_BY_CATEGORY.audio_drama;
+  }
+  if (recordTextIncludesAny(categoryName, MANBO_CATEGORY_ALIASES.radio_drama)) {
+    return CONTENT_TYPE_LABEL_BY_CATEGORY.radio_drama;
+  }
+  if (recordTextIncludesAny(categoryName, MANBO_CATEGORY_ALIASES.audio_drama)) {
+    return CONTENT_TYPE_LABEL_BY_CATEGORY.audio_drama;
+  }
+  return "";
+}
+
+function splitManboApiCvNames(value) {
+  return normalizeStringArray(
+    normalizeTextValue(value)
+      .split(/[&、,，/／|]+/)
+      .map((item) => item.trim())
+      .filter(Boolean),
+    20
+  );
+}
+
+export function normalizeManboSearchApiCandidate(item) {
+  const source = item && typeof item === "object" ? item : {};
+  const drama = source?.radioDramaResp && typeof source.radioDramaResp === "object"
+    ? source.radioDramaResp
+    : source;
+  const dramaId = String(
+    drama?.radioDramaIdStr ??
+      drama?.radioDramaId ??
+      drama?.dramaId ??
+      drama?.id ??
+      ""
+  ).trim();
+  const title = normalizeTextValue(drama?.title ?? drama?.name);
+  if (!/^\d+$/.test(dramaId) || !title) {
+    return null;
+  }
+
+  const categoryLabels = normalizeStringArray(
+    (Array.isArray(drama?.categoryLabels) ? drama.categoryLabels : [])
+      .map(normalizeManboApiCategoryLabel)
+      .filter(Boolean),
+    10
+  );
+
+  return {
+    dramaId,
+    title,
+    cover: normalizeTextValue(drama?.coverPic ?? drama?.cover ?? drama?.coverUrl),
+    watchCount: normalizeOptionalFiniteNumber(drama?.watchCount) ?? 0,
+    collectionFormatText: normalizeTextValue(drama?.collectionFormatText),
+    cvNames: splitManboApiCvNames(drama?.cvNameStr),
+    categoryLabels,
+    contentTypeLabel: normalizeManboApiContentTypeLabel(drama),
+    price: normalizeOptionalFiniteNumber(drama?.price) ?? 0,
+    vipFree: Number(drama?.vipFree ?? 0) === 1,
+  };
+}
+
+export function buildManboApiSearchFallbackCard(record) {
+  const mainCvs = normalizeStringArray(record?.cvNames, 20);
+  const viewCount = Number(record?.watchCount ?? 0) || 0;
+  const card = {
+    id: String(record?.dramaId ?? ""),
+    name: record?.title || "",
+    cover: record?.cover || "",
+    view_count: viewCount,
+    playCountWan: formatPlayCountWan(viewCount),
+    price: Number(record?.price ?? 0) || 0,
+    sound_id: null,
+    subscription_num: null,
+    pay_count: null,
+    diamond_value: 0,
+    is_member: Boolean(record?.vipFree),
+    checked: false,
+    platform: "manbo",
+    search_source: "manbo_api",
+    content_type_label: record?.contentTypeLabel || "",
+    main_cvs: mainCvs,
+    main_cv_text: buildMainCvText(mainCvs),
+  };
+  return {
+    ...card,
+    payment_label: getManboPaymentLabel(card),
+  };
+}
+
+function collectManboSearchApiTimelineItems(payload) {
+  const groups = Array.isArray(payload?.b?.searchStructureNewRespList)
+    ? payload.b.searchStructureNewRespList
+    : [];
+  return groups.flatMap((group) =>
+    Array.isArray(group?.timelineItemResp) ? group.timelineItemResp : []
+  );
+}
+
+export function normalizeManboSearchApiPayloadRecords(payload) {
+  const statusCode = payload?.h?.code == null ? 200 : Number(payload.h.code);
+  if (statusCode !== 200) {
+    const message = normalizeTextValue(payload?.h?.msg ?? payload?.h?.message);
+    throw new Error(`Manbo search API error ${statusCode}${message ? `: ${message}` : ""}`);
+  }
+
+  return Array.from(
+    collectManboSearchApiTimelineItems(payload)
+      .map(normalizeManboSearchApiCandidate)
+      .filter(Boolean)
+      .reduce((map, item) => {
+        const key = String(item.dramaId);
+        if (!map.has(key)) {
+          map.set(key, item);
+        }
+        return map;
+      }, new Map())
+      .values()
+  ).slice(0, 20);
+}
+
+function generateManboVisitorId() {
+  const randomSuffix = Math.floor(Math.random() * 1000000)
+    .toString()
+    .padStart(6, "0");
+  return `${Date.now()}${randomSuffix}`;
+}
+
+async function fetchManboSearchApiRecords(keyword, options = {}) {
+  const cacheKey = normalizeTextValue(keyword);
+  const cached = getCachedValue(
+    manboSearchApiCache,
+    cacheKey,
+    MISSEVAN_SEARCH_API_CACHE_TTL_MS
+  );
+  if (cached) {
+    return cached;
+  }
+
+  const url = new URL(MANBO_SEARCH_API_BASE);
+  url.searchParams.set("type", "5");
+  url.searchParams.set("keyWord", cacheKey);
+  url.searchParams.set("pageNo", "1");
+  url.searchParams.set("pageSize", "20");
+
+  try {
+    const payload = await fetchJsonWithRetry(url.toString(), 2, 250, {
+      headers: {
+        visitor_id: generateManboVisitorId(),
+      },
+      timeoutMs: MANBO_FETCH_TIMEOUT_MS,
+    });
+    const normalized = normalizeManboSearchApiPayloadRecords(payload);
+
+    setCachedValue(manboSearchApiCache, cacheKey, normalized);
+    if (options?.logApiCall) {
+      void writeUsageLog(buildManboSearchApiUsageLog(cacheKey, { matchedCount: normalized.length }));
+    }
+    return normalized;
+  } catch (error) {
+    if (options?.logApiCall) {
+      void writeUsageLog(buildManboSearchApiUsageLog(cacheKey, { matchedCount: 0, error }));
+    }
+    throw error;
+  }
+}
+
+export function selectManboSearchSourceRecords(libraryRecords, apiRecords) {
+  const normalizedLibraryRecords = Array.isArray(libraryRecords) ? libraryRecords : [];
+  if (normalizedLibraryRecords.length > 0) {
+    return {
+      source: "library",
+      records: normalizedLibraryRecords,
+    };
+  }
+  return {
+    source: "manbo_api",
+    records: Array.isArray(apiRecords) ? apiRecords : [],
+  };
 }
 
 function normalizeMissevanApiSearchCandidate(item) {
@@ -6622,6 +6836,7 @@ app.get("/manbo/search", async (req, res) => {
   const keyword = normalizeKeyword(req.query.keyword);
   const offset = normalizeSearchOffset(req.query.offset);
   const limit = normalizeSearchLimit(req.query.limit, 5, 5);
+  const useApiFallback = shouldUseMissevanApiFallback(req.query.apiFallback);
   if (!keyword) {
     return res.json({
       success: false,
@@ -6649,25 +6864,42 @@ app.get("/manbo/search", async (req, res) => {
 
   try {
     await ensureInfoStoreLoaded(manboInfoStore);
-    if (!manboInfoStore.remoteAvailable) {
-      return res.status(503).json({
-        success: false,
-        unavailable: true,
-        results: [],
-        message: "Manbo search is unavailable while Upstash is not available. Please import by ID or link.",
-        meta: {
-          keyword,
-          matchedCount: 0,
-          hydratedCount: 0,
-        },
-      });
-    }
-
     const matchedRecords = searchManboLibraryRecords(
       manboInfoStore.records,
       keyword,
       SEARCH_RESULT_LIMIT
     );
+    if (!matchedRecords.length && !useApiFallback) {
+      return res.json({
+        success: false,
+        results: [],
+        meta: {
+          ...buildSearchPageMeta(keyword, 0, offset, limit),
+          source: "library_only",
+          hydratedCount: 0,
+        },
+      });
+    }
+
+    if (!matchedRecords.length) {
+      const apiRecords = await fetchManboSearchApiRecords(keyword, { logApiCall: true });
+      const sourceSelection = selectManboSearchSourceRecords(matchedRecords, apiRecords);
+      const apiResults = sourceSelection.records.map(buildManboApiSearchFallbackCard);
+      return res.json({
+        success: apiResults.length > 0,
+        results: apiResults,
+        meta: {
+          ...buildSearchPageMeta(keyword, apiResults.length, 0, 20),
+          source: sourceSelection.source,
+          offset: 0,
+          limit: 20,
+          nextOffset: apiResults.length,
+          hasMore: false,
+          hydratedCount: apiResults.length,
+        },
+      });
+    }
+
     const pagedRecords = matchedRecords.slice(offset, offset + limit);
     const hydratedResults = await mapWithConcurrency(
       pagedRecords,
@@ -6686,6 +6918,7 @@ app.get("/manbo/search", async (req, res) => {
       results: hydratedResults,
       meta: {
         ...meta,
+        source: "library",
         hydratedCount: hydratedResults.length,
       },
     });

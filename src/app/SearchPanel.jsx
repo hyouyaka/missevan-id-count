@@ -11,6 +11,7 @@ import {
   getBackendVersionFromResponse,
   normalizeVersion,
   parseRawItems,
+  shouldUseManboLibraryFallbackForMissevanSearch,
 } from "@/app/app-utils";
 import { canParseShareUrl, decryptShareUrl, extractResolvedId } from "@/utils/manboCrypto";
 
@@ -28,6 +29,7 @@ export function SearchPanel({
   onUpdateResults,
   onCrossPlatformImport,
   onMissevanFallbackResults,
+  onManboFallbackResults,
   onNotice,
 }) {
   const [isSearchPending, setIsSearchPending] = useState(false);
@@ -186,10 +188,6 @@ export function SearchPanel({
           data.meta || {}
         );
         if (!data.success) {
-          if (data.unavailable) {
-            showBlockingNotice("漫播搜索不可用", "当前无法连接漫播信息库，请改用作品ID、分集 ID 或链接导入。");
-            return;
-          }
           if (data?.meta?.keywordTooShort) {
             showKeywordTooShortNotice();
             return;
@@ -231,8 +229,31 @@ export function SearchPanel({
         )
       );
       const data = await parseVersionedJson(response);
+      const missevanResults = Array.isArray(data.results) ? data.results : [];
+      if (shouldUseManboLibraryFallbackForMissevanSearch(data, keyword)) {
+        try {
+          const fallbackResponse = await fetch(
+            buildVersionedUrl(
+              `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5&apiFallback=0`,
+              frontendVersion
+            )
+          );
+          const fallbackData = await parseVersionedJson(fallbackResponse);
+          const fallbackResults = Array.isArray(fallbackData?.results) ? fallbackData.results : [];
+          if (fallbackData?.success && fallbackResults.length > 0) {
+            onManboFallbackResults?.({
+              keyword,
+              results: fallbackResults,
+              meta: fallbackData.meta || {},
+            });
+            return;
+          }
+        } catch (fallbackError) {
+          console.error("Manbo fallback search failed", fallbackError);
+        }
+      }
       if (data.success) {
-        onUpdateResults?.(data.results, "search", data.meta || {});
+        onUpdateResults?.(missevanResults, "search", data.meta || {});
         return;
       }
       if (data?.meta?.keywordTooShort) {
@@ -343,17 +364,8 @@ export function SearchPanel({
         }
         onResetState?.();
         const manboResult = await queryManbo(rawItems, {
-          suppressFailureNotice: Boolean(options?.fallbackTargetPlatform),
+          suppressFailureNotice: false,
         });
-        if (!manboResult?.success && options?.fallbackTargetPlatform === "missevan") {
-          await onCrossPlatformImport?.({
-            targetPlatform: "missevan",
-            rawItems,
-            sourcePlatform: "manbo",
-            allowMissevanApiFallback: false,
-            emptyResultNotice: options.emptyResultNotice || "not_found",
-          });
-        }
         return;
       }
 

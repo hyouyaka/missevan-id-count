@@ -1,6 +1,7 @@
 import { normalizeVersion } from "../../shared/versionUtils.js";
 import {
   isSearchKeywordLongEnough,
+  normalizeSearchText,
   parseMissevanInputToken,
 } from "../../shared/searchUtils.js";
 
@@ -88,6 +89,24 @@ export function getBackendVersionFromResponse(response, data = null) {
 export function buildVersionedUrl(url, frontendVersion) {
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}frontendVersion=${encodeURIComponent(normalizeVersion(frontendVersion))}`;
+}
+
+export function hasSearchKeywordInResultTitles(results, keyword) {
+  const normalizedKeyword = normalizeSearchText(keyword);
+  if (!normalizedKeyword) {
+    return false;
+  }
+  return (Array.isArray(results) ? results : []).some((item) => {
+    const normalizedTitle = normalizeSearchText(item?.title ?? item?.name);
+    return normalizedTitle.includes(normalizedKeyword);
+  });
+}
+
+export function shouldUseManboLibraryFallbackForMissevanSearch(data, keyword) {
+  if (data?.meta?.source !== "missevan_api") {
+    return false;
+  }
+  return !hasSearchKeywordInResultTitles(data?.results, keyword);
 }
 
 export function formatCooldownRemaining(until) {
@@ -1252,29 +1271,28 @@ export function classifyMergedSearchInput(rawValue, platform = "missevan", optio
         action: "import",
         keyword: "",
         rawItems,
-        fallbackTargetPlatform: "missevan",
-        allowMissevanApiFallback: false,
-        emptyResultNotice: "not_found",
+      };
+    }
+    const emptyResultNotice = getNumericEmptyResultNotice(rawItems[0]);
+    if (emptyResultNotice === "short_keyword") {
+      return {
+        action: "keyword_too_short",
+        keyword,
+        rawItems: [],
       };
     }
     return {
-      action: "cross_import",
-      targetPlatform: "missevan",
-      keyword: "",
-      rawItems,
-      allowMissevanApiFallback: false,
-      emptyResultNotice: getNumericEmptyResultNotice(rawItems[0]),
+      action: "search",
+      keyword,
+      rawItems: [],
     };
   }
 
   if (normalizedPlatform === "manbo" && rawItems.every(isMissevanCrossImportToken)) {
     return {
-      action: "cross_import",
-      targetPlatform: "missevan",
-      keyword: "",
-      rawItems,
-      allowMissevanApiFallback: false,
-      emptyResultNotice: "not_found",
+      action: "search",
+      keyword,
+      rawItems: [],
     };
   }
 

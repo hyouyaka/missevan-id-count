@@ -9,10 +9,9 @@ const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.ur
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
+const serverSource = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
 
-test("Missevan fallback dialog uses cancel label and horizontal confirm actions", () => {
-  assert.match(toolViewSource, /cancelLabel:\s*"取消"/);
-  assert.doesNotMatch(toolViewSource, /cancelLabel:\s*"不显示"/);
+test("message dialog keeps horizontal confirm actions", () => {
   assert.match(messageDialogSource, /AlertDialogFooter\s+className=/);
   assert.match(messageDialogSource, /grid-cols-2/);
 });
@@ -26,8 +25,21 @@ test("Missevan fallback dialog places confirm before cancel", () => {
   assert.ok(actionIndex < cancelIndex, "expected confirm button to render before cancel button");
 });
 
-test("Manbo fallback search disables Missevan API fallback", () => {
-  assert.match(searchPanelSource, /\/search\?keyword=\$\{encodeURIComponent\(keyword\)\}&offset=0&limit=5&apiFallback=0/);
+test("Manbo empty search falls back to Missevan library search only", () => {
+  const manboBranchStart = searchPanelSource.indexOf('if (platform === "manbo")');
+  assert.notEqual(manboBranchStart, -1, "Manbo keyword search branch should exist");
+  const fallbackStart = searchPanelSource.indexOf("const fallbackResponse", manboBranchStart);
+  assert.notEqual(fallbackStart, -1, "Manbo empty search should try Missevan fallback");
+  const fallbackEnd = searchPanelSource.indexOf("showBlockingNotice", fallbackStart);
+  assert.notEqual(fallbackEnd, -1, "Manbo fallback branch should end before empty-result notice");
+  const fallbackBranch = searchPanelSource.slice(fallbackStart, fallbackEnd);
+
+  assert.match(fallbackBranch, /apiFallback=0/);
+  assert.match(fallbackBranch, /onMissevanFallbackResults/);
+  assert.doesNotMatch(
+    fallbackBranch,
+    /`\/search\?keyword=\$\{encodeURIComponent\(keyword\)\}&offset=0&limit=5`/
+  );
 });
 
 test("Manbo numeric import only accepts 18 to 20 digit IDs", () => {
@@ -40,10 +52,45 @@ test("Missevan numeric import failure has short-keyword and API-fallback branche
   assert.match(searchPanelSource, /allowMissevanApiFallback/);
 });
 
-test("cross-platform Missevan fallback keeps API fallback disabled", () => {
-  assert.match(toolViewSource, /allowMissevanApiFallback:\s*false/);
-  assert.match(toolViewSource, /apiFallback=0/);
-  assert.doesNotMatch(toolViewSource, /allowMissevanApiFallback:\s*true/);
+test("Manbo API search results are the only Manbo search results registered as new ids", () => {
+  assert.match(toolViewSource, /expectedSource = normalizedPlatform === "manbo" \? "manbo_api" : "missevan_api"/);
+  assert.match(toolViewSource, /item\?\.search_source === expectedSource/);
+  assert.match(toolViewSource, /platform: normalizedPlatform/);
+  assert.match(toolViewSource, /confirmMissevanFallbackSearch/);
+  assert.match(toolViewSource, /onMissevanFallbackResults=\{confirmMissevanFallbackSearch\}/);
+});
+
+test("Manbo search supports local-only fallback mode", () => {
+  const routeStart = serverSource.indexOf('app.get("/manbo/search"');
+  assert.notEqual(routeStart, -1, "Manbo search route should exist");
+  const routeEnd = serverSource.indexOf('app.post("/manbo/getdramacards"', routeStart);
+  assert.notEqual(routeEnd, -1, "Manbo search route end marker should exist");
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+  const localOnlyIndex = routeSource.indexOf('source: "library_only"');
+  const apiCallIndex = routeSource.indexOf("fetchManboSearchApiRecords");
+
+  assert.match(routeSource, /req\.query\.apiFallback/);
+  assert.ok(localOnlyIndex >= 0, "Manbo search should return library_only when API fallback is disabled");
+  assert.ok(apiCallIndex > localOnlyIndex, "Manbo API fetch should occur after local-only branch");
+});
+
+test("Missevan API search falls back to Manbo library when API titles miss keyword", () => {
+  assert.match(searchPanelSource, /shouldUseManboLibraryFallbackForMissevanSearch/);
+  assert.match(searchPanelSource, /onManboFallbackResults/);
+  assert.match(searchPanelSource, /\/manbo\/search\?keyword=\$\{encodeURIComponent\(keyword\)\}&offset=0&limit=5&apiFallback=0/);
+  assert.match(toolViewSource, /confirmManboFallbackSearch/);
+  assert.match(toolViewSource, /onManboFallbackResults=\{confirmManboFallbackSearch\}/);
+});
+
+test("Missevan API results remain available when Manbo fallback has no matches", () => {
+  const fallbackStart = searchPanelSource.indexOf("if (shouldUseManboLibraryFallbackForMissevanSearch");
+  assert.notEqual(fallbackStart, -1, "Missevan API mismatch fallback branch should exist");
+  const successStart = searchPanelSource.indexOf("if (data.success)", fallbackStart);
+  assert.notEqual(successStart, -1, "Missevan API success branch should remain after fallback");
+  const fallbackMissBranch = searchPanelSource.slice(fallbackStart, successStart);
+
+  assert.doesNotMatch(fallbackMissBranch, /showBlockingNotice/);
+  assert.doesNotMatch(fallbackMissBranch, /catch \(fallbackError\)[\s\S]*?\}\s*return;\s*\}/);
 });
 
 test("merged search textarea submits on plain Enter and keeps Shift Enter for newlines", () => {

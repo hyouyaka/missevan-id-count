@@ -220,6 +220,137 @@ test("Missevan API search usage log entries describe real external calls", async
   );
 });
 
+test("Manbo API search usage log entries describe real external calls", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildManboSearchApiUsageLog } = await import("./server.js");
+
+  assert.deepEqual(buildManboSearchApiUsageLog("心眼", { matchedCount: 2 }), {
+    platform: "manbo",
+    action: "manbo_search_api",
+    keyword: "心眼",
+    success: true,
+    matchedCount: 2,
+    cached: false,
+  });
+  assert.deepEqual(
+    buildManboSearchApiUsageLog("心眼", {
+      matchedCount: 0,
+      error: new Error("HTTP 500"),
+    }),
+    {
+      platform: "manbo",
+      action: "manbo_search_api",
+      keyword: "心眼",
+      success: false,
+      matchedCount: 0,
+      cached: false,
+      error: "HTTP 500",
+    }
+  );
+});
+
+test("Manbo API search candidates normalize to search result cards", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeManboSearchApiCandidate, buildManboApiSearchFallbackCard } = await import("./server.js");
+
+  const record = normalizeManboSearchApiCandidate({
+    radioDramaId: 1653424609497710600,
+    radioDramaIdStr: "1653424609497710659",
+    title: "心眼·第一季",
+    coverPic: "https://img.kilamanbo.com/h5/1701189900396700.jpg",
+    watchCount: 15140036,
+    collectionFormatText: "超过19万人追剧",
+    cvNameStr: "陈张太康 & 文森",
+    category: "有声剧",
+    categoryLabels: [{ name: "广播剧" }],
+    price: 188,
+    vipFree: 1,
+  });
+  const card = buildManboApiSearchFallbackCard(record);
+
+  assert.deepEqual(
+    {
+      id: card.id,
+      name: card.name,
+      cover: card.cover,
+      view_count: card.view_count,
+      playCountWan: card.playCountWan,
+      platform: card.platform,
+      checked: card.checked,
+      search_source: card.search_source,
+      content_type_label: card.content_type_label,
+      payment_label: card.payment_label,
+      main_cvs: card.main_cvs,
+      main_cv_text: card.main_cv_text,
+    },
+    {
+      id: "1653424609497710659",
+      name: "心眼·第一季",
+      cover: "https://img.kilamanbo.com/h5/1701189900396700.jpg",
+      view_count: 15140036,
+      playCountWan: "1514.0万",
+      platform: "manbo",
+      checked: false,
+      search_source: "manbo_api",
+      content_type_label: "有声剧",
+      payment_label: "会员",
+      main_cvs: ["陈张太康", "文森"],
+      main_cv_text: "主要CV：陈张太康，文森",
+    }
+  );
+});
+
+test("Manbo API search payment labels follow price and vipFree", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeManboSearchApiCandidate, buildManboApiSearchFallbackCard } = await import("./server.js");
+
+  const buildCard = (overrides) =>
+    buildManboApiSearchFallbackCard(
+      normalizeManboSearchApiCandidate({
+        radioDramaIdStr: String(overrides.id),
+        title: `测试剧${overrides.id}`,
+        category: "广播剧",
+        ...overrides,
+      })
+    );
+
+  assert.equal(buildCard({ id: 1, price: 999, vipFree: 1 }).payment_label, "会员");
+  assert.equal(buildCard({ id: 2, price: 101, vipFree: 0 }).payment_label, "付费");
+  assert.equal(buildCard({ id: 3, price: 100, vipFree: 0 }).payment_label, "免费");
+  assert.equal(buildCard({ id: 4, price: 0, vipFree: 0 }).payment_label, "免费");
+});
+
+test("Manbo search source chooses library records before API fallback", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { selectManboSearchSourceRecords } = await import("./server.js");
+
+  const libraryRecords = [{ dramaId: "1", name: "本地结果" }];
+  const apiRecords = [{ dramaId: "2", name: "接口结果" }];
+
+  assert.deepEqual(selectManboSearchSourceRecords(libraryRecords, apiRecords), {
+    source: "library",
+    records: libraryRecords,
+  });
+  assert.deepEqual(selectManboSearchSourceRecords([], apiRecords), {
+    source: "manbo_api",
+    records: apiRecords,
+  });
+});
+
+test("Manbo API search payload parser rejects business error responses", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeManboSearchApiPayloadRecords } = await import("./server.js");
+
+  assert.throws(
+    () =>
+      normalizeManboSearchApiPayloadRecords({
+        h: { code: 429, msg: "too many requests" },
+        b: { searchStructureNewRespList: [] },
+      }),
+    /Manbo search API error 429: too many requests/
+  );
+});
+
 test("Missevan library search ranks complete term prefixes above ordinary prefixes", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords } = await import("./server.js");

@@ -16,6 +16,8 @@ import {
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
   selectDramaEpisodesByMode,
+  hasSearchKeywordInResultTitles,
+  shouldUseManboLibraryFallbackForMissevanSearch,
   STATS_HISTORY_STORAGE_KEY,
 } from "./app-utils.js";
 
@@ -195,27 +197,21 @@ test("classifyMergedSearchInput accepts 18 to 20 digit Manbo IDs after keyword l
       action: "import",
       keyword: "",
       rawItems: [id],
-      fallbackTargetPlatform: "missevan",
-      allowMissevanApiFallback: false,
-      emptyResultNotice: "not_found",
     });
   });
 });
 
-test("classifyMergedSearchInput routes non-Manbo numeric IDs on Manbo to Missevan without API fallback", () => {
-  [
-    ["12", "short_keyword"],
-    ["123", "not_found"],
-    ["12345678901234567", "not_found"],
-    ["123456789012345678901", "not_found"],
-  ].forEach(([id, emptyResultNotice]) => {
+test("classifyMergedSearchInput keeps non-Manbo numeric IDs on Manbo inside Manbo search", () => {
+  assert.deepEqual(classifyMergedSearchInput("12", "manbo", { numericLookup: false }), {
+    action: "keyword_too_short",
+    keyword: "12",
+    rawItems: [],
+  });
+  ["123", "12345678901234567", "123456789012345678901"].forEach((id) => {
     assert.deepEqual(classifyMergedSearchInput(id, "manbo", { numericLookup: false }), {
-      action: "cross_import",
-      targetPlatform: "missevan",
-      keyword: "",
-      rawItems: [id],
-      allowMissevanApiFallback: false,
-      emptyResultNotice,
+      action: "search",
+      keyword: id,
+      rawItems: [],
     });
   });
 });
@@ -240,28 +236,22 @@ test("classifyMergedSearchInput keeps mixed Manbo-looking input on Missevan as s
   });
 });
 
-test("classifyMergedSearchInput routes Missevan-looking input on Manbo to cross import", () => {
+test("classifyMergedSearchInput keeps Missevan-looking input on Manbo as Manbo search", () => {
   assert.deepEqual(
     classifyMergedSearchInput("93420 https://www.missevan.com/sound/12681701?share_channel=copy", "manbo"),
     {
-      action: "cross_import",
-      targetPlatform: "missevan",
-      keyword: "",
-      rawItems: ["93420", "https://www.missevan.com/sound/12681701?share_channel=copy"],
-      allowMissevanApiFallback: false,
-      emptyResultNotice: "not_found",
+      action: "search",
+      keyword: "93420 https://www.missevan.com/sound/12681701?share_channel=copy",
+      rawItems: [],
     }
   );
 });
 
-test("classifyMergedSearchInput routes short Missevan drama IDs on Manbo to cross import after lookup", () => {
+test("classifyMergedSearchInput keeps short Missevan drama IDs on Manbo as Manbo search after lookup", () => {
   assert.deepEqual(classifyMergedSearchInput("2401", "manbo", { numericLookup: false }), {
-    action: "cross_import",
-    targetPlatform: "missevan",
-    keyword: "",
-    rawItems: ["2401"],
-    allowMissevanApiFallback: false,
-    emptyResultNotice: "not_found",
+    action: "search",
+    keyword: "2401",
+    rawItems: [],
   });
 });
 
@@ -279,6 +269,48 @@ test("classifyMergedSearchInput routes empty input separately", () => {
     keyword: "",
     rawItems: [],
   });
+});
+
+test("hasSearchKeywordInResultTitles uses normalized title matching", () => {
+  assert.equal(
+    hasSearchKeywordInResultTitles(
+      [{ title: "某某广播剧·第一季" }, { name: "另一个结果" }],
+      "某某 广播剧"
+    ),
+    true
+  );
+  assert.equal(
+    hasSearchKeywordInResultTitles(
+      [{ title: "完全无关" }, { name: "别的结果" }],
+      "某某广播剧"
+    ),
+    false
+  );
+});
+
+test("shouldUseManboLibraryFallbackForMissevanSearch handles empty Missevan API results", () => {
+  assert.equal(
+    shouldUseManboLibraryFallbackForMissevanSearch(
+      {
+        success: false,
+        results: [],
+        meta: { source: "missevan_api", matchedCount: 0 },
+      },
+      "万米高空降临"
+    ),
+    true
+  );
+  assert.equal(
+    shouldUseManboLibraryFallbackForMissevanSearch(
+      {
+        success: true,
+        results: [{ name: "万米高空降临" }],
+        meta: { source: "missevan_api", matchedCount: 1 },
+      },
+      "万米高空降临"
+    ),
+    false
+  );
 });
 
 test("formatDeviceDateTime formats 24-hour local time with timezone label", () => {

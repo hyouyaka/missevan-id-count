@@ -588,44 +588,8 @@ export function ToolView({ initialAppConfig }) {
     );
   }
 
-  function showMissevanEmptyResultNotice(emptyResultNotice = "not_found") {
-    if (emptyResultNotice === "short_keyword") {
-      setNotice({
-        title: "关键词太短",
-        description: "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。",
-      });
-      return;
-    }
-
-    setNotice({
-      title: "",
-      description: "未找到猫耳结果，请检查输入内容。",
-    });
-  }
-
-  async function searchMissevanLibraryWithoutApiFallback(keyword) {
-    const response = await fetch(
-      buildVersionedUrl(
-        `/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5&apiFallback=0`,
-        appConfigRef.current.frontendVersion
-      ),
-      { cache: "no-store" }
-    );
-    const data = await parseVersionedJsonResponse(response);
-    const results = Array.isArray(data?.results)
-      ? data.results.map((item) => ({
-          ...item,
-          platform: item?.platform || "missevan",
-        }))
-      : [];
-    return { data, results };
-  }
-
   async function importRawItemsIntoPlatform(targetPlatform, rawItems, options = {}) {
     const normalizedPlatform = targetPlatform === "manbo" ? "manbo" : "missevan";
-    const sourcePlatform = options?.sourcePlatform === "manbo" ? "manbo" : "";
-    const allowMissevanApiFallback = options?.allowMissevanApiFallback === true;
-    const emptyResultNotice = options?.emptyResultNotice || "not_found";
     const normalizedRawItems = Array.from(
       new Set(
         (Array.isArray(rawItems) ? rawItems : [])
@@ -640,7 +604,6 @@ export function ToolView({ initialAppConfig }) {
 
     if (
       normalizedPlatform === "missevan" &&
-      sourcePlatform !== "manbo" &&
       !appConfigRef.current.desktopApp &&
       Number(appConfigRef.current.cooldownUntil ?? 0) > Date.now()
     ) {
@@ -676,33 +639,6 @@ export function ToolView({ initialAppConfig }) {
       if (!response.ok || !data?.success || !results.length) {
         if (normalizedPlatform === "missevan" && data?.accessDenied) {
           await refreshCooldownState();
-        }
-        if (normalizedPlatform === "missevan" && sourcePlatform === "manbo" && !allowMissevanApiFallback) {
-          if (emptyResultNotice === "short_keyword") {
-            showMissevanEmptyResultNotice(emptyResultNotice);
-            return;
-          }
-          try {
-            const keyword = normalizedRawItems.join(" ");
-            const fallback = await searchMissevanLibraryWithoutApiFallback(keyword);
-            if (fallback.data?.success && fallback.results.length > 0) {
-              updateSearchFormForPlatform("missevan", {
-                keyword,
-                manualInput: "",
-              });
-              setSearchResults("missevan", fallback.results, "search", {
-                ...(fallback.data.meta || {}),
-                keyword,
-              });
-              setCurrentPlatform("missevan");
-              scrollToPanel(resultsPanelRef);
-              return;
-            }
-          } catch (fallbackError) {
-            console.error("Missevan no-API fallback search failed", fallbackError);
-          }
-          showMissevanEmptyResultNotice(emptyResultNotice);
-          return;
         }
         toast.error(normalizedPlatform === "manbo" ? "Manbo 导入失败，请检查输入内容。" : "猫耳导入失败，请检查输入内容。");
         return;
@@ -744,6 +680,28 @@ export function ToolView({ initialAppConfig }) {
           keyword,
         });
         setCurrentPlatform("missevan");
+        scrollToPanel(resultsPanelRef);
+      },
+    });
+  }
+
+  function confirmManboFallbackSearch({ keyword, results, meta }) {
+    setNotice({
+      title: "",
+      description: "未找到准确猫耳剧集，是否显示漫播搜索结果？",
+      actionLabel: "是",
+      cancelLabel: "取消",
+      onAction: () => {
+        updateSearchFormForPlatform("manbo", {
+          keyword,
+          manualInput: "",
+        });
+        setSearchResults("manbo", results, "search", {
+          ...(meta || {}),
+          keyword,
+        });
+        setCurrentPlatform("manbo");
+        scrollToPanel(resultsPanelRef);
       },
     });
   }
@@ -1239,13 +1197,15 @@ export function ToolView({ initialAppConfig }) {
     };
   }
 
-  async function registerFallbackMissevanDramaIds(platform, ids) {
-    if (platform !== "missevan") {
+  async function registerApiSearchDramaIds(platform, ids) {
+    const normalizedPlatform = platform === "manbo" ? "manbo" : platform === "missevan" ? "missevan" : "";
+    if (!normalizedPlatform) {
       return;
     }
 
-    const fallbackIds = getSearchResultsByIds(platform, ids)
-      .filter((item) => item?.search_source === "missevan_api")
+    const expectedSource = normalizedPlatform === "manbo" ? "manbo_api" : "missevan_api";
+    const fallbackIds = getSearchResultsByIds(normalizedPlatform, ids)
+      .filter((item) => item?.search_source === expectedSource)
       .map((item) => item.id);
     if (!fallbackIds.length) {
       return;
@@ -1254,12 +1214,12 @@ export function ToolView({ initialAppConfig }) {
     try {
       await postJson(
         "/register-new-drama-ids",
-        { platform: "missevan", drama_ids: fallbackIds },
+        { platform: normalizedPlatform, drama_ids: fallbackIds },
         undefined,
         "Failed to register new drama ids"
       );
     } catch (error) {
-      console.error("Failed to register fallback Missevan drama ids", error);
+      console.error("Failed to register API search drama ids", error);
     }
   }
 
@@ -1283,7 +1243,7 @@ export function ToolView({ initialAppConfig }) {
     const requestedIdSet = new Set(ids.map((id) => String(id)));
 
     try {
-      await registerFallbackMissevanDramaIds(platform, ids);
+      await registerApiSearchDramaIds(platform, ids);
 
       for (let index = 0; index < ids.length; index += 1) {
         const id = String(ids[index]);
@@ -1462,6 +1422,10 @@ export function ToolView({ initialAppConfig }) {
       finishRun(platform, runId);
       return;
     }
+    await registerApiSearchDramaIds(
+      platform,
+      selectedEpisodes.map((episode) => episode.drama_id)
+    );
     updatePlatformState(platform, (state) => ({
       ...state,
       stats: {
@@ -1499,6 +1463,10 @@ export function ToolView({ initialAppConfig }) {
       finishRun(platform, runId);
       return;
     }
+    await registerApiSearchDramaIds(
+      platform,
+      selectedEpisodes.map((episode) => episode.drama_id)
+    );
     updatePlatformState(platform, (state) => ({
       ...state,
       stats: {
@@ -1586,7 +1554,7 @@ export function ToolView({ initialAppConfig }) {
     }));
     scrollToPanel(outputPanelRef);
     try {
-      await registerFallbackMissevanDramaIds(platform, dramaIds);
+      await registerApiSearchDramaIds(platform, dramaIds);
       await startStatsTask(platform, "revenue", { dramaIds }, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
@@ -1737,15 +1705,15 @@ export function ToolView({ initialAppConfig }) {
             onCrossPlatformImport={({ targetPlatform, rawItems, sourcePlatform, emptyResultNotice }) =>
               importRawItemsIntoPlatform(targetPlatform, rawItems, {
                 sourcePlatform,
-                allowMissevanApiFallback: false,
                 emptyResultNotice,
               })
             }
-            onMissevanFallbackResults={confirmMissevanFallbackSearch}
             onNotice={setNotice}
             onResetState={() => resetSearchFlow(currentPlatform)}
             onUpdateFormState={updateSearchForm}
             onUpdateResults={(results, source, meta) => setSearchResults(currentPlatform, results, source, meta)}
+            onMissevanFallbackResults={confirmMissevanFallbackSearch}
+            onManboFallbackResults={confirmManboFallbackSearch}
             platform={currentPlatform}
           />
 
