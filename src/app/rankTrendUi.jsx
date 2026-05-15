@@ -173,9 +173,6 @@ export async function fetchRankTrendData({ platform, id, frontendVersion }) {
   const normalizedVersion = String(frontendVersion ?? "").trim();
   const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedPlatform}:${normalizedId}`;
   const cached = rankTrendClientCache.get(cacheKey);
-  if (cached?.data) {
-    return cached.data;
-  }
   if (cached?.promise) {
     return cached.promise;
   }
@@ -188,7 +185,7 @@ export async function fetchRankTrendData({ platform, id, frontendVersion }) {
   const promise = (async () => {
     try {
       const response = await fetch(buildVersionedUrl(`/ranks/trends?${params.toString()}`, frontendVersion), {
-        cache: "no-cache",
+        cache: "no-store",
       });
       const data = await response.json();
       const payload = { response, data };
@@ -521,16 +518,33 @@ function offsetTrendPositions(positions, offset) {
 
 function buildTrendPercentPoints(metric) {
   const history = Array.isArray(metric?.history) ? metric.history : [];
-  const baseValue = getTrendNumber(history.find((point) => getTrendNumber(point.value) != null)?.value);
+  const isPaidIdMetric = metric?.key === "danmaku_uid_count";
+  const basePoint = isPaidIdMetric
+    ? history.find((point) => {
+        const value = getTrendNumber(point.value);
+        return value != null && value > 0;
+      })
+    : history.find((point) => getTrendNumber(point.value) != null);
+  const baseValue = getTrendNumber(basePoint?.value);
   if (baseValue == null || baseValue === 0) {
     return [];
   }
-  return history.map((point) => ({
-    ...point,
-    percent: getTrendNumber(point.value) != null
-      ? ((getTrendNumber(point.value) - baseValue) / baseValue) * 100
-      : null,
-  }));
+  let hasReachedBasePoint = false;
+  return history.map((point) => {
+    const value = getTrendNumber(point.value);
+    if (isPaidIdMetric) {
+      hasReachedBasePoint = hasReachedBasePoint || point === basePoint;
+      if (!hasReachedBasePoint || value == null) {
+        return { ...point, percent: null };
+      }
+    }
+    return {
+      ...point,
+      percent: value != null
+        ? ((value - baseValue) / baseValue) * 100
+        : null,
+    };
+  });
 }
 
 function isPeakSeriesChart(metrics) {

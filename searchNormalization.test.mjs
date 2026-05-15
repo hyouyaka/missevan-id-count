@@ -46,6 +46,119 @@ test("library search matches Manbo names when query omits common symbols", async
   assert.equal(results[0].dramaId, "202");
 });
 
+test("library search matches Missevan titles by pinyin initials", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "301",
+      soundIds: [],
+      title: "再世权臣",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+      searchPinyinTokens: ["zaishiquanchen", "zsqc"],
+    },
+  ];
+
+  const results = searchMissevanLibraryRecords(records, "zsqc");
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].dramaId, "301");
+});
+
+test("library search matches Missevan titles by homophone pinyin", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "302",
+      soundIds: [],
+      title: "再世权臣",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+      searchPinyinTokens: ["zaishiquanchen", "zsqc"],
+    },
+  ];
+
+  const results = searchMissevanLibraryRecords(records, "再试权臣");
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].dramaId, "302");
+});
+
+test("library search matches Manbo titles by full pinyin", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchManboLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "303",
+      name: "魔道祖师",
+      aliases: [],
+      mainCvNicknames: [],
+      mainCvNames: [],
+      mainCvRoleNames: [],
+      seriesTitle: "",
+      author: "",
+      catalogName: "",
+      searchPinyinTokens: ["modaozushi", "mdzs"],
+    },
+    {
+      dramaId: "304",
+      name: "奇洛李维斯回信",
+      aliases: [],
+      mainCvNicknames: [],
+      mainCvNames: [],
+      mainCvRoleNames: [],
+      seriesTitle: "",
+      author: "",
+      catalogName: "",
+      searchPinyinTokens: ["qiluoliweisihuixin", "qllwshx"],
+    },
+  ];
+
+  assert.equal(searchManboLibraryRecords(records, "modaozushi")[0]?.dramaId, "303");
+  assert.equal(searchManboLibraryRecords(records, "huixin")[0]?.dramaId, "304");
+});
+
+test("Missevan Han homophone queries rank full pinyin title matches above broad initials matches", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "401",
+      soundIds: [],
+      title: "洄天 第一季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "淮上",
+      catalog: 89,
+      searchPinyinTokens: ["huitiandiyiji", "htdyj", "huaishang", "hs"],
+    },
+    {
+      dramaId: "402",
+      soundIds: [],
+      title: "无关标题",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "壶鱼辣椒",
+      catalog: 89,
+      searchPinyinTokens: ["wuguanbiaoti", "wgbt", "huyulajiao", "hylj", "ht"],
+    },
+  ];
+
+  assert.equal(searchMissevanLibraryRecords(records, "洄天")[0]?.dramaId, "401");
+  assert.equal(searchMissevanLibraryRecords(records, "回填")[0]?.dramaId, "401");
+  assert.equal(searchMissevanLibraryRecords(records, "汇天")[0]?.dramaId, "401");
+});
+
 test("library search keeps numeric Missevan drama and sound ID matching", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords } = await import("./server.js");

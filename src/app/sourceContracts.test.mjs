@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const messageDialogSource = readFileSync(new URL("./MessageDialog.jsx", import.meta.url), "utf8");
+const changelogDialogSource = readFileSync(new URL("./ChangelogDialog.jsx", import.meta.url), "utf8");
 const appUtilsSource = readFileSync(new URL("./app-utils.js", import.meta.url), "utf8");
 const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.meta.url), "utf8");
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
@@ -119,6 +120,44 @@ test("ongoing refresh timestamp uses device timezone display", () => {
   assert.doesNotMatch(updatedAtFormatter, /Asia\/Shanghai/, "ongoing refresh timestamp should not force Beijing time");
 });
 
+test("ongoing paid ID metric displays full numbers while playback stays compact", () => {
+  assert.match(
+    ongoingPanelSource,
+    /metricKey === "danmaku_uid_count"[\s\S]*?formatPlainNumber/,
+    "paid ID metrics should use full plain-number formatting"
+  );
+  assert.match(
+    ongoingPanelSource,
+    /metricKey === "view_count" \? \{ forceWanDecimal: true \} : \{\}/,
+    "playback metrics should keep the compact wan formatter options"
+  );
+});
+
+test("changelog dialog keeps header and footer fixed while entries scroll", () => {
+  assert.match(
+    changelogDialogSource,
+    /h-\[min\(80dvh,34rem\)\]/,
+    "changelog dialog should cap its own height for mobile-friendly reading"
+  );
+  assert.match(
+    changelogDialogSource,
+    /overflow-y-auto/,
+    "changelog entries should scroll inside the dialog body"
+  );
+
+  const scrollRegionStart = changelogDialogSource.indexOf('data-changelog-scroll-region="true"');
+  assert.notEqual(scrollRegionStart, -1, "changelog scroll region should be explicitly marked");
+  const footerStart = changelogDialogSource.indexOf("<AlertDialogFooter", scrollRegionStart);
+  assert.notEqual(footerStart, -1, "changelog footer should render after the scroll region");
+  const scrollRegionSource = changelogDialogSource.slice(scrollRegionStart, footerStart);
+
+  assert.match(scrollRegionSource, /CHANGELOG_ENTRIES\.map/);
+  assert.doesNotMatch(scrollRegionSource, /<AlertDialogFooter/);
+  assert.match(changelogDialogSource, /min-h-0/);
+  assert.match(changelogDialogSource, /overscroll-contain/);
+  assert.match(changelogDialogSource, /\[-webkit-overflow-scrolling:touch\]/);
+});
+
 test("rank desktop title content-type badge is rendered inside the clickable title", () => {
   const desktopTitleStart = ranksPanelSource.indexOf('<div className="hidden min-w-0 lg:block">');
   assert.notEqual(desktopTitleStart, -1, "desktop title row markup should exist");
@@ -177,4 +216,47 @@ test("rank trend dialog shows metric refresh time in device timezone", () => {
   assert.match(rankTrendUiSource, /数据刷新于：/, "trend date row should include metric refresh copy");
   assert.match(rankTrendUiSource, /formatDeviceDateTime/, "trend refresh time should use the shared device-time formatter");
   assert.match(rankTrendUiSource, /generatedAt/, "trend UI should read generatedAt from metric window data");
+});
+
+test("rank trend chart starts paid ID line at the first nonzero history point", () => {
+  const percentPointsStart = rankTrendUiSource.indexOf("function buildTrendPercentPoints");
+  assert.notEqual(percentPointsStart, -1, "trend percent point builder should exist");
+  const percentPointsEnd = rankTrendUiSource.indexOf("function isPeakSeriesChart", percentPointsStart);
+  assert.notEqual(percentPointsEnd, -1, "trend percent point builder should end before peak chart logic");
+  const percentPointSource = rankTrendUiSource.slice(percentPointsStart, percentPointsEnd);
+
+  assert.match(percentPointSource, /metric\?\.key === "danmaku_uid_count"/);
+  assert.match(percentPointSource, /value > 0/);
+  assert.match(percentPointSource, /hasReachedBasePoint/);
+  assert.match(percentPointSource, /percent: null/);
+  assert.match(
+    rankTrendUiSource,
+    /history\.find\(\(point\) => getTrendNumber\(point\.value\) != null\)/,
+    "ordinary metrics should still use the first finite history value as their baseline"
+  );
+});
+
+test("rank trend fetch does not reuse stale successful responses forever", () => {
+  const fetchStart = rankTrendUiSource.indexOf("export async function fetchRankTrendData");
+  assert.notEqual(fetchStart, -1, "rank trend fetch helper should exist");
+  const fetchEnd = rankTrendUiSource.indexOf("export async function fetchRanksTrendLookupData", fetchStart);
+  assert.notEqual(fetchEnd, -1, "rank trend fetch helper should end before lookup helper");
+  const fetchSource = rankTrendUiSource.slice(fetchStart, fetchEnd);
+
+  assert.doesNotMatch(fetchSource, /if \(cached\?\.data\) \{\s*return cached\.data;\s*\}/);
+  assert.match(fetchSource, /cache: "no-store"/);
+});
+
+test("rank trend backend cache varies by latest index date and disables HTTP caching", () => {
+  assert.match(serverSource, /getRankTrendCacheKey\(normalizedPlatform, normalizedDramaId, latestIndexDate\)/);
+  assert.match(serverSource, /function pruneRankTrendCacheEntries/);
+  assert.match(serverSource, /pruneRankTrendCacheEntries\(normalizedPlatform, normalizedDramaId, cacheKey\)/);
+
+  const routeStart = serverSource.indexOf('app.get("/ranks/trends"');
+  assert.notEqual(routeStart, -1, "rank trend route should exist");
+  const routeEnd = serverSource.indexOf('app.get("/ongoing"', routeStart);
+  assert.notEqual(routeEnd, -1, "rank trend route should end before ongoing route");
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+
+  assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
 });

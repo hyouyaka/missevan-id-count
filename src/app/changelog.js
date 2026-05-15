@@ -4,6 +4,13 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.5.5",
+    changes: [
+      "优化搜索：支持全拼和首字母搜索，疑似搜错平台会提示跳转",
+      "优化趋势页面",
+    ],
+  },
+  {
     version: "1.5.4",
     changes: [
       "合并搜索和导入输入，新版输入框支持各类关键词，分享链接，剧集和分集ID搜索和导入",

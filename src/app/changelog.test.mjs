@@ -21,18 +21,18 @@ function createStorageMock(initialEntries = []) {
 }
 
 test("getShouldAutoOpenChangelog opens when current version has not been seen", () => {
-  const storage = createStorageMock([[CHANGELOG_SEEN_VERSION_STORAGE_KEY, "1.5.3"]]);
+  const storage = createStorageMock([[CHANGELOG_SEEN_VERSION_STORAGE_KEY, "1.5.4"]]);
 
-  assert.equal(getShouldAutoOpenChangelog("1.5.4", storage), true);
+  assert.equal(getShouldAutoOpenChangelog("1.5.5", storage), true);
 });
 
 test("getShouldAutoOpenChangelog stays closed after current version is marked seen", () => {
   const storage = createStorageMock();
 
-  markChangelogVersionSeen("1.5.4", storage);
+  markChangelogVersionSeen("1.5.5", storage);
 
-  assert.equal(storage.getItem(CHANGELOG_SEEN_VERSION_STORAGE_KEY), "1.5.4");
-  assert.equal(getShouldAutoOpenChangelog("1.5.4", storage), false);
+  assert.equal(storage.getItem(CHANGELOG_SEEN_VERSION_STORAGE_KEY), "1.5.5");
+  assert.equal(getShouldAutoOpenChangelog("1.5.5", storage), false);
 });
 
 test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
@@ -45,12 +45,24 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
     },
   };
 
-  assert.equal(getShouldAutoOpenChangelog("1.5.4", blockedStorage), false);
-  assert.doesNotThrow(() => markChangelogVersionSeen("1.5.4", blockedStorage));
+  assert.equal(getShouldAutoOpenChangelog("1.5.5", blockedStorage), false);
+  assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("changelog contains 1.5.4 merged search entry", () => {
+test("changelog contains 1.5.5 search and trend entry", () => {
   assert.deepEqual(CHANGELOG_ENTRIES[0], {
+    version: "1.5.5",
+    changes: [
+      "优化搜索：支持全拼和首字母搜索，疑似搜错平台会提示跳转",
+      "优化趋势页面",
+    ],
+  });
+});
+
+test("changelog keeps 1.5.4 merged search entry", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.5.4");
+
+  assert.deepEqual(entry, {
     version: "1.5.4",
     changes: [
       "合并搜索和导入输入，新版输入框支持各类关键词，分享链接，剧集和分集ID搜索和导入",

@@ -111,13 +111,24 @@ function formatWanNumber(value, options = {}) {
   return formatPlainNumber(count);
 }
 
-function formatDelta(value, options = {}) {
+function formatOngoingMetricValue(value, metricKey, options = {}) {
+  const count = Number(value);
+  if (!Number.isFinite(count)) {
+    return "暂无";
+  }
+  if (metricKey === "danmaku_uid_count") {
+    return formatPlainNumber(count);
+  }
+  return formatWanNumber(count, options);
+}
+
+function formatDelta(value, metricKey, options = {}) {
   const delta = Number(value);
   if (!Number.isFinite(delta)) {
     return "暂无";
   }
   const prefix = delta > 0 ? "+" : "";
-  return `${prefix}${formatWanNumber(delta, options)}`;
+  return `${prefix}${formatOngoingMetricValue(delta, metricKey, options)}`;
 }
 
 function getMetricValue(item, metricKey) {
@@ -179,10 +190,10 @@ function OngoingMetric({ item, windowKey, metricKey }) {
         <span className="truncate">{metric?.label || "指标"}</span>
       </div>
       <div className={`mt-1 text-[0.92rem] leading-5 tabular-nums text-foreground ${showEmptyPaidDanmaku ? "font-normal" : "font-semibold"}`}>
-        {showEmptyPaidDanmaku ? "暂无付费集" : formatWanNumber(getMetricValue(item, metricKey), numberOptions)}
+        {showEmptyPaidDanmaku ? "暂无付费集" : formatOngoingMetricValue(getMetricValue(item, metricKey), metricKey, numberOptions)}
       </div>
       <div className="text-[0.74rem] font-medium leading-5 tabular-nums text-[rgb(20,137,111)]">
-        {showEmptyPaidDanmaku ? "\u00a0" : showMissingDelta ? "暂无" : formatDelta(delta, numberOptions)}
+        {showEmptyPaidDanmaku ? "\u00a0" : showMissingDelta ? "暂无" : formatDelta(delta, metricKey, numberOptions)}
       </div>
     </div>
   );

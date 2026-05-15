@@ -13,6 +13,11 @@ import {
   parseMissevanInputToken,
   normalizeSearchText,
 } from "./shared/searchUtils.js";
+import {
+  buildCombinedPinyinSearchTokens,
+  buildPinyinFullSearchTokens,
+  buildPinyinSearchTokens,
+} from "./shared/pinyinSearchUtils.js";
 import { createUpstashRestClient } from "./shared/upstashRestClient.js";
 import { loadLocalEnv } from "./envConfig.js";
 import { isMissevanLikelyDanmakuOverflow } from "./shared/episodeRules.js";
@@ -1210,23 +1215,38 @@ function normalizeManboLibraryRecord(record) {
   }
 
   const name = normalizeTextValue(record?.name);
+  const aliases = normalizeStringArray(record?.aliases, 30);
+  const mainCvNicknames = normalizeStringArray(record?.mainCvNicknames, 20);
+  const mainCvNames = normalizeStringArray(record?.mainCvNames, 20);
+  const mainCvRoleNames = normalizeStringArray(record?.mainCvRoleNames, 20);
+  const seriesTitle = normalizeTextValue(record?.seriesTitle);
+  const author = normalizeTextValue(record?.author);
   return {
     dramaId,
     name,
     normalizedName: normalizeSearchText(record?.normalizedName || name),
-    aliases: normalizeStringArray(record?.aliases, 30),
+    aliases,
     cover: normalizeTextValue(record?.cover),
-    mainCvNicknames: normalizeStringArray(record?.mainCvNicknames, 20),
-    mainCvNames: normalizeStringArray(record?.mainCvNames, 20),
+    mainCvNicknames,
+    mainCvNames,
     catalog: normalizeOptionalFiniteNumber(record?.catalog),
     createTime: normalizeTextValue(record?.createTime),
     catalogName: normalizeTextValue(record?.catalogName),
     type: normalizeOptionalFiniteNumber(record?.type),
     genre: normalizeTextValue(record?.genre),
     mainCvIds: normalizeNumericArray(record?.mainCvIds, 20),
-    mainCvRoleNames: normalizeStringArray(record?.mainCvRoleNames, 20),
-    seriesTitle: normalizeTextValue(record?.seriesTitle),
-    author: normalizeTextValue(record?.author),
+    mainCvRoleNames,
+    seriesTitle,
+    author,
+    searchPinyinTokens: buildCombinedPinyinSearchTokens([
+      name,
+      aliases,
+      mainCvNicknames,
+      mainCvNames,
+      mainCvRoleNames,
+      seriesTitle,
+      author,
+    ]),
   };
 }
 
@@ -1641,8 +1661,17 @@ async function getCachedRanksResponse() {
   return ranksCache.loadPromise;
 }
 
-function getRankTrendCacheKey(platform, dramaId) {
-  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}`;
+function getRankTrendCacheKey(platform, dramaId, latestIndexDate = "") {
+  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}:${latestIndexDate}`;
+}
+
+function pruneRankTrendCacheEntries(platform, dramaId, activeCacheKey) {
+  const cacheKeyPrefix = `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}:`;
+  for (const cacheKey of rankTrendsCache.keys()) {
+    if (cacheKey !== activeCacheKey && cacheKey.startsWith(cacheKeyPrefix)) {
+      rankTrendsCache.delete(cacheKey);
+    }
+  }
 }
 
 function getOngoingCacheKey(platform) {
@@ -1710,7 +1739,11 @@ async function getCachedOngoingResponse(platform) {
 async function getCachedRankTrendResponse(platform, dramaId) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedDramaId = String(dramaId ?? "").trim();
-  const cacheKey = getRankTrendCacheKey(normalizedPlatform, normalizedDramaId);
+  const usesRankIndex = !(normalizedPlatform === "missevan" && !isNumericId(normalizedDramaId));
+  const indexSnapshot = usesRankIndex ? await readRanksJsonKey(RANKS_INDEX_KEY) : null;
+  const dates = usesRankIndex ? normalizeRankTrendDates(indexSnapshot) : [];
+  const latestIndexDate = dates.at(-1) || "";
+  const cacheKey = getRankTrendCacheKey(normalizedPlatform, normalizedDramaId, latestIndexDate);
   const now = Date.now();
   const cached = rankTrendsCache.get(cacheKey);
   if (cached?.response && now - cached.loadedAt < RANKS_CACHE_TTL_MS) {
@@ -1730,16 +1763,16 @@ async function getCachedRankTrendResponse(platform, dramaId) {
       if (response && typeof response === "object") {
         response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
       }
-      rankTrendsCache.set(cacheKey, {
-        response,
-        loadedAt: Date.now(),
-        loadPromise: null,
-      });
+      if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
+        rankTrendsCache.set(cacheKey, {
+          response,
+          loadedAt: Date.now(),
+          loadPromise: null,
+        });
+      }
       return response;
     }
 
-    const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
-    const dates = normalizeRankTrendDates(indexSnapshot);
     const [metricEntries, listEntries] = await Promise.all([
       dates.map(async (date) => [
         date,
@@ -1767,14 +1800,17 @@ async function getCachedRankTrendResponse(platform, dramaId) {
     if (response && typeof response === "object") {
       response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
     }
-    rankTrendsCache.set(cacheKey, {
-      response,
-      loadedAt: Date.now(),
-      loadPromise: null,
-    });
+    if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
+      rankTrendsCache.set(cacheKey, {
+        response,
+        loadedAt: Date.now(),
+        loadPromise: null,
+      });
+    }
     return response;
   })();
 
+  pruneRankTrendCacheEntries(normalizedPlatform, normalizedDramaId, cacheKey);
   rankTrendsCache.set(cacheKey, {
     response: null,
     loadedAt: 0,
@@ -1797,20 +1833,30 @@ function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey
 
   const title = normalizeTextValue(node?.title);
   const seriesTitle = normalizeTextValue(node?.seriesTitle || fallbackSeriesTitle || title);
+  const cvroles = normalizeStringMap(node?.cvroles);
+  const cvnames = normalizeStringMap(node?.cvnames);
+  const author = normalizeTextValue(node?.author);
   return {
     title,
     dramaId,
     soundIds: normalizeStringIdArray(node?.soundIds, 500),
     maincvs: normalizeNumericArray(node?.maincvs, 20),
     type: normalizeOptionalFiniteNumber(node?.type),
-    cvroles: normalizeStringMap(node?.cvroles),
-    cvnames: normalizeStringMap(node?.cvnames),
+    cvroles,
+    cvnames,
     catalog: normalizeOptionalFiniteNumber(node?.catalog),
     createTime: normalizeTextValue(node?.createTime),
-    author: normalizeTextValue(node?.author),
+    author,
     seriesTitle,
     needpay: Boolean(node?.needpay),
     seasonKey: normalizeTextValue(seasonKey),
+    searchPinyinTokens: buildCombinedPinyinSearchTokens([
+      title,
+      seriesTitle,
+      Object.values(cvnames),
+      Object.values(cvroles),
+      author,
+    ]),
   };
 }
 
@@ -2129,17 +2175,33 @@ function getSearchFieldScore(value, rawKeyword, normalizedKeyword) {
 }
 
 function getWeightedSearchScore(entries, rawKeyword, normalizedKeyword) {
+  const normalizedKeywords = (Array.isArray(normalizedKeyword)
+    ? normalizedKeyword
+    : [normalizedKeyword]
+  ).filter(Boolean);
   let bestScore = 0;
   entries.forEach(({ value, boost = 0 }) => {
     const values = Array.isArray(value) ? value : [value];
     values.forEach((item) => {
-      const score = getSearchFieldScore(item, rawKeyword, normalizedKeyword);
+      const score = Math.max(
+        0,
+        ...normalizedKeywords.map((keyword) => getSearchFieldScore(item, rawKeyword, keyword))
+      );
       if (score > 0) {
         bestScore = Math.max(bestScore, score + boost);
       }
     });
   });
   return bestScore;
+}
+
+function buildSearchKeywordVariants(rawKeyword) {
+  const pinyinTokens = /\p{Script=Han}/u.test(String(rawKeyword ?? ""))
+    ? buildPinyinFullSearchTokens(rawKeyword)
+    : buildPinyinSearchTokens(rawKeyword);
+  return Array.from(
+    new Set([normalizeSearchText(rawKeyword), ...pinyinTokens].filter(Boolean))
+  );
 }
 
 const SEARCH_CATEGORY_TERMS = Object.freeze([
@@ -2305,7 +2367,7 @@ function matchesMissevanSearchCategory(record, category) {
 
 function scoreManboLibraryRecord(record, keyword) {
   const rawKeyword = normalizeTextValue(keyword);
-  const normalizedKeyword = normalizeSearchText(rawKeyword);
+  const normalizedKeywords = buildSearchKeywordVariants(rawKeyword);
   if (!rawKeyword) {
     return 0;
   }
@@ -2321,15 +2383,16 @@ function scoreManboLibraryRecord(record, keyword) {
       { value: record.mainCvRoleNames, boost: 120 },
       { value: record.seriesTitle, boost: 100 },
       { value: record.author, boost: 90 },
+      { value: record.searchPinyinTokens, boost: 210 },
     ],
     rawKeyword,
-    normalizedKeyword
+    normalizedKeywords
   );
 }
 
 function scoreMissevanLibraryRecord(record, keyword) {
   const rawKeyword = normalizeTextValue(keyword);
-  const normalizedKeyword = normalizeSearchText(rawKeyword);
+  const normalizedKeywords = buildSearchKeywordVariants(rawKeyword);
   if (!rawKeyword) {
     return 0;
   }
@@ -2346,9 +2409,10 @@ function scoreMissevanLibraryRecord(record, keyword) {
       { value: Object.values(record.cvnames), boost: 150 },
       { value: Object.values(record.cvroles), boost: 130 },
       { value: record.author, boost: 90 },
+      { value: record.searchPinyinTokens, boost: 210 },
     ],
     rawKeyword,
-    normalizedKeyword
+    normalizedKeywords
   );
 }
 
@@ -6099,7 +6163,7 @@ app.get("/ranks/trends", async (req, res) => {
     if (!response.success) {
       return res.status(response.status || 404).json(response);
     }
-    res.setHeader("Cache-Control", `public, max-age=${Math.floor(RANKS_CACHE_TTL_MS / 1000)}`);
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     if (response.latestDate) {
       res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
       res.setHeader(
