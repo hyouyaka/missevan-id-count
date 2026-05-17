@@ -7,6 +7,7 @@ import {
   normalizeOngoingIdList,
   sortOngoingItemsByWindowDelta,
 } from "./ongoingUtils.js";
+import { buildMetricSnapshotsFromRankTrendAggregate } from "./ranksTrendUtils.js";
 
 const sampleIndex = {
   dates: ["2026-04-01", "2026-04-26", "2026-04-29"],
@@ -93,6 +94,57 @@ test("buildOngoingResponse filters listed dramas and computes window deltas", ()
   assert.equal(response.items[0].windows["3d"].metrics.view_count.delta, 400);
   assert.equal(response.items[0].windows["30d"].metrics.view_count.delta, 800);
   assert.equal(response.items[0].windows["3d"].metrics.subscription_num.label, "追剧人数");
+});
+
+test("buildOngoingResponse accepts metric snapshots converted from rank trend aggregate", () => {
+  const { indexSnapshot, metricSnapshotsByDate } = buildMetricSnapshotsFromRankTrendAggregate(
+    {
+      version: 1,
+      platform: "missevan",
+      updated_at: "2026-05-17T01:00:00.000Z",
+      dates: ["2026-05-15", "2026-05-17"],
+      dramas: {
+        101: {
+          name: "四面佛",
+          cover: "https://example.com/101.jpg",
+          payStatus: "付费",
+          samples: {
+            "2026-05-15": {
+              metrics: {
+                view_count: 100,
+                danmaku_uid_count: 1,
+                subscription_num: 10,
+              },
+            },
+            "2026-05-17": {
+              generated_at: "2026-05-17T01:00:00.000Z",
+              metrics: {
+                view_count: 500,
+                danmaku_uid_count: 5,
+                subscription_num: 50,
+              },
+            },
+          },
+        },
+      },
+    },
+    "missevan"
+  );
+  const response = buildOngoingResponse({
+    platform: "missevan",
+    ongoingIds: ["101"],
+    indexSnapshot,
+    metricSnapshotsByDate,
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.latestDate, "2026-05-17");
+  assert.equal(response.updatedAt, "2026-05-17T01:00:00.000Z");
+  assert.equal(response.items[0].id, "101");
+  assert.equal(response.items[0].cover, "https://example.com/101.jpg");
+  assert.equal(response.items[0].payment_label, "付费");
+  assert.equal(response.items[0].windows["3d"].metrics.view_count.delta, 400);
+  assert.equal(response.items[0].metrics.subscription_num.value, 50);
 });
 
 test("buildOngoingResponse normalizes paystatus payment labels", () => {

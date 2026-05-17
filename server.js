@@ -1,4 +1,5 @@
 ﻿import fs from "fs/promises";
+import compression from "compression";
 import cors from "cors";
 import express from "express";
 import fetch from "node-fetch";
@@ -31,9 +32,12 @@ import {
   resolveMissevanRevenueType,
 } from "./shared/missevanRevenueUtils.js";
 import {
+  buildAggregatedRankTrendResponse,
+  buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
   buildRankTrendResponse,
   getPeakSeriesDailyViewDelta,
+  isRankTrendAggregateSnapshot,
   normalizeRankTrendDates,
 } from "./shared/ranksTrendUtils.js";
 import { normalizeVersion } from "./shared/versionUtils.js";
@@ -107,6 +111,10 @@ const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
 const RANKS_INDEX_KEY = "ranks:index";
 const MISSEVAN_PEAK_SERIES_TREND_KEY = "ranks:trend:peak:missevan";
+const RANK_TREND_AGGREGATE_KEYS = Object.freeze({
+  missevan: "ranks:trend:missevan",
+  manbo: "ranks:trend:manbo",
+});
 const ONGOING_KEY_PREFIX = "ongoing";
 const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
   5000,
@@ -167,6 +175,7 @@ const ranksCache = {
   loadedAt: 0,
   loadPromise: null,
 };
+const rankTrendAggregateCache = new Map();
 const rankTrendsCache = new Map();
 const ongoingCache = new Map();
 const RANKS_RESPONSE_SCHEMA_VERSION = 3;
@@ -246,6 +255,13 @@ let lastCooldownRefreshSucceeded = false;
 
 app.use(cors());
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    const type = String(res.getHeader("Content-Type") || "").toLowerCase();
+    return type.includes("application/json") && compression.filter(req, res);
+  },
+}));
 
 app.use((error, req, res, next) => {
   if (error?.type === "request.aborted" || error?.code === "ECONNABORTED") {
@@ -1661,8 +1677,8 @@ async function getCachedRanksResponse() {
   return ranksCache.loadPromise;
 }
 
-function getRankTrendCacheKey(platform, dramaId, latestIndexDate = "") {
-  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}:${latestIndexDate}`;
+function getRankTrendCacheKey(platform, dramaId, latestIndexDate = "", sourceVersion = "") {
+  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}:${latestIndexDate}:${sourceVersion}`;
 }
 
 function pruneRankTrendCacheEntries(platform, dramaId, activeCacheKey) {
@@ -1674,8 +1690,79 @@ function pruneRankTrendCacheEntries(platform, dramaId, activeCacheKey) {
   }
 }
 
+function getRankTrendAggregateCacheKey(platform) {
+  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}`;
+}
+
+function getRankTrendAggregateUpstashKey(platform) {
+  return RANK_TREND_AGGREGATE_KEYS[String(platform ?? "").trim()] || "";
+}
+
+async function readRankTrendAggregateSnapshot(platform) {
+  const key = getRankTrendAggregateUpstashKey(platform);
+  if (!key) {
+    return null;
+  }
+  return readRanksJsonKey(key);
+}
+
+async function getCachedRankTrendAggregateSnapshot(platform) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform);
+  const now = Date.now();
+  const cached = rankTrendAggregateCache.get(cacheKey);
+  if (cached && "snapshot" in cached && now - cached.loadedAt < RANKS_CACHE_TTL_MS) {
+    return cached.snapshot;
+  }
+  if (cached?.loadPromise) {
+    return cached.loadPromise;
+  }
+
+  const loadPromise = (async () => {
+    const snapshot = await readRankTrendAggregateSnapshot(normalizedPlatform);
+    rankTrendAggregateCache.set(cacheKey, {
+      snapshot,
+      loadedAt: Date.now(),
+      loadPromise: null,
+    });
+    return snapshot;
+  })();
+
+  rankTrendAggregateCache.set(cacheKey, {
+    snapshot: cached?.snapshot || null,
+    loadedAt: cached?.loadedAt || 0,
+    loadPromise,
+  });
+
+  try {
+    return await loadPromise;
+  } catch (error) {
+    rankTrendAggregateCache.delete(cacheKey);
+    throw error;
+  }
+}
+
 function getOngoingCacheKey(platform) {
   return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${platform}`;
+}
+
+async function getLegacyOngoingMetricSnapshots(platform) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
+  const dates = normalizeRankTrendDates(indexSnapshot);
+  const metricEntries = await Promise.all(
+    dates.map(async (date) => [
+      date,
+      await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
+    ])
+  );
+
+  return {
+    indexSnapshot,
+    metricSnapshotsByDate: Object.fromEntries(
+      metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
+    ),
+  };
 }
 
 async function getCachedOngoingResponse(platform) {
@@ -1691,20 +1778,19 @@ async function getCachedOngoingResponse(platform) {
   }
 
   const loadPromise = (async () => {
-    const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
-    const dates = normalizeRankTrendDates(indexSnapshot);
-    const [ongoingIds, metricEntries] = await Promise.all([
+    const [ongoingIds, aggregateSnapshot] = await Promise.all([
       readOngoingIds(normalizedPlatform),
-      Promise.all(
-        dates.map(async (date) => [
-          date,
-          await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
-        ])
-      ),
+      getCachedRankTrendAggregateSnapshot(normalizedPlatform).catch((error) => {
+        console.warn("Failed to read ongoing rank trend aggregate; falling back to legacy metrics", error);
+        return null;
+      }),
     ]);
-    const metricSnapshotsByDate = Object.fromEntries(
-      metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
-    );
+    const { indexSnapshot, metricSnapshotsByDate } = isRankTrendAggregateSnapshot(
+      aggregateSnapshot,
+      normalizedPlatform
+    )
+      ? buildMetricSnapshotsFromRankTrendAggregate(aggregateSnapshot, normalizedPlatform)
+      : await getLegacyOngoingMetricSnapshots(normalizedPlatform);
     const response = buildOngoingResponse({
       platform: normalizedPlatform,
       ongoingIds,
@@ -1736,25 +1822,59 @@ async function getCachedOngoingResponse(platform) {
   }
 }
 
+async function getLegacyRankTrendResponse(platform, dramaId) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
+  const dates = normalizeRankTrendDates(indexSnapshot);
+
+  const [metricEntries, listEntries] = await Promise.all([
+    dates.map(async (date) => [
+      date,
+      await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
+    ]),
+    dates.map(async (date) => [
+      date,
+      await readRanksJsonKey(`ranks:list:${date}:${normalizedPlatform}`),
+    ]),
+  ].map((commands) => Promise.all(commands)));
+  const metricSnapshotsByDate = Object.fromEntries(
+    metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
+  );
+  const listSnapshotsByDate = Object.fromEntries(
+    listEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
+  );
+
+  return buildRankTrendResponse({
+    platform: normalizedPlatform,
+    id: normalizedDramaId,
+    indexSnapshot,
+    metricSnapshotsByDate,
+    listSnapshotsByDate,
+  });
+}
+
 async function getCachedRankTrendResponse(platform, dramaId) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedDramaId = String(dramaId ?? "").trim();
-  const usesRankIndex = !(normalizedPlatform === "missevan" && !isNumericId(normalizedDramaId));
-  const indexSnapshot = usesRankIndex ? await readRanksJsonKey(RANKS_INDEX_KEY) : null;
-  const dates = usesRankIndex ? normalizeRankTrendDates(indexSnapshot) : [];
-  const latestIndexDate = dates.at(-1) || "";
-  const cacheKey = getRankTrendCacheKey(normalizedPlatform, normalizedDramaId, latestIndexDate);
-  const now = Date.now();
-  const cached = rankTrendsCache.get(cacheKey);
-  if (cached?.response && now - cached.loadedAt < RANKS_CACHE_TTL_MS) {
-    return cached.response;
-  }
-  if (cached?.loadPromise) {
-    return cached.loadPromise;
-  }
 
-  const loadPromise = (async () => {
-    if (normalizedPlatform === "missevan" && !isNumericId(normalizedDramaId)) {
+  if (normalizedPlatform === "missevan" && !isNumericId(normalizedDramaId)) {
+    const cacheKey = getRankTrendCacheKey(
+      normalizedPlatform,
+      normalizedDramaId,
+      "",
+      MISSEVAN_PEAK_SERIES_TREND_KEY
+    );
+    const now = Date.now();
+    const cached = rankTrendsCache.get(cacheKey);
+    if (cached?.response && now - cached.loadedAt < RANKS_CACHE_TTL_MS) {
+      return cached.response;
+    }
+    if (cached?.loadPromise) {
+      return cached.loadPromise;
+    }
+
+    const loadPromise = (async () => {
       const peakSnapshot = await readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY);
       const response = buildPeakSeriesTrendResponse({
         id: normalizedDramaId,
@@ -1771,35 +1891,63 @@ async function getCachedRankTrendResponse(platform, dramaId) {
         });
       }
       return response;
-    }
+    })();
 
-    const [metricEntries, listEntries] = await Promise.all([
-      dates.map(async (date) => [
-        date,
-        await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
-      ]),
-      dates.map(async (date) => [
-        date,
-        await readRanksJsonKey(`ranks:list:${date}:${normalizedPlatform}`),
-      ]),
-    ].map((commands) => Promise.all(commands)));
-    const metricSnapshotsByDate = Object.fromEntries(
-      metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
-    );
-    const listSnapshotsByDate = Object.fromEntries(
-      listEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
-    );
-
-    const response = buildRankTrendResponse({
-      platform: normalizedPlatform,
-      id: normalizedDramaId,
-      indexSnapshot,
-      metricSnapshotsByDate,
-      listSnapshotsByDate,
+    pruneRankTrendCacheEntries(normalizedPlatform, normalizedDramaId, cacheKey);
+    rankTrendsCache.set(cacheKey, {
+      response: null,
+      loadedAt: 0,
+      loadPromise,
     });
+
+    try {
+      return await loadPromise;
+    } catch (error) {
+      rankTrendsCache.delete(cacheKey);
+      throw error;
+    }
+  }
+
+  let aggregateSnapshot = null;
+  try {
+    aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform);
+  } catch (error) {
+    console.warn("Failed to read rank trend aggregate; falling back to legacy shards", error);
+  }
+
+  const hasUsableAggregate = isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform);
+  const aggregateDates = hasUsableAggregate ? normalizeRankTrendDates(aggregateSnapshot) : [];
+  const latestIndexDate = aggregateDates.at(-1) || "";
+  const aggregateSourceVersion = hasUsableAggregate
+    ? String(aggregateSnapshot?.updated_at ?? aggregateSnapshot?.updatedAt ?? "").trim()
+    : "legacy";
+  const cacheKey = getRankTrendCacheKey(
+    normalizedPlatform,
+    normalizedDramaId,
+    latestIndexDate,
+    aggregateSourceVersion
+  );
+  const now = Date.now();
+  const cached = rankTrendsCache.get(cacheKey);
+  if (cached?.response && now - cached.loadedAt < RANKS_CACHE_TTL_MS) {
+    return cached.response;
+  }
+  if (cached?.loadPromise) {
+    return cached.loadPromise;
+  }
+
+  const loadPromise = (async () => {
+    const response = hasUsableAggregate
+      ? buildAggregatedRankTrendResponse({
+          platform: normalizedPlatform,
+          id: normalizedDramaId,
+          aggregateSnapshot,
+        })
+      : await getLegacyRankTrendResponse(normalizedPlatform, normalizedDramaId);
     if (response && typeof response === "object") {
       response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
     }
+    await Promise.resolve();
     if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
       rankTrendsCache.set(cacheKey, {
         response,

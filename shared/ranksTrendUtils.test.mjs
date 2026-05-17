@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildAggregatedRankTrendResponse,
+  buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
   buildRankTrendResponse,
   getPeakSeriesDailyViewDelta,
@@ -280,6 +282,166 @@ test("buildRankTrendResponse returns not found when a drama has no metric snapsh
 
   assert.equal(response.success, false);
   assert.equal(response.status, 404);
+});
+
+test("buildAggregatedRankTrendResponse builds ordinary trend response from platform aggregate", () => {
+  const response = buildAggregatedRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    aggregateSnapshot: {
+      version: 1,
+      platform: "missevan",
+      updated_at: "2026-05-17T01:00:00.000Z",
+      dates: ["2026-05-15", "2026-05-16", "2026-05-17"],
+      dramas: {
+        "93038": {
+          id: "93038",
+          name: "一屋暗灯 全一季",
+          samples: {
+            "2026-05-15": {
+              generated_at: "2026-05-15T01:00:00.000Z",
+              metrics: {
+                view_count: 100,
+                danmaku_uid_count: 10,
+                subscription_num: 50,
+              },
+              ranks: [{ key: "new_daily", name: "新品日榜", position: 5 }],
+            },
+            "2026-05-17": {
+              metrics: {
+                view_count: 160,
+                danmaku_uid_count: 16,
+                subscription_num: 60,
+              },
+              ranks: [
+                { key: "new_daily", name: "新品日榜", position: 2 },
+                { key: "bestseller_weekly", name: "畅销周榜", position: 9 },
+              ],
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.platform, "missevan");
+  assert.equal(response.id, "93038");
+  assert.equal(response.name, "一屋暗灯 全一季");
+  assert.equal(response.latestDate, "2026-05-17");
+  assert.deepEqual(response.rankHistory, [
+    {
+      date: "2026-05-15",
+      ranks: [{ key: "new_daily", name: "新品日榜", position: 5 }],
+    },
+    {
+      date: "2026-05-17",
+      ranks: [
+        { key: "new_daily", name: "新品日榜", position: 2 },
+        { key: "bestseller_weekly", name: "畅销周榜", position: 9 },
+      ],
+    },
+  ]);
+
+  assert.equal(response.windows["3d"].fromDate, "2026-05-15");
+  assert.equal(response.windows["3d"].toDate, "2026-05-17");
+  assert.equal(response.windows["3d"].generatedAt, "2026-05-17T01:00:00.000Z");
+  assert.deepEqual(
+    response.windows["3d"].metrics.map((metric) => [metric.key, metric.delta, metric.history.at(-1).generatedAt]),
+    [
+      ["view_count", 60, "2026-05-17T01:00:00.000Z"],
+      ["danmaku_uid_count", 6, "2026-05-17T01:00:00.000Z"],
+      ["subscription_num", 10, "2026-05-17T01:00:00.000Z"],
+    ]
+  );
+});
+
+test("buildAggregatedRankTrendResponse returns not found without falling back semantics", () => {
+  const response = buildAggregatedRankTrendResponse({
+    platform: "manbo",
+    id: "missing",
+    aggregateSnapshot: {
+      version: 1,
+      platform: "manbo",
+      updated_at: "2026-05-17T01:00:00.000Z",
+      dates: ["2026-05-17"],
+      dramas: {},
+    },
+  });
+
+  assert.equal(response.success, false);
+  assert.equal(response.status, 404);
+});
+
+test("buildMetricSnapshotsFromRankTrendAggregate converts platform trend aggregate for ongoing responses", () => {
+  const result = buildMetricSnapshotsFromRankTrendAggregate(
+    {
+      version: 1,
+      platform: "manbo",
+      updated_at: "2026-05-17T01:00:00.000Z",
+      dates: ["2026-05-15", "bad-date", "2026-05-17"],
+      dramas: {
+        "2087206604062588962": {
+          name: "囚于永夜",
+          samples: {
+            "2026-05-15": {
+              generated_at: "2026-05-15T01:00:00.000Z",
+              metrics: {
+                view_count: 3000,
+                danmaku_uid_count: 20,
+                pay_count: 100,
+              },
+            },
+            "2026-05-17": {
+              metrics: {
+                view_count: 3300,
+                danmaku_uid_count: 26,
+                pay_count: 130,
+              },
+            },
+          },
+        },
+        "2182687618293039383": {
+          name: "干涸地",
+          samples: {
+            "2026-05-17": {
+              metrics: {
+                view_count: 900,
+                danmaku_uid_count: 8,
+                pay_count: 0,
+              },
+            },
+          },
+        },
+      },
+    },
+    "manbo"
+  );
+
+  assert.deepEqual(result.indexSnapshot, {
+    version: 1,
+    platform: "manbo",
+    dates: ["2026-05-15", "2026-05-17"],
+    updated_at: "2026-05-17T01:00:00.000Z",
+  });
+  assert.deepEqual(
+    Object.keys(result.metricSnapshotsByDate),
+    ["2026-05-15", "2026-05-17"]
+  );
+  assert.deepEqual(
+    result.metricSnapshotsByDate["2026-05-17"].dramas["2087206604062588962"],
+    {
+      view_count: 3300,
+      danmaku_uid_count: 26,
+      pay_count: 130,
+      name: "囚于永夜",
+      generated_at: "2026-05-17T01:00:00.000Z",
+    }
+  );
+  assert.equal(
+    result.metricSnapshotsByDate["2026-05-15"].dramas["2087206604062588962"].generated_at,
+    "2026-05-15T01:00:00.000Z"
+  );
 });
 
 test("buildPeakSeriesTrendResponse builds playback-only windows from series samples", () => {

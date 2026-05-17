@@ -247,10 +247,27 @@ test("rank trend fetch does not reuse stale successful responses forever", () =>
   assert.match(fetchSource, /cache: "no-store"/);
 });
 
-test("rank trend backend cache varies by latest index date and disables HTTP caching", () => {
-  assert.match(serverSource, /getRankTrendCacheKey\(normalizedPlatform, normalizedDramaId, latestIndexDate\)/);
-  assert.match(serverSource, /function pruneRankTrendCacheEntries/);
-  assert.match(serverSource, /pruneRankTrendCacheEntries\(normalizedPlatform, normalizedDramaId, cacheKey\)/);
+test("rank trend backend reads ordinary trends from aggregate platform keys", () => {
+  assert.match(serverSource, /RANK_TREND_AGGREGATE_KEYS/);
+  assert.match(serverSource, /const rankTrendAggregateCache = new Map\(\)/);
+  assert.match(serverSource, /readRankTrendAggregateSnapshot\(normalizedPlatform\)/);
+  assert.match(serverSource, /getCachedRankTrendAggregateSnapshot/);
+  assert.match(serverSource, /buildAggregatedRankTrendResponse/);
+
+  const fallbackStart = serverSource.indexOf("async function getLegacyRankTrendResponse");
+  assert.notEqual(fallbackStart, -1, "legacy rank trend fallback should exist");
+  const fallbackEnd = serverSource.indexOf("async function getCachedRankTrendResponse", fallbackStart);
+  assert.notEqual(fallbackEnd, -1, "fallback should end before cached trend route loader");
+  const primarySource = serverSource.slice(fallbackEnd, serverSource.indexOf("function normalizeMissevanSeasonRecord", fallbackEnd));
+
+  assert.doesNotMatch(primarySource, /ranks:metrics:\$\{date\}:\$\{normalizedPlatform\}/);
+  assert.doesNotMatch(primarySource, /ranks:list:\$\{date\}:\$\{normalizedPlatform\}/);
+  assert.match(primarySource, /MISSEVAN_PEAK_SERIES_TREND_KEY/);
+  assert.match(
+    primarySource,
+    /await Promise\.resolve\(\);[\s\S]*rankTrendsCache\.get\(cacheKey\)\?\.loadPromise === loadPromise/,
+    "ordinary aggregate trend load should yield once before comparing the loadPromise closure"
+  );
 
   const routeStart = serverSource.indexOf('app.get("/ranks/trends"');
   assert.notEqual(routeStart, -1, "rank trend route should exist");
@@ -259,4 +276,27 @@ test("rank trend backend cache varies by latest index date and disables HTTP cac
   const routeSource = serverSource.slice(routeStart, routeEnd);
 
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
+});
+
+test("ongoing backend reads metrics from rank trend aggregate before legacy shards", () => {
+  assert.match(serverSource, /buildMetricSnapshotsFromRankTrendAggregate/);
+  assert.match(serverSource, /async function getLegacyOngoingMetricSnapshots/);
+
+  const fallbackStart = serverSource.indexOf("async function getLegacyOngoingMetricSnapshots");
+  assert.notEqual(fallbackStart, -1, "legacy ongoing metric fallback should exist");
+  const fallbackEnd = serverSource.indexOf("async function getCachedOngoingResponse", fallbackStart);
+  assert.notEqual(fallbackEnd, -1, "ongoing fallback should end before cached loader");
+  const primarySource = serverSource.slice(fallbackEnd, serverSource.indexOf("async function getLegacyRankTrendResponse", fallbackEnd));
+
+  assert.match(primarySource, /getCachedRankTrendAggregateSnapshot\(normalizedPlatform\)/);
+  assert.match(primarySource, /buildMetricSnapshotsFromRankTrendAggregate\(aggregateSnapshot, normalizedPlatform\)/);
+  assert.doesNotMatch(primarySource, /ranks:metrics:\$\{date\}:\$\{normalizedPlatform\}/);
+});
+
+test("server compresses JSON responses but skips images", () => {
+  assert.match(serverSource, /import compression from "compression"/);
+  assert.match(serverSource, /app\.use\(compression\(/);
+  assert.match(serverSource, /threshold: 1024/);
+  assert.match(serverSource, /type\.includes\("application\/json"\)/);
+  assert.doesNotMatch(serverSource, /type\.startsWith\("image\/"\)[\s\S]*return true/);
 });

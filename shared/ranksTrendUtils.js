@@ -81,6 +81,19 @@ function getDramaMetrics(snapshot, id) {
   return dramas[String(id)] || null;
 }
 
+export function isRankTrendAggregateSnapshot(snapshot, platform) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  return Boolean(
+    normalizedPlatform &&
+      snapshot &&
+      typeof snapshot === "object" &&
+      (!snapshot.platform || String(snapshot.platform).trim() === normalizedPlatform) &&
+      Array.isArray(snapshot.dates) &&
+      snapshot.dramas &&
+      typeof snapshot.dramas === "object"
+  );
+}
+
 function normalizePeakSeriesSamples(seriesRecord) {
   const samples = seriesRecord?.samples && typeof seriesRecord.samples === "object"
     ? seriesRecord.samples
@@ -286,6 +299,152 @@ function buildRankHistory(dates, listSnapshotsByDate, id) {
     .filter(Boolean);
 }
 
+function buildAggregateMetricSnapshotsByDate(aggregateSnapshot, platform, id) {
+  const normalizedId = String(id ?? "").trim();
+  const dates = normalizeRankTrendDates(aggregateSnapshot);
+  const dramaRecord = aggregateSnapshot?.dramas?.[normalizedId];
+  const samples = dramaRecord?.samples && typeof dramaRecord.samples === "object"
+    ? dramaRecord.samples
+    : {};
+  const snapshotsByDate = {};
+
+  dates.forEach((date) => {
+    const sample = samples[date];
+    const metrics = sample?.metrics && typeof sample.metrics === "object"
+      ? sample.metrics
+      : null;
+    if (!metrics) {
+      return;
+    }
+
+    const generatedAt = normalizeGeneratedAt(sample) || normalizeGeneratedAt(aggregateSnapshot);
+    snapshotsByDate[date] = {
+      version: aggregateSnapshot?.version,
+      date,
+      platform,
+      generated_at: generatedAt,
+      dramas: {
+        [normalizedId]: {
+          ...metrics,
+          name: String(metrics.name ?? dramaRecord?.name ?? "").trim(),
+          ...(generatedAt ? { generated_at: generatedAt } : {}),
+        },
+      },
+    };
+  });
+
+  return snapshotsByDate;
+}
+
+export function buildMetricSnapshotsFromRankTrendAggregate(aggregateSnapshot, platform) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const dates = normalizeRankTrendDates(aggregateSnapshot);
+  const aggregateGeneratedAt = normalizeGeneratedAt(aggregateSnapshot);
+  const indexSnapshot = {
+    version: aggregateSnapshot?.version,
+    platform: normalizedPlatform,
+    dates,
+    ...(aggregateGeneratedAt ? { updated_at: aggregateGeneratedAt } : {}),
+  };
+  const metricSnapshotsByDate = Object.fromEntries(
+    dates.map((date) => [
+      date,
+      {
+        version: aggregateSnapshot?.version,
+        date,
+        platform: normalizedPlatform,
+        ...(aggregateGeneratedAt ? { generated_at: aggregateGeneratedAt } : {}),
+        dramas: {},
+      },
+    ])
+  );
+  const dramas = aggregateSnapshot?.dramas && typeof aggregateSnapshot.dramas === "object"
+    ? aggregateSnapshot.dramas
+    : {};
+
+  Object.entries(dramas).forEach(([id, dramaRecord]) => {
+    const normalizedId = String(id ?? "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    const { samples: _samples, ...dramaMetadata } = dramaRecord && typeof dramaRecord === "object"
+      ? dramaRecord
+      : {};
+    const samples = dramaRecord?.samples && typeof dramaRecord.samples === "object"
+      ? dramaRecord.samples
+      : {};
+
+    dates.forEach((date) => {
+      const sample = samples[date];
+      const metrics = sample?.metrics && typeof sample.metrics === "object"
+        ? sample.metrics
+        : null;
+      if (!metrics) {
+        return;
+      }
+
+      const generatedAt = normalizeGeneratedAt(sample) || aggregateGeneratedAt;
+      metricSnapshotsByDate[date].dramas[normalizedId] = {
+        ...dramaMetadata,
+        ...metrics,
+        name: String(metrics.name ?? dramaRecord?.name ?? "").trim(),
+        ...(generatedAt ? { generated_at: generatedAt } : {}),
+      };
+    });
+  });
+
+  return {
+    indexSnapshot,
+    metricSnapshotsByDate: Object.fromEntries(
+      Object.entries(metricSnapshotsByDate).filter(([, snapshot]) =>
+        Object.keys(snapshot.dramas).length > 0
+      )
+    ),
+  };
+}
+
+function buildAggregateListSnapshotsByDate(aggregateSnapshot, platform, id) {
+  const normalizedId = String(id ?? "").trim();
+  const dates = normalizeRankTrendDates(aggregateSnapshot);
+  const dramaRecord = aggregateSnapshot?.dramas?.[normalizedId];
+  const samples = dramaRecord?.samples && typeof dramaRecord.samples === "object"
+    ? dramaRecord.samples
+    : {};
+  const snapshotsByDate = {};
+
+  dates.forEach((date) => {
+    const ranks = Array.isArray(samples[date]?.ranks) ? samples[date].ranks : [];
+    const rankPayload = {};
+    ranks.forEach((rank) => {
+      const key = String(rank?.key ?? "").trim();
+      if (!key) {
+        return;
+      }
+      rankPayload[key] = {
+        name: String(rank?.name ?? key).trim(),
+        items: [
+          {
+            drama_id: normalizedId,
+            position: normalizeFiniteNumber(rank?.position),
+          },
+        ],
+      };
+    });
+
+    if (Object.keys(rankPayload).length > 0) {
+      snapshotsByDate[date] = {
+        version: aggregateSnapshot?.version,
+        date,
+        platform,
+        generated_at: normalizeGeneratedAt(samples[date]) || normalizeGeneratedAt(aggregateSnapshot),
+        ranks: rankPayload,
+      };
+    }
+  });
+
+  return snapshotsByDate;
+}
+
 function buildMetric(config, fromDrama, toDrama, history) {
   const fromValue = normalizeFiniteNumber(fromDrama?.[config.key]);
   const toValue = normalizeFiniteNumber(toDrama?.[config.key]);
@@ -413,6 +572,40 @@ export function buildRankTrendResponse({
       ])
     ),
   };
+}
+
+export function buildAggregatedRankTrendResponse({
+  platform,
+  id,
+  aggregateSnapshot,
+} = {}) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedId = String(id ?? "").trim();
+  if (!isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform)) {
+    return {
+      success: false,
+      status: 503,
+      platform: normalizedPlatform,
+      id: normalizedId,
+      message: "Rank trend aggregate is unavailable",
+    };
+  }
+
+  return buildRankTrendResponse({
+    platform: normalizedPlatform,
+    id: normalizedId,
+    indexSnapshot: aggregateSnapshot,
+    metricSnapshotsByDate: buildAggregateMetricSnapshotsByDate(
+      aggregateSnapshot,
+      normalizedPlatform,
+      normalizedId
+    ),
+    listSnapshotsByDate: buildAggregateListSnapshotsByDate(
+      aggregateSnapshot,
+      normalizedPlatform,
+      normalizedId
+    ),
+  });
 }
 
 export function buildPeakSeriesTrendResponse({
