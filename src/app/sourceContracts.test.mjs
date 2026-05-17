@@ -9,6 +9,7 @@ const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.met
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
+const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
 const serverSource = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
 
@@ -92,6 +93,21 @@ test("Missevan API results remain available when Manbo fallback has no matches",
 
   assert.doesNotMatch(fallbackMissBranch, /showBlockingNotice/);
   assert.doesNotMatch(fallbackMissBranch, /catch \(fallbackError\)[\s\S]*?\}\s*return;\s*\}/);
+});
+
+test("search result cards show original author between ID and main CV with a distinct icon", () => {
+  assert.match(searchResultsSource, /FeatherIcon/, "search result author row should use a distinct author icon");
+  assert.match(searchResultsSource, /aria-label="原作名"/, "author icon should expose the original-author label");
+  assert.match(searchResultsSource, /const originalAuthorText = String\(item\.author \?\? ""\)\.trim\(\);/);
+  assert.match(searchResultsSource, /originalAuthorText \|\| "暂无"/);
+
+  const idRowIndex = searchResultsSource.indexOf("aria-label={idLabel}");
+  const authorRowIndex = searchResultsSource.indexOf('aria-label="原作名"');
+  const cvRowIndex = searchResultsSource.indexOf('aria-label="主要CV"');
+
+  assert.ok(idRowIndex >= 0, "ID row should exist");
+  assert.ok(authorRowIndex > idRowIndex, "author row should render below ID");
+  assert.ok(cvRowIndex > authorRowIndex, "CV row should render below author");
 });
 
 test("merged search textarea submits on plain Enter and keeps Shift Enter for newlines", () => {
@@ -299,4 +315,33 @@ test("server compresses JSON responses but skips images", () => {
   assert.match(serverSource, /threshold: 1024/);
   assert.match(serverSource, /type\.includes\("application\/json"\)/);
   assert.doesNotMatch(serverSource, /type\.startsWith\("image\/"\)[\s\S]*return true/);
+});
+
+test("image proxy retries aborted image bodies and logs concise failures", () => {
+  assert.match(serverSource, /const IMAGE_PROXY_TIMEOUT_MS = 8000/);
+  assert.match(serverSource, /const IMAGE_PROXY_RETRIES = 2/);
+  assert.match(serverSource, /async function fetchImageBufferWithRetry/);
+  assert.match(serverSource, /function formatImageProxyError/);
+
+  const helperStart = serverSource.indexOf("async function fetchImageBufferWithRetry");
+  assert.notEqual(helperStart, -1, "image proxy retry helper should exist");
+  const helperEnd = serverSource.indexOf("app.get(\"/image-proxy\"", helperStart);
+  assert.notEqual(helperEnd, -1, "image proxy helper should be defined before the route");
+  const helperSource = serverSource.slice(helperStart, helperEnd);
+
+  assert.match(helperSource, /createTimeoutSignal\(IMAGE_PROXY_TIMEOUT_MS\)/);
+  assert.match(helperSource, /response\.arrayBuffer\(\)/);
+  assert.match(helperSource, /response\.status >= 400 && response\.status < 500/);
+
+  const routeStart = serverSource.indexOf('app.get("/image-proxy"');
+  assert.notEqual(routeStart, -1, "image proxy route should exist");
+  const routeEnd = serverSource.indexOf('app.get("/search"', routeStart);
+  assert.notEqual(routeEnd, -1, "image proxy route should end before search route");
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+
+  assert.match(routeSource, /fetchImageBufferWithRetry\(targetUrl\)/);
+  assert.match(routeSource, /formatImageProxyError\(error\)/);
+  assert.match(routeSource, /console\.warn\(/);
+  assert.match(routeSource, /res\.status\(502\)\.send\("Image proxy failed"\)/);
+  assert.doesNotMatch(routeSource, /console\.error\(error\)/);
 });

@@ -13,11 +13,14 @@ import {
   isSearchKeywordLongEnough,
   parseMissevanInputToken,
   normalizeSearchText,
+  stripSearchSeasonSuffix,
 } from "./shared/searchUtils.js";
 import {
+  buildCombinedPinyinSearchUnits,
   buildCombinedPinyinSearchTokens,
   buildPinyinFullSearchTokens,
   buildPinyinSearchTokens,
+  buildPinyinSearchUnits,
 } from "./shared/pinyinSearchUtils.js";
 import { createUpstashRestClient } from "./shared/upstashRestClient.js";
 import { loadLocalEnv } from "./envConfig.js";
@@ -236,6 +239,9 @@ const MANBO_FETCH_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.MANBO_FETCH_TIMEOUT_MS ?? 10000) || 10000
 );
+const IMAGE_PROXY_TIMEOUT_MS = 8000;
+const IMAGE_PROXY_RETRIES = 2;
+const IMAGE_PROXY_RETRY_DELAY_MS = 250;
 const manboHttpsAgent = new https.Agent({
   keepAlive: true,
   maxSockets: Math.max(
@@ -1263,6 +1269,15 @@ function normalizeManboLibraryRecord(record) {
       seriesTitle,
       author,
     ]),
+    searchPinyinUnits: buildCombinedPinyinSearchUnits([
+      stripSearchSeasonSuffix(name),
+      aliases,
+      mainCvNicknames,
+      mainCvNames,
+      mainCvRoleNames,
+      stripSearchSeasonSuffix(seriesTitle),
+      author,
+    ]),
   };
 }
 
@@ -2005,6 +2020,13 @@ function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey
       Object.values(cvroles),
       author,
     ]),
+    searchPinyinUnits: buildCombinedPinyinSearchUnits([
+      stripSearchSeasonSuffix(title),
+      stripSearchSeasonSuffix(seriesTitle),
+      Object.values(cvnames),
+      Object.values(cvroles),
+      author,
+    ]),
   };
 }
 
@@ -2343,6 +2365,82 @@ function getWeightedSearchScore(entries, rawKeyword, normalizedKeyword) {
   return bestScore;
 }
 
+function getPinyinSearchWindowScore(unit, normalizedKeyword) {
+  const syllables = Array.isArray(unit?.syllables)
+    ? unit.syllables.map((item) => normalizeSearchText(item)).filter(Boolean)
+    : [];
+  if (!syllables.length || !normalizedKeyword) {
+    return 0;
+  }
+
+  let bestScore = 0;
+  for (let start = 0; start < syllables.length; start += 1) {
+    let joined = "";
+    for (let end = start; end < syllables.length; end += 1) {
+      joined += syllables[end];
+      if (joined !== normalizedKeyword) {
+        continue;
+      }
+      if (start === 0 && end === syllables.length - 1) {
+        bestScore = Math.max(bestScore, 780);
+      } else if (start === 0) {
+        bestScore = Math.max(bestScore, 620);
+      } else {
+        bestScore = Math.max(bestScore, 460);
+      }
+    }
+  }
+  return bestScore;
+}
+
+function getPinyinInitialsScore(unit, normalizedKeyword) {
+  const initials = normalizeSearchText(unit?.initials);
+  if (!initials || !normalizedKeyword) {
+    return 0;
+  }
+  if (initials === normalizedKeyword) {
+    return 780;
+  }
+  if (initials.startsWith(normalizedKeyword)) {
+    return 620;
+  }
+  if (initials.includes(normalizedKeyword)) {
+    return 460;
+  }
+  return 0;
+}
+
+function getPinyinSearchUnitScore(units, rawKeyword) {
+  const normalizedKeyword = normalizeSearchText(rawKeyword);
+  if (!normalizedKeyword) {
+    return 0;
+  }
+
+  const keywordHasHan = /\p{Script=Han}/u.test(String(rawKeyword ?? ""));
+  const queryUnits = keywordHasHan ? buildPinyinSearchUnits(rawKeyword) : [];
+  const queryFull = queryUnits.length
+    ? normalizeSearchText(queryUnits.flatMap((unit) => unit.syllables || []).join(""))
+    : normalizedKeyword;
+  const safeUnits = Array.isArray(units) ? units : [];
+
+  return safeUnits.reduce((bestScore, unit) => {
+    const fullScore = getPinyinSearchWindowScore(unit, queryFull);
+    const initialsScore = keywordHasHan ? 0 : getPinyinInitialsScore(unit, normalizedKeyword);
+    return Math.max(bestScore, fullScore, initialsScore);
+  }, 0);
+}
+
+function getWeightedPinyinSearchScore(entries, rawKeyword) {
+  let bestScore = 0;
+  entries.forEach(({ value, boost = 0 }) => {
+    const score = getPinyinSearchUnitScore(value, rawKeyword);
+    if (score > 0) {
+      bestScore = Math.max(bestScore, score + boost);
+    }
+  });
+  return bestScore;
+}
+
 function buildSearchKeywordVariants(rawKeyword) {
   const pinyinTokens = /\p{Script=Han}/u.test(String(rawKeyword ?? ""))
     ? buildPinyinFullSearchTokens(rawKeyword)
@@ -2513,6 +2611,34 @@ function matchesMissevanSearchCategory(record, category) {
   return expectedCatalogs.includes(Number(record?.catalog ?? 0));
 }
 
+function getManboRecordPinyinUnits(record) {
+  if (Array.isArray(record?.searchPinyinUnits) && record.searchPinyinUnits.length) {
+    return record.searchPinyinUnits;
+  }
+  return buildCombinedPinyinSearchUnits([
+    stripSearchSeasonSuffix(record?.name),
+    record?.aliases,
+    record?.mainCvNicknames,
+    record?.mainCvNames,
+    record?.mainCvRoleNames,
+    stripSearchSeasonSuffix(record?.seriesTitle),
+    record?.author,
+  ]);
+}
+
+function getMissevanRecordPinyinUnits(record) {
+  if (Array.isArray(record?.searchPinyinUnits) && record.searchPinyinUnits.length) {
+    return record.searchPinyinUnits;
+  }
+  return buildCombinedPinyinSearchUnits([
+    stripSearchSeasonSuffix(record?.title),
+    stripSearchSeasonSuffix(record?.seriesTitle),
+    Object.values(record?.cvnames || {}),
+    Object.values(record?.cvroles || {}),
+    record?.author,
+  ]);
+}
+
 function scoreManboLibraryRecord(record, keyword) {
   const rawKeyword = normalizeTextValue(keyword);
   const normalizedKeywords = buildSearchKeywordVariants(rawKeyword);
@@ -2522,20 +2648,24 @@ function scoreManboLibraryRecord(record, keyword) {
   if (record.dramaId === rawKeyword) {
     return 1200;
   }
-  return getWeightedSearchScore(
+  const textScore = getWeightedSearchScore(
     [
-      { value: record.name, boost: 220 },
+      { value: stripSearchSeasonSuffix(record.name), boost: 220 },
       { value: record.aliases, boost: 180 },
       { value: record.mainCvNicknames, boost: 150 },
       { value: record.mainCvNames, boost: 140 },
       { value: record.mainCvRoleNames, boost: 120 },
-      { value: record.seriesTitle, boost: 100 },
+      { value: stripSearchSeasonSuffix(record.seriesTitle), boost: 100 },
       { value: record.author, boost: 90 },
-      { value: record.searchPinyinTokens, boost: 210 },
     ],
     rawKeyword,
     normalizedKeywords
   );
+  const pinyinScore = getWeightedPinyinSearchScore(
+    [{ value: getManboRecordPinyinUnits(record), boost: 210 }],
+    rawKeyword
+  );
+  return Math.max(textScore, pinyinScore);
 }
 
 function scoreMissevanLibraryRecord(record, keyword) {
@@ -2547,21 +2677,25 @@ function scoreMissevanLibraryRecord(record, keyword) {
   if (String(record.dramaId) === rawKeyword) {
     return 1200;
   }
-  if (record.soundIds.includes(rawKeyword)) {
+  if ((Array.isArray(record.soundIds) ? record.soundIds : []).includes(rawKeyword)) {
     return 1120;
   }
-  return getWeightedSearchScore(
+  const textScore = getWeightedSearchScore(
     [
-      { value: record.title, boost: 220 },
-      { value: record.seriesTitle, boost: 170 },
-      { value: Object.values(record.cvnames), boost: 150 },
-      { value: Object.values(record.cvroles), boost: 130 },
+      { value: stripSearchSeasonSuffix(record.title), boost: 220 },
+      { value: stripSearchSeasonSuffix(record.seriesTitle), boost: 170 },
+      { value: Object.values(record.cvnames || {}), boost: 150 },
+      { value: Object.values(record.cvroles || {}), boost: 130 },
       { value: record.author, boost: 90 },
-      { value: record.searchPinyinTokens, boost: 210 },
     ],
     rawKeyword,
     normalizedKeywords
   );
+  const pinyinScore = getWeightedPinyinSearchScore(
+    [{ value: getMissevanRecordPinyinUnits(record), boost: 210 }],
+    rawKeyword
+  );
+  return Math.max(textScore, pinyinScore);
 }
 
 function buildScoredManboLibraryMatches(records, keyword, category = null) {
@@ -2797,6 +2931,7 @@ function buildManboSearchFallbackCard(record) {
     content_type_label: getManboContentTypeLabel(record),
     main_cvs: mainCvs,
     main_cv_text: buildMainCvText(mainCvs),
+    author: normalizeTextValue(record?.author),
   };
   return {
     ...card,
@@ -2826,6 +2961,7 @@ function buildMissevanSearchFallbackCard(record) {
     content_type_label: getMissevanContentTypeLabel(record),
     main_cvs: mainCvs,
     main_cv_text: buildMainCvText(mainCvs),
+    author: normalizeTextValue(record?.author),
   };
   return {
     ...card,
@@ -2909,6 +3045,12 @@ export function normalizeManboSearchApiCandidate(item) {
     watchCount: normalizeOptionalFiniteNumber(drama?.watchCount) ?? 0,
     collectionFormatText: normalizeTextValue(drama?.collectionFormatText),
     cvNames: splitManboApiCvNames(drama?.cvNameStr),
+    author: normalizeTextValue(
+      drama?.author ??
+        drama?.authorName ??
+        drama?.originalAuthor ??
+        drama?.originalAuthorName
+    ),
     categoryLabels,
     contentTypeLabel: normalizeManboApiContentTypeLabel(drama),
     price: normalizeOptionalFiniteNumber(drama?.price) ?? 0,
@@ -2937,6 +3079,7 @@ export function buildManboApiSearchFallbackCard(record) {
     content_type_label: record?.contentTypeLabel || "",
     main_cvs: mainCvs,
     main_cv_text: buildMainCvText(mainCvs),
+    author: normalizeTextValue(record?.author),
   };
   return {
     ...card,
@@ -3095,6 +3238,16 @@ function normalizeMissevanApiSearchCandidate(item) {
         ""
     ),
     soundId: Number.isFinite(soundId) && soundId > 0 ? soundId : null,
+    author: normalizeTextValue(
+      candidate?.author ??
+        candidate?.author_name ??
+        candidate?.authorName ??
+        drama?.author ??
+        drama?.author_name ??
+        drama?.authorName ??
+        info?.author ??
+        ""
+    ),
   };
 }
 
@@ -3224,6 +3377,7 @@ function buildMissevanApiSearchFallbackCard(record, mainCvs = []) {
     content_type_label: "",
     main_cvs: mainCvs,
     main_cv_text: buildMainCvText(mainCvs),
+    author: normalizeTextValue(record?.author),
   };
   return {
     ...card,
@@ -3292,6 +3446,7 @@ async function hydrateMissevanSearchRecord(record) {
         info.drama.subscription_num
       ),
       reward_num: rewardNum,
+      author: fallbackCard.author || normalizeTextValue(info.drama.author),
     };
     return {
       ...card,
@@ -3357,6 +3512,7 @@ async function hydrateMissevanApiSearchRecord(record) {
       reward_num: rewardNum,
       main_cvs: mainCvs,
       main_cv_text: buildMainCvText(mainCvs),
+      author: fallbackCard.author || normalizeTextValue(info.drama.author),
     };
     return {
       ...card,
@@ -3438,6 +3594,7 @@ async function buildMissevanDramaCardFromInput(item) {
     content_type_label:
       getMissevanContentTypeLabel(info.drama) ||
       (resolvedLibraryRecord ? getMissevanContentTypeLabel(resolvedLibraryRecord) : ""),
+    author: normalizeTextValue(resolvedLibraryRecord?.author ?? info.drama.author),
   };
 
   if (mainCvs.length > 0) {
@@ -3470,6 +3627,7 @@ async function hydrateManboSearchRecord(record) {
       content_type_label: card.content_type_label || fallbackCard.content_type_label,
       main_cvs: fallbackCard.main_cvs,
       main_cv_text: fallbackCard.main_cv_text,
+      author: card.author || fallbackCard.author,
     };
   } catch (error) {
     console.error(
@@ -3637,6 +3795,61 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
   }
 
   throw lastError;
+}
+
+function formatImageProxyError(error) {
+  return [
+    error?.name ? `name=${error.name}` : "",
+    error?.type ? `type=${error.type}` : "",
+    error?.code ? `code=${error.code}` : "",
+    error?.status ? `status=${error.status}` : "",
+    error?.message ? `message=${error.message}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+async function fetchImageBufferWithRetry(targetUrl) {
+  let lastError;
+  let attempts = 0;
+
+  for (let attempt = 0; attempt <= IMAGE_PROXY_RETRIES; attempt += 1) {
+    attempts = attempt + 1;
+    const { signal, cleanup } = createTimeoutSignal(IMAGE_PROXY_TIMEOUT_MS);
+    let response;
+
+    try {
+      response = await fetch(
+        targetUrl.toString(),
+        buildFetchOptions(targetUrl, { signal })
+      );
+
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      return {
+        attempts,
+        buffer: Buffer.from(arrayBuffer),
+        contentType: response.headers.get("content-type") || "image/jpeg",
+      };
+    } catch (error) {
+      lastError = error;
+      if (response && response.status >= 400 && response.status < 500) {
+        break;
+      }
+      if (attempt < IMAGE_PROXY_RETRIES) {
+        await sleep(IMAGE_PROXY_RETRY_DELAY_MS * (attempt + 1));
+      }
+    } finally {
+      cleanup();
+    }
+  }
+
+  const error = lastError || new Error("Image proxy request failed");
+  error.attempts = attempts;
+  throw error;
 }
 
 function normalizeMissevanDramaInfo(info) {
@@ -4162,6 +4375,12 @@ function normalizeManboDramaInfo(raw) {
       member_price: memberPrice,
       vip_free: vipFree,
       is_member: isMember,
+      author: normalizeTextValue(
+        raw.author ??
+          raw.authorName ??
+          raw.originalAuthor ??
+          raw.originalAuthorName
+      ),
       member_listen_count: normalizeOptionalFiniteNumber(
         pickFirstDefined(raw.memberListenCount, raw.member_listen_count)
       ),
@@ -4200,6 +4419,7 @@ function normalizeManboCardFromDramaInfo(info) {
     revenue_type: revenueType,
     checked: true,
     platform: "manbo",
+    author: normalizeTextValue(drama.author),
   };
   return {
     ...card,
@@ -6407,31 +6627,32 @@ app.get("/image-proxy", async (req, res) => {
     return res.status(400).send("Missing url");
   }
 
+  let targetUrl;
   try {
-    const targetUrl = new URL(url);
+    targetUrl = new URL(url);
+  } catch {
+    return res.status(400).send("Invalid image url");
+  }
 
-    if (
-      targetUrl.protocol !== "https:" ||
-      !isAllowedImageHost(targetUrl.hostname)
-    ) {
-      return res.status(400).send("Invalid image host");
-    }
+  if (
+    targetUrl.protocol !== "https:" ||
+    !isAllowedImageHost(targetUrl.hostname)
+  ) {
+    return res.status(400).send("Invalid image host");
+  }
 
-    const response = await fetch(targetUrl.toString());
-    if (!response.ok) {
-      return res.status(response.status).send("Failed to fetch image");
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    res.setHeader(
-      "Content-Type",
-      response.headers.get("content-type") || "image/jpeg"
-    );
+  try {
+    const { buffer, contentType } = await fetchImageBufferWithRetry(targetUrl);
+    res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "public, max-age=3600");
-    return res.send(Buffer.from(arrayBuffer));
+    return res.send(buffer);
   } catch (error) {
-    console.error(error);
-    return res.status(500).send("Image proxy failed");
+    const attempts = error?.attempts ?? 1;
+    const summary = formatImageProxyError(error);
+    console.warn(
+      `Image proxy failed url=${targetUrl.toString()} attempts=${attempts} error=${summary}`
+    );
+    return res.status(502).send("Image proxy failed");
   }
 });
 
@@ -7185,6 +7406,7 @@ app.post("/manbo/getdramacards", async (req, res) => {
         };
         if (libraryRecord) {
           nextCard.content_type_label = getManboContentTypeLabel(libraryRecord) || nextCard.content_type_label;
+          nextCard.author = normalizeTextValue(libraryRecord.author) || nextCard.author;
         }
         if (libraryRecord && mainCvs.length > 0) {
           nextCard.main_cvs = mainCvs;

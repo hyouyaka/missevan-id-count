@@ -6,6 +6,7 @@ import {
   ChevronUpIcon,
   ChevronsDownIcon,
   EraserIcon,
+  FeatherIcon,
   GemIcon,
   HandCoinsIcon,
   HashIcon,
@@ -878,6 +879,7 @@ export function SearchResults({
               const importedDrama = getImportedDrama(item.id);
               const coverUrl = buildProxyImageUrl(item.cover);
               const mainCvText = item.main_cv_text || "";
+              const originalAuthorText = String(item.author ?? "").trim();
               const paymentTag = getSearchResultPaymentTag(item);
               const titleTags = getSearchResultTitleTags(item);
               const metrics = getResultMetrics(item);
@@ -943,6 +945,10 @@ export function SearchResults({
                           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                             <HashIcon aria-label={idLabel} className={metaIconClassName} title={idLabel} />
                             <span className="min-w-0 break-all">{item.id}</span>
+                          </div>
+                          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                            <FeatherIcon aria-label="原作名" className={metaIconClassName} title="原作名" />
+                            <span className="min-w-0 break-words">{originalAuthorText || "暂无"}</span>
                           </div>
                           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                             <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />

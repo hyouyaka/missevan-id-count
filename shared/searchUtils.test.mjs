@@ -9,6 +9,7 @@ import {
   parseMissevanInputToken,
   normalizeManboIndexName,
   normalizeSearchText,
+  stripSearchSeasonSuffix,
 } from "./searchUtils.js";
 
 test("normalizeSearchText removes common symbols and keeps compatibility alias", () => {
@@ -175,4 +176,14 @@ test("extractSearchSortKey groups full-season and special entries for infix keyw
     seasonNumber: null,
     partRank: 0,
   });
+});
+
+test("stripSearchSeasonSuffix removes only trailing season and special markers", () => {
+  assert.equal(stripSearchSeasonSuffix("洄天 第一季"), "洄天");
+  assert.equal(stripSearchSeasonSuffix("洄天 第二季（上）"), "洄天");
+  assert.equal(stripSearchSeasonSuffix("洄天 上季"), "洄天");
+  assert.equal(stripSearchSeasonSuffix("洄天 全一季"), "洄天");
+  assert.equal(stripSearchSeasonSuffix("奇洛李维斯回信 番外篇"), "奇洛李维斯回信");
+  assert.equal(stripSearchSeasonSuffix("第一季"), "");
+  assert.equal(stripSearchSeasonSuffix("洄天 第一季 主题曲"), "洄天 第一季 主题曲");
 });

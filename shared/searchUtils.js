@@ -120,6 +120,14 @@ const SEARCH_SORT_SEASON_PATTERN = new RegExp(
 );
 const SEARCH_SORT_SPECIAL_PATTERN = /^(?:独家番外|番外篇?|特别篇|特别版|小剧场|粤语版|sp|SP|花絮|预告)/u;
 const SEARCH_SORT_PART_PATTERN = /^[\s（(【\[]*([上中下前后])[\s）)】\]]*/u;
+const SEARCH_TITLE_SUFFIX_PATTERN = new RegExp(
+  `[\\s/／\\\\＼|｜,_\\-+~\`!@#$%^&*()[\\]{}:;"'<>.?，。！？、：；（）《》“”‘’【】·•‧・—–…]*(?:` +
+    `(?:第\\s*${CHINESE_NUMBER_PATTERN}\\s*[季部册卷期集话章节]?|${CHINESE_NUMBER_PATTERN}\\s*[季部]|[上下]季|全一季)` +
+    `[\\s（(【\\[]*[上中下前后]?[\\s）)】\\]]*` +
+    `|独家番外|番外篇?|特别篇|特别版|小剧场|粤语版|sp|SP|花絮|预告` +
+  `)$`,
+  "u"
+);
 
 function getRemainderAfterNormalizedPrefix(value, keyword) {
   const normalizedKeyword = normalizeSearchText(keyword);
@@ -330,6 +338,16 @@ function normalizeSearchSortBaseKey(value) {
   return String(value ?? "")
     .replace(/[\s\/／\\＼|｜,_\-+~`!@#$%^&*()[\]{}:;"'<>.?，。！？、：；（）《》“”‘’【】·•‧・—–…]+$/u, "")
     .trim();
+}
+
+export function stripSearchSeasonSuffix(value) {
+  let text = String(value ?? "").trim();
+  let previous = "";
+  while (text && text !== previous) {
+    previous = text;
+    text = text.replace(SEARCH_TITLE_SUFFIX_PATTERN, "").trim();
+  }
+  return text;
 }
 
 function getSearchPartRank(markerText, markerLength) {

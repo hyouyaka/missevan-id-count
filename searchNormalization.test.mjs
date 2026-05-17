@@ -159,6 +159,69 @@ test("Missevan Han homophone queries rank full pinyin title matches above broad 
   assert.equal(searchMissevanLibraryRecords(records, "汇天")[0]?.dramaId, "401");
 });
 
+test("library search does not match across pinyin syllable or word boundaries", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+
+  const results = searchMissevanLibraryRecords([
+    {
+      dramaId: "85974",
+      soundIds: [],
+      title: "奇洛李维斯回信",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+    {
+      dramaId: "91100",
+      soundIds: [],
+      title: "束缚厄剌托",
+      seriesTitle: "束缚厄剌托",
+      cvnames: { 4581: "瀚墨" },
+      cvroles: { 4581: "林在水 / 星河Bunny" },
+      author: "仿生犬",
+      catalog: 93,
+      searchPinyinTokens: [
+        "shufuelatuo",
+        "sfelt",
+        "hanmo",
+        "hm",
+        "linzaishuixinghebunny",
+        "lzsxhbunny",
+        "fangshengquan",
+        "fsq",
+      ],
+    },
+  ], "回信").map((item) => item.title);
+
+  assert.deepEqual(results, ["奇洛李维斯回信"]);
+});
+
+test("library search ignores season suffixes during matching", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "401",
+      soundIds: [],
+      title: "洄天 第一季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "淮上",
+      catalog: 89,
+    },
+  ];
+
+  assert.equal(searchMissevanLibraryRecords(records, "洄天")[0]?.dramaId, "401");
+  assert.equal(searchMissevanLibraryRecords(records, "回填")[0]?.dramaId, "401");
+  assert.equal(searchMissevanLibraryRecords(records, "huitian")[0]?.dramaId, "401");
+  assert.equal(searchMissevanLibraryRecords(records, "tiandi").length, 0);
+  assert.equal(searchMissevanLibraryRecords(records, "第一季").length, 0);
+});
+
 test("library search keeps numeric Missevan drama and sound ID matching", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords } = await import("./server.js");
@@ -376,6 +439,7 @@ test("Manbo API search candidates normalize to search result cards", async () =>
     cvNameStr: "陈张太康 & 文森",
     category: "有声剧",
     categoryLabels: [{ name: "广播剧" }],
+    author: "耳东兔子",
     price: 188,
     vipFree: 1,
   });
@@ -395,6 +459,7 @@ test("Manbo API search candidates normalize to search result cards", async () =>
       payment_label: card.payment_label,
       main_cvs: card.main_cvs,
       main_cv_text: card.main_cv_text,
+      author: card.author,
     },
     {
       id: "1653424609497710659",
@@ -409,6 +474,7 @@ test("Manbo API search candidates normalize to search result cards", async () =>
       payment_label: "会员",
       main_cvs: ["陈张太康", "文森"],
       main_cv_text: "主要CV：陈张太康，文森",
+      author: "耳东兔子",
     }
   );
 });
