@@ -209,6 +209,7 @@ function OngoingCard({
   handleVersionResponse,
   onOpenSearchResult,
   favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
   onToggleFavorite,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
@@ -326,6 +327,7 @@ function OngoingCard({
                 variant="ghost"
                 size="icon-sm"
                 className="bg-background/84"
+                disabled={favoriteActionsDisabled}
                 onClick={toggleFavorite}
                 aria-label={isFavorite ? "取消收藏" : "加入收藏"}
                 title={isFavorite ? "取消收藏" : "加入收藏"}
@@ -414,6 +416,7 @@ export function OngoingPanel({
   handleVersionResponse,
   onOpenSearchResult,
   favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
   onToggleFavorite,
 }) {
   const [selectedPlatform, setSelectedPlatform] = useState("missevan");
@@ -597,6 +600,7 @@ export function OngoingPanel({
               handleVersionResponse={handleVersionResponse}
               onOpenSearchResult={onOpenSearchResult}
               favoriteKeys={favoriteKeys}
+              favoriteActionsDisabled={favoriteActionsDisabled}
               onToggleFavorite={onToggleFavorite}
             />
           ))}

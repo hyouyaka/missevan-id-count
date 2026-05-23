@@ -261,6 +261,7 @@ function RankItemCard({
   handleVersionResponse,
   onOpenSearchResult,
   favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
   onToggleFavorite,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
@@ -402,6 +403,7 @@ function RankItemCard({
                 variant="ghost"
                 size="icon-sm"
                 className="bg-background/84"
+                disabled={favoriteActionsDisabled}
                 onClick={toggleFavorite}
                 aria-label={isFavorite ? "取消收藏" : "加入收藏"}
                 title={isFavorite ? "取消收藏" : "加入收藏"}
@@ -565,6 +567,7 @@ function RankColumn({
   handleVersionResponse,
   onOpenSearchResult,
   favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
   onToggleFavorite,
 }) {
   return (
@@ -588,6 +591,7 @@ function RankColumn({
               handleVersionResponse={handleVersionResponse}
               onOpenSearchResult={onOpenSearchResult}
               favoriteKeys={favoriteKeys}
+              favoriteActionsDisabled={favoriteActionsDisabled}
               onToggleFavorite={onToggleFavorite}
             />
           ))}
@@ -1124,6 +1128,7 @@ export function RanksPanel({
   handleVersionResponse,
   onOpenSearchResult,
   favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
   onToggleFavorite,
 }) {
   const [rankData, setRankData] = useState(null);
@@ -1371,6 +1376,7 @@ export function RanksPanel({
                 handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}
                 favoriteKeys={favoriteKeys}
+                favoriteActionsDisabled={favoriteActionsDisabled}
                 onToggleFavorite={onToggleFavorite}
               />
             ))}
@@ -1385,6 +1391,7 @@ export function RanksPanel({
                 handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}
                 favoriteKeys={favoriteKeys}
+                favoriteActionsDisabled={favoriteActionsDisabled}
                 onToggleFavorite={onToggleFavorite}
               />
             ) : null}

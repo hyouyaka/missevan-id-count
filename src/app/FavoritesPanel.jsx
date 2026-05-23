@@ -564,27 +564,35 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
 
 export function FavoritesPanel({
   favorites = [],
+  favoriteActionsDisabled = false,
   frontendVersion = "0.0.0",
   handleVersionResponse,
   isDesktopApp = false,
   onFavoritesChange,
+  onRefreshSettled,
+  onRefreshStateChange = () => {},
   onToggleFavorite,
+  refreshRevision = 0,
+  refreshState = {
+    isRunning: false,
+    progress: 0,
+    currentTitle: "",
+  },
 }) {
   const [snapshots, setSnapshots] = useState([]);
   const [selectedKeys, setSelectedKeys] = useState(new Set());
   const [expandedKeys, setExpandedKeys] = useState(new Set());
   const [settings, setSettings] = useState(() => normalizeFavoriteSettings());
-  const [refreshState, setRefreshState] = useState({
-    isRunning: false,
-    progress: 0,
-    currentTitle: "",
-  });
   const fileInputRef = useRef(null);
   const backfilledCvKeysRef = useRef(new Set());
+  const mountedRef = useRef(true);
 
   async function reloadSnapshots() {
     try {
-      setSnapshots(await listSnapshots());
+      const nextSnapshots = await listSnapshots();
+      if (mountedRef.current) {
+        setSnapshots(nextSnapshots);
+      }
     } catch (error) {
       console.error("Failed to load favorite snapshots", error);
       toast.error("读取收藏统计记录失败。");
@@ -592,7 +600,17 @@ export function FavoritesPanel({
   }
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     reloadSnapshots();
+  }, [refreshRevision]);
+
+  useEffect(() => {
     loadFavoriteSettings()
       .then(setSettings)
       .catch(() => {});
@@ -686,12 +704,12 @@ export function FavoritesPanel({
       toast.warning("请先选择收藏作品。");
       return;
     }
-    setRefreshState({ isRunning: true, progress: 0, currentTitle: "" });
+    onRefreshStateChange({ isRunning: true, progress: 0, currentTitle: "" });
     let failedCount = 0;
     try {
       for (let index = 0; index < queue.length; index += 1) {
         const favorite = queue[index];
-        setRefreshState({
+        onRefreshStateChange({
           isRunning: true,
           progress: Math.floor((index / queue.length) * 100),
           currentTitle: favorite.title,
@@ -724,8 +742,9 @@ export function FavoritesPanel({
       } else {
         toast.success("收藏刷新完成。");
       }
+      await onRefreshSettled?.();
     } finally {
-      setRefreshState({ isRunning: false, progress: 100, currentTitle: "" });
+      onRefreshStateChange({ isRunning: false, progress: 100, currentTitle: "" });
     }
   }
 
@@ -794,23 +813,23 @@ export function FavoritesPanel({
             type="button"
             variant="secondary"
             className="h-9 gap-1 px-2 text-sm sm:px-3"
-            disabled={refreshState.isRunning || selectedKeys.size === 0}
+            disabled={refreshState.isRunning || favoriteActionsDisabled || selectedKeys.size === 0}
             onClick={() => refreshMany(favorites.filter((favorite) => selectedKeys.has(favorite.key)))}
           >
             <RefreshCwIcon data-icon="inline-start" className={refreshState.isRunning ? "animate-spin" : ""} />
-            选中
+            {refreshState.isRunning ? "刷新中" : "选中"}
           </Button>
           <Button
             type="button"
             variant="outline"
             className="h-9 gap-1 px-2 text-sm sm:px-3"
-            disabled={refreshState.isRunning || favorites.length === 0}
+            disabled={refreshState.isRunning || favoriteActionsDisabled || favorites.length === 0}
             onClick={() => refreshMany(sortedFavorites)}
           >
             <RefreshCwIcon data-icon="inline-start" className={refreshState.isRunning ? "animate-spin" : ""} />
-            全部
+            {refreshState.isRunning ? "刷新中" : "全部"}
           </Button>
-          <Button type="button" variant="outline" className="h-9 gap-1 px-2 text-sm sm:px-3" onClick={() => fileInputRef.current?.click()} aria-label="导入数据" title="导入数据">
+          <Button type="button" variant="outline" className="h-9 gap-1 px-2 text-sm sm:px-3" disabled={favoriteActionsDisabled} onClick={() => fileInputRef.current?.click()} aria-label="导入数据" title="导入数据">
             <DownloadIcon data-icon="inline-start" />
             导入
           </Button>
@@ -890,7 +909,7 @@ export function FavoritesPanel({
                         onClick={() => onToggleFavorite?.({ ...favorite, source: "favorites" })}
                         aria-label="取消收藏"
                         title="取消收藏"
-                        disabled={refreshState.isRunning}
+                        disabled={favoriteActionsDisabled}
                       >
                         <Trash2Icon />
                       </Button>

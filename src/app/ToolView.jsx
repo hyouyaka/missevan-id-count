@@ -113,12 +113,19 @@ export function ToolView({ initialAppConfig }) {
   const [notice, setNotice] = useState(null);
   const [searchJumpStatus, setSearchJumpStatus] = useState(null);
   const [favoriteItems, setFavoriteItems] = useState([]);
+  const [favoriteRefreshState, setFavoriteRefreshState] = useState({
+    isRunning: false,
+    progress: 0,
+    currentTitle: "",
+  });
+  const [favoriteRefreshRevision, setFavoriteRefreshRevision] = useState(0);
   const [cancelFavoriteRequest, setCancelFavoriteRequest] = useState(null);
   const { changelogOpen, openChangelog, setChangelogOpen } = useChangelogDialog(appConfig.frontendVersion);
 
   const currentPlatformRef = useRef(currentPlatform);
   const appConfigRef = useRef(appConfig);
   const platformStatesRef = useRef(platformStates);
+  const favoriteRefreshStateRef = useRef(favoriteRefreshState);
   const runtimeMetaRef = useRef({
     missevan: createRuntimeMeta(),
     manbo: createRuntimeMeta(),
@@ -140,6 +147,10 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     platformStatesRef.current = platformStates;
   }, [platformStates]);
+
+  useEffect(() => {
+    favoriteRefreshStateRef.current = favoriteRefreshState;
+  }, [favoriteRefreshState]);
 
   useEffect(() => {
     savePersistedHistoryEntries({
@@ -268,6 +279,12 @@ export function ToolView({ initialAppConfig }) {
     () => new Set((Array.isArray(favoriteItems) ? favoriteItems : []).map((item) => item.key)),
     [favoriteItems]
   );
+  const favoriteActionsDisabled = favoriteRefreshState.isRunning;
+
+  async function handleFavoriteRefreshSettled() {
+    setFavoriteRefreshRevision((current) => current + 1);
+    await reloadFavoriteItems();
+  }
 
   function buildFavoriteLogPayload(item, action) {
     const platform = item?.platform === "manbo" ? "manbo" : item?.platform === "missevan" ? "missevan" : "";
@@ -302,6 +319,11 @@ export function ToolView({ initialAppConfig }) {
     if (!request) {
       return;
     }
+    if (favoriteRefreshStateRef.current.isRunning) {
+      toast.warning("收藏刷新中，请稍后再操作。");
+      setCancelFavoriteRequest(null);
+      return;
+    }
     const platform = request.platform === "manbo" ? "manbo" : request.platform === "missevan" ? "missevan" : "";
     const dramaId = String(request.dramaId ?? request.id ?? "").trim();
     try {
@@ -318,6 +340,10 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function toggleFavorite(item) {
+    if (favoriteRefreshStateRef.current.isRunning) {
+      toast.warning("收藏刷新中，请稍后再操作。");
+      return;
+    }
     const platform = item?.platform === "manbo" ? "manbo" : item?.platform === "missevan" ? "missevan" : "";
     const dramaId = String(item?.dramaId ?? item?.id ?? "").trim();
     const key = createFavoriteKey(platform, dramaId);
@@ -1775,6 +1801,7 @@ export function ToolView({ initialAppConfig }) {
       {currentPlatform === "ranks" ? (
         <RanksPanel
           favoriteKeys={favoriteKeySet}
+          favoriteActionsDisabled={favoriteActionsDisabled}
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
           onToggleFavorite={toggleFavorite}
@@ -1783,6 +1810,7 @@ export function ToolView({ initialAppConfig }) {
       ) : currentPlatform === "ongoing" ? (
         <OngoingPanel
           favoriteKeys={favoriteKeySet}
+          favoriteActionsDisabled={favoriteActionsDisabled}
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
           onToggleFavorite={toggleFavorite}
@@ -1791,10 +1819,15 @@ export function ToolView({ initialAppConfig }) {
       ) : currentPlatform === "favorites" ? (
         <FavoritesPanel
           favorites={favoriteItems}
+          favoriteActionsDisabled={favoriteActionsDisabled}
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
           isDesktopApp={appConfig.desktopApp}
           onFavoritesChange={reloadFavoriteItems}
+          refreshState={favoriteRefreshState}
+          refreshRevision={favoriteRefreshRevision}
+          onRefreshStateChange={setFavoriteRefreshState}
+          onRefreshSettled={handleFavoriteRefreshSettled}
           onToggleFavorite={toggleFavorite}
         />
       ) : currentPlatform !== "report" ? (
@@ -1853,6 +1886,7 @@ export function ToolView({ initialAppConfig }) {
               frontendVersion={appConfig.frontendVersion}
               handleVersionResponse={updateVersionStatusFromResponse}
               favoriteKeys={favoriteKeySet}
+              favoriteActionsDisabled={favoriteActionsDisabled}
               onAddDramas={addDramas}
               onSelectionChange={updateSelection}
               onSetDramas={setDramas}

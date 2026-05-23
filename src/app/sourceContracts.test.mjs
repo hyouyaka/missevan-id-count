@@ -494,9 +494,61 @@ test("favorites card keeps destructive action in the left operation rail", () =>
 test("favorites card disables destructive action while refresh is running", () => {
   assert.match(
     favoritesPanelSource,
-    /aria-label="取消收藏"[\s\S]*?disabled=\{refreshState\.isRunning\}/,
+    /aria-label="取消收藏"[\s\S]*?disabled=\{favoriteActionsDisabled\}/,
     "favorite removal should be disabled while refresh tasks may write the same record"
   );
+});
+
+test("favorite refresh state survives navigation through ToolView ownership", () => {
+  assert.match(toolViewSource, /const \[favoriteRefreshState, setFavoriteRefreshState\] = useState\(/);
+  assert.match(toolViewSource, /const \[favoriteRefreshRevision, setFavoriteRefreshRevision\] = useState\(0\)/);
+  assert.match(toolViewSource, /const favoriteRefreshStateRef = useRef\(favoriteRefreshState\)/);
+  assert.match(toolViewSource, /favoriteRefreshStateRef\.current = favoriteRefreshState/);
+  assert.match(toolViewSource, /function handleFavoriteRefreshSettled\(/);
+  assert.match(toolViewSource, /setFavoriteRefreshRevision\(\(current\) => current \+ 1\)/);
+  assert.match(favoritesPanelSource, /refreshState = \{/);
+  assert.doesNotMatch(
+    favoritesPanelSource,
+    /const \[refreshState, setRefreshState\] = useState\(\{[\s\S]*?isRunning: false/,
+    "FavoritesPanel should not lose refresh state when the tab unmounts"
+  );
+  assert.match(favoritesPanelSource, /onRefreshStateChange\(\{[\s\S]*?isRunning: true/);
+  assert.match(favoritesPanelSource, /onRefreshSettled\?\.\(\)/);
+  assert.match(favoritesPanelSource, /useEffect\(\(\) => \{[\s\S]*?reloadSnapshots\(\);[\s\S]*?\}, \[refreshRevision\]\)/);
+  assert.match(
+    favoritesPanelSource,
+    /useEffect\(\(\) => \{[\s\S]*?mountedRef\.current = true;[\s\S]*?return \(\) => \{[\s\S]*?mountedRef\.current = false;/,
+    "mountedRef should recover after React development StrictMode re-runs effects"
+  );
+  assert.match(
+    toolViewSource,
+    /<FavoritesPanel[\s\S]*?refreshState=\{favoriteRefreshState\}[\s\S]*?refreshRevision=\{favoriteRefreshRevision\}[\s\S]*?onRefreshStateChange=\{setFavoriteRefreshState\}[\s\S]*?onRefreshSettled=\{handleFavoriteRefreshSettled\}/,
+    "ToolView should pass durable refresh state and completion hooks to FavoritesPanel"
+  );
+});
+
+test("favorite actions are disabled globally during favorite refresh", () => {
+  assert.match(toolViewSource, /const favoriteActionsDisabled = favoriteRefreshState\.isRunning/);
+  assert.match(
+    toolViewSource,
+    /if \(favoriteRefreshStateRef\.current\.isRunning\) \{[\s\S]*?toast\.warning\("收藏刷新中，请稍后再操作。"\);[\s\S]*?return;[\s\S]*?\}/,
+    "toggleFavorite should guard against hidden or stale favorite action entry points"
+  );
+  assert.match(toolViewSource, /<RanksPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
+  assert.match(toolViewSource, /<OngoingPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
+  assert.match(toolViewSource, /<FavoritesPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
+  assert.match(toolViewSource, /<SearchResults[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
+  assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| selectedKeys\.size === 0\}/);
+  assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| favorites\.length === 0\}/);
+  assert.match(favoritesPanelSource, /disabled=\{favoriteActionsDisabled\}/);
+  assert.match(favoritesPanelSource, /\{refreshState\.isRunning \? "刷新中" : "选中"\}/);
+  assert.match(favoritesPanelSource, /\{refreshState\.isRunning \? "刷新中" : "全部"\}/);
+  assert.match(searchResultsSource, /favoriteActionsDisabled = false/);
+  assert.match(searchResultsSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onClick=\{\(\) => onToggleFavorite\?\./);
+  assert.match(ranksPanelSource, /favoriteActionsDisabled = false/);
+  assert.match(ranksPanelSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onClick=\{toggleFavorite\}/);
+  assert.match(ongoingPanelSource, /favoriteActionsDisabled = false/);
+  assert.match(ongoingPanelSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onClick=\{toggleFavorite\}/);
 });
 
 test("favorite refresh skips writes when the favorite was removed mid-refresh", () => {

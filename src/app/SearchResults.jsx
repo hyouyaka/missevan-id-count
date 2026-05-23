@@ -175,6 +175,7 @@ export function SearchResults({
   isLoadingMoreResults = false,
   totalResults = 0,
   favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
   onToggleFavorite,
 }) {
   const idLabel = "作品ID";
@@ -928,6 +929,7 @@ export function SearchResults({
                             variant="ghost"
                             size="icon-sm"
                             className="bg-background/84"
+                            disabled={favoriteActionsDisabled}
                             onClick={() => onToggleFavorite?.(buildFavoritePayload(item))}
                           >
                             <StarIcon className={isFavorite(item) ? "fill-primary text-primary" : ""} />
