@@ -1756,7 +1756,11 @@ export function ToolView({ initialAppConfig }) {
                   <ChangelogButton onClick={openChangelog} style={headerActionButtonStyle} />
                 </div>
               </div>
-              <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-3">
+              <div
+                className={`mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-3 ${
+                  appConfig.desktopApp ? "" : "lg:flex-col lg:items-start lg:gap-1"
+                }`}
+              >
                 <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{appConfig.titleZh}</h1>
                 <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">{appConfig.description}</p>
               </div>
