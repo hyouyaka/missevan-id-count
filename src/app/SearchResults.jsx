@@ -174,6 +174,8 @@ export function SearchResults({
   allResults = [],
   isLoadingMoreResults = false,
   totalResults = 0,
+  favoriteKeys = new Set(),
+  onToggleFavorite,
 }) {
   const idLabel = "作品ID";
   const episodeIdLabel = platform === "manbo" ? "Set ID" : "Sound ID";
@@ -388,6 +390,28 @@ export function SearchResults({
 
   function getResultDramaId(item) {
     return platform === "manbo" ? String(item.id) : Number(item.id);
+  }
+
+  function getFavoriteKey(item) {
+    return `${platform}:${String(item?.id ?? "").trim()}`;
+  }
+
+  function isFavorite(item) {
+    return Boolean(favoriteKeys?.has?.(getFavoriteKey(item)));
+  }
+
+  function buildFavoritePayload(item) {
+    return {
+      platform,
+      dramaId: String(item?.id ?? "").trim(),
+      title: item?.name || "",
+      cover: item?.cover || "",
+      paymentLabel: getSearchResultPaymentTag(item),
+      contentTypeLabel: getSearchResultTitleTags(item)[0] || "",
+      dramaUpdatedAt: item?.updated_at || item?.dramaUpdatedAt || "",
+      mainCvText: item?.main_cv_text || item?.mainCvText || "",
+      source: resultSource || "search",
+    };
   }
 
   function canShowSearchTrend(item) {
@@ -688,6 +712,12 @@ export function SearchResults({
   const desktopBatchControlClass = "flex h-9 w-full items-center justify-start gap-2 rounded-md border border-border/75 bg-background px-2.5 text-[14px]! font-medium";
   const resultActionControlClass = "flex h-8 items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
   const resultActionButtonClass = "h-8 gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-[0.7rem] sm:gap-1.5 sm:px-2.5 sm:text-xs";
+  const mobileResultActionsClass = "grid w-fit max-w-full grid-cols-[max-content_max-content_max-content_max-content] justify-start gap-1 lg:hidden";
+  const mobileResultActionShortTextClass = "[font-size:clamp(0.6rem,2.7vw,0.75rem)]! [line-height:1]!";
+  const mobileResultActionLongTextClass = "[font-size:clamp(0.6rem,3.15vw,0.875rem)]! [line-height:1]!";
+  const mobileResultActionChromeClass = "[height:clamp(1.75rem,7vw,2rem)]! gap-[clamp(0.125rem,0.85vw,0.25rem)]! [padding-inline:clamp(0.125rem,1.55vw,0.375rem)]!";
+  const mobileResultActionControlClass = `flex min-w-0 items-center justify-center rounded-[calc(var(--radius)-0.16rem)] border border-border/70 bg-background/84 font-medium text-foreground ${mobileResultActionChromeClass} ${mobileResultActionShortTextClass}`;
+  const mobileResultActionButtonClass = `min-w-0 rounded-[calc(var(--radius)-0.16rem)] leading-none [&>svg]:[height:clamp(0.625rem,3.15vw,0.875rem)]! [&>svg]:[width:clamp(0.625rem,3.15vw,0.875rem)]! ${mobileResultActionChromeClass} ${mobileResultActionLongTextClass}`;
 
   function runMobileAction(callback) {
     setMobileActionsOpen(false);
@@ -888,10 +918,20 @@ export function SearchResults({
               return (
                 <div key={item.id} data-search-result-id={String(item.id)} className="px-0 py-3.5 first:pt-0 last:pb-0 sm:py-4">
                   <div className="flex flex-col gap-2.5">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="flex min-w-0 gap-3">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex min-w-0 items-center gap-3">
                         <div className="flex w-8 shrink-0 flex-col items-center gap-2 pt-0.5">
                           <Checkbox checked={Boolean(item.checked)} onCheckedChange={(checked) => updateResultChecked(item.id, Boolean(checked))} />
+                          <Button
+                            aria-label={isFavorite(item) ? "取消收藏" : "加入收藏"}
+                            title={isFavorite(item) ? "取消收藏" : "加入收藏"}
+                            variant="ghost"
+                            size="icon-sm"
+                            className="bg-background/84"
+                            onClick={() => onToggleFavorite?.(buildFavoritePayload(item))}
+                          >
+                            <StarIcon className={isFavorite(item) ? "fill-primary text-primary" : ""} />
+                          </Button>
                           {importedDrama ? (
                             <Button variant="ghost" size="icon-sm" className="bg-background/84" onClick={() => toggleDrama(item.id)}>
                               {importedDrama.expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
@@ -909,7 +949,7 @@ export function SearchResults({
                             </Button>
                           )}
                         </div>
-                        <div className="relative size-20 shrink-0 self-start overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
+                        <div className="relative size-20 shrink-0 self-center overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
                           {coverUrl ? (
                             <img alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
                           ) : (
@@ -923,7 +963,7 @@ export function SearchResults({
                             </Badge>
                           ) : null}
                         </div>
-                        <div className="flex min-w-0 flex-1 flex-col gap-1 lg:h-24 lg:justify-between lg:gap-0">
+                        <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 lg:min-h-24 lg:gap-1">
                           <div className="hidden min-w-0 flex-wrap items-center gap-1.5 lg:flex">
                             <span className={`min-w-0 break-words ${getTitleClassName(item.name)}`}>{item.name}</span>
                             {titleTags.map((label) => (
@@ -1054,8 +1094,8 @@ export function SearchResults({
                       />
                     ) : null}
 
-                    <div className="flex flex-wrap gap-1.5 lg:hidden">
-                      <div className={resultActionControlClass}>
+                    <div className={mobileResultActionsClass}>
+                      <div className={mobileResultActionControlClass}>
                         <Switch
                           aria-label="切换当前作品全选"
                           size="sm"
@@ -1065,7 +1105,7 @@ export function SearchResults({
                         />
                         <span>全选</span>
                       </div>
-                      <div className={resultActionControlClass}>
+                      <div className={mobileResultActionControlClass}>
                         <Switch
                           aria-label="切换当前作品付费分集"
                           size="sm"
@@ -1078,7 +1118,7 @@ export function SearchResults({
                       <Button
                         type="button"
                         variant="secondary"
-                        className={resultActionButtonClass}
+                        className={mobileResultActionButtonClass}
                         onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
                       >
                         <UserSearchIcon data-icon="inline-start" />
@@ -1087,7 +1127,7 @@ export function SearchResults({
                       <Button
                         type="button"
                         variant="secondary"
-                        className={resultActionButtonClass}
+                        className={mobileResultActionButtonClass}
                         onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
                       >
                         <HandCoinsIcon data-icon="inline-start" />

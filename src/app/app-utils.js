@@ -795,7 +795,20 @@ export function formatDeviceDateTime(value, options = {}) {
     return "未知";
   }
 
-  const date = value instanceof Date ? value : new Date(normalized);
+  let date = value instanceof Date ? value : null;
+  if (!date) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      date = new Date(value);
+    } else if (/^\d{11,}$/.test(normalized)) {
+      const timestamp = Number(normalized);
+      date = Number.isFinite(timestamp) ? new Date(timestamp) : new Date(normalized);
+    } else if (/^\d{10}$/.test(normalized)) {
+      const timestamp = Number(normalized) * 1000;
+      date = Number.isFinite(timestamp) ? new Date(timestamp) : new Date(normalized);
+    } else {
+      date = new Date(normalized);
+    }
+  }
   if (Number.isNaN(date.getTime())) {
     return normalized;
   }
@@ -819,33 +832,14 @@ export function formatDeviceDateTime(value, options = {}) {
       return map;
     }, {});
 
-  let timeZoneLabel = "";
-  try {
-    const timeZoneOptions = {
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZoneName: "short",
-    };
-    if (options.timeZone) {
-      timeZoneOptions.timeZone = options.timeZone;
-    }
-    timeZoneLabel =
-      new Intl.DateTimeFormat("en-US", timeZoneOptions)
-        .formatToParts(date)
-        .find((part) => part.type === "timeZoneName")?.value || "";
-  } catch {
-    timeZoneLabel = "";
-  }
-
-  const suffix = timeZoneLabel ? `（${timeZoneLabel}）` : "";
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}${suffix}`;
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 function trimTrailingZero(value) {
   return value.replace(/\.?0+$/, "");
 }
 
-function formatCompactMetricValue(value) {
+export function formatCompactMetricValue(value) {
   const amount = Number(value ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) {
     return "0";
@@ -860,6 +854,15 @@ function formatCompactMetricValue(value) {
     return `${amount}`;
   }
   return trimTrailingZero(amount.toFixed(2));
+}
+
+export function formatSignedCompactMetricValue(value) {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount) || amount === 0) {
+    return "0";
+  }
+  const sign = amount > 0 ? "+" : "-";
+  return `${sign}${formatCompactMetricValue(Math.abs(amount))}`;
 }
 
 function hasRevenueRangeValues(result) {

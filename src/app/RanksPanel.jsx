@@ -43,6 +43,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -252,7 +253,16 @@ function getRankMetrics(platform, item, rankKey = "") {
   return metrics;
 }
 
-function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
+function RankItemCard({
+  item,
+  platform,
+  rankKey = "",
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+  favoriteKeys = new Set(),
+  onToggleFavorite,
+}) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const metrics = getRankMetrics(platform, item, rankKey);
   const isMissevanPeak = platform === "missevan" && item.type === "peak";
@@ -271,6 +281,10 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
       ? [item.id]
       : [];
   const canOpenSearchResult = Boolean(onOpenSearchResult && platform && searchDramaIds.length);
+  const favoriteDramaId = String(searchDramaIds[0] ?? item.id ?? "").trim();
+  const canToggleFavorite = !isMissevanPeak && Boolean(favoriteDramaId);
+  const favoriteKey = favoriteDramaId ? `${platform}:${favoriteDramaId}` : "";
+  const isFavorite = Boolean(canToggleFavorite && favoriteKey && favoriteKeys?.has?.(favoriteKey));
   const mainCvText = String(item.main_cv_text ?? "").replace(/^主要CV：/, "");
   const peakPlayMetric = isMissevanPeak
     ? { label: "系列总播放量", iconLabel: "总播放量", value: formatPlainNumber(item.view_count) }
@@ -359,11 +373,43 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
     });
   }
 
+  function toggleFavorite() {
+    if (!canToggleFavorite) {
+      return;
+    }
+    onToggleFavorite?.({
+      platform,
+      dramaId: favoriteDramaId,
+      title: item.name,
+      cover: item.cover || "",
+      paymentLabel: paymentTag,
+      contentTypeLabel: titleTags[0] || "",
+      dramaUpdatedAt: item.updated_at || "",
+      mainCvText: item.main_cv_text || "",
+      source: "ranks",
+    });
+  }
+
   return (
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
       <CardContent className="px-3.5">
         <div className="flex gap-3">
-          <RankBadge rank={item.rank} />
+          <div className="flex shrink-0 flex-col items-center gap-2">
+            <RankBadge rank={item.rank} />
+            {canToggleFavorite ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="bg-background/84"
+                onClick={toggleFavorite}
+                aria-label={isFavorite ? "取消收藏" : "加入收藏"}
+                title={isFavorite ? "取消收藏" : "加入收藏"}
+              >
+                <StarIcon className={isFavorite ? "fill-primary text-primary" : ""} />
+              </Button>
+            ) : null}
+          </div>
           <div className="relative size-20 shrink-0 overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
             {coverUrl ? (
               <img alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
@@ -512,7 +558,15 @@ function RankItemCard({ item, platform, rankKey = "", frontendVersion = "0.0.0",
   );
 }
 
-function RankColumn({ rank, platform, frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
+function RankColumn({
+  rank,
+  platform,
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+  favoriteKeys = new Set(),
+  onToggleFavorite,
+}) {
   return (
     <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -533,6 +587,8 @@ function RankColumn({ rank, platform, frontendVersion = "0.0.0", handleVersionRe
               frontendVersion={frontendVersion}
               handleVersionResponse={handleVersionResponse}
               onOpenSearchResult={onOpenSearchResult}
+              favoriteKeys={favoriteKeys}
+              onToggleFavorite={onToggleFavorite}
             />
           ))}
         </div>
@@ -1063,7 +1119,13 @@ function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
   );
 }
 
-export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
+export function RanksPanel({
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+  favoriteKeys = new Set(),
+  onToggleFavorite,
+}) {
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -1308,6 +1370,8 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse, o
                 frontendVersion={frontendVersion}
                 handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={onToggleFavorite}
               />
             ))}
           </div>
@@ -1320,6 +1384,8 @@ export function RanksPanel({ frontendVersion = "0.0.0", handleVersionResponse, o
                 frontendVersion={frontendVersion}
                 handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={onToggleFavorite}
               />
             ) : null}
           </div>

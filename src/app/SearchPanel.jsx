@@ -115,6 +115,22 @@ export function SearchPanel({
     showBlockingNotice("关键词太短", "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。");
   }
 
+  function buildSearchPath(targetPlatform, keyword, options = {}) {
+    const offset = Number(options.offset ?? 0) || 0;
+    const limit = Number(options.limit ?? 5) || 5;
+    const basePath =
+      targetPlatform === "manbo"
+        ? `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${limit}`
+        : `/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${limit}`;
+    if (targetPlatform === "missevan" && options.apiFallback === false && (!isDesktopApp || options.localOnly === true)) {
+      return `${basePath}&apiFallback=0`;
+    }
+    if (targetPlatform === "manbo" && options.apiFallback === false) {
+      return `${basePath}&apiFallback=0`;
+    }
+    return basePath;
+  }
+
   async function queryNumericLibraryLookup(keyword) {
     if (isSearchPending) {
       return { handled: true, matched: false };
@@ -130,10 +146,7 @@ export function SearchPanel({
     setIsSearchPending(true);
 
     try {
-      const searchPath =
-        platform === "manbo"
-          ? `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5`
-          : `/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5&apiFallback=0`;
+      const searchPath = buildSearchPath(platform, keyword, { apiFallback: false });
       const response = await fetch(buildVersionedUrl(searchPath, frontendVersion));
       const data = await parseVersionedJson(response);
       const results = Array.isArray(data.results) ? data.results : [];
@@ -176,7 +189,7 @@ export function SearchPanel({
       if (platform === "manbo") {
         const response = await fetch(
           buildVersionedUrl(
-            `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5`,
+            buildSearchPath("manbo", keyword),
             frontendVersion
           )
         );
@@ -195,7 +208,7 @@ export function SearchPanel({
           try {
             const fallbackResponse = await fetch(
               buildVersionedUrl(
-                `/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5&apiFallback=0`,
+                buildSearchPath("missevan", keyword, { apiFallback: false, localOnly: true }),
                 frontendVersion
               )
             );
@@ -224,7 +237,7 @@ export function SearchPanel({
 
       const response = await fetch(
         buildVersionedUrl(
-          `/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5`,
+          buildSearchPath("missevan", keyword),
           frontendVersion
         )
       );
@@ -234,7 +247,7 @@ export function SearchPanel({
         try {
           const fallbackResponse = await fetch(
             buildVersionedUrl(
-              `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5&apiFallback=0`,
+              buildSearchPath("manbo", keyword, { apiFallback: false }),
               frontendVersion
             )
           );

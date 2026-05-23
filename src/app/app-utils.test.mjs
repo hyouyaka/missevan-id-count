@@ -7,6 +7,7 @@ import {
   classifyMergedSearchInput,
   createStatsHistoryEntry,
   getHistoryMetricIconKey,
+  formatSignedCompactMetricValue,
   formatDeviceDateTime,
   formatRevenueDisplayValue,
   getRevenueDisplayLabel,
@@ -313,11 +314,32 @@ test("shouldUseManboLibraryFallbackForMissevanSearch handles empty Missevan API 
   );
 });
 
-test("formatDeviceDateTime formats 24-hour local time with timezone label", () => {
+test("formatDeviceDateTime formats 24-hour local time without timezone suffix", () => {
   assert.equal(
     formatDeviceDateTime("2026-05-11T00:26:00.000Z", { timeZone: "America/New_York" }),
-    "2026-05-10 20:26（EDT）"
+    "2026-05-10 20:26"
   );
+});
+
+test("formatDeviceDateTime treats numeric strings as browser-local millisecond timestamps", () => {
+  assert.equal(
+    formatDeviceDateTime("1779179144169", { timeZone: "America/New_York" }),
+    "2026-05-19 04:25"
+  );
+});
+
+test("formatDeviceDateTime treats numeric strings as browser-local second timestamps", () => {
+  assert.equal(
+    formatDeviceDateTime("1779179144", { timeZone: "America/New_York" }),
+    "2026-05-19 04:25"
+  );
+});
+
+test("formatSignedCompactMetricValue preserves negative compact deltas", () => {
+  assert.equal(formatSignedCompactMetricValue(-5), "-5");
+  assert.equal(formatSignedCompactMetricValue(-12345), "-1.2万");
+  assert.equal(formatSignedCompactMetricValue(12345), "+1.2万");
+  assert.equal(formatSignedCompactMetricValue(0), "0");
 });
 
 test("createStatsHistoryEntry keeps successful revenue items when some dramas fail", () => {

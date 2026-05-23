@@ -50,7 +50,9 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
 });
 
 test("changelog contains 1.5.5 search and trend entry", () => {
-  assert.deepEqual(CHANGELOG_ENTRIES[0], {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.5.5");
+
+  assert.deepEqual(entry, {
     version: "1.5.5",
     changes: [
       "优化搜索：支持全拼和首字母搜索，疑似搜错平台会提示跳转",

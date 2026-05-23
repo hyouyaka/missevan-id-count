@@ -425,6 +425,57 @@ test("Manbo API search usage log entries describe real external calls", async ()
   );
 });
 
+test("favorite usage log entries are accepted and sanitized", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildFavoriteUsageLog } = await import("./server.js");
+
+  assert.deepEqual(
+    buildFavoriteUsageLog({
+      platform: "missevan",
+      action: "favorite_add",
+      dramaId: "93038",
+      dramaName: "一屋暗灯",
+      source: "search",
+    }),
+    {
+      platform: "missevan",
+      action: "favorite_add",
+      dramaId: "93038",
+      dramaName: "一屋暗灯",
+      source: "search",
+      success: true,
+    }
+  );
+  assert.equal(buildFavoriteUsageLog({ platform: "manbo", action: "favorite_remove", dramaId: "1467142227078676553" }).action, "favorite_remove");
+  assert.equal(buildFavoriteUsageLog({ platform: "missevan", action: "favorite_add", dramaId: "" }), null);
+});
+
+test("stats task source is normalized for favorite refresh logs", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeStatsTaskSource } = await import("./server.js");
+
+  assert.equal(normalizeStatsTaskSource(" favorite "), "favorite");
+  assert.equal(normalizeStatsTaskSource("x".repeat(80)), "x".repeat(40));
+  assert.equal(normalizeStatsTaskSource(""), "");
+});
+
+test("desktop favorites read errors keep a JSON response payload with file path", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildDesktopFavoritesReadErrorPayload } = await import("./server.js");
+  const payload = buildDesktopFavoritesReadErrorPayload("C:\\portable\\mm-toolkit-favorites.json");
+
+  assert.equal(payload.success, false);
+  assert.equal(payload.message, "桌面收藏 JSON 读取失败");
+  assert.equal(payload.exists, false);
+  assert.equal(payload.filePath, "C:\\portable\\mm-toolkit-favorites.json");
+  assert.deepEqual(payload.data.favorites, []);
+  assert.deepEqual(payload.data.snapshots, []);
+  assert.deepEqual(payload.data.settings, {
+    deltaMetric: "viewCount",
+    sortBy: "lastSnapshotAt",
+  });
+});
+
 test("Manbo API search candidates normalize to search result cards", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { normalizeManboSearchApiCandidate, buildManboApiSearchFallbackCard } = await import("./server.js");
@@ -528,6 +579,36 @@ test("Manbo API search payload parser rejects business error responses", async (
       }),
     /Manbo search API error 429: too many requests/
   );
+});
+
+test("Missevan drama detail exposes lastupdate_time as updated_at", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeMissevanDramaInfo } = await import("./server.js");
+
+  const info = normalizeMissevanDramaInfo({
+    drama: {
+      id: 29187,
+      name: "吞海 第一季",
+      lastupdate_time: "2026-05-18 12:34:56",
+    },
+    episodes: { episode: [] },
+  });
+
+  assert.equal(info.drama.updated_at, "2026-05-18 12:34:56");
+});
+
+test("Manbo drama detail exposes updateTime as updated_at", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeManboDramaInfo } = await import("./server.js");
+
+  const info = normalizeManboDramaInfo({
+    radioDramaIdStr: "123456789012345678",
+    title: "测试漫播剧",
+    updateTime: "2026-05-18T12:34:56+08:00",
+    setRespList: [],
+  });
+
+  assert.equal(info.drama.updated_at, "2026-05-18T12:34:56+08:00");
 });
 
 test("Missevan library search ranks complete term prefixes above ordinary prefixes", async () => {

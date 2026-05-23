@@ -69,6 +69,8 @@ const APP_VERSION = String(packageJson.version || "0.0.0").trim() || "0.0.0";
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || "1mb").trim() || "1mb";
 const MISSEVAN_ENABLED = process.env.ENABLE_MISSEVAN !== "false";
 const DESKTOP_APP = process.env.DESKTOP_APP === "true";
+const DESKTOP_EXE_DIR = String(process.env.DESKTOP_EXE_DIR || "").trim();
+const DESKTOP_FAVORITES_FILE_NAME = "mm-toolkit-favorites.json";
 const MISSEVAN_COOLDOWN_HOURS = Math.max(
   1,
   Number(process.env.MISSEVAN_COOLDOWN_HOURS ?? 4) || 4
@@ -319,6 +321,171 @@ app.use((req, res, next) => {
   next();
 });
 
+function getDesktopFavoritesFilePath() {
+  return path.join(DESKTOP_EXE_DIR || appDataDir, DESKTOP_FAVORITES_FILE_NAME);
+}
+
+function normalizeDesktopFavoriteString(value) {
+  return String(value ?? "").trim();
+}
+
+function normalizeDesktopFavoriteTimestamp(value, fallback = 0) {
+  const timestamp = Number(value ?? fallback);
+  return Number.isFinite(timestamp) && timestamp > 0 ? Math.trunc(timestamp) : fallback;
+}
+
+function normalizeDesktopFavoriteRecord(record = {}) {
+  const platform = normalizeDesktopFavoriteString(record.platform);
+  const dramaId = normalizeDesktopFavoriteString(record.dramaId ?? record.id);
+  if (!["missevan", "manbo"].includes(platform) || !dramaId) {
+    return null;
+  }
+  const key = `${platform}:${dramaId}`;
+  const now = Date.now();
+  const createdAt = normalizeDesktopFavoriteTimestamp(record.createdAt, now);
+  const updatedAt = normalizeDesktopFavoriteTimestamp(record.updatedAt, createdAt);
+  return {
+    key,
+    platform,
+    dramaId,
+    title: normalizeDesktopFavoriteString(record.title ?? record.name) || key,
+    cover: normalizeDesktopFavoriteString(record.cover),
+    paymentLabel: normalizeDesktopFavoriteString(record.paymentLabel ?? record.payment_label),
+    contentTypeLabel: normalizeDesktopFavoriteString(record.contentTypeLabel ?? record.content_type_label),
+    dramaUpdatedAt: normalizeDesktopFavoriteString(record.dramaUpdatedAt ?? record.drama_updated_at ?? record.updated_at),
+    mainCvText: normalizeDesktopFavoriteString(record.mainCvText ?? record.main_cv_text),
+    createdAt,
+    updatedAt,
+    lastSnapshotAt: normalizeDesktopFavoriteTimestamp(record.lastSnapshotAt, 0),
+  };
+}
+
+function normalizeDesktopFavoriteMetricNumber(value, fallback = 0) {
+  if (value == null || value === "") {
+    return fallback;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.trunc(number) : fallback;
+}
+
+function normalizeDesktopFavoriteSnapshot(record = {}) {
+  const platform = normalizeDesktopFavoriteString(record.platform);
+  const dramaId = normalizeDesktopFavoriteString(record.dramaId ?? record.id);
+  const favoriteKey = normalizeDesktopFavoriteString(record.favoriteKey) || `${platform}:${dramaId}`;
+  if (!["missevan", "manbo"].includes(platform) || !dramaId || !favoriteKey) {
+    return null;
+  }
+  const capturedAt = normalizeDesktopFavoriteTimestamp(record.capturedAt, Date.now());
+  const sourceMetrics = record.metrics && typeof record.metrics === "object" ? record.metrics : {};
+  const errors = Array.isArray(record.errors)
+    ? record.errors.map((item) => normalizeDesktopFavoriteString(item)).filter(Boolean)
+    : [];
+  return {
+    id: normalizeDesktopFavoriteString(record.id) || `${favoriteKey}:${capturedAt}`,
+    favoriteKey,
+    platform,
+    dramaId,
+    capturedAt,
+    status: normalizeDesktopFavoriteString(record.status) || (errors.length ? "partial" : "success"),
+    metrics: {
+      viewCount: normalizeDesktopFavoriteMetricNumber(sourceMetrics.viewCount, 0),
+      subscriptionCount: normalizeDesktopFavoriteMetricNumber(sourceMetrics.subscriptionCount, 0),
+      rewardCount: sourceMetrics.rewardCount == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.rewardCount, 0),
+      rewardTotal: sourceMetrics.rewardTotal == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.rewardTotal, 0),
+      giftTotal: sourceMetrics.giftTotal == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.giftTotal, 0),
+      paidOrListenCount: sourceMetrics.paidOrListenCount == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.paidOrListenCount, 0),
+      paidIdCount: normalizeDesktopFavoriteMetricNumber(sourceMetrics.paidIdCount, 0),
+    },
+    errors,
+  };
+}
+
+function normalizeDesktopFavoriteSettings(settings = {}) {
+  const deltaMetric = ["viewCount", "subscriptionCount", "rewardCount", "rewardTotal", "paidOrListenCount", "paidIdCount"].includes(settings?.deltaMetric)
+    ? settings.deltaMetric
+    : "viewCount";
+  const sortBy = ["lastSnapshotAt", "viewCount", "subscriptionCount", "rewardTotal", "paidIdCount"].includes(settings?.sortBy)
+    ? settings.sortBy
+    : "lastSnapshotAt";
+  return { deltaMetric, sortBy };
+}
+
+function normalizeDesktopFavoritesBackup(payload = {}) {
+  const favoritesByKey = new Map();
+  (Array.isArray(payload?.favorites) ? payload.favorites : []).forEach((item) => {
+    const favorite = normalizeDesktopFavoriteRecord(item);
+    if (!favorite) {
+      return;
+    }
+    const previous = favoritesByKey.get(favorite.key);
+    if (!previous || Number(favorite.updatedAt) >= Number(previous.updatedAt)) {
+      favoritesByKey.set(favorite.key, favorite);
+    }
+  });
+  const snapshotsById = new Map();
+  (Array.isArray(payload?.snapshots) ? payload.snapshots : []).forEach((item) => {
+    const snapshot = normalizeDesktopFavoriteSnapshot(item);
+    if (snapshot) {
+      snapshotsById.set(snapshot.id, snapshot);
+    }
+  });
+  return {
+    app: "mm-toolkit",
+    type: "favorites-backup",
+    version: 1,
+    exportedAt: normalizeDesktopFavoriteString(payload?.exportedAt) || new Date().toISOString(),
+    favorites: Array.from(favoritesByKey.values()),
+    snapshots: Array.from(snapshotsById.values()),
+    settings: normalizeDesktopFavoriteSettings(payload?.settings),
+  };
+}
+
+function ensureDesktopFavoritesRequest(res) {
+  if (!DESKTOP_APP) {
+    res.status(404).json({ success: false, message: "Desktop favorites are unavailable" });
+    return false;
+  }
+  return true;
+}
+
+export function buildDesktopFavoritesReadErrorPayload(filePath = getDesktopFavoritesFilePath()) {
+  return {
+    success: false,
+    message: "桌面收藏 JSON 读取失败",
+    exists: false,
+    data: normalizeDesktopFavoritesBackup({}),
+    filePath,
+  };
+}
+
+async function writeDesktopFavoritesFile(data) {
+  const filePath = getDesktopFavoritesFilePath();
+  const payload = `${JSON.stringify(normalizeDesktopFavoritesBackup(data), null, 2)}\n`;
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(tempPath, payload, "utf8");
+  await fs.rename(tempPath, filePath);
+  return filePath;
+}
+
+async function readDesktopFavoritesFile() {
+  const filePath = getDesktopFavoritesFilePath();
+  try {
+    const content = await fs.readFile(filePath, "utf8");
+    const trimmed = String(content || "").trim();
+    return {
+      exists: true,
+      data: trimmed ? JSON.parse(trimmed) : null,
+      filePath,
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { exists: false, data: null, filePath };
+    }
+    throw error;
+  }
+}
+
 app.get("/app-config", (req, res) => {
   const frontendVersion = getFrontendVersionFromRequest(req);
   res.json({
@@ -337,6 +504,62 @@ app.get("/app-config", (req, res) => {
     frontendVersion,
     versionMismatch: frontendVersion !== APP_VERSION,
   });
+});
+
+app.get("/desktop/favorites-data", async (req, res) => {
+  if (!ensureDesktopFavoritesRequest(res)) {
+    return;
+  }
+  const filePath = getDesktopFavoritesFilePath();
+  try {
+    const { exists, data } = await readDesktopFavoritesFile();
+    return res.json({
+      success: true,
+      exists,
+      data: normalizeDesktopFavoritesBackup(data || {}),
+      filePath,
+    });
+  } catch (error) {
+    console.error("Failed to read desktop favorites JSON", error);
+    return res.status(500).json(buildDesktopFavoritesReadErrorPayload(filePath));
+  }
+});
+
+app.put("/desktop/favorites-data", async (req, res) => {
+  if (!ensureDesktopFavoritesRequest(res)) {
+    return;
+  }
+  try {
+    const data = normalizeDesktopFavoritesBackup(req.body || {});
+    const filePath = await writeDesktopFavoritesFile(data);
+    return res.json({
+      success: true,
+      exists: true,
+      data,
+      filePath,
+    });
+  } catch (error) {
+    console.error("Failed to write desktop favorites JSON", error);
+    return res.status(500).json({
+      success: false,
+      message: "桌面收藏 JSON 写入失败",
+    });
+  }
+});
+
+app.get("/favorites/meta", async (req, res) => {
+  const platform = normalizeTextValue(req.query.platform);
+  const dramaId = normalizeTextValue(req.query.dramaId ?? req.query.id);
+  try {
+    const meta = await buildFavoriteMetaFromInfoStore(platform, dramaId);
+    if (!meta) {
+      return res.json({ success: false, mainCvText: "" });
+    }
+    return res.json({ success: true, ...meta });
+  } catch (error) {
+    console.error("Failed to load favorite meta", error);
+    return res.status(500).json({ success: false, message: "收藏元数据读取失败", mainCvText: "" });
+  }
 });
 
 function sleep(ms) {
@@ -373,6 +596,7 @@ function buildStatsTaskSnapshot(task) {
     totalDanmaku: task.totalDanmaku,
     totalUsers: task.totalUsers,
     accessDenied: task.accessDenied,
+    source: task.source,
     result:
       task.status === "completed" || task.status === "cancelled"
         ? task.result
@@ -970,6 +1194,30 @@ export function buildManboSearchApiUsageLog(keyword, options = {}) {
     matchedCount,
     cached: false,
     ...(error ? { error: message } : {}),
+  };
+}
+
+export function normalizeStatsTaskSource(value) {
+  return normalizeTextValue(value).slice(0, 40);
+}
+
+export function buildFavoriteUsageLog(payload = {}) {
+  const platform = normalizeTextValue(payload.platform);
+  const action = normalizeTextValue(payload.action);
+  const dramaId = normalizeTextValue(payload.dramaId ?? payload.id).slice(0, 80);
+  if (!["missevan", "manbo"].includes(platform) || !["favorite_add", "favorite_remove"].includes(action) || !dramaId) {
+    return null;
+  }
+
+  const dramaName = normalizeTextValue(payload.dramaName ?? payload.name).slice(0, 200);
+  const source = normalizeStatsTaskSource(payload.source);
+  return {
+    platform,
+    action,
+    dramaId,
+    ...(dramaName ? { dramaName } : {}),
+    ...(source ? { source } : {}),
+    success: true,
   };
 }
 
@@ -2912,6 +3160,30 @@ function getManboMainCvNames(record) {
   return nicknames;
 }
 
+async function buildFavoriteMetaFromInfoStore(platform, dramaId) {
+  const normalizedPlatform = platform === "manbo" ? "manbo" : platform === "missevan" ? "missevan" : "";
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  if (!normalizedPlatform || !isNumericId(normalizedDramaId)) {
+    return null;
+  }
+
+  const store = getInfoStore(normalizedPlatform);
+  await ensureInfoStoreLoaded(store);
+  const record = store.byDramaId.get(normalizedDramaId);
+  if (!record) {
+    return null;
+  }
+
+  const mainCvs = normalizedPlatform === "manbo" ? getManboMainCvNames(record) : getMissevanMainCvNames(record);
+  const mainCvText = buildMainCvText(mainCvs);
+  return {
+    platform: normalizedPlatform,
+    dramaId: normalizedDramaId,
+    mainCvText,
+    main_cv_text: mainCvText,
+  };
+}
+
 function buildManboSearchFallbackCard(record) {
   const mainCvs = getManboMainCvNames(record);
   const card = {
@@ -3852,7 +4124,7 @@ async function fetchImageBufferWithRetry(targetUrl) {
   throw error;
 }
 
-function normalizeMissevanDramaInfo(info) {
+export function normalizeMissevanDramaInfo(info) {
   if (!info?.drama) {
     return null;
   }
@@ -3873,6 +4145,9 @@ function normalizeMissevanDramaInfo(info) {
       is_member: Number(drama.vip ?? 0) === 1,
       view_count: Number(drama.view_count ?? 0),
       subscription_num: Number(drama.subscription_num ?? 0),
+      updated_at: normalizeTextValue(
+        drama.updated_at ?? drama.updatedAt ?? drama.lastupdate_time ?? drama.lastUpdateTime
+      ),
       platform: "missevan",
       pay_type: normalizeMissevanPayType(drama.pay_type ?? drama.payType),
     },
@@ -3952,12 +4227,10 @@ async function fetchDramaInfo(dramaId, soundId = null) {
       soundId ?? normalized?.episodes?.episode?.[0]?.sound_id
     );
 
-    if (
-      !soundId
-      && normalized
-      && Number(normalized?.drama?.subscription_num ?? 0) <= 0
-      && resolvedSoundId > 0
-    ) {
+    const needsSubscriptionBackfill = Number(normalized?.drama?.subscription_num ?? 0) <= 0;
+    const needsUpdatedAtBackfill = !normalizeTextValue(normalized?.drama?.updated_at);
+
+    if (!soundId && normalized && resolvedSoundId > 0 && (needsSubscriptionBackfill || needsUpdatedAtBackfill)) {
       try {
         const bySoundData = await fetchJsonWithRetry(
           `https://www.missevan.com/dramaapi/getdramabysound?sound_id=${resolvedSoundId}`,
@@ -3968,12 +4241,14 @@ async function fetchDramaInfo(dramaId, soundId = null) {
         if (bySoundData?.success && bySoundData?.info) {
           const bySoundNormalized = normalizeMissevanDramaInfo(bySoundData.info);
           const bySoundSubscriptionNum = Number(bySoundNormalized?.drama?.subscription_num ?? 0);
-          if (bySoundSubscriptionNum > 0) {
+          const bySoundUpdatedAt = normalizeTextValue(bySoundNormalized?.drama?.updated_at);
+          if (bySoundSubscriptionNum > 0 || bySoundUpdatedAt) {
             normalized = {
               ...normalized,
               drama: {
                 ...normalized.drama,
-                subscription_num: bySoundSubscriptionNum,
+                ...(bySoundSubscriptionNum > 0 ? { subscription_num: bySoundSubscriptionNum } : {}),
+                ...(bySoundUpdatedAt ? { updated_at: bySoundUpdatedAt } : {}),
               },
             };
           }
@@ -4198,7 +4473,8 @@ async function fetchManboV530DramaPayload(dramaId) {
   return null;
 }
 
-async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "") {
+async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "", rawSource = "") {
+  const source = normalizeStatsTaskSource(rawSource);
   const cacheKey = String(soundId);
   const cached = getCachedValue(danmakuCache, cacheKey, SOUND_SUMMARY_CACHE_TTL_MS);
   if (cached) {
@@ -4213,6 +4489,7 @@ async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "") {
       userCount: Array.isArray(cached.users) ? cached.users.length : 0,
       accessDenied: Boolean(cached.accessDenied),
       cached: true,
+      ...(source ? { source } : {}),
       ...(cached.error ? { error: cached.error } : {}),
     });
     return {
@@ -4263,6 +4540,7 @@ async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "") {
       userCount: users.size,
       accessDenied: false,
       cached: false,
+      ...(source ? { source } : {}),
     });
 
     return {
@@ -4287,6 +4565,7 @@ async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "") {
       userCount: 0,
       accessDenied,
       cached: false,
+      ...(source ? { source } : {}),
       error: message,
     });
 
@@ -4303,7 +4582,7 @@ async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "") {
   }
 }
 
-function normalizeManboDramaInfo(raw) {
+export function normalizeManboDramaInfo(raw) {
   if (!raw) {
     return null;
   }
@@ -4371,6 +4650,9 @@ function normalizeManboDramaInfo(raw) {
       subscription_num: subscriptionCount,
       pay_count: normalizeOptionalFiniteNumber(raw.payCount),
       diamond_value: diamondValue,
+      updated_at: normalizeTextValue(
+        pickFirstDefined(raw.updated_at, raw.updatedAt, raw.updateTime, raw.update_time)
+      ),
       pay_type: Number(raw.payType ?? raw.setPayType ?? 0),
       member_price: memberPrice,
       vip_free: vipFree,
@@ -4971,7 +5253,8 @@ async function fetchManboSetSummary(setId) {
   };
 }
 
-async function fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle = "") {
+async function fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle = "", rawSource = "") {
+  const source = normalizeStatsTaskSource(rawSource);
   const resolvedEpisodeTitle = resolveManboEpisodeTitle(setId, episodeTitle);
   const cached = getCachedValue(
     manboDanmakuCache,
@@ -4990,6 +5273,7 @@ async function fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle = "") {
       userCount: Array.isArray(cached.users) ? cached.users.length : 0,
       accessDenied: Boolean(cached.accessDenied),
       cached: true,
+      ...(source ? { source } : {}),
       ...(cached.error ? { error: cached.error } : {}),
     });
     return {
@@ -5090,6 +5374,7 @@ async function fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle = "") {
         userCount: users.size,
         accessDenied: false,
         cached: false,
+        ...(source ? { source } : {}),
         pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
         totalPages,
         durationMs: Date.now() - startedAt,
@@ -5117,6 +5402,7 @@ async function fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle = "") {
         userCount: 0,
         accessDenied,
         cached: false,
+        ...(source ? { source } : {}),
         error: message,
         pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
         durationMs: Date.now() - startedAt,
@@ -5539,7 +5825,7 @@ async function executeMissevanIdTask(task) {
     const episodeTitle = String(episode?.episode_title ?? episode?.name ?? "").trim();
     const durationMs = Number(episode?.duration ?? 0);
     try {
-      const result = await fetchDanmakuSummary(soundId, dramaTitle, episodeTitle);
+      const result = await fetchDanmakuSummary(soundId, dramaTitle, episodeTitle, task.source);
       if (result.success) {
         const drama = dramaMap.get(dramaId || dramaTitle);
         if (drama) {
@@ -5639,7 +5925,7 @@ async function executeManboIdTask(task) {
       const dramaTitle = String(episode?.drama_title ?? "").trim() || "Unknown";
       const episodeTitle = String(episode?.episode_title ?? episode?.name ?? "").trim();
       try {
-        const result = await fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle);
+        const result = await fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle, task.source);
         if (result.success) {
           const drama = dramaMap.get(dramaId || dramaTitle);
           if (drama) {
@@ -5972,7 +6258,8 @@ async function executeMissevanRevenueTask(task) {
         const danmakuResult = await fetchDanmakuSummary(
           episode.sound_id,
           title,
-          String(episode?.name ?? "").trim()
+          String(episode?.name ?? "").trim(),
+          task.source
         );
         if (!danmakuResult.success) {
           failed = true;
@@ -6268,7 +6555,8 @@ async function executeManboRevenueTask(task) {
           const danmakuResult = await fetchManboDanmakuSummary(
             episode.sound_id,
             title,
-            String(episode?.name ?? "").trim()
+            String(episode?.name ?? "").trim(),
+            task.source
           );
           if (!danmakuResult.success) {
             failed = true;
@@ -6899,6 +7187,18 @@ app.post("/usage-log", async (req, res) => {
         keyword,
         success: true,
       });
+      return res.json({ success: true });
+    }
+
+    if (["favorite_add", "favorite_remove"].includes(action)) {
+      const entry = buildFavoriteUsageLog(payload);
+      if (!entry) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid usage log payload",
+        });
+      }
+      await writeUsageLog(entry);
       return res.json({ success: true });
     }
 
@@ -7555,7 +7855,7 @@ function normalizeTaskDramaIds(rawDramaIds = [], platform = "missevan") {
   );
 }
 
-function createStatsTask({ platform, taskType, episodes = [], dramaIds = [] }) {
+function createStatsTask({ platform, taskType, episodes = [], dramaIds = [], source = "" }) {
   const taskId = createTaskId();
   const task = {
     taskId,
@@ -7570,6 +7870,7 @@ function createStatsTask({ platform, taskType, episodes = [], dramaIds = [] }) {
     totalDanmaku: 0,
     totalUsers: 0,
     accessDenied: false,
+    source: normalizeStatsTaskSource(source),
     episodes,
     dramaIds,
     result: null,
@@ -7603,6 +7904,7 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
   const normalizedTaskType = taskType || defaultTaskType || "";
   const episodes = normalizeTaskEpisodes(req.body?.episodes);
   const dramaIds = normalizeTaskDramaIds(req.body?.dramaIds, platform);
+  const source = normalizeStatsTaskSource(req.body?.source);
 
   if (!["play_count", "id", "revenue"].includes(normalizedTaskType)) {
     res.status(400).json({ error: "Invalid taskType" });
@@ -7624,6 +7926,7 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
     taskType: normalizedTaskType,
     episodes,
     dramaIds,
+    source,
   });
 }
 

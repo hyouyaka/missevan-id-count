@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCwIcon,
   AlertTriangleIcon,
   ChartNoAxesColumnIncreasingIcon,
   Clock3Icon,
+  FileSpreadsheetIcon,
   MessageSquarePlusIcon,
+  StarIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ChangelogButton, ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { DesktopReportPanel } from "@/app/DesktopReportPanel";
+import { FavoritesPanel } from "@/app/FavoritesPanel";
 import { MessageDialog } from "@/app/MessageDialog";
 import { OngoingPanel } from "@/app/OngoingPanel";
 import { OutputPanel } from "@/app/OutputPanel";
@@ -17,6 +20,12 @@ import { RanksPanel } from "@/app/RanksPanel";
 import { SearchPanel } from "@/app/SearchPanel";
 import { SearchResults } from "@/app/SearchResults";
 import { canParseShareUrl, decryptShareUrl, extractResolvedId } from "@/utils/manboCrypto";
+import {
+  createFavoriteKey,
+  listFavorites,
+  removeFavoriteWithSnapshots,
+  saveFavorite,
+} from "@/app/favoritesStorage";
 import {
   buildRevenueSummary,
   buildUniqueUserIds,
@@ -46,8 +55,11 @@ import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
+  AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
@@ -60,6 +72,8 @@ import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 const mainNavigationIconMap = {
   ongoing: Clock3Icon,
   ranks: ChartNoAxesColumnIncreasingIcon,
+  favorites: StarIcon,
+  report: FileSpreadsheetIcon,
 };
 const headerActionButtonStyle = { fontSize: 14 };
 
@@ -98,6 +112,8 @@ export function ToolView({ initialAppConfig }) {
   });
   const [notice, setNotice] = useState(null);
   const [searchJumpStatus, setSearchJumpStatus] = useState(null);
+  const [favoriteItems, setFavoriteItems] = useState([]);
+  const [cancelFavoriteRequest, setCancelFavoriteRequest] = useState(null);
   const { changelogOpen, openChangelog, setChangelogOpen } = useChangelogDialog(appConfig.frontendVersion);
 
   const currentPlatformRef = useRef(currentPlatform);
@@ -132,21 +148,25 @@ export function ToolView({ initialAppConfig }) {
     });
   }, [platformStates.missevan?.historyEntries, platformStates.manbo?.historyEntries]);
 
-  const visiblePlatforms = [
+  const webPlatforms = [
     { key: "missevan", label: "猫耳" },
     { key: "manbo", label: "漫播" },
     { key: "ongoing", label: "更新" },
     { key: "ranks", label: "榜单" },
+    { key: "favorites", label: "收藏" },
+  ];
+  const desktopPlatforms = [
+    { key: "missevan", label: "猫耳" },
+    { key: "manbo", label: "漫播" },
+    { key: "favorites", label: "收藏" },
     { key: "report", label: "Excel 报表" },
-  ].filter((platform) => {
-    if (platform.key === "report") {
-      return appConfig.desktopApp;
-    }
+  ];
+  const visiblePlatforms = (appConfig.desktopApp ? desktopPlatforms : webPlatforms).filter((platform) => {
     return platform.key !== "missevan" || appConfig.missevanEnabled;
   });
 
   const currentBrowseState =
-    currentPlatform === "report" || currentPlatform === "ranks" || currentPlatform === "ongoing"
+    currentPlatform === "favorites" || currentPlatform === "report" || currentPlatform === "ranks" || currentPlatform === "ongoing"
       ? null
       : platformStates[currentPlatform];
   const currentStatsState = currentBrowseState?.stats || null;
@@ -230,11 +250,107 @@ export function ToolView({ initialAppConfig }) {
       if (!merged.missevanEnabled && currentPlatformRef.current === "missevan") {
         setCurrentPlatform("manbo");
       }
-      if (!merged.desktopApp && currentPlatformRef.current === "report") {
-        setCurrentPlatform(merged.missevanEnabled ? "missevan" : "manbo");
-      }
     } catch (_) {
       setAppConfig((current) => mergeAppConfig(current));
+    }
+  }
+
+  async function reloadFavoriteItems() {
+    try {
+      setFavoriteItems(await listFavorites());
+    } catch (error) {
+      console.error("Failed to load favorites", error);
+      toast.error("读取收藏失败。");
+    }
+  }
+
+  const favoriteKeySet = useMemo(
+    () => new Set((Array.isArray(favoriteItems) ? favoriteItems : []).map((item) => item.key)),
+    [favoriteItems]
+  );
+
+  function buildFavoriteLogPayload(item, action) {
+    const platform = item?.platform === "manbo" ? "manbo" : item?.platform === "missevan" ? "missevan" : "";
+    const dramaId = String(item?.dramaId ?? item?.id ?? "").trim();
+    return {
+      platform,
+      action,
+      dramaId,
+      dramaName: item?.title || item?.name || "",
+      source: item?.source || item?.favoriteSource || currentPlatformRef.current || "unknown",
+    };
+  }
+
+  async function logFavoriteUsage(item, action) {
+    const payload = buildFavoriteLogPayload(item, action);
+    if (!payload.platform || !payload.dramaId) {
+      return;
+    }
+    try {
+      await fetch(buildVersionedUrl("/usage-log", appConfigRef.current.frontendVersion), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.error("Failed to log favorite action", error);
+    }
+  }
+
+  async function confirmRemoveFavorite() {
+    const request = cancelFavoriteRequest;
+    if (!request) {
+      return;
+    }
+    const platform = request.platform === "manbo" ? "manbo" : request.platform === "missevan" ? "missevan" : "";
+    const dramaId = String(request.dramaId ?? request.id ?? "").trim();
+    try {
+      await removeFavoriteWithSnapshots(platform, dramaId);
+      await logFavoriteUsage(request, "favorite_remove");
+      await reloadFavoriteItems();
+      toast.success("已取消收藏，并删除历史统计记录。");
+    } catch (error) {
+      console.error("Failed to remove favorite", error);
+      toast.error("取消收藏失败。");
+    } finally {
+      setCancelFavoriteRequest(null);
+    }
+  }
+
+  async function toggleFavorite(item) {
+    const platform = item?.platform === "manbo" ? "manbo" : item?.platform === "missevan" ? "missevan" : "";
+    const dramaId = String(item?.dramaId ?? item?.id ?? "").trim();
+    const key = createFavoriteKey(platform, dramaId);
+    if (!key) {
+      toast.error("收藏失败，作品信息不完整。");
+      return;
+    }
+    try {
+      if (favoriteKeySet.has(key)) {
+        setCancelFavoriteRequest({
+          ...item,
+          platform,
+          dramaId,
+          title: item?.title || item?.name || "",
+        });
+      } else {
+        const favorite = await saveFavorite({
+          platform,
+          dramaId,
+          title: item?.title || item?.name || "",
+          cover: item?.cover || "",
+          paymentLabel: item?.paymentLabel || item?.payment_label || "",
+          contentTypeLabel: item?.contentTypeLabel || item?.content_type_label || "",
+          dramaUpdatedAt: item?.dramaUpdatedAt || item?.drama_updated_at || item?.updated_at || "",
+          mainCvText: item?.mainCvText || item?.main_cv_text || "",
+        });
+        await logFavoriteUsage({ ...item, ...favorite }, "favorite_add");
+        toast.success("已加入收藏。");
+        await reloadFavoriteItems();
+      }
+    } catch (error) {
+      console.error("Failed to toggle favorite", error);
+      toast.error("收藏操作失败。");
     }
   }
 
@@ -261,6 +377,7 @@ export function ToolView({ initialAppConfig }) {
 
   useEffect(() => {
     loadAppConfig();
+    reloadFavoriteItems();
     const pageExitHandler = () => {
       notifyAllActiveStatsTaskCancels();
     };
@@ -1657,15 +1774,28 @@ export function ToolView({ initialAppConfig }) {
 
       {currentPlatform === "ranks" ? (
         <RanksPanel
+          favoriteKeys={favoriteKeySet}
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
+          onToggleFavorite={toggleFavorite}
           onOpenSearchResult={openDramaInSearch}
         />
       ) : currentPlatform === "ongoing" ? (
         <OngoingPanel
+          favoriteKeys={favoriteKeySet}
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
+          onToggleFavorite={toggleFavorite}
           onOpenSearchResult={openDramaInSearch}
+        />
+      ) : currentPlatform === "favorites" ? (
+        <FavoritesPanel
+          favorites={favoriteItems}
+          frontendVersion={appConfig.frontendVersion}
+          handleVersionResponse={updateVersionStatusFromResponse}
+          isDesktopApp={appConfig.desktopApp}
+          onFavoritesChange={reloadFavoriteItems}
+          onToggleFavorite={toggleFavorite}
         />
       ) : currentPlatform !== "report" ? (
         <div className="grid gap-4 sm:gap-5">
@@ -1722,6 +1852,7 @@ export function ToolView({ initialAppConfig }) {
               dramas={currentBrowseState?.dramas || []}
               frontendVersion={appConfig.frontendVersion}
               handleVersionResponse={updateVersionStatusFromResponse}
+              favoriteKeys={favoriteKeySet}
               onAddDramas={addDramas}
               onSelectionChange={updateSelection}
               onSetDramas={setDramas}
@@ -1730,6 +1861,7 @@ export function ToolView({ initialAppConfig }) {
               onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
               onStartPlayCountStatistics={startPlayCountStatistics}
               onStartRevenueEstimate={startRevenueEstimate}
+              onToggleFavorite={toggleFavorite}
               onLoadMoreResults={() => loadMoreSearchResults(currentPlatform)}
               allResults={getAllSearchResults(currentBrowseState)}
               hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
@@ -1775,6 +1907,31 @@ export function ToolView({ initialAppConfig }) {
 
       <MessageDialog notice={notice} onClose={() => setNotice(null)} />
       <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
+
+      <AlertDialog
+        open={Boolean(cancelFavoriteRequest)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCancelFavoriteRequest(null);
+          }
+        }}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <AlertTriangleIcon aria-hidden="true" className="size-5" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>取消收藏</AlertDialogTitle>
+            <AlertDialogDescription>
+              会删除这部作品的收藏记录和历史统计数据，确认取消收藏吗？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>保留</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRemoveFavorite}>取消收藏</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={Boolean(searchJumpStatus)} onOpenChange={() => {}}>
         <AlertDialogContent size="sm">

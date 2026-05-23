@@ -6,6 +6,7 @@ import {
   PlayCircleIcon,
   RefreshCwIcon,
   ShoppingCartIcon,
+  StarIcon,
   UsersRoundIcon,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ import {
 } from "@/app/rankTrendUi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -79,7 +81,6 @@ function formatOngoingDate(value) {
   }
 
   const parts = new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -199,7 +200,17 @@ function OngoingMetric({ item, windowKey, metricKey }) {
   );
 }
 
-function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
+function OngoingCard({
+  item,
+  rank,
+  windowKey,
+  platform,
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+  favoriteKeys = new Set(),
+  onToggleFavorite,
+}) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const baseMetricKeys = platform === "missevan"
     ? ["view_count", "subscription_num", "danmaku_uid_count"]
@@ -209,6 +220,8 @@ function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0
   const paymentTag = item.payment_label;
   const metricGridClassName = metricKeys.length >= 3 ? "grid-cols-3" : "grid-cols-2";
   const canOpenTrend = Boolean(platform && item?.id);
+  const favoriteKey = `${platform}:${String(item?.id ?? "").trim()}`;
+  const isFavorite = Boolean(favoriteKeys?.has?.(favoriteKey));
   const [isTrendOpen, setIsTrendOpen] = useState(false);
   const [trendState, setTrendState] = useState({
     isLoading: false,
@@ -282,6 +295,23 @@ function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0
     });
   }
 
+  function toggleFavorite() {
+    if (!platform || !item?.id) {
+      return;
+    }
+    onToggleFavorite?.({
+      platform,
+      dramaId: String(item.id),
+      title: item.name || "",
+      cover: item.cover || "",
+      paymentLabel: item.payment_label || "",
+      contentTypeLabel: item.content_type_label || "",
+      dramaUpdatedAt: item.updated_at || "",
+      mainCvText: item.main_cv_text || "",
+      source: "ongoing",
+    });
+  }
+
   return (
     <>
       <Card
@@ -289,7 +319,20 @@ function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0
       >
         <CardContent className="p-0">
           <div className="flex h-[9.5rem] gap-3 overflow-hidden p-3.5 sm:h-[10.25rem]">
-            <RankBadge rank={rank} />
+            <div className="flex shrink-0 flex-col items-center gap-2">
+              <RankBadge rank={rank} />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="bg-background/84"
+                onClick={toggleFavorite}
+                aria-label={isFavorite ? "取消收藏" : "加入收藏"}
+                title={isFavorite ? "取消收藏" : "加入收藏"}
+              >
+                <StarIcon className={isFavorite ? "fill-primary text-primary" : ""} />
+              </Button>
+            </div>
             <div className="flex w-[5.35rem] shrink-0 flex-col items-center gap-1.5 sm:w-24">
               <div className="relative size-[5.35rem] overflow-hidden rounded-md border border-border/70 bg-muted/50 sm:size-24">
                 {coverUrl ? (
@@ -366,7 +409,13 @@ function OngoingCard({ item, rank, windowKey, platform, frontendVersion = "0.0.0
   );
 }
 
-export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse, onOpenSearchResult }) {
+export function OngoingPanel({
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+  favoriteKeys = new Set(),
+  onToggleFavorite,
+}) {
   const [selectedPlatform, setSelectedPlatform] = useState("missevan");
   const [selectedWindow, setSelectedWindow] = useState("3d");
   const [ongoingData, setOngoingData] = useState(null);
@@ -547,6 +596,8 @@ export function OngoingPanel({ frontendVersion = "0.0.0", handleVersionResponse,
               frontendVersion={frontendVersion}
               handleVersionResponse={handleVersionResponse}
               onOpenSearchResult={onOpenSearchResult}
+              favoriteKeys={favoriteKeys}
+              onToggleFavorite={onToggleFavorite}
             />
           ))}
         </div>

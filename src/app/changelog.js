@@ -4,6 +4,16 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.6.0",
+    changes: [
+      "请保存本工具新地址 mmtoolkit.app，旧地址将于 2 个月后失效",
+      "新增“收藏”页面：可收藏猫耳和漫播剧集，查看最近统计、历史记录和关键指标增量",
+      "收藏数据保存在浏览器本地，支持导入导出，方便备份和迁移到其他浏览器",
+      "搜索结果、更新页和榜单页支持一键收藏，并在收藏页批量刷新统计数据",
+      "修复一些逻辑错误",
+    ],
+  },
+  {
     version: "1.5.5",
     changes: [
       "优化搜索：支持全拼和首字母搜索，疑似搜错平台会提示跳转",
