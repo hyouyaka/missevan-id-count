@@ -13,6 +13,10 @@ import {
   normalizeFavoriteRecord,
   normalizeFavoritesBackup,
   normalizeFavoriteSettings,
+  importFavoritesData,
+  listFavorites,
+  listSnapshots,
+  loadFavoriteSettings,
   saveFavorite,
   shouldMigrateFavoritesBackupToDesktopJson,
   sortFavoritesWithSnapshots,
@@ -37,6 +41,77 @@ function createSnapshot(overrides = {}) {
     },
     errors: [],
     ...overrides,
+  };
+}
+
+function createFakeIndexedDb() {
+  const stores = new Map();
+  const clone = (value) => (value == null ? value : JSON.parse(JSON.stringify(value)));
+
+  function makeRequest(result) {
+    const request = { result: undefined, error: null, onsuccess: null, onerror: null };
+    queueMicrotask(() => {
+      request.result = clone(result);
+      request.onsuccess?.();
+    });
+    return request;
+  }
+
+  function makeStore(storeState) {
+    return {
+      createIndex() {},
+      put(value) {
+        storeState.records.set(value[storeState.keyPath], clone(value));
+        return makeRequest(undefined);
+      },
+      get(key) {
+        return makeRequest(storeState.records.get(key));
+      },
+      getAll() {
+        return makeRequest(Array.from(storeState.records.values()));
+      },
+      delete(key) {
+        storeState.records.delete(key);
+        return makeRequest(undefined);
+      },
+    };
+  }
+
+  const db = {
+    objectStoreNames: {
+      contains(name) {
+        return stores.has(name);
+      },
+    },
+    createObjectStore(name, options = {}) {
+      const storeState = { keyPath: options.keyPath || "key", records: new Map() };
+      stores.set(name, storeState);
+      return makeStore(storeState);
+    },
+    transaction(storeNames) {
+      const tx = {
+        error: null,
+        oncomplete: null,
+        onerror: null,
+        objectStore(name) {
+          return makeStore(stores.get(name));
+        },
+      };
+      queueMicrotask(() => tx.oncomplete?.());
+      return tx;
+    },
+    close() {},
+  };
+
+  return {
+    open() {
+      const request = { result: db, error: null, onupgradeneeded: null, onsuccess: null, onerror: null };
+      queueMicrotask(() => {
+        request.onupgradeneeded?.();
+        request.onsuccess?.();
+      });
+      return request;
+    },
   };
 }
 
@@ -129,6 +204,44 @@ test("normalizeFavoritesBackup rejects unknown backup shapes and dedupes records
   assert.equal(parsed.snapshots.length, 1);
   assert.equal(parsed.snapshots[0].metrics.viewCount, 2);
   assert.deepEqual(parsed.settings, { deltaMetric: "rewardTotal", sortBy: "rewardTotal" });
+});
+
+test("browser favorites import accepts exported backup payloads", async () => {
+  const originalWindow = globalThis.window;
+  const favorite = normalizeFavoriteRecord({
+    platform: "missevan",
+    dramaId: "93038",
+    title: "一屋暗灯",
+  });
+  const snapshot = createSnapshot({
+    id: "missevan:93038:1770000000000",
+    favoriteKey: favorite.key,
+  });
+  const backup = buildFavoritesBackup({
+    favorites: [favorite],
+    snapshots: [snapshot],
+    settings: { deltaMetric: "rewardTotal", sortBy: "paidIdCount" },
+    exportedAt: "2026-05-23T00:13:45.776Z",
+  });
+  globalThis.window = { indexedDB: createFakeIndexedDb() };
+
+  try {
+    const imported = await importFavoritesData(backup);
+    const favorites = await listFavorites();
+    const snapshots = await listSnapshots();
+    const settings = await loadFavoriteSettings();
+
+    assert.equal(imported.favorites.length, 1);
+    assert.equal(favorites[0].key, favorite.key);
+    assert.equal(snapshots[0].id, snapshot.id);
+    assert.deepEqual(settings, { deltaMetric: "rewardTotal", sortBy: "paidIdCount" });
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
 });
 
 test("favorite removal targets every snapshot for the removed work", () => {

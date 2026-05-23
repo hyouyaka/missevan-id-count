@@ -588,7 +588,7 @@ async function exportIndexedDbFavoritesData() {
 }
 
 async function importIndexedDbFavoritesData(payload) {
-  const normalized = normalizeFavoritesBackup(payload);
+  const normalized = payload;
   await Promise.all(normalized.favorites.map((favorite) => saveIndexedDbFavorite(favorite)));
   await Promise.all(normalized.snapshots.map((snapshot) => saveIndexedDbSnapshot(snapshot)));
   await saveIndexedDbFavoriteSettings(normalized.settings);
