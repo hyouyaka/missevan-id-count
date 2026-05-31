@@ -49,6 +49,20 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
+test("changelog contains 1.6.1 search trend and mobile layout entry", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.6.1");
+
+  assert.deepEqual(entry, {
+    version: "1.6.1",
+    changes: [
+      "请保存本工具新地址：https://mmtoolkit.app/，旧地址将于7月底失效",
+      "合并搜索入口，猫耳和漫播共用“搜索”页面，关键词会同时检索两边结果，并按猫耳/漫播切换查看，查询历史合并显示猫耳/漫播来源",
+      "优化趋势弹窗，支持指标勾选显示/隐藏曲线，数据点可查看具体数值；缺失或重复的趋势样本会显示为无数据",
+      "优化移动端页面布局，搜索/更新/榜单/收藏合并到顶部菜单栏，节省页面显示空间",
+    ],
+  });
+});
+
 test("changelog contains 1.5.5 search and trend entry", () => {
   const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.5.5");
 

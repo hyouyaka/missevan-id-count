@@ -264,9 +264,245 @@ test("buildRankTrendResponse preserves explicit null and zero metric values", ()
       ["2026-04-26", null],
     ]
   );
-  assert.equal(danmakuMetric.toValue, null);
-  assert.equal(danmakuMetric.available, false);
-  assert.equal(danmakuMetric.delta, null);
+  assert.equal(danmakuMetric.fromValue, 0);
+  assert.equal(danmakuMetric.toValue, 10);
+  assert.equal(danmakuMetric.available, true);
+  assert.equal(danmakuMetric.delta, 10);
+  assert.equal(danmakuMetric.deltaPercent, null);
+});
+
+test("buildRankTrendResponse keeps missing drama dates as null points without filling calendar gaps", () => {
+  const response = buildRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    indexSnapshot: {
+      version: 1,
+      dates: ["2026-04-24", "2026-04-25", "2026-05-01", "2026-05-09"],
+    },
+    metricSnapshotsByDate: {
+      "2026-04-24": {
+        dramas: {
+          "93038": {
+            name: "一屋暗灯",
+            view_count: 100,
+            danmaku_uid_count: null,
+            subscription_num: 10,
+          },
+        },
+      },
+      "2026-04-25": {
+        dramas: {
+          other: {
+            name: "其他作品",
+            view_count: 999,
+            danmaku_uid_count: 99,
+            subscription_num: 99,
+          },
+        },
+      },
+      "2026-05-01": {
+        dramas: {
+          "93038": {
+            name: "一屋暗灯",
+            view_count: 150,
+            danmaku_uid_count: 10,
+            subscription_num: 15,
+          },
+        },
+      },
+      "2026-05-09": {
+        dramas: {
+          "93038": {
+            name: "一屋暗灯",
+            view_count: 260,
+            danmaku_uid_count: 25,
+            subscription_num: 30,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.windows["30d"].fromDate, "2026-04-24");
+  assert.equal(response.windows["30d"].toDate, "2026-05-09");
+
+  const viewMetric = response.windows["30d"].metrics.find((metric) => metric.key === "view_count");
+  assert.deepEqual(
+    viewMetric.history.map((point) => [point.date, point.value]),
+    [
+      ["2026-04-24", 100],
+      ["2026-04-25", null],
+      ["2026-05-01", 150],
+      ["2026-05-09", 260],
+    ]
+  );
+  assert.equal(viewMetric.delta, 160);
+  assert.equal(viewMetric.deltaPercent, 1.6);
+
+  const paidIdMetric = response.windows["30d"].metrics.find(
+    (metric) => metric.key === "danmaku_uid_count"
+  );
+  assert.deepEqual(
+    paidIdMetric.history.map((point) => [point.date, point.value]),
+    [
+      ["2026-04-24", null],
+      ["2026-04-25", null],
+      ["2026-05-01", 10],
+      ["2026-05-09", 25],
+    ]
+  );
+  assert.equal(paidIdMetric.fromValue, 10);
+  assert.equal(paidIdMetric.toValue, 25);
+  assert.equal(paidIdMetric.delta, 15);
+  assert.equal(paidIdMetric.deltaPercent, 1.5);
+});
+
+test("buildRankTrendResponse treats repeated Missevan display metrics as missing data", () => {
+  const response = buildRankTrendResponse({
+    platform: "missevan",
+    id: "88696",
+    indexSnapshot: {
+      version: 1,
+      dates: ["2026-05-06", "2026-05-07", "2026-05-08", "2026-05-29", "2026-05-30"],
+    },
+    metricSnapshotsByDate: {
+      "2026-05-06": {
+        dramas: {
+          "88696": {
+            name: "顽石 全一季",
+            view_count: 3826067,
+            danmaku_uid_count: 4891,
+            subscription_num: 60506,
+          },
+        },
+      },
+      "2026-05-07": {
+        dramas: {
+          "88696": {
+            name: "顽石 全一季",
+            view_count: 3826067,
+            danmaku_uid_count: 4891,
+            subscription_num: 60506,
+          },
+        },
+      },
+      "2026-05-08": {
+        dramas: {
+          "88696": {
+            name: "顽石 全一季",
+            view_count: 3826067,
+            danmaku_uid_count: 4891,
+            subscription_num: 60506,
+          },
+        },
+      },
+      "2026-05-29": {
+        dramas: {
+          "88696": {
+            name: "顽石 全一季",
+            view_count: 3826067,
+            danmaku_uid_count: 4891,
+            subscription_num: 60506,
+          },
+        },
+      },
+      "2026-05-30": {
+        dramas: {
+          "88696": {
+            name: "顽石 全一季",
+            view_count: 4027349,
+            danmaku_uid_count: 5145,
+            subscription_num: 62124,
+          },
+        },
+      },
+    },
+  });
+
+  const thirtyDayWindow = response.windows["30d"];
+  const viewMetric = thirtyDayWindow.metrics.find((metric) => metric.key === "view_count");
+  const paidIdMetric = thirtyDayWindow.metrics.find((metric) => metric.key === "danmaku_uid_count");
+  const subscriptionMetric = thirtyDayWindow.metrics.find((metric) => metric.key === "subscription_num");
+
+  assert.deepEqual(
+    viewMetric.history.map((point) => [point.date, point.value]),
+    [
+      ["2026-05-06", 3826067],
+      ["2026-05-07", null],
+      ["2026-05-08", null],
+      ["2026-05-29", null],
+      ["2026-05-30", 4027349],
+    ]
+  );
+  assert.equal(viewMetric.delta, 201282);
+  assert.equal(paidIdMetric.delta, 254);
+  assert.equal(subscriptionMetric.delta, 1618);
+
+  assert.equal(response.windows["3d"].insufficientData, true);
+  assert.equal(response.windows["3d"].metrics[0].available, false);
+  assert.deepEqual(
+    response.windows["3d"].metrics[0].history.map((point) => [point.date, point.value]),
+    [
+      ["2026-05-29", null],
+      ["2026-05-30", 4027349],
+    ]
+  );
+  assert.equal(response.windows["7d"].insufficientData, true);
+});
+
+test("buildRankTrendResponse includes Manbo pay count when detecting repeated display metrics", () => {
+  const response = buildRankTrendResponse({
+    platform: "manbo",
+    id: "2087206604062588962",
+    indexSnapshot: {
+      version: 1,
+      dates: ["2026-05-01", "2026-05-02", "2026-05-03"],
+    },
+    metricSnapshotsByDate: {
+      "2026-05-01": {
+        dramas: {
+          "2087206604062588962": {
+            name: "囚于永夜",
+            view_count: 100,
+            danmaku_uid_count: 10,
+            pay_count: 5,
+          },
+        },
+      },
+      "2026-05-02": {
+        dramas: {
+          "2087206604062588962": {
+            name: "囚于永夜",
+            view_count: 100,
+            danmaku_uid_count: 10,
+            pay_count: 5,
+          },
+        },
+      },
+      "2026-05-03": {
+        dramas: {
+          "2087206604062588962": {
+            name: "囚于永夜",
+            view_count: 100,
+            danmaku_uid_count: 10,
+            pay_count: 6,
+          },
+        },
+      },
+    },
+  });
+
+  const window = response.windows["3d"];
+  assert.equal(window.insufficientData, false);
+  assert.deepEqual(
+    window.metrics.map((metric) => [metric.key, metric.delta, metric.history.map((point) => point.value)]),
+    [
+      ["view_count", 0, [100, null, 100]],
+      ["danmaku_uid_count", 0, [10, null, 10]],
+      ["pay_count", 1, [5, null, 6]],
+    ]
+  );
 });
 
 test("buildRankTrendResponse returns not found when a drama has no metric snapshots", () => {
@@ -516,6 +752,87 @@ test("buildPeakSeriesTrendResponse builds playback-only windows from series samp
       ]
     );
   }
+});
+
+test("buildPeakSeriesTrendResponse keeps missing peak dates as null points", () => {
+  const response = buildPeakSeriesTrendResponse({
+    id: "魔道祖师",
+    peakSnapshot: {
+      dates: ["2026-04-24", "2026-05-01", "2026-05-05", "2026-05-09"],
+      series: {
+        魔道祖师: {
+          name: "魔道祖师",
+          dramaIds: ["15861", "19059", "22602"],
+          samples: {
+            "2026-04-24": {
+              view_count: 1000,
+              position: 1,
+            },
+            "2026-05-01": {
+              view_count: 1200,
+              position: 1,
+            },
+            "2026-05-09": {
+              view_count: 1600,
+              position: 1,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.deepEqual(
+    response.windows["30d"].metrics[0].history.map((point) => [point.date, point.value]),
+    [
+      ["2026-04-24", 1000],
+      ["2026-05-01", 1200],
+      ["2026-05-05", null],
+      ["2026-05-09", 1600],
+    ]
+  );
+  assert.equal(response.windows["30d"].metrics[0].delta, 600);
+  assert.equal(response.windows["30d"].metrics[0].deltaPercent, 0.6);
+});
+
+test("buildPeakSeriesTrendResponse treats repeated playback samples as missing data", () => {
+  const response = buildPeakSeriesTrendResponse({
+    id: "魔道祖师",
+    peakSnapshot: {
+      dates: ["2026-05-01", "2026-05-02", "2026-05-03"],
+      series: {
+        魔道祖师: {
+          name: "魔道祖师",
+          samples: {
+            "2026-05-01": {
+              view_count: 1000,
+              position: 1,
+            },
+            "2026-05-02": {
+              view_count: 1000,
+              position: 1,
+            },
+            "2026-05-03": {
+              view_count: 1100,
+              position: 1,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    response.windows["3d"].metrics[0].history.map((point) => [point.date, point.value]),
+    [
+      ["2026-05-01", 1000],
+      ["2026-05-02", null],
+      ["2026-05-03", 1100],
+    ]
+  );
+  assert.equal(response.windows["3d"].metrics[0].delta, 100);
+  assert.equal(response.windows["3d"].metrics[0].deltaPercent, 0.1);
 });
 
 test("getPeakSeriesDailyViewDelta uses latest minus previous available sample", () => {

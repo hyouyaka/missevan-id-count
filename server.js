@@ -3805,6 +3805,169 @@ async function hydrateMissevanApiSearchRecord(record) {
   }
 }
 
+function buildEmptyUnifiedPlatformSearchResult(keyword, offset, limit, source = "library_only", extraMeta = {}) {
+  return {
+    success: false,
+    results: [],
+    meta: {
+      ...buildSearchPageMeta(keyword, 0, offset, limit),
+      source,
+      ...extraMeta,
+    },
+  };
+}
+
+function normalizeSettledUnifiedSearchResult(platform, settled, fallbackResult, stage) {
+  if (settled.status === "fulfilled") {
+    return settled.value;
+  }
+  const error = settled.reason;
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`Unified ${stage} search failed platform=${platform}`, error);
+  return {
+    ...fallbackResult,
+    success: false,
+    unavailable: true,
+    error: message,
+    meta: {
+      ...(fallbackResult.meta || {}),
+      source: `${stage}_error`,
+      error: message,
+    },
+  };
+}
+
+async function runMissevanLibraryUnifiedSearch(keyword, offset, limit) {
+  let source = "library_only";
+  let totalMatched = 0;
+  let results = [];
+
+  if (missevanInfoStore.remoteAvailable) {
+    const matchedRecords = searchMissevanLibraryRecords(
+      missevanInfoStore.records,
+      keyword,
+      SEARCH_RESULT_LIMIT
+    );
+    source = "library";
+    totalMatched = matchedRecords.length;
+
+    if (matchedRecords.length > 0) {
+      const pagedRecords = matchedRecords.slice(offset, offset + limit);
+      results = await mapWithConcurrency(
+        pagedRecords,
+        4,
+        hydrateMissevanSearchRecord
+      );
+    }
+  }
+
+  return {
+    success: totalMatched > 0,
+    results,
+    meta: {
+      ...buildSearchPageMeta(keyword, totalMatched, offset, limit),
+      source,
+    },
+  };
+}
+
+async function runManboLibraryUnifiedSearch(keyword, offset, limit) {
+  const matchedRecords = searchManboLibraryRecords(
+    manboInfoStore.records,
+    keyword,
+    SEARCH_RESULT_LIMIT
+  );
+
+  if (!matchedRecords.length) {
+    return buildEmptyUnifiedPlatformSearchResult(keyword, offset, limit, "library_only", {
+      hydratedCount: 0,
+    });
+  }
+
+  const pagedRecords = matchedRecords.slice(offset, offset + limit);
+  const hydratedResults = await mapWithConcurrency(
+    pagedRecords,
+    4,
+    hydrateManboSearchRecord
+  );
+
+  return {
+    success: true,
+    results: hydratedResults,
+    meta: {
+      ...buildSearchPageMeta(keyword, matchedRecords.length, offset, limit),
+      source: "library",
+      hydratedCount: hydratedResults.length,
+    },
+  };
+}
+
+async function runMissevanApiUnifiedSearch(keyword, offset, limit) {
+  try {
+    const apiRecords = await searchMissevanApiRecords(
+      keyword,
+      SEARCH_RESULT_LIMIT,
+      { logApiCall: true }
+    );
+    const pagedRecords = apiRecords.slice(offset, offset + limit);
+    const results = await mapWithConcurrency(
+      pagedRecords,
+      4,
+      hydrateMissevanApiSearchRecord
+    );
+
+    return {
+      success: apiRecords.length > 0,
+      results,
+      meta: {
+        ...buildSearchPageMeta(keyword, apiRecords.length, offset, limit),
+        source: "missevan_api",
+      },
+    };
+  } catch (error) {
+    console.error(`Failed to run unified Missevan API search keyword=${keyword}`, error);
+    return {
+      ...buildMissevanAccessDeniedResponse(error),
+      results: [],
+      meta: {
+        ...buildSearchPageMeta(keyword, 0, offset, limit),
+        source: "missevan_api",
+      },
+    };
+  }
+}
+
+async function runManboApiUnifiedSearch(keyword, offset, limit) {
+  try {
+    const apiRecords = await fetchManboSearchApiRecords(keyword, { logApiCall: true });
+    const sourceSelection = selectManboSearchSourceRecords([], apiRecords);
+    const apiResults = sourceSelection.records.map(buildManboApiSearchFallbackCard);
+    const pagedResults = apiResults.slice(offset, offset + limit);
+
+    return {
+      success: apiResults.length > 0,
+      results: pagedResults,
+      meta: {
+        ...buildSearchPageMeta(keyword, apiResults.length, offset, limit),
+        source: sourceSelection.source,
+        hydratedCount: pagedResults.length,
+      },
+    };
+  } catch (error) {
+    console.error(`Failed to run unified Manbo API search keyword=${keyword}`, error);
+    return {
+      success: false,
+      results: [],
+      meta: {
+        ...buildSearchPageMeta(keyword, 0, offset, limit),
+        source: "manbo_api",
+        hydratedCount: 0,
+      },
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function buildMissevanDramaCardFromInput(item) {
   if (!item || item.type === "invalid") {
     return null;
@@ -6941,6 +7104,130 @@ app.get("/image-proxy", async (req, res) => {
       `Image proxy failed url=${targetUrl.toString()} attempts=${attempts} error=${summary}`
     );
     return res.status(502).send("Image proxy failed");
+  }
+});
+
+app.get("/unified-search", async (req, res) => {
+  const normalizedKeyword = normalizeKeyword(req.query.keyword);
+  const offset = normalizeSearchOffset(req.query.offset);
+  const limit = normalizeSearchLimit(req.query.limit, 5, 5);
+
+  function buildUnifiedResponse(missevanResult, manboResult, usedApiFallback = false) {
+    return {
+      success: Boolean(missevanResult?.success || manboResult?.success),
+      results: {
+        missevan: missevanResult,
+        manbo: manboResult,
+      },
+      meta: {
+        keyword: normalizedKeyword,
+        usedApiFallback,
+      },
+    };
+  }
+
+  if (!normalizedKeyword) {
+    return res.json({
+      success: false,
+      message: "Missing keyword",
+      results: {
+        missevan: buildEmptyUnifiedPlatformSearchResult("", offset, limit),
+        manbo: buildEmptyUnifiedPlatformSearchResult("", offset, limit),
+      },
+      meta: {
+        keyword: "",
+        usedApiFallback: false,
+      },
+    });
+  }
+
+  if (!isSearchKeywordLongEnough(normalizedKeyword)) {
+    return res.json({
+      success: false,
+      results: {
+        missevan: buildKeywordTooShortSearchResponse(normalizedKeyword, offset, limit),
+        manbo: buildKeywordTooShortSearchResponse(normalizedKeyword, offset, limit, {
+          hydratedCount: 0,
+        }),
+      },
+      meta: {
+        keyword: normalizedKeyword,
+        usedApiFallback: false,
+      },
+    });
+  }
+
+  void writeUsageLog({
+    platform: "unified",
+    action: "search",
+    keyword: normalizedKeyword,
+  });
+
+  try {
+    await Promise.all([
+      ensureInfoStoreLoaded(missevanInfoStore),
+      ensureInfoStoreLoaded(manboInfoStore),
+    ]);
+    await refreshMissevanCooldownState();
+
+    const [missevanLibrarySettled, manboLibrarySettled] = await Promise.allSettled([
+      runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit),
+      runManboLibraryUnifiedSearch(normalizedKeyword, offset, limit),
+    ]);
+    const missevanLibraryResult = normalizeSettledUnifiedSearchResult("missevan",
+      missevanLibrarySettled,
+      buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "library_error"),
+      "library"
+    );
+    const manboLibraryResult = normalizeSettledUnifiedSearchResult("manbo",
+      manboLibrarySettled,
+      buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "library_error", {
+        hydratedCount: 0,
+      }),
+      "library"
+    );
+    const shouldUseApiFallback =
+      !missevanLibraryResult.unavailable &&
+      !manboLibraryResult.unavailable &&
+      Number(missevanLibraryResult.meta.matchedCount ?? 0) === 0 &&
+      Number(manboLibraryResult.meta.matchedCount ?? 0) === 0;
+
+    if (!shouldUseApiFallback) {
+      return res.json(buildUnifiedResponse(missevanLibraryResult, manboLibraryResult));
+    }
+
+    const [missevanApiSettled, manboApiSettled] = await Promise.allSettled([
+      runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit),
+      runManboApiUnifiedSearch(normalizedKeyword, offset, limit),
+    ]);
+    const missevanApiResult = normalizeSettledUnifiedSearchResult("missevan",
+      missevanApiSettled,
+      buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "api_error"),
+      "api"
+    );
+    const manboApiResult = normalizeSettledUnifiedSearchResult("manbo",
+      manboApiSettled,
+      buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "api_error", {
+        hydratedCount: 0,
+      }),
+      "api"
+    );
+
+    return res.json(buildUnifiedResponse(missevanApiResult, manboApiResult, true));
+  } catch (error) {
+    console.error(`Failed to run unified search keyword=${normalizedKeyword}`, error);
+    return res.status(500).json({
+      success: false,
+      results: {
+        missevan: buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit),
+        manbo: buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit),
+      },
+      meta: {
+        keyword: normalizedKeyword,
+        usedApiFallback: false,
+      },
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 });
 

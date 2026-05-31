@@ -143,10 +143,83 @@ function findPeakSeriesRecord(peakSnapshot, id) {
   };
 }
 
-function buildPeakSeriesMetric(config, fromSample, toSample, history) {
-  const fromValue = normalizeFiniteNumber(fromSample?.[config.key]);
-  const toValue = normalizeFiniteNumber(toSample?.[config.key]);
-  const available = fromValue != null && toValue != null;
+function getMetricHistoryRange(history, getValue) {
+  const points = (Array.isArray(history) ? history : [])
+    .map((point) => ({
+      point,
+      value: getValue(point),
+    }))
+    .filter((entry) => entry.value != null);
+  const from = points[0] || null;
+  const to = points.at(-1) || null;
+  return {
+    fromPoint: from?.point || null,
+    toPoint: to?.point || null,
+    fromValue: from?.value ?? null,
+    toValue: to?.value ?? null,
+    hasComparableRange: Boolean(from && to && from.point !== to.point),
+  };
+}
+
+function getTrendMetricValues(record, metricConfigs) {
+  return metricConfigs.map((config) => normalizeFiniteNumber(record?.[config.key]));
+}
+
+function areTrendMetricValuesEqual(leftValues, rightValues) {
+  return (
+    Array.isArray(leftValues) &&
+    Array.isArray(rightValues) &&
+    leftValues.length === rightValues.length &&
+    leftValues.every((value, index) => value === rightValues[index])
+  );
+}
+
+function getRepeatedTrendSampleDateSet({ dates, snapshotsByDate, platform, id }) {
+  const metricConfigs = getRankTrendMetricConfigs(platform);
+  const staleDateSet = new Set();
+  let previousValues = null;
+
+  dates.forEach((date) => {
+    const drama = getDramaMetrics(snapshotsByDate[date], id);
+    if (!drama) {
+      return;
+    }
+    const currentValues = getTrendMetricValues(drama, metricConfigs);
+    if (previousValues && areTrendMetricValuesEqual(currentValues, previousValues)) {
+      staleDateSet.add(date);
+    }
+    previousValues = currentValues;
+  });
+
+  return staleDateSet;
+}
+
+function getRepeatedPeakSeriesSampleDateSet({ dates, samplesByDate }) {
+  const staleDateSet = new Set();
+  let previousValues = null;
+
+  dates.forEach((date) => {
+    const sample = samplesByDate[date];
+    if (!sample) {
+      return;
+    }
+    const currentValues = getTrendMetricValues(sample, PEAK_SERIES_TREND_METRICS);
+    if (previousValues && areTrendMetricValuesEqual(currentValues, previousValues)) {
+      staleDateSet.add(date);
+    }
+    previousValues = currentValues;
+  });
+
+  return staleDateSet;
+}
+
+function buildPeakSeriesMetric(config, history) {
+  const range = getMetricHistoryRange(history, (sample) =>
+    normalizeFiniteNumber(sample?.[config.key])
+  );
+  const fromValue = range.fromValue;
+  const toValue = range.toValue;
+  const available = range.hasComparableRange;
   const delta = available ? toValue - fromValue : null;
   const deltaPercent = available && fromValue !== 0 ? delta / fromValue : null;
 
@@ -170,7 +243,7 @@ function buildPeakSeriesMetric(config, fromSample, toSample, history) {
   };
 }
 
-function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesByDate }) {
+function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesByDate, staleDateSet }) {
   const latestTime = parseDateKey(latestDate);
   const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
   const history = dates
@@ -178,25 +251,27 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
       const time = parseDateKey(date);
       return Number.isFinite(time) && time >= earliestAllowedTime && time <= latestTime;
     })
-    .map((date) => samplesByDate[date])
-    .filter(Boolean);
+    .map((date) => (staleDateSet.has(date) ? { date } : samplesByDate[date] || { date }));
+  const availableHistory = history.filter((sample) =>
+    normalizeFiniteNumber(sample?.view_count) != null
+  );
 
-  if (history.length < 2) {
+  if (availableHistory.length < 2) {
     return withGeneratedAt({
       key: windowConfig.key,
       label: windowConfig.label,
       days: windowConfig.days,
-      fromDate: history[0]?.date || "",
-      toDate: history.at(-1)?.date || "",
+      fromDate: availableHistory[0]?.date || "",
+      toDate: availableHistory.at(-1)?.date || "",
       insufficientData: true,
       metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
-        buildPeakSeriesMetric(config, history[0] || null, history.at(-1) || null, history)
+        buildPeakSeriesMetric(config, history)
       ),
-    }, history.at(-1));
+    }, availableHistory.at(-1));
   }
 
-  const fromSample = history[0];
-  const toSample = history.at(-1);
+  const fromSample = availableHistory[0];
+  const toSample = availableHistory.at(-1);
   return withGeneratedAt({
     key: windowConfig.key,
     label: windowConfig.label,
@@ -205,7 +280,7 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
     toDate: toSample.date,
     insufficientData: false,
     metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
-      buildPeakSeriesMetric(config, fromSample, toSample, history)
+      buildPeakSeriesMetric(config, history)
     ),
   }, toSample);
 }
@@ -309,6 +384,15 @@ function buildAggregateMetricSnapshotsByDate(aggregateSnapshot, platform, id) {
   const snapshotsByDate = {};
 
   dates.forEach((date) => {
+    const generatedAt = normalizeGeneratedAt(samples[date]) || normalizeGeneratedAt(aggregateSnapshot);
+    snapshotsByDate[date] = {
+      version: aggregateSnapshot?.version,
+      date,
+      platform,
+      generated_at: generatedAt,
+      dramas: {},
+    };
+
     const sample = samples[date];
     const metrics = sample?.metrics && typeof sample.metrics === "object"
       ? sample.metrics
@@ -317,19 +401,10 @@ function buildAggregateMetricSnapshotsByDate(aggregateSnapshot, platform, id) {
       return;
     }
 
-    const generatedAt = normalizeGeneratedAt(sample) || normalizeGeneratedAt(aggregateSnapshot);
-    snapshotsByDate[date] = {
-      version: aggregateSnapshot?.version,
-      date,
-      platform,
-      generated_at: generatedAt,
-      dramas: {
-        [normalizedId]: {
-          ...metrics,
-          name: String(metrics.name ?? dramaRecord?.name ?? "").trim(),
-          ...(generatedAt ? { generated_at: generatedAt } : {}),
-        },
-      },
+    snapshotsByDate[date].dramas[normalizedId] = {
+      ...metrics,
+      name: String(metrics.name ?? dramaRecord?.name ?? "").trim(),
+      ...(generatedAt ? { generated_at: generatedAt } : {}),
     };
   });
 
@@ -445,10 +520,13 @@ function buildAggregateListSnapshotsByDate(aggregateSnapshot, platform, id) {
   return snapshotsByDate;
 }
 
-function buildMetric(config, fromDrama, toDrama, history) {
-  const fromValue = normalizeFiniteNumber(fromDrama?.[config.key]);
-  const toValue = normalizeFiniteNumber(toDrama?.[config.key]);
-  const available = fromValue != null && toValue != null;
+function buildMetric(config, history) {
+  const range = getMetricHistoryRange(history, (point) =>
+    normalizeFiniteNumber(point.drama?.[config.key])
+  );
+  const fromValue = range.fromValue;
+  const toValue = range.toValue;
+  const available = range.hasComparableRange;
   const delta = available ? toValue - fromValue : null;
   const deltaPercent = available && fromValue !== 0 ? delta / fromValue : null;
 
@@ -472,7 +550,7 @@ function buildMetric(config, fromDrama, toDrama, history) {
   };
 }
 
-function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, platform, id }) {
+function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, platform, id, staleDateSet }) {
   const latestTime = parseDateKey(latestDate);
   const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
   const windowDates = dates.filter((date) => {
@@ -482,26 +560,26 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
   const history = windowDates
     .map((date) => ({
       date,
-      drama: getDramaMetrics(snapshotsByDate[date], id),
-    }))
-    .filter((point) => point.drama);
+      drama: staleDateSet.has(date) ? null : getDramaMetrics(snapshotsByDate[date], id),
+    }));
+  const availableHistory = history.filter((point) => point.drama);
 
-  if (history.length < 2) {
+  if (availableHistory.length < 2) {
     return withGeneratedAt({
       key: windowConfig.key,
       label: windowConfig.label,
       days: windowConfig.days,
-      fromDate: history[0]?.date || "",
-      toDate: history.at(-1)?.date || "",
+      fromDate: availableHistory[0]?.date || "",
+      toDate: availableHistory.at(-1)?.date || "",
       insufficientData: true,
       metrics: getRankTrendMetricConfigs(platform).map((config) =>
-        buildMetric(config, history[0]?.drama || null, history.at(-1)?.drama || null, history)
+        buildMetric(config, history)
       ),
-    }, history.at(-1)?.drama);
+    }, availableHistory.at(-1)?.drama);
   }
 
-  const fromPoint = history[0];
-  const toPoint = history.at(-1);
+  const fromPoint = availableHistory[0];
+  const toPoint = availableHistory.at(-1);
   return withGeneratedAt({
     key: windowConfig.key,
     label: windowConfig.label,
@@ -510,7 +588,7 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
     toDate: toPoint.date,
     insufficientData: false,
     metrics: getRankTrendMetricConfigs(platform).map((config) =>
-      buildMetric(config, fromPoint.drama, toPoint.drama, history)
+      buildMetric(config, history)
     ),
   }, toPoint.drama);
 }
@@ -551,6 +629,12 @@ export function buildRankTrendResponse({
   }
 
   const latestDrama = getDramaMetrics(metricSnapshotsByDate[latestDate], normalizedId);
+  const staleDateSet = getRepeatedTrendSampleDateSet({
+    dates,
+    snapshotsByDate: metricSnapshotsByDate,
+    platform: normalizedPlatform,
+    id: normalizedId,
+  });
   return {
     success: true,
     platform: normalizedPlatform,
@@ -568,6 +652,7 @@ export function buildRankTrendResponse({
           snapshotsByDate: metricSnapshotsByDate,
           platform: normalizedPlatform,
           id: normalizedId,
+          staleDateSet,
         }),
       ])
     ),
@@ -645,10 +730,9 @@ export function buildPeakSeriesTrendResponse({
     };
   }
 
-  const dates = getPeakSeriesDates(peakSnapshot, matchedSeries.record).filter((date) =>
-    samples.some((sample) => sample.date === date)
-  );
+  const dates = getPeakSeriesDates(peakSnapshot, matchedSeries.record);
   const samplesByDate = Object.fromEntries(samples.map((sample) => [sample.date, sample]));
+  const staleDateSet = getRepeatedPeakSeriesSampleDateSet({ dates, samplesByDate });
 
   return {
     success: true,
@@ -667,6 +751,7 @@ export function buildPeakSeriesTrendResponse({
           dates,
           latestDate: latestSample.date,
           samplesByDate,
+          staleDateSet,
         }),
       ])
     ),

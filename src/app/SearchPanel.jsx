@@ -3,11 +3,11 @@ import { SearchIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import {
   buildVersionedUrl,
   classifyMergedSearchInput,
+  classifyUnifiedSearchInput,
   getBackendVersionFromResponse,
   normalizeVersion,
   parseRawItems,
@@ -25,8 +25,12 @@ export function SearchPanel({
   frontendVersion,
   handleVersionResponse,
   onUpdateFormState,
+  onUpdatePlatformFormState,
   onResetState,
+  onResetPlatformState,
   onUpdateResults,
+  onUpdatePlatformResults,
+  onSelectPlatform,
   onCrossPlatformImport,
   onMissevanFallbackResults,
   onManboFallbackResults,
@@ -35,12 +39,14 @@ export function SearchPanel({
   const [isSearchPending, setIsSearchPending] = useState(false);
   const [isManualPending, setIsManualPending] = useState(false);
   const isPending = isSearchPending || isManualPending;
-  const mergedPlaceholder =
-    platform === "manbo"
-      ? "输入剧名、CV、角色名、原作名，或粘贴作品ID、分集 ID、网页链接 / 分享链接"
-      : "输入作品名、CV、角色名、原作名，或粘贴作品ID、分集ID、作品链接 / 分集链接";
+  const mergedPlaceholder = "输入剧名、CV、角色名、原作名，或粘贴作品ID、分集 ID、网页链接 / 分享链接";
 
   function setKeyword(value) {
+    if (typeof onUpdatePlatformFormState === "function") {
+      onUpdatePlatformFormState("missevan", { keyword: value });
+      onUpdatePlatformFormState("manbo", { keyword: value });
+      return;
+    }
     onUpdateFormState?.({ keyword: value });
   }
 
@@ -105,6 +111,17 @@ export function SearchPanel({
   }
 
   function clearManualInput() {
+    if (typeof onUpdatePlatformFormState === "function") {
+      onUpdatePlatformFormState("missevan", {
+        keyword: "",
+        manualInput: "",
+      });
+      onUpdatePlatformFormState("manbo", {
+        keyword: "",
+        manualInput: "",
+      });
+      return;
+    }
     onUpdateFormState?.({
       keyword: "",
       manualInput: "",
@@ -129,6 +146,115 @@ export function SearchPanel({
       return `${basePath}&apiFallback=0`;
     }
     return basePath;
+  }
+
+  function buildUnifiedSearchPath(keyword) {
+    return `/unified-search?keyword=${encodeURIComponent(keyword)}&offset=0&limit=5`;
+  }
+
+  function hasPlatformMatches(result) {
+    const results = Array.isArray(result?.results) ? result.results : [];
+    const matchedCount = Number(result?.meta?.matchedCount ?? result?.meta?.totalMatched ?? results.length) || 0;
+    return matchedCount > 0 || results.length > 0;
+  }
+
+  function normalizeUnifiedPlatformResult(platformResult, keyword) {
+    return {
+      success: Boolean(platformResult?.success),
+      accessDenied: Boolean(platformResult?.accessDenied),
+      unavailable: Boolean(platformResult?.unavailable),
+      results: Array.isArray(platformResult?.results) ? platformResult.results : [],
+      meta: {
+        ...(platformResult?.meta || {}),
+        keyword,
+      },
+    };
+  }
+
+  async function queryBackendUnifiedSearch(keyword) {
+    try {
+      const response = await fetch(
+        buildVersionedUrl(
+          buildUnifiedSearchPath(keyword),
+          frontendVersion
+        )
+      );
+      const data = await parseVersionedJson(response);
+      return {
+        missevan: normalizeUnifiedPlatformResult(data?.results?.missevan, keyword),
+        manbo: normalizeUnifiedPlatformResult(data?.results?.manbo, keyword),
+      };
+    } catch (error) {
+      console.error("Unified search failed", error);
+      return {
+        missevan: {
+          success: false,
+          error,
+          results: [],
+          meta: {
+            keyword,
+            matchedCount: 0,
+          },
+        },
+        manbo: {
+          success: false,
+          error,
+          results: [],
+          meta: {
+            keyword,
+            matchedCount: 0,
+          },
+        },
+      };
+    }
+  }
+
+  function publishUnifiedSearchResults(resultsByPlatform, source = "search") {
+    onUpdatePlatformResults?.("missevan", resultsByPlatform.missevan?.results || [], source, resultsByPlatform.missevan?.meta || {});
+    onUpdatePlatformResults?.("manbo", resultsByPlatform.manbo?.results || [], source, resultsByPlatform.manbo?.meta || {});
+  }
+
+  function selectFirstPlatformWithResults(resultsByPlatform) {
+    if (hasPlatformMatches(resultsByPlatform.missevan)) {
+      onSelectPlatform?.("missevan");
+      return;
+    }
+    if (hasPlatformMatches(resultsByPlatform.manbo)) {
+      onSelectPlatform?.("manbo");
+    }
+  }
+
+  async function queryUnifiedKeywordSearch(keyword) {
+    if (isSearchPending) {
+      return;
+    }
+
+    onResetPlatformState?.("missevan");
+    onResetPlatformState?.("manbo");
+    setIsSearchPending(true);
+
+    try {
+      const finalResults = await queryBackendUnifiedSearch(keyword);
+
+      publishUnifiedSearchResults(finalResults);
+      selectFirstPlatformWithResults(finalResults);
+
+      if (finalResults.missevan?.accessDenied) {
+        const config = await fetchAppConfig();
+        if (isDesktopApp) {
+          showBlockingNotice(
+            "Missevan 当前受限",
+            "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
+          );
+        } else {
+          showMissevanCooldownNotice(config || { cooldownHours, cooldownUntil });
+        }
+      } else if (!hasPlatformMatches(finalResults.missevan) && !hasPlatformMatches(finalResults.manbo)) {
+        showBlockingNotice("", "未找到结果，可尝试导入作品ID或链接。");
+      }
+    } finally {
+      setIsSearchPending(false);
+    }
   }
 
   async function queryNumericLibraryLookup(keyword) {
@@ -449,21 +575,19 @@ export function SearchPanel({
       return;
     }
 
-    const classified = classifyMergedSearchInput(formState?.keyword, platform);
+    const classified = classifyUnifiedSearchInput(formState?.keyword);
     async function runClassifiedAction(nextClassified) {
       if (nextClassified.action === "import") {
-        await queryManualInput(nextClassified.rawItems, nextClassified);
-        return;
-      }
-
-      if (nextClassified.action === "cross_import") {
         await onCrossPlatformImport?.({
           targetPlatform: nextClassified.targetPlatform,
           rawItems: nextClassified.rawItems,
-          sourcePlatform: platform,
-          allowMissevanApiFallback: nextClassified.allowMissevanApiFallback,
-          emptyResultNotice: nextClassified.emptyResultNotice,
+          sourcePlatform: "search",
         });
+        return;
+      }
+
+      if (nextClassified.action === "mixed_import") {
+        showBlockingNotice("导入内容混合", "请一次只粘贴同一平台的作品ID或链接。");
         return;
       }
 
@@ -472,7 +596,7 @@ export function SearchPanel({
         return;
       }
 
-      await queryKeywordSearch(nextClassified.keyword);
+      await queryUnifiedKeywordSearch(nextClassified.keyword);
     }
 
     if (classified.action === "empty") {
@@ -480,51 +604,38 @@ export function SearchPanel({
       return;
     }
 
-    if (classified.action === "numeric_lookup") {
-      const lookupResult = await queryNumericLibraryLookup(classified.keyword);
-      if (lookupResult.handled) {
-        return;
-      }
-      await runClassifiedAction(
-        classifyMergedSearchInput(formState?.keyword, platform, { numericLookup: false })
-      );
-      return;
-    }
-
     await runClassifiedAction(classified);
   }
 
   return (
-    <Card className="border-border/80 bg-card shadow-[0_20px_46px_-38px_rgba(15,23,42,0.28)]">
-      <CardContent className="grid grid-cols-[minmax(0,1fr)_5rem] gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_5.5rem] sm:p-5">
-        <div className="flex min-w-0 flex-col gap-3">
-          <div className="text-base font-semibold text-foreground">搜索 / 导入</div>
-          <Textarea
-            className="h-20 min-h-20 max-h-20 min-w-0 resize-none overflow-y-auto border-border/80 bg-background focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
-            placeholder={mergedPlaceholder}
-            rows={2}
-            value={formState?.keyword ?? ""}
-            onChange={(event) => setKeyword(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                runMergedSearch();
-              }
-            }}
-          />
-        </div>
+    <div className="flex flex-col gap-3">
+      <div className="text-base font-semibold text-foreground">搜索 / 导入</div>
+      <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] gap-3 sm:grid-cols-[minmax(0,1fr)_5rem]">
+        <Textarea
+          className="h-[4.375rem] min-h-[4.375rem] max-h-[4.375rem] min-w-0 resize-none overflow-y-auto border-border/80 bg-white dark:bg-background text-sm! focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+          placeholder={mergedPlaceholder}
+          rows={2}
+          value={formState?.keyword ?? ""}
+          onChange={(event) => setKeyword(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              runMergedSearch();
+            }
+          }}
+        />
 
-        <div className="grid grid-cols-1 gap-1.5 pt-9">
-          <Button className="h-9 gap-1 px-2 text-sm [&_svg:not([class*='size-'])]:size-3.5" disabled={isPending} onClick={runMergedSearch}>
+        <div className="grid grid-cols-1 gap-1.5">
+          <Button className="h-8 gap-1 px-2 text-sm! [&_svg:not([class*='size-'])]:size-3.5" disabled={isPending} onClick={runMergedSearch}>
             <SearchIcon data-icon="inline-start" />
             {isSearchPending ? "搜索中" : isManualPending ? "导入中" : "搜索"}
           </Button>
-          <Button variant="secondary" className="h-9 gap-1 px-2 text-sm [&_svg:not([class*='size-'])]:size-3.5" onClick={clearManualInput}>
+          <Button variant="secondary" className="h-8 gap-1 px-2 text-sm! [&_svg:not([class*='size-'])]:size-3.5" onClick={clearManualInput}>
             <Trash2Icon data-icon="inline-start" />
             清空
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

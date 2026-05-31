@@ -38,6 +38,8 @@ function applyLandingRegionSnapshot(snapshotMap, fallbackVersion, regions) {
   });
 }
 
+const landingFooterActionButtonClassName = "h-9 w-[90px] justify-center px-1.5 text-xs sm:h-10 sm:w-auto sm:min-w-fit sm:px-4 sm:text-sm";
+
 export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
   const frontendVersion = normalizeVersion(
     typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0"
@@ -187,15 +189,15 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
 
             <div className="relative flex flex-row flex-wrap justify-end gap-2.5">
               {appConfig.featureSuggestionUrl ? (
-                <Button variant="outline" className="h-10 min-w-fit px-3 sm:px-4" asChild>
+                <Button variant="outline" className={landingFooterActionButtonClassName} asChild>
                   <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
                     <MessageSquarePlusIcon data-icon="inline-start" />
                     功能建议
                   </a>
                 </Button>
               ) : null}
-              <ChangelogButton className="h-10 min-w-fit px-3 sm:px-4" size="default" onClick={openChangelog} />
-              <Button variant="outline" className="h-10 min-w-fit px-3 sm:px-4" disabled={loading} onClick={refreshAllRegions}>
+              <ChangelogButton className={landingFooterActionButtonClassName} size="default" onClick={openChangelog} />
+              <Button variant="outline" className={landingFooterActionButtonClassName} disabled={loading} onClick={refreshAllRegions}>
                 <RefreshCcwIcon data-icon="inline-start" className={loading ? "animate-spin" : ""} />
                 {loading ? "正在刷新..." : "刷新状态"}
               </Button>

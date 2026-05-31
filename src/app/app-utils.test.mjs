@@ -5,12 +5,14 @@ import {
   buildRevenuePaidMetricSegments,
   buildRevenueSummary,
   classifyMergedSearchInput,
+  classifyUnifiedSearchInput,
   createStatsHistoryEntry,
   getHistoryMetricIconKey,
   formatSignedCompactMetricValue,
   formatDeviceDateTime,
   formatRevenueDisplayValue,
   getRevenueDisplayLabel,
+  getInlineTaggedTitleDisplayText,
   getRevenuePaidCountLabel,
   loadPersistedHistoryEntries,
   parseRawItems,
@@ -98,6 +100,46 @@ test("classifyMergedSearchInput routes Missevan keywords to search", () => {
     keyword: "撒野 CV",
     rawItems: [],
   });
+});
+
+test("getInlineTaggedTitleDisplayText truncates long tagged mobile titles", () => {
+  assert.equal(
+    getInlineTaggedTitleDisplayText("全球进化后我站在食物链顶端 第二季（下）", {
+      hasTags: true,
+      viewport: "mobile",
+    }),
+    "全球进化后我站在食物链顶端 第二季（..."
+  );
+});
+
+test("getInlineTaggedTitleDisplayText keeps medium tagged mobile titles intact", () => {
+  assert.equal(
+    getInlineTaggedTitleDisplayText("初三的六一儿童节 第二季（上）", {
+      hasTags: true,
+      viewport: "mobile",
+    }),
+    "初三的六一儿童节 第二季（上）"
+  );
+});
+
+test("getInlineTaggedTitleDisplayText allows more title text without tags", () => {
+  assert.equal(
+    getInlineTaggedTitleDisplayText("全球进化后我站在食物链顶端 第二季（下）番外篇", {
+      hasTags: false,
+      viewport: "mobile",
+    }),
+    "全球进化后我站在食物链顶端 第二季（下）番外..."
+  );
+});
+
+test("getInlineTaggedTitleDisplayText keeps short titles unchanged", () => {
+  assert.equal(
+    getInlineTaggedTitleDisplayText("洄天 第一季", {
+      hasTags: true,
+      viewport: "mobile",
+    }),
+    "洄天 第一季"
+  );
 });
 
 test("classifyMergedSearchInput routes Missevan drama and sound IDs to import", () => {
@@ -270,6 +312,39 @@ test("classifyMergedSearchInput routes empty input separately", () => {
     keyword: "",
     rawItems: [],
   });
+});
+
+test("classifyUnifiedSearchInput routes platform IDs and keywords", () => {
+  assert.deepEqual(classifyUnifiedSearchInput("1467142227078676553"), {
+    action: "import",
+    targetPlatform: "manbo",
+    keyword: "",
+    rawItems: ["1467142227078676553"],
+  });
+  assert.deepEqual(classifyUnifiedSearchInput("https://manbo.hongdoulive.com/Activecard/radioplay?id=1"), {
+    action: "import",
+    targetPlatform: "manbo",
+    keyword: "",
+    rawItems: ["https://manbo.hongdoulive.com/Activecard/radioplay?id=1"],
+  });
+  assert.deepEqual(classifyUnifiedSearchInput("93420"), {
+    action: "import",
+    targetPlatform: "missevan",
+    keyword: "",
+    rawItems: ["93420"],
+  });
+  assert.deepEqual(classifyUnifiedSearchInput("https://www.missevan.com/sound/12681701?share_channel=copy"), {
+    action: "import",
+    targetPlatform: "missevan",
+    keyword: "",
+    rawItems: ["https://www.missevan.com/sound/12681701?share_channel=copy"],
+  });
+  assert.deepEqual(classifyUnifiedSearchInput("撒野 CV"), {
+    action: "search",
+    keyword: "撒野 CV",
+    rawItems: [],
+  });
+  assert.equal(classifyUnifiedSearchInput("2087206604062588962 93420").action, "mixed_import");
 });
 
 test("hasSearchKeywordInResultTitles uses normalized title matching", () => {

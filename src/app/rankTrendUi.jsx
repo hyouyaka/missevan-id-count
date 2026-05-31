@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BeanIcon,
+  CheckIcon,
   ChevronDownIcon,
   CoinsIcon,
   GemIcon,
-  HashIcon,
   HeartIcon,
   PlayCircleIcon,
   RefreshCwIcon,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { buildVersionedUrl, formatDeviceDateTime, formatPlainNumber } from "@/app/app-utils";
+import { PlatformIdIcon } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -114,6 +115,10 @@ function getTrendWindowGeneratedAt(activeWindow, activeMetrics) {
 
 function formatTrendValue(value) {
   return value == null ? "暂无数据" : formatPlainNumber(value);
+}
+
+function formatTrendSnapshotValue(value) {
+  return value == null ? "无数据" : formatTrendValue(value);
 }
 
 function formatTrendDelta(metric) {
@@ -769,32 +774,109 @@ function getTrendAxisLabelPoints(points, windowKey) {
   return axisPoints.filter((point, index) => index % 5 === 0 || index === lastIndex);
 }
 
-function RankTrendLineChart({ metrics, windowKey }) {
+function clampTrendTooltipPercent(value) {
+  return Math.min(92, Math.max(8, value));
+}
+
+function TrendMetricToggleLegend({ metrics, visibleMetricKeys, onToggleMetric }) {
+  const legendMetrics = Array.isArray(metrics) ? metrics : [];
+  if (!legendMetrics.length) {
+    return null;
+  }
+  const visibleCurrentMetricCount = legendMetrics.filter((metric) => visibleMetricKeys.has(metric.key)).length;
+
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+      {legendMetrics.map((metric) => {
+        const style = getTrendMetricStyle(metric);
+        const isChecked = visibleMetricKeys.has(metric.key);
+        const isOnlyVisible = isChecked && visibleCurrentMetricCount <= 1;
+        return (
+          <label
+            key={metric.key}
+            className={`inline-flex min-w-0 items-center gap-1 rounded-md px-1 py-0.5 text-[0.7rem] font-medium text-foreground transition-colors ${
+              isOnlyVisible ? "cursor-default" : "cursor-pointer hover:bg-muted/50"
+            }`}
+          >
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={isChecked}
+              disabled={isOnlyVisible}
+              aria-label={`显示${metric.label}曲线`}
+              onChange={() => onToggleMetric?.(metric.key)}
+            />
+            <span
+              aria-hidden="true"
+              className="flex size-3.5 shrink-0 items-center justify-center rounded-[4px] border transition-colors"
+              style={{
+                backgroundColor: isChecked ? style.color : "transparent",
+                borderColor: style.color,
+                color: "white",
+              }}
+            >
+              {isChecked ? <CheckIcon className="size-2.5 stroke-[3]" /> : null}
+            </span>
+            <span className="min-w-0 truncate">{metric.label}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function RankTrendLineChart({ metrics, legendMetrics = metrics, visibleMetricKeys = new Set(), onToggleMetric, windowKey }) {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [selectedPoint, setSelectedPoint] = useState(null);
   const availableMetrics = Array.isArray(metrics) ? metrics : [];
+  const availableLegendMetrics = Array.isArray(legendMetrics) ? legendMetrics : availableMetrics;
+  const chartMetricSignature = availableMetrics
+    .map((metric) => `${metric.key}:${(Array.isArray(metric.history) ? metric.history : []).map((point) => point.date).join(",")}`)
+    .join("|");
   const chartData = buildTrendChartLines(availableMetrics);
   const chartLines = chartData.lines;
   const axisPoints =
     availableMetrics.find((metric) => Array.isArray(metric.history) && metric.history.length)?.history || [];
   const axisLabelPoints = getTrendAxisLabelPoints(axisPoints, windowKey);
+  const activeTooltipPoint = selectedPoint || hoveredPoint;
+
+  function buildTooltipPoint(line, point, position, style) {
+    return {
+      key: `${line.metric.key}-${point.date}`,
+      date: formatTrendDate(point.date),
+      value: formatTrendValue(point.value),
+      color: style.color,
+      position,
+    };
+  }
+
+  const tooltipPlacement = activeTooltipPoint?.position?.y < 44 ? "below" : "above";
+  const tooltipLeft = activeTooltipPoint
+    ? clampTrendTooltipPercent((activeTooltipPoint.position.x / 320) * 100)
+    : 50;
+  const tooltipTop = activeTooltipPoint
+    ? clampTrendTooltipPercent(
+        ((activeTooltipPoint.position.y + (tooltipPlacement === "below" ? 18 : -12)) / 170) * 100
+      )
+    : 50;
+
+  useEffect(() => {
+    setHoveredPoint(null);
+    setSelectedPoint(null);
+  }, [windowKey, chartMetricSignature]);
 
   return (
     <div className="rounded-lg border border-border/80 bg-background/82 p-2.5 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.22)]">
-      <div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        {availableMetrics.map((metric) => {
-          const style = getTrendMetricStyle(metric);
-          return (
-            <span key={metric.key} className="inline-flex items-center gap-1 text-[0.7rem] font-medium text-foreground">
-              <span
-                aria-hidden="true"
-                className="size-2 rounded-full"
-                style={{ backgroundColor: style.color }}
-              />
-              {metric.label}
-            </span>
-          );
-        })}
-      </div>
-      <div className="relative h-48 w-full overflow-hidden rounded-md bg-card sm:h-52">
+      <TrendMetricToggleLegend
+        metrics={availableLegendMetrics}
+        visibleMetricKeys={visibleMetricKeys}
+        onToggleMetric={onToggleMetric}
+      />
+      <div
+        className="relative h-48 w-full overflow-hidden rounded-md bg-card sm:h-52"
+        onClick={() => setSelectedPoint(null)}
+        onPointerLeave={() => setHoveredPoint(null)}
+      >
         <svg aria-label="趋势折线图" className="size-full" preserveAspectRatio="none" viewBox="0 0 320 170">
           {chartData.ticks.map((tick) => (
             <line
@@ -855,6 +937,49 @@ function RankTrendLineChart({ metrics, windowKey }) {
             />
           ));
         })}
+        {chartLines.flatMap((line) => {
+          const style = getTrendMetricStyle(line.metric);
+          return line.segments.flatMap((segment) =>
+            segment.map(({ point, position }) => {
+              const tooltipPoint = buildTooltipPoint(line, point, position, style);
+              return (
+                <button
+                  key={`target-${tooltipPoint.key}`}
+                  type="button"
+                  aria-label={`${line.metric.label} ${tooltipPoint.date} ${tooltipPoint.value}`}
+                  className="absolute size-7 -translate-x-1/2 -translate-y-1/2 rounded-full bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                  style={{
+                    left: `${(position.x / 320) * 100}%`,
+                    top: `${(position.y / 170) * 100}%`,
+                  }}
+                  onFocus={() => setHoveredPoint(tooltipPoint)}
+                  onBlur={() => setHoveredPoint(null)}
+                  onPointerEnter={() => setHoveredPoint(tooltipPoint)}
+                  onPointerLeave={() => setHoveredPoint(null)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedPoint(tooltipPoint);
+                  }}
+                />
+              );
+            })
+          );
+        })}
+        {activeTooltipPoint ? (
+          <div
+            className={`pointer-events-none absolute z-20 min-w-12 -translate-x-1/2 rounded-md border bg-popover px-2 py-1 text-center text-[0.62rem] font-medium leading-tight text-popover-foreground shadow-md ${
+              tooltipPlacement === "below" ? "" : "-translate-y-full"
+            }`}
+            style={{
+              borderColor: activeTooltipPoint.color,
+              left: `${tooltipLeft}%`,
+              top: `${tooltipTop}%`,
+            }}
+          >
+            <div>{activeTooltipPoint.date}</div>
+            <div className="mt-0.5 tabular-nums">{activeTooltipPoint.value}</div>
+          </div>
+        ) : null}
         <div className="pointer-events-none absolute inset-x-3 bottom-2 flex justify-between text-[0.65rem] font-medium text-muted-foreground">
           {axisLabelPoints.map((point) => (
             <span key={point.date}>{formatTrendDate(point.date)}</span>
@@ -937,7 +1062,7 @@ function TrendSnapshotDetails({ metrics, platform }) {
     <div className="rounded-lg border border-border/70 bg-background/82">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-[0.78rem] font-medium text-foreground"
+        className="flex h-9 w-full items-center justify-between gap-2 px-2.5 text-left text-sm! font-medium text-foreground"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((current) => !current)}
       >
@@ -975,7 +1100,7 @@ function TrendSnapshotDetails({ metrics, platform }) {
                           column.key === "date" ? "text-left text-muted-foreground" : "text-right text-foreground"
                         }`}
                       >
-                        {column.key === "date" ? formatTrendDate(row.date) : formatTrendValue(row.values[column.key])}
+                        {column.key === "date" ? formatTrendDate(row.date) : formatTrendSnapshotValue(row.values[column.key])}
                       </td>
                     ))}
                   </tr>
@@ -1067,6 +1192,8 @@ export function RankTrendButton({ className = "", ...props }) {
 
 export function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
   const [selectedWindow, setSelectedWindow] = useState("3d");
+  const [visibleMetricKeys, setVisibleMetricKeys] = useState(() => new Set());
+  const knownMetricKeysRef = useRef(new Set());
   const data = trendState.data;
   const windows = data?.windows || {};
   const metaTags = getTrendMetaTags(item, platform);
@@ -1079,15 +1206,71 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
   const activeMetrics = getDisplayTrendMetrics(activeWindow?.metrics, platform);
   const activeWindowGeneratedAt = getTrendWindowGeneratedAt(activeWindow, activeMetrics);
   const chartMetrics = getChartTrendMetrics(activeMetrics);
+  const chartMetricKeySignature = chartMetrics.map((metric) => metric.key).join("|");
+  const visibleChartMetrics = visibleMetricKeys.size
+    ? chartMetrics.filter((metric) => visibleMetricKeys.has(metric.key))
+    : chartMetrics;
   const detailIdText = Array.isArray(data?.dramaIds) && data.dramaIds.length
     ? data.dramaIds.join("，")
     : item?.id ?? data?.id;
 
+  function resetVisibleTrendMetrics() {
+    setVisibleMetricKeys(new Set());
+    knownMetricKeysRef.current = new Set();
+  }
+
   useEffect(() => {
     if (open) {
       setSelectedWindow("3d");
+      resetVisibleTrendMetrics();
     }
   }, [open, item?.id]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const chartMetricKeys = chartMetricKeySignature.split("|").filter(Boolean);
+    if (!chartMetricKeys.length) {
+      return;
+    }
+    const knownMetricKeys = knownMetricKeysRef.current;
+    const newMetricKeys = chartMetricKeys.filter((key) => !knownMetricKeys.has(key));
+    setVisibleMetricKeys((current) => {
+      if (!knownMetricKeys.size) {
+        return new Set(chartMetricKeys);
+      }
+      const next = new Set(current);
+      newMetricKeys.forEach((key) => next.add(key));
+      const hasVisibleCurrentMetric = chartMetricKeys.some((key) => next.has(key));
+      if (!hasVisibleCurrentMetric) {
+        next.add(chartMetricKeys[0]);
+      }
+      return next;
+    });
+    if (newMetricKeys.length) {
+      const next = new Set(knownMetricKeys);
+      newMetricKeys.forEach((key) => next.add(key));
+      knownMetricKeysRef.current = next;
+    }
+  }, [open, chartMetricKeySignature]);
+
+  function toggleVisibleMetric(metricKey) {
+    setVisibleMetricKeys((current) => {
+      const currentMetricKeys = chartMetrics.map((metric) => metric.key);
+      const visibleCurrentMetricCount = currentMetricKeys.filter((key) => current.has(key)).length;
+      if (current.has(metricKey) && currentMetricKeys.includes(metricKey) && visibleCurrentMetricCount <= 1) {
+        return current;
+      }
+      const next = new Set(current);
+      if (next.has(metricKey)) {
+        next.delete(metricKey);
+      } else {
+        next.add(metricKey);
+      }
+      return next;
+    });
+  }
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -1121,7 +1304,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
             className="flex w-full max-w-none justify-self-stretch items-start gap-1 text-left text-xs"
             style={{ textWrap: "wrap" }}
           >
-            <HashIcon aria-hidden="true" className="size-3.5 shrink-0" />
+            <PlatformIdIcon platform={platform} aria-label="作品ID" className="size-3.5 shrink-0" />
             <span className="min-w-0 flex-1 break-words" style={{ textWrap: "wrap" }}>{detailIdText}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -1143,10 +1326,10 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
 
         {!trendState.isLoading && !trendState.error && data?.success ? (
           <div className="grid min-w-0 gap-2.5">
-            <Tabs value={activeWindowKey} onValueChange={setSelectedWindow}>
-              <TabsList className="grid w-full grid-cols-3">
+            <Tabs value={activeWindowKey} onValueChange={setSelectedWindow} className="w-fit">
+              <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
                 {availableWindows.map((key) => (
-                  <TabsTrigger key={key} className="min-w-0 px-2" value={key}>
+                  <TabsTrigger key={key} className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
                     {windows[key].label}
                   </TabsTrigger>
                 ))}
@@ -1169,7 +1352,13 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                     ))}
                   </div>
                 ) : null}
-                <RankTrendLineChart metrics={chartMetrics} windowKey={activeWindowKey} />
+                <RankTrendLineChart
+                  metrics={visibleChartMetrics}
+                  legendMetrics={chartMetrics}
+                  visibleMetricKeys={visibleMetricKeys}
+                  onToggleMetric={toggleVisibleMetric}
+                  windowKey={activeWindowKey}
+                />
                 <TrendSnapshotDetails metrics={activeMetrics} platform={platform} />
                 <div className="grid gap-1.5">
                   {activeMetrics.map((metric) => (

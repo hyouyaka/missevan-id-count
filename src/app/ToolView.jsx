@@ -5,7 +5,10 @@ import {
   ChartNoAxesColumnIncreasingIcon,
   Clock3Icon,
   FileSpreadsheetIcon,
+  MenuIcon,
   MessageSquarePlusIcon,
+  ScrollTextIcon,
+  SearchIcon,
   StarIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +21,7 @@ import { OngoingPanel } from "@/app/OngoingPanel";
 import { OutputPanel } from "@/app/OutputPanel";
 import { RanksPanel } from "@/app/RanksPanel";
 import { SearchPanel } from "@/app/SearchPanel";
-import { SearchResults } from "@/app/SearchResults";
+import { SearchResults, MetricLegend } from "@/app/SearchResults";
 import { canParseShareUrl, decryptShareUrl, extractResolvedId } from "@/utils/manboCrypto";
 import {
   createFavoriteKey,
@@ -51,7 +54,6 @@ import {
   selectDramaEpisodesByMode,
   STATS_HISTORY_LIMIT,
 } from "@/app/app-utils";
-import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -70,6 +72,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 const mainNavigationIconMap = {
+  search: SearchIcon,
   ongoing: Clock3Icon,
   ranks: ChartNoAxesColumnIncreasingIcon,
   favorites: StarIcon,
@@ -78,10 +81,6 @@ const mainNavigationIconMap = {
 const headerActionButtonStyle = { fontSize: 14 };
 
 function MainNavigationTabLabel({ platform }) {
-  if (platform.key === "missevan" || platform.key === "manbo") {
-    return <PlatformTabLabel platform={platform.key} iconClassName="size-3.5 sm:size-4" />;
-  }
-
   const Icon = mainNavigationIconMap[platform.key];
   return (
     <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
@@ -92,7 +91,17 @@ function MainNavigationTabLabel({ platform }) {
 }
 
 export function ToolView({ initialAppConfig }) {
-  const [currentPlatform, setCurrentPlatform] = useState("missevan");
+  const [currentPlatform, setCurrentPlatform] = useState("search");
+  const [activeSearchPlatform, setActiveSearchPlatform] = useState(() =>
+    initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
+  );
+  const [sharedSearchForm, setSharedSearchForm] = useState({
+    keyword: "",
+    manualInput: "",
+  });
+  const [sharedOutputPlatform, setSharedOutputPlatform] = useState(() =>
+    initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
+  );
   const [appConfig, setAppConfig] = useState({
     ...getDefaultAppConfig(),
     ...(initialAppConfig || {}),
@@ -120,9 +129,12 @@ export function ToolView({ initialAppConfig }) {
   });
   const [favoriteRefreshRevision, setFavoriteRefreshRevision] = useState(0);
   const [cancelFavoriteRequest, setCancelFavoriteRequest] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { changelogOpen, openChangelog, setChangelogOpen } = useChangelogDialog(appConfig.frontendVersion);
 
   const currentPlatformRef = useRef(currentPlatform);
+  const activeSearchPlatformRef = useRef(activeSearchPlatform);
+  const sharedOutputPlatformRef = useRef(sharedOutputPlatform);
   const appConfigRef = useRef(appConfig);
   const platformStatesRef = useRef(platformStates);
   const favoriteRefreshStateRef = useRef(favoriteRefreshState);
@@ -136,6 +148,14 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     currentPlatformRef.current = currentPlatform;
   }, [currentPlatform]);
+
+  useEffect(() => {
+    activeSearchPlatformRef.current = activeSearchPlatform;
+  }, [activeSearchPlatform]);
+
+  useEffect(() => {
+    sharedOutputPlatformRef.current = sharedOutputPlatform;
+  }, [sharedOutputPlatform]);
 
   useEffect(() => {
     appConfigRef.current = appConfig;
@@ -159,41 +179,137 @@ export function ToolView({ initialAppConfig }) {
     });
   }, [platformStates.missevan?.historyEntries, platformStates.manbo?.historyEntries]);
 
-  const webPlatforms = [
+  const searchPlatforms = [
     { key: "missevan", label: "猫耳" },
     { key: "manbo", label: "漫播" },
+  ];
+  const webPlatforms = [
+    { key: "search", label: "搜索" },
     { key: "ongoing", label: "更新" },
     { key: "ranks", label: "榜单" },
     { key: "favorites", label: "收藏" },
   ];
   const desktopPlatforms = [
-    { key: "missevan", label: "猫耳" },
-    { key: "manbo", label: "漫播" },
+    { key: "search", label: "搜索" },
     { key: "favorites", label: "收藏" },
     { key: "report", label: "Excel 报表" },
   ];
-  const visiblePlatforms = (appConfig.desktopApp ? desktopPlatforms : webPlatforms).filter((platform) => {
+  const visibleSearchPlatforms = searchPlatforms.filter((platform) => {
     return platform.key !== "missevan" || appConfig.missevanEnabled;
   });
+  const visiblePlatforms = appConfig.desktopApp ? desktopPlatforms : webPlatforms;
+  const mobileMenuNavigationItems = visiblePlatforms;
+  const mobileMenuItemClassName = "relative w-full justify-start overflow-hidden text-[0.82rem] font-medium text-foreground visited:text-foreground hover:text-foreground";
+  const mobileMenuActiveItemClassName = "bg-[rgba(45,72,139,0.12)] text-[rgb(32,54,112)] shadow-[inset_0_0_0_1px_rgba(45,72,139,0.18)] before:absolute before:inset-y-1.5 before:left-1 before:w-1 before:rounded-full before:bg-primary";
+  const activeBrowsePlatform = activeSearchPlatform === "manbo" || appConfig.missevanEnabled ? activeSearchPlatform : "manbo";
 
-  const currentBrowseState =
-    currentPlatform === "favorites" || currentPlatform === "report" || currentPlatform === "ranks" || currentPlatform === "ongoing"
-      ? null
-      : platformStates[currentPlatform];
-  const currentStatsState = currentBrowseState?.stats || null;
-  const currentRevenueSummary = currentStatsState?.revenueSummary || buildRevenueSummary(currentStatsState?.revenueResults || [], currentPlatform);
-  const stepOneHint =
-    currentPlatform === "missevan"
-      ? appConfig.desktopApp
-        ? "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
-        : `如果猫耳接口暂时受限，请 ${getRemainingCooldownHours(
-            {
-              cooldownHours: appConfig.cooldownHours,
-              cooldownUntil: appConfig.cooldownUntil,
-            },
-            appConfig.cooldownHours
-          )} 小时后再来。`
-      : "";
+  const currentBrowseState = currentPlatform === "search" ? platformStates[activeBrowsePlatform] : null;
+  const sharedOutputState = platformStates[sharedOutputPlatform];
+  const sharedStatsState = sharedOutputState?.stats || null;
+  const sharedRevenueSummary = sharedStatsState?.revenueSummary || buildRevenueSummary(sharedStatsState?.revenueResults || [], sharedOutputPlatform);
+  const sharedHistoryEntries = getMergedHistoryEntries();
+  const stepOneHint = appConfig.desktopApp
+    ? "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
+    : `如果猫耳接口暂时受限，请 ${getRemainingCooldownHours(
+        {
+          cooldownHours: appConfig.cooldownHours,
+          cooldownUntil: appConfig.cooldownUntil,
+        },
+        appConfig.cooldownHours
+      )} 小时后再来。`;
+
+  useEffect(() => {
+    closeMobileMenu();
+  }, [currentPlatform]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) {
+      return undefined;
+    }
+
+    function handleMobileMenuKeyDown(event) {
+      if (event.key === "Escape") {
+        setMobileMenuOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleMobileMenuKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleMobileMenuKeyDown);
+    };
+  }, [mobileMenuOpen]);
+
+  function getActiveWorkPlatform() {
+    return activeSearchPlatformRef.current === "manbo" || appConfigRef.current.missevanEnabled
+      ? activeSearchPlatformRef.current
+      : "manbo";
+  }
+
+  function closeMobileMenu() {
+    setMobileMenuOpen(false);
+  }
+
+  function selectMobileMenuPlatform(key) {
+    setCurrentPlatform(key);
+    setMobileMenuOpen(false);
+  }
+
+  function openMobileChangelog() {
+    openChangelog();
+    setMobileMenuOpen(false);
+  }
+
+  function openMobileFeatureSuggestion() {
+    if (!appConfig.featureSuggestionUrl) {
+      return;
+    }
+    window.open(appConfig.featureSuggestionUrl, "_blank", "noreferrer");
+    setMobileMenuOpen(false);
+  }
+
+  function resolveStatsPlatform(platform) {
+    return platform === "manbo" ? "manbo" : platform === "missevan" ? "missevan" : getActiveWorkPlatform();
+  }
+
+  function openSearchPlatform(platform) {
+    const normalizedPlatform = platform === "manbo" ? "manbo" : "missevan";
+    setActiveSearchPlatform(normalizedPlatform);
+    setCurrentPlatform("search");
+  }
+
+  function renderHeaderAccessHint() {
+    if (!appConfig.missevanEnabled) {
+      return null;
+    }
+
+    if (appConfig.desktopApp) {
+      return (
+        <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
+          {stepOneHint}
+        </p>
+      );
+    }
+
+    return (
+      <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
+        {stepOneHint} 也可前往{" "}
+        <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
+          节点页
+        </a>{" "}
+        选择其他节点，或直接使用
+        {appConfig.desktopAppUrl ? (
+          <>
+            <a className="font-medium text-primary underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
+              桌面版
+            </a>
+            。
+          </>
+        ) : (
+          "桌面版。"
+        )}
+      </p>
+    );
+  }
 
   function scrollToPanel(ref) {
     if (typeof window === "undefined") {
@@ -258,8 +374,11 @@ export function ToolView({ initialAppConfig }) {
         backendVersion: getBackendVersionFromResponse(response, config),
       });
       setAppConfig(merged);
-      if (!merged.missevanEnabled && currentPlatformRef.current === "missevan") {
-        setCurrentPlatform("manbo");
+      if (!merged.missevanEnabled && activeSearchPlatformRef.current === "missevan") {
+        setActiveSearchPlatform("manbo");
+      }
+      if (!merged.missevanEnabled && sharedOutputPlatformRef.current === "missevan") {
+        setSharedOutputPlatform("manbo");
       }
     } catch (_) {
       setAppConfig((current) => mergeAppConfig(current));
@@ -294,7 +413,7 @@ export function ToolView({ initialAppConfig }) {
       action,
       dramaId,
       dramaName: item?.title || item?.name || "",
-      source: item?.source || item?.favoriteSource || currentPlatformRef.current || "unknown",
+      source: item?.source || item?.favoriteSource || (currentPlatformRef.current === "search" ? "search" : currentPlatformRef.current) || "unknown",
     };
   }
 
@@ -430,12 +549,13 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function updateSearchForm(patch) {
-    updatePlatformState(currentPlatformRef.current, (state) => ({
-      ...state,
-      searchForm: {
-        ...state.searchForm,
-        ...patch,
-      },
+    updateSharedSearchForm(patch);
+  }
+
+  function updateSharedSearchForm(patch) {
+    setSharedSearchForm((current) => ({
+      ...current,
+      ...patch,
     }));
   }
 
@@ -456,7 +576,7 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
-  function resetSearchFlow(platform = currentPlatformRef.current) {
+  function resetSearchFlow(platform = getActiveWorkPlatform()) {
     updatePlatformState(platform, (state) => ({
       ...state,
       searchResultSource: "search",
@@ -520,8 +640,8 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  function setResults(nextResults) {
-    updatePlatformState(currentPlatformRef.current, (state) => ({
+  function setResults(nextResults, platform = getActiveWorkPlatform()) {
+    updatePlatformState(platform, (state) => ({
       ...state,
       searchResults: nextResults,
       searchPageCache:
@@ -534,15 +654,15 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
-  function setDramas(nextDramas) {
-    updatePlatformState(currentPlatformRef.current, (state) => ({
+  function setDramas(nextDramas, platform = getActiveWorkPlatform()) {
+    updatePlatformState(platform, (state) => ({
       ...state,
       dramas: nextDramas,
     }));
   }
 
-  function updateSelection(selectedEpisodes) {
-    updatePlatformState(currentPlatformRef.current, (state) => ({
+  function updateSelection(selectedEpisodes, platform = getActiveWorkPlatform()) {
+    updatePlatformState(platform, (state) => ({
       ...state,
       selectedEpisodesSnapshot: selectedEpisodes,
     }));
@@ -629,6 +749,28 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
+  function clearAllHistoryEntries() {
+    clearHistoryEntries("missevan");
+    clearHistoryEntries("manbo");
+  }
+
+  function getMergedHistoryEntries() {
+    return ["missevan", "manbo"]
+      .flatMap((platform) =>
+        (Array.isArray(platformStates[platform]?.historyEntries) ? platformStates[platform].historyEntries : []).map((entry) => ({
+          ...entry,
+          platform: entry.platform || platform,
+          platformLabel: (entry.platform || platform) === "manbo" ? "漫播" : "猫耳",
+        }))
+      )
+      .sort((left, right) => Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0));
+  }
+
+  function activateSharedOutputPlatform(platform) {
+    setSharedOutputPlatform(platform);
+    sharedOutputPlatformRef.current = platform;
+  }
+
   function getAllSearchResults(state) {
     if (state?.searchResultSource !== "search") {
       return state?.searchResults || [];
@@ -645,6 +787,17 @@ export function ToolView({ initialAppConfig }) {
         });
       });
     return Array.from(merged.values());
+  }
+
+  function getPlatformResultCount(platform) {
+    const state = platformStates[platform];
+    if (!state) {
+      return 0;
+    }
+    if (state.searchResultSource === "search") {
+      return Number(state.searchTotalMatched || getAllSearchResults(state).length || state.searchResults?.length || 0) || 0;
+    }
+    return Number(state.searchResults?.length ?? 0) || 0;
   }
 
   function updateSearchPage(platform, page, results, meta = {}) {
@@ -792,7 +945,7 @@ export function ToolView({ initialAppConfig }) {
         manualInput: normalizedRawItems.join("\n"),
       });
       setManualSearchResults(normalizedPlatform, results, { limit: normalizedRawItems.length, scroll: false });
-      setCurrentPlatform(normalizedPlatform);
+      openSearchPlatform(normalizedPlatform);
       scrollToPanel(resultsPanelRef);
       if (data.failedItems?.length) {
         toast.warning(`以下内容导入失败：${data.failedItems.join(" | ")}`);
@@ -814,6 +967,10 @@ export function ToolView({ initialAppConfig }) {
       actionLabel: "是",
       cancelLabel: "取消",
       onAction: () => {
+        updateSharedSearchForm({
+          keyword,
+          manualInput: "",
+        });
         updateSearchFormForPlatform("missevan", {
           keyword,
           manualInput: "",
@@ -822,7 +979,7 @@ export function ToolView({ initialAppConfig }) {
           ...(meta || {}),
           keyword,
         });
-        setCurrentPlatform("missevan");
+        openSearchPlatform("missevan");
         scrollToPanel(resultsPanelRef);
       },
     });
@@ -835,6 +992,10 @@ export function ToolView({ initialAppConfig }) {
       actionLabel: "是",
       cancelLabel: "取消",
       onAction: () => {
+        updateSharedSearchForm({
+          keyword,
+          manualInput: "",
+        });
         updateSearchFormForPlatform("manbo", {
           keyword,
           manualInput: "",
@@ -843,7 +1004,7 @@ export function ToolView({ initialAppConfig }) {
           ...(meta || {}),
           keyword,
         });
-        setCurrentPlatform("manbo");
+        openSearchPlatform("manbo");
         scrollToPanel(resultsPanelRef);
       },
     });
@@ -922,16 +1083,18 @@ export function ToolView({ initialAppConfig }) {
         return;
       }
 
-      updatePlatformState(targetPlatform, (state) => ({
-        ...state,
-        searchForm: {
-          ...state.searchForm,
-          keyword: String(name ?? "").trim(),
-          manualInput,
-        },
-      }));
+      resetSearchFlow("missevan");
+      resetSearchFlow("manbo");
+      updateSharedSearchForm({
+        keyword: String(name ?? "").trim(),
+        manualInput,
+      });
+      updateSearchFormForPlatform(targetPlatform, {
+        keyword: String(name ?? "").trim(),
+        manualInput,
+      });
       setManualSearchResults(targetPlatform, results, { limit: dramaIds.length, scroll: false });
-      setCurrentPlatform(targetPlatform);
+      openSearchPlatform(targetPlatform);
       scrollToPanel(resultsPanelRef);
     } catch (error) {
       console.error("Failed to open drama in search", error);
@@ -941,7 +1104,7 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  async function loadSearchPage(page, platform = currentPlatformRef.current) {
+  async function loadSearchPage(page, platform = getActiveWorkPlatform()) {
     const state = platformStatesRef.current[platform];
     const keyword = String(state?.searchKeyword ?? "").trim();
     const pageSize = Number(state?.searchPageSize ?? 5) || 5;
@@ -1068,7 +1231,7 @@ export function ToolView({ initialAppConfig }) {
     return taskId;
   }
 
-  async function cancelActiveRun(platform = currentPlatformRef.current) {
+  async function cancelActiveRun(platform = getActiveWorkPlatform()) {
     const taskId = cancelPollingRun(platform);
     if (taskId) {
       notifyTaskCancel(taskId);
@@ -1267,7 +1430,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function showMissevanAccessHint() {
-    if (currentPlatformRef.current !== "missevan") return;
+    if (getActiveWorkPlatform() !== "missevan") return;
     if (!appConfigRef.current.desktopApp) {
       await refreshCooldownState();
     }
@@ -1304,12 +1467,14 @@ export function ToolView({ initialAppConfig }) {
     return platform === "manbo" ? "/manbo/getdramas" : "/getdramas";
   }
 
-  async function fetchDramaById(platform, dramaId, signal) {
-    const loaded = getLoadedDramaById(platform, dramaId);
+  async function fetchDramaById(platform, dramaId, signal, options = {}) {
+    const loaded = (Array.isArray(options.loadedDramas) ? options.loadedDramas : []).find((item) => String(item?.drama?.id) === String(dramaId))
+      || getLoadedDramaById(platform, dramaId);
     if (loaded) {
       return loaded;
     }
-    const searchResult = getSearchResultById(platform, dramaId);
+    const searchResult = (Array.isArray(options.searchResults) ? options.searchResults : []).find((item) => String(item?.id) === String(dramaId))
+      || getSearchResultById(platform, dramaId);
     const payload = { drama_ids: [dramaId] };
     if (platform === "missevan") {
       const soundIdMap = {};
@@ -1340,6 +1505,96 @@ export function ToolView({ initialAppConfig }) {
     };
   }
 
+  function normalizeFetchedDrama(result, shouldExpandImported = false) {
+    return {
+      ...result.info,
+      expanded: shouldExpandImported,
+      episodes: {
+        ...result.info.episodes,
+        episode: Array.isArray(result.info?.episodes?.episode)
+          ? result.info.episodes.episode.map((episode) => ({
+              ...episode,
+              selected: false,
+            }))
+          : [],
+      },
+    };
+  }
+
+  async function fetchDramasByIds(platform, dramaIds, signal, options = {}) {
+    const requestedIds = Array.from(
+      new Set(
+        (Array.isArray(dramaIds) ? dramaIds : [])
+          .map((id) => String(id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    const loadedById = new Map();
+    const missingIds = [];
+    requestedIds.forEach((id) => {
+      const loaded = (Array.isArray(options.loadedDramas) ? options.loadedDramas : []).find((item) => String(item?.drama?.id) === id)
+        || getLoadedDramaById(platform, id);
+      if (loaded) {
+        loadedById.set(id, loaded);
+        return;
+      }
+      missingIds.push(id);
+    });
+
+    if (!missingIds.length) {
+      return requestedIds.map((id) => ({
+        success: true,
+        id,
+        drama: loadedById.get(id),
+        loaded: true,
+      }));
+    }
+
+    const searchResults = Array.isArray(options.searchResults) ? options.searchResults : getAllSearchResults(platformStatesRef.current[platform]);
+    const payload = { drama_ids: missingIds };
+    if (platform === "missevan") {
+      const soundIdMap = {};
+      missingIds.forEach((id) => {
+        const searchResult = searchResults.find((item) => String(item?.id) === id);
+        if (Number(searchResult?.sound_id) > 0) {
+          soundIdMap[id] = Number(searchResult.sound_id);
+        }
+      });
+      payload.sound_id_map = soundIdMap;
+    }
+
+    const data = await postJson(getDramasEndpoint(platform), payload, signal, "Failed to load dramas");
+    const fetchedById = new Map(
+      extractResponseItems(data).map((result) => [String(result?.id ?? ""), result])
+    );
+
+    return requestedIds.map((id) => {
+      const loaded = loadedById.get(id);
+      if (loaded) {
+        return {
+          success: true,
+          id,
+          drama: loaded,
+          loaded: true,
+        };
+      }
+      const result = fetchedById.get(id);
+      if (result?.success && result?.info) {
+        return {
+          success: true,
+          id,
+          drama: normalizeFetchedDrama(result, Boolean(options.expandImported)),
+          loaded: false,
+        };
+      }
+      return {
+        success: false,
+        id,
+        accessDenied: Boolean(result?.accessDenied),
+      };
+    });
+  }
+
   async function registerApiSearchDramaIds(platform, ids) {
     const normalizedPlatform = platform === "manbo" ? "manbo" : platform === "missevan" ? "missevan" : "";
     if (!normalizedPlatform) {
@@ -1367,7 +1622,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function addDramas(ids, options = {}) {
-    const platform = currentPlatformRef.current;
+    const platform = resolveStatsPlatform(options?.platform);
     if (!ids?.length) {
       toast.warning("请先选择作品。");
       return;
@@ -1388,26 +1643,26 @@ export function ToolView({ initialAppConfig }) {
     try {
       await registerApiSearchDramaIds(platform, ids);
 
-      for (let index = 0; index < ids.length; index += 1) {
-        const id = String(ids[index]);
-        if (existingDramaMap.has(id)) {
-          continue;
-        }
-        try {
+      const missingIds = ids
+        .map((id) => String(id))
+        .filter((id) => !existingDramaMap.has(String(id)));
+      const batchResult = await fetchDramasByIds(platform, missingIds);
+      batchResult.forEach((result) => {
+        if (result?.success && result?.drama) {
           const drama = {
-            ...(await fetchDramaById(platform, id)),
+            ...result.drama,
             expanded: shouldExpandImported,
           };
           mergedDramas.push(drama);
-          existingDramaMap.set(id, drama);
-          importedIdSet.add(id);
-        } catch (error) {
-          if (error?.accessDenied) {
-            hasAccessDenied = true;
-          }
-          console.error(`Failed to import drama ${id}`, error);
+          existingDramaMap.set(String(result.id), drama);
+          importedIdSet.add(String(result.id));
+          return;
         }
-      }
+        if (result?.accessDenied) {
+          hasAccessDenied = true;
+        }
+        console.error(`Failed to import drama ${result?.id}`);
+      });
 
       if (shouldSelectImportedEpisodes) {
         selectDramaEpisodesByMode(mergedDramas, Array.from(requestedIdSet), {
@@ -1466,7 +1721,7 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  async function loadMoreSearchResults(platform = currentPlatformRef.current) {
+  async function loadMoreSearchResults(platform = getActiveWorkPlatform()) {
     const state = platformStatesRef.current[platform];
     const keyword = String(state?.searchKeyword ?? "").trim();
     const pageSize = Number(state?.searchPageSize ?? 5) || 5;
@@ -1552,11 +1807,12 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  async function startPlayCountStatistics(soundIds) {
-    const platform = currentPlatformRef.current;
-    const selectedEpisodes = platformStatesRef.current[platform].selectedEpisodesSnapshot.filter((episode) =>
-      soundIds.includes(episode.sound_id)
-    );
+  async function startPlayCountStatistics(soundIds, options = {}) {
+    const platform = resolveStatsPlatform(options?.platform);
+    const selectedEpisodeSource = Array.isArray(options?.selectedEpisodes)
+      ? options.selectedEpisodes
+      : platformStatesRef.current[platform].selectedEpisodesSnapshot;
+    const selectedEpisodes = selectedEpisodeSource.filter((episode) => soundIds.includes(episode.sound_id));
     await cancelActiveRun(platform);
     resetOutputs(platform);
     const { runId, signal } = beginRun(platform);
@@ -1565,6 +1821,7 @@ export function ToolView({ initialAppConfig }) {
       finishRun(platform, runId);
       return;
     }
+    activateSharedOutputPlatform(platform);
     await registerApiSearchDramaIds(
       platform,
       selectedEpisodes.map((episode) => episode.drama_id)
@@ -1596,8 +1853,8 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  async function startIdStatisticsForEpisodes(selectedEpisodes, emptyMessage = "请先选择分集。") {
-    const platform = currentPlatformRef.current;
+  async function startIdStatisticsForEpisodes(selectedEpisodes, emptyMessage = "请先选择分集。", options = {}) {
+    const platform = resolveStatsPlatform(options?.platform);
     await cancelActiveRun(platform);
     resetOutputs(platform);
     const { runId, signal } = beginRun(platform);
@@ -1606,6 +1863,7 @@ export function ToolView({ initialAppConfig }) {
       finishRun(platform, runId);
       return;
     }
+    activateSharedOutputPlatform(platform);
     await registerApiSearchDramaIds(
       platform,
       selectedEpisodes.map((episode) => episode.drama_id)
@@ -1637,26 +1895,29 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  async function startIdStatisticsConcurrent(soundIds) {
-    const platform = currentPlatformRef.current;
-    const selectedEpisodes = platformStatesRef.current[platform].selectedEpisodesSnapshot.filter((episode) =>
-      soundIds.includes(episode.sound_id)
-    );
-    await startIdStatisticsForEpisodes(selectedEpisodes);
+  async function startIdStatisticsConcurrent(soundIds, options = {}) {
+    const platform = resolveStatsPlatform(options?.platform);
+    const selectedEpisodeSource = Array.isArray(options?.selectedEpisodes)
+      ? options.selectedEpisodes
+      : platformStatesRef.current[platform].selectedEpisodesSnapshot;
+    const selectedEpisodes = selectedEpisodeSource.filter((episode) => soundIds.includes(episode.sound_id));
+    await startIdStatisticsForEpisodes(selectedEpisodes, "请先选择分集。", { platform });
   }
 
-  async function startDramaPaidIdStatistics(dramaId) {
+  async function startDramaPaidIdStatistics(dramaId, options = {}) {
     const normalizedDramaId = String(dramaId ?? "").trim();
     if (!normalizedDramaId) {
       toast.warning("请先选择作品。");
       return;
     }
-    const platform = currentPlatformRef.current;
-    const importResult = await addDramas([dramaId], {
+    const platform = resolveStatsPlatform(options?.platform);
+    const addDramasForContext = options?.addDramas || addDramas;
+    const importResult = await addDramasForContext([dramaId], {
       autoCheck: true,
       expandImported: true,
       preserveScroll: true,
       selectMode: "paid",
+      platform,
     });
     const nextDramas = importResult?.dramas || platformStatesRef.current[platform]?.dramas || [];
     const drama = nextDramas.find((item) => String(item?.drama?.id) === normalizedDramaId);
@@ -1676,18 +1937,19 @@ export function ToolView({ initialAppConfig }) {
       episode_title: episode.name,
       duration: Number(episode.duration ?? 0),
     }));
-    await startIdStatisticsForEpisodes(selectedPaidEpisodes, "没有可统计的付费分集。");
+    await startIdStatisticsForEpisodes(selectedPaidEpisodes, "没有可统计的付费分集。", { platform });
   }
 
-  async function startRevenueEstimate(dramaIds) {
+  async function startRevenueEstimate(dramaIds, options = {}) {
     if (!dramaIds?.length) {
       toast.warning("请先选择作品。");
       return;
     }
-    const platform = currentPlatformRef.current;
+    const platform = resolveStatsPlatform(options?.platform);
     await cancelActiveRun(platform);
     resetOutputs(platform);
     const { runId, signal } = beginRun(platform);
+    activateSharedOutputPlatform(platform);
     updatePlatformState(platform, (state) => ({
       ...state,
       stats: {
@@ -1716,7 +1978,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function cancelCurrentStatistics() {
-    const platform = currentPlatformRef.current;
+    const platform = sharedOutputPlatformRef.current;
     const stats = platformStatesRef.current[platform]?.stats;
     if (!stats?.isRunning && !stats?.activeTaskId) {
       return;
@@ -1731,8 +1993,66 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
+  const missevanResultCount = getPlatformResultCount("missevan");
+  const manboResultCount = getPlatformResultCount("manbo");
+  const searchResultSummaryText = `猫耳 ${missevanResultCount} / 漫播 ${manboResultCount}`;
+
   return (
     <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pb-24 pt-3 sm:px-5 sm:pb-8 lg:gap-5 lg:px-6">
+      {mobileMenuOpen ? (
+        <div className="fixed inset-0 z-40 bg-transparent sm:hidden" onClick={closeMobileMenu} aria-hidden="true" />
+      ) : null}
+      <div className="fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-50 sm:hidden">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-lg"
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-main-menu"
+          aria-label={mobileMenuOpen ? "关闭菜单" : "打开菜单"}
+          title={mobileMenuOpen ? "关闭菜单" : "打开菜单"}
+          onClick={() => setMobileMenuOpen((open) => !open)}
+        >
+          <MenuIcon aria-hidden="true" className="size-4" />
+        </Button>
+        {mobileMenuOpen ? (
+          <div
+            id="mobile-main-menu"
+            className="absolute right-0 mt-2 w-[125px] rounded-lg border border-border/80 bg-background/98 p-1.5 shadow-[0_18px_42px_-24px_rgba(15,23,42,0.36)] ring-1 ring-white/55"
+          >
+            <div className="grid gap-1">
+              {mobileMenuNavigationItems.map((platform) => (
+                <Button
+                  key={platform.key}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={`${mobileMenuItemClassName} ${currentPlatform === platform.key ? mobileMenuActiveItemClassName : ""}`}
+                  aria-current={currentPlatform === platform.key ? "page" : undefined}
+                  onClick={() => selectMobileMenuPlatform(platform.key)}
+                >
+                  <MainNavigationTabLabel platform={platform} />
+                </Button>
+              ))}
+              <div className="my-1 border-t border-border/70" />
+              <Button type="button" variant="ghost" size="sm" className={mobileMenuItemClassName} onClick={openMobileChangelog}>
+                <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
+                  <ScrollTextIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                  <span className="min-w-0 truncate">更新日志</span>
+                </span>
+              </Button>
+              {appConfig.featureSuggestionUrl ? (
+                <Button type="button" variant="ghost" size="sm" className={mobileMenuItemClassName} onClick={openMobileFeatureSuggestion}>
+                  <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
+                    <MessageSquarePlusIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">功能建议</span>
+                  </span>
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <header className="-mx-3 border-b border-border/75 bg-background/92 px-3 py-3 backdrop-blur-xl sm:-mx-5 sm:px-5 lg:sticky lg:top-0 lg:z-20 lg:-mx-6 lg:px-6">
         <div className="mx-auto flex max-w-7xl flex-col gap-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1744,17 +2064,6 @@ export function ToolView({ initialAppConfig }) {
                     v{appConfig.frontendVersion}
                   </Badge>
                 </div>
-                <div className="flex shrink-0 items-center gap-2 sm:hidden">
-                  {appConfig.featureSuggestionUrl ? (
-                    <Button variant="outline" size="default" style={headerActionButtonStyle} asChild>
-                      <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
-                        <MessageSquarePlusIcon data-icon="inline-start" />
-                        功能建议
-                      </a>
-                    </Button>
-                  ) : null}
-                  <ChangelogButton onClick={openChangelog} style={headerActionButtonStyle} />
-                </div>
               </div>
               <div
                 className={`mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-3 ${
@@ -1762,7 +2071,7 @@ export function ToolView({ initialAppConfig }) {
                 }`}
               >
                 <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{appConfig.titleZh}</h1>
-                <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">{appConfig.description}</p>
+                {renderHeaderAccessHint()}
               </div>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
@@ -1775,9 +2084,9 @@ export function ToolView({ initialAppConfig }) {
                 </Button>
               ) : null}
               <ChangelogButton className="hidden sm:inline-flex" onClick={openChangelog} style={headerActionButtonStyle} />
-              <Tabs value={currentPlatform} onValueChange={setCurrentPlatform}>
+              <Tabs value={currentPlatform} onValueChange={setCurrentPlatform} className="hidden sm:block">
                 <TabsList
-                  className="grid h-9 w-full overflow-hidden p-0.5 sm:inline-flex sm:w-fit"
+                  className="h-9 w-fit overflow-hidden p-0.5"
                   style={{ gridTemplateColumns: `repeat(${visiblePlatforms.length}, minmax(0, 1fr))` }}
                 >
                   {visiblePlatforms.map((platform) => (
@@ -1836,36 +2145,13 @@ export function ToolView({ initialAppConfig }) {
         />
       ) : currentPlatform !== "report" ? (
         <div className="grid gap-4 sm:gap-5">
-          {currentPlatform === "missevan" ? (
-            <div className="px-1 text-sm leading-6 text-muted-foreground">
-              {appConfig.desktopApp ? (
-                stepOneHint
-              ) : (
-                <>
-                  {stepOneHint} 也可前往
-                  {" "}
-                  <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
-                    节点页
-                  </a>
-                  {" "}选择其他节点，或直接使用
-                  {appConfig.desktopAppUrl ? (
-                    <>
-                      <a className="font-medium text-primary underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
-                        桌面版
-                      </a>
-                      。
-                    </>
-                  ) : "桌面版。"}
-                </>
-              )}
-            </div>
-          ) : null}
+          <MetricLegend />
 
           <SearchPanel
             cooldownHours={appConfig.cooldownHours}
             cooldownUntil={appConfig.cooldownUntil}
             desktopAppUrl={appConfig.desktopAppUrl}
-            formState={currentBrowseState?.searchForm}
+            formState={sharedSearchForm}
             frontendVersion={appConfig.frontendVersion}
             handleVersionResponse={updateVersionStatusFromResponse}
             isDesktopApp={appConfig.desktopApp}
@@ -1876,12 +2162,15 @@ export function ToolView({ initialAppConfig }) {
               })
             }
             onNotice={setNotice}
-            onResetState={() => resetSearchFlow(currentPlatform)}
-            onUpdateFormState={updateSearchForm}
-            onUpdateResults={(results, source, meta) => setSearchResults(currentPlatform, results, source, meta)}
+            onResetState={() => resetSearchFlow(activeBrowsePlatform)}
+            onResetPlatformState={resetSearchFlow}
+            onSelectPlatform={setActiveSearchPlatform}
+            onUpdateFormState={updateSharedSearchForm}
+            onUpdateResults={(results, source, meta) => setSearchResults(activeBrowsePlatform, results, source, meta)}
+            onUpdatePlatformResults={(platform, results, source, meta) => setSearchResults(platform, results, source, meta)}
             onMissevanFallbackResults={confirmMissevanFallbackSearch}
             onManboFallbackResults={confirmManboFallbackSearch}
-            platform={currentPlatform}
+            platform={activeBrowsePlatform}
           />
 
           <section ref={resultsPanelRef} className="grid gap-3">
@@ -1900,12 +2189,19 @@ export function ToolView({ initialAppConfig }) {
               onStartPlayCountStatistics={startPlayCountStatistics}
               onStartRevenueEstimate={startRevenueEstimate}
               onToggleFavorite={toggleFavorite}
-              onLoadMoreResults={() => loadMoreSearchResults(currentPlatform)}
+              onLoadMoreResults={() => loadMoreSearchResults(activeBrowsePlatform)}
               allResults={getAllSearchResults(currentBrowseState)}
               hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
               isLoadingMoreResults={Boolean(currentBrowseState?.isLoadingMoreResults)}
               loadedResultCount={Number(currentBrowseState?.searchResults?.length ?? 0) || 0}
-              platform={currentPlatform}
+              platformTabs={visibleSearchPlatforms}
+              activePlatform={activeBrowsePlatform}
+              onPlatformChange={setActiveSearchPlatform}
+              platformResultCounts={{
+                missevan: missevanResultCount,
+                manbo: manboResultCount,
+              }}
+              platform={activeBrowsePlatform}
               resultSource={currentBrowseState?.searchResultSource || "search"}
               results={currentBrowseState?.searchResults || []}
               selectedEpisodes={currentBrowseState?.selectedEpisodesSnapshot || []}
@@ -1915,27 +2211,27 @@ export function ToolView({ initialAppConfig }) {
 
           <section ref={outputPanelRef} className="grid gap-3">
             <OutputPanel
-              currentAction={currentStatsState?.currentAction}
-              currentHistoryEntryId={currentStatsState?.currentHistoryEntryId}
-              elapsedMs={currentStatsState?.elapsedMs}
-              historyEntries={currentBrowseState?.historyEntries || []}
-              idResults={currentStatsState?.idResults}
-              idSelectedEpisodeCount={currentStatsState?.idSelectedEpisodeCount}
-              isRunning={currentStatsState?.isRunning}
+              currentAction={sharedStatsState?.currentAction}
+              currentHistoryEntryId={sharedStatsState?.currentHistoryEntryId}
+              elapsedMs={sharedStatsState?.elapsedMs}
+              historyEntries={sharedHistoryEntries}
+              idResults={sharedStatsState?.idResults}
+              idSelectedEpisodeCount={sharedStatsState?.idSelectedEpisodeCount}
+              isRunning={sharedStatsState?.isRunning}
               onCancelStatistics={cancelCurrentStatistics}
-              onClearHistory={() => clearHistoryEntries(currentPlatform)}
-              onDeleteHistoryEntry={(entryId) => deleteHistoryEntry(currentPlatform, entryId)}
-              platform={currentPlatform}
-              playCountFailed={currentStatsState?.playCountFailed}
-              playCountResults={currentStatsState?.playCountResults}
-              playCountSelectedEpisodeCount={currentStatsState?.playCountSelectedEpisodeCount}
-              playCountTotal={currentStatsState?.playCountTotal}
-              progress={currentStatsState?.progress}
-              revenueResults={currentStatsState?.revenueResults}
-              revenueSummary={currentRevenueSummary}
-              suspectedOverflowEpisodes={currentStatsState?.suspectedOverflowEpisodes}
-              totalDanmaku={currentStatsState?.totalDanmaku}
-              totalUsers={currentStatsState?.totalUsers}
+              onClearHistory={clearAllHistoryEntries}
+              onDeleteHistoryEntry={(entry) => deleteHistoryEntry(entry.platform, entry.id)}
+              platform={sharedOutputPlatform}
+              playCountFailed={sharedStatsState?.playCountFailed}
+              playCountResults={sharedStatsState?.playCountResults}
+              playCountSelectedEpisodeCount={sharedStatsState?.playCountSelectedEpisodeCount}
+              playCountTotal={sharedStatsState?.playCountTotal}
+              progress={sharedStatsState?.progress}
+              revenueResults={sharedStatsState?.revenueResults}
+              revenueSummary={sharedRevenueSummary}
+              suspectedOverflowEpisodes={sharedStatsState?.suspectedOverflowEpisodes}
+              totalDanmaku={sharedStatsState?.totalDanmaku}
+              totalUsers={sharedStatsState?.totalUsers}
             />
           </section>
         </div>

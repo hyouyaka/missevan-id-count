@@ -3,7 +3,6 @@ import {
   BeanIcon,
   CoinsIcon,
   GemIcon,
-  HashIcon,
   HeartIcon,
   MicIcon,
   PlayCircleIcon,
@@ -20,8 +19,9 @@ import {
   formatDeviceDateTime,
   formatPlainNumber,
   getBackendVersionFromResponse,
+  getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
-import { PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
   canShowRankTrend,
@@ -272,6 +272,14 @@ function RankItemCard({
   const recentUpdatedDate = isMissevanPeak ? "" : formatRankUpdatedDate(item.updated_at);
   const paymentTag = getRankPaymentTag(item);
   const titleTags = getRankTitleTags(item);
+  const mobileDisplayTitle = getInlineTaggedTitleDisplayText(item.name, {
+    hasTags: titleTags.length > 0,
+    viewport: "mobile",
+  });
+  const desktopDisplayTitle = getInlineTaggedTitleDisplayText(item.name, {
+    hasTags: titleTags.length > 0,
+    viewport: "desktop",
+  });
   const detailIdText = isMissevanPeak ? dramaIdText : item.id;
   const trendLookupId = isMissevanPeak ? item.name : item.id;
   const trendItemBase = paymentTag ? { ...item, payment_label: paymentTag, payStatus: paymentTag } : item;
@@ -434,7 +442,7 @@ function RankItemCard({
                   className={`min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
                   onClick={openSearchResult}
                 >
-                  <span>{item.name}</span>
+                  <span>{desktopDisplayTitle}</span>
                   {titleTags.map((label) => (
                     <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
                       {label}
@@ -443,7 +451,7 @@ function RankItemCard({
                 </button>
               ) : (
                 <span className={`min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`}>
-                  <span>{item.name}</span>
+                  <span>{desktopDisplayTitle}</span>
                   {titleTags.map((label) => (
                     <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
                       {label}
@@ -459,7 +467,7 @@ function RankItemCard({
                   className={`break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
                   onClick={openSearchResult}
                 >
-                  <span>{item.name}</span>
+                  <span>{mobileDisplayTitle}</span>
                   {titleTags.map((label) => (
                     <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
                       {label}
@@ -468,7 +476,7 @@ function RankItemCard({
                 </button>
               ) : (
                 <span className={`break-words text-foreground ${getTitleClassName(item.name)}`}>
-                  <span>{item.name}</span>
+                  <span>{mobileDisplayTitle}</span>
                   {titleTags.map((label) => (
                     <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
                       {label}
@@ -479,7 +487,7 @@ function RankItemCard({
             </div>
             {detailIdText ? (
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <HashIcon aria-label={isMissevanPeak ? "包含作品ID" : "作品ID"} className={metaIconClassName} title={isMissevanPeak ? "包含作品ID" : "作品ID"} />
+                <PlatformIdIcon platform={platform} aria-label={isMissevanPeak ? "包含作品ID" : "作品ID"} className={metaIconClassName} title={isMissevanPeak ? "包含作品ID" : "作品ID"} />
                 <span className="min-w-0 break-all">{detailIdText}</span>
               </div>
             ) : null}
@@ -1061,7 +1069,7 @@ function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
             ))}
           </div>
           <AlertDialogDescription className="flex items-center gap-1 text-left text-xs">
-            <HashIcon aria-hidden="true" className="size-3.5 shrink-0" />
+            <PlatformIdIcon platform={platform} aria-label="作品ID" className="size-3.5 shrink-0" />
             <span className="break-all">{item?.id}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>

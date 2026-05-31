@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatPlainNumber, getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
 import {
   buildOngoingTrendEligibleIdSet,
@@ -38,6 +39,7 @@ import {
   RankTrendButton,
   RankTrendDialog,
 } from "@/app/rankTrendUi";
+import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 function buildProxyImageUrl(url) {
@@ -91,7 +93,7 @@ function MetricIcon({ label, className = "size-3.5" }) {
   return <Icon aria-hidden="true" className={className} />;
 }
 
-function MetricLegend({ className = "" }) {
+export function MetricLegend({ className = "" }) {
   return (
     <div
       className={`rounded-lg border border-border/75 bg-card/96 px-3 py-2 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.28)] ${className}`}
@@ -174,6 +176,10 @@ export function SearchResults({
   allResults = [],
   isLoadingMoreResults = false,
   totalResults = 0,
+  platformTabs = [],
+  activePlatform = platform,
+  onPlatformChange,
+  platformResultCounts = {},
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
@@ -213,6 +219,11 @@ export function SearchResults({
     data: null,
   });
   const trendRequestIdRef = useRef(0);
+
+  function getPlatformResultCountText(nextPlatform) {
+    const count = Number(platformResultCounts?.[nextPlatform] ?? 0) || 0;
+    return String(count);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -707,8 +718,8 @@ export function SearchResults({
   }
 
   const actionButtonBaseClass = "h-9 w-full justify-start px-2.5 text-[14px]!";
-  const mobileBatchTextClass = "text-[14px]! font-medium";
-  const mobileActionButtonClass = `h-9 min-w-fit gap-1 px-2 ${mobileBatchTextClass}`;
+  const mobileBatchTextClass = "text-xs! font-medium";
+  const mobileActionButtonClass = `h-8 min-w-fit gap-1 px-2 ${mobileBatchTextClass}`;
   const batchSwitchControlClass = "flex h-8 min-w-fit items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
   const desktopBatchControlClass = "flex h-9 w-full items-center justify-start gap-2 rounded-md border border-border/75 bg-background px-2.5 text-[14px]! font-medium";
   const resultActionControlClass = "flex h-8 items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
@@ -901,11 +912,28 @@ export function SearchResults({
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_11rem] lg:items-start">
-      {results.length ? <MetricLegend className="lg:hidden" /> : null}
-      <Card className="min-w-0 border-border/80 bg-card shadow-[0_24px_52px_-42px_rgba(15,23,42,0.24)]">
-        <CardContent className="pt-5">
+      <Card className="min-w-0 border-border/80 bg-card py-0 pt-2.5 pb-4 shadow-[0_24px_52px_-42px_rgba(15,23,42,0.24)]">
+        <CardContent className="pt-0">
+        {platformTabs.length > 1 ? (
+          <div className="border-b border-border/75 pb-1.5">
+            <Tabs value={activePlatform} onValueChange={onPlatformChange}>
+              <TabsList className="h-auto justify-start gap-1 bg-transparent p-0 border-0!">
+                {platformTabs.map((item) => (
+                  <TabsTrigger
+                    key={item.key}
+                    className="h-8 rounded-md border-0 bg-transparent px-2.5 text-sm font-medium text-muted-foreground shadow-none hover:bg-muted/55 hover:text-foreground data-[state=active]:bg-muted/65 data-[state=active]:text-foreground data-[state=active]:shadow-none"
+                    value={item.key}
+                  >
+                    <PlatformTabLabel platform={item.key} iconClassName="size-3.5" />
+                    <span className="tabular-nums">{getPlatformResultCountText(item.key)}</span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+        ) : null}
         {results.length ? (
-          <div className="divide-y divide-border/75">
+          <div className={platformTabs.length > 1 ? "mt-3 divide-y divide-border/75" : "divide-y divide-border/75"}>
             {visibleResults.map((item) => {
               const importedDrama = getImportedDrama(item.id);
               const coverUrl = buildProxyImageUrl(item.cover);
@@ -985,7 +1013,7 @@ export function SearchResults({
                             {importedDrama ? <Badge variant="imported" className={mobileInlineBadgeClassName}>已导入</Badge> : null}
                           </div>
                           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                            <HashIcon aria-label={idLabel} className={metaIconClassName} title={idLabel} />
+                            <PlatformIdIcon platform={platform} aria-label={idLabel} className={metaIconClassName} title={idLabel} />
                             <span className="min-w-0 break-all">{item.id}</span>
                           </div>
                           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -1198,13 +1226,8 @@ export function SearchResults({
             ) : null}
           </div>
         ) : (
-          <div className="rounded-lg border border-dashed border-border/80 bg-muted/30 px-6 py-10 text-center">
-            <div className="text-base font-semibold">还没有导入结果</div>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              {platform === "manbo"
-                ? "先搜索已收录的漫播信息库，或继续粘贴作品ID / 链接导入。"
-                : "先搜索关键词，或直接输入作品ID后将结果导入到这里。"}
-            </p>
+          <div className={`${platformTabs.length > 1 ? "mt-4 " : ""}rounded-lg border border-dashed border-border/80 bg-muted/30 px-6 py-10 text-center`}>
+            <div className="text-base font-semibold">还没有结果</div>
           </div>
         )}
         </CardContent>
@@ -1212,7 +1235,6 @@ export function SearchResults({
       {results.length ? (
         <aside className="hidden lg:sticky lg:top-36 lg:block">
           <div className="grid gap-3">
-            <MetricLegend />
             <div className="rounded-lg border border-border/80 bg-card p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.32)]">
               <div className="mb-3 text-xs font-semibold text-muted-foreground">批量操作</div>
               <ActionPanel />

@@ -7,9 +7,13 @@ const changelogDialogSource = readFileSync(new URL("./ChangelogDialog.jsx", impo
 const appUtilsSource = readFileSync(new URL("./app-utils.js", import.meta.url), "utf8");
 const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import.meta.url), "utf8");
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
+const landingViewSource = readFileSync(new URL("./LandingView.jsx", import.meta.url), "utf8");
 const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.meta.url), "utf8");
+const outputPanelSource = readFileSync(new URL("./OutputPanel.jsx", import.meta.url), "utf8");
+const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", import.meta.url), "utf8");
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
+const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils.js", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
@@ -240,9 +244,12 @@ test("web navigation keeps discovery pages and favorites", () => {
   assert.notEqual(platformEnd, -1, "web platform list should end before semicolon");
   const platformSource = toolViewSource.slice(platformStart, platformEnd);
 
+  assert.match(toolViewSource, /SearchIcon/);
+  assert.match(toolViewSource, /search: SearchIcon/);
   assert.match(toolViewSource, /favorites: StarIcon/);
-  assert.match(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
-  assert.match(platformSource, /\{ key: "manbo", label: "漫播" \}/);
+  assert.match(platformSource, /\{ key: "search", label: "搜索" \}/);
+  assert.doesNotMatch(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
+  assert.doesNotMatch(platformSource, /\{ key: "manbo", label: "漫播" \}/);
   assert.match(platformSource, /\{ key: "ongoing", label: "更新" \}/);
   assert.match(platformSource, /\{ key: "ranks", label: "榜单" \}/);
   assert.match(platformSource, /\{ key: "favorites", label: "收藏" \}/);
@@ -259,12 +266,380 @@ test("desktop navigation replaces discovery pages with Excel report entry", () =
   assert.match(toolViewSource, /FileSpreadsheetIcon/);
   assert.match(toolViewSource, /report: FileSpreadsheetIcon/);
   assert.match(toolViewSource, /appConfig\.desktopApp \? desktopPlatforms : webPlatforms/);
-  assert.match(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
-  assert.match(platformSource, /\{ key: "manbo", label: "漫播" \}/);
+  assert.match(platformSource, /\{ key: "search", label: "搜索" \}/);
+  assert.doesNotMatch(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
+  assert.doesNotMatch(platformSource, /\{ key: "manbo", label: "漫播" \}/);
   assert.match(platformSource, /\{ key: "favorites", label: "收藏" \}/);
   assert.match(platformSource, /\{ key: "report", label: "Excel 报表" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "ongoing", label: "更新" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "ranks", label: "榜单" \}/);
+});
+
+test("mobile header actions collapse into a fixed top-right menu", () => {
+  assert.match(toolViewSource, /MenuIcon/);
+  assert.match(toolViewSource, /const \[mobileMenuOpen, setMobileMenuOpen\] = useState\(false\)/);
+  assert.match(toolViewSource, /const mobileMenuNavigationItems = visiblePlatforms/);
+  assert.match(toolViewSource, /function closeMobileMenu\(\)/);
+  assert.match(toolViewSource, /function openMobileChangelog\(\)/);
+  assert.match(toolViewSource, /function openMobileFeatureSuggestion\(\)/);
+  assert.match(toolViewSource, /window\.open\(appConfig\.featureSuggestionUrl, "_blank", "noreferrer"\)/);
+  assert.match(toolViewSource, /function selectMobileMenuPlatform\(key\)/);
+  assert.match(toolViewSource, /window\.addEventListener\("keydown", handleMobileMenuKeyDown\)/);
+  assert.match(toolViewSource, /event\.key === "Escape"/);
+  assert.match(toolViewSource, /setMobileMenuOpen\(false\)/);
+
+  assert.doesNotMatch(toolViewSource, /className="flex shrink-0 items-center gap-2 sm:hidden"/);
+  assert.match(toolViewSource, /className="fixed right-3 top-\[max\(0\.75rem,env\(safe-area-inset-top\)\)\] z-50 sm:hidden"/);
+  assert.match(toolViewSource, /aria-expanded=\{mobileMenuOpen\}/);
+  assert.match(toolViewSource, /aria-controls="mobile-main-menu"/);
+  assert.match(toolViewSource, /aria-label=\{mobileMenuOpen \? "关闭菜单" : "打开菜单"\}/);
+  assert.match(toolViewSource, /<MenuIcon aria-hidden="true"/);
+  assert.match(toolViewSource, /<div className="fixed inset-0 z-40 bg-transparent sm:hidden" onClick=\{closeMobileMenu\}/);
+  assert.match(toolViewSource, /id="mobile-main-menu"/);
+  assert.match(toolViewSource, /className="absolute right-0 mt-2 w-\[125px\]/);
+  assert.doesNotMatch(toolViewSource, /id="mobile-main-menu"[\s\S]*?w-40/);
+  assert.match(toolViewSource, /const mobileMenuItemClassName = "relative w-full justify-start overflow-hidden text-\[0\.82rem\] font-medium text-foreground/);
+  assert.match(toolViewSource, /const mobileMenuActiveItemClassName = "bg-\[rgba\(45,72,139,0\.12\)\] text-\[rgb\(32,54,112\)\]/);
+  assert.match(toolViewSource, /before:absolute before:inset-y-1\.5 before:left-1 before:w-1 before:rounded-full before:bg-primary/);
+
+  assert.match(toolViewSource, /mobileMenuNavigationItems\.map\(\(platform\) => \(/);
+  assert.match(toolViewSource, /selectMobileMenuPlatform\(platform\.key\)/);
+  assert.match(toolViewSource, /variant="ghost"[\s\S]*className=\{\`\$\{mobileMenuItemClassName\} \$\{currentPlatform === platform\.key \? mobileMenuActiveItemClassName : ""\}\`\}/);
+  assert.match(toolViewSource, /<MainNavigationTabLabel platform=\{platform\} \/>/);
+  assert.match(toolViewSource, /openMobileChangelog/);
+  assert.match(toolViewSource, /更新日志/);
+  assert.match(toolViewSource, /appConfig\.featureSuggestionUrl \? \(/);
+  assert.match(toolViewSource, /<Button type="button" variant="ghost" size="sm" className=\{mobileMenuItemClassName\} onClick=\{openMobileFeatureSuggestion\}>/);
+  assert.doesNotMatch(toolViewSource, /<Button variant="ghost" size="sm" className=\{mobileMenuItemClassName\} asChild>/);
+  assert.match(toolViewSource, /<span className="inline-flex min-w-0 items-center justify-center gap-1\.5">[\s\S]*<MessageSquarePlusIcon aria-hidden="true" className="size-3\.5 shrink-0" \/>[\s\S]*<span className="min-w-0 truncate">功能建议<\/span>/);
+  assert.match(toolViewSource, /功能建议/);
+});
+
+test("landing node footer actions use compact mobile sizing", () => {
+  assert.match(landingViewSource, /const landingFooterActionButtonClassName = "h-9 w-\[90px\] justify-center px-1\.5 text-xs sm:h-10 sm:w-auto sm:min-w-fit sm:px-4 sm:text-sm"/);
+  assert.match(landingViewSource, /<Button variant="outline" className=\{landingFooterActionButtonClassName\} asChild>/);
+  assert.match(landingViewSource, /<ChangelogButton className=\{landingFooterActionButtonClassName\} size="default" onClick=\{openChangelog\} \/>/);
+  assert.match(landingViewSource, /<Button variant="outline" className=\{landingFooterActionButtonClassName\} disabled=\{loading\} onClick=\{refreshAllRegions\}>/);
+  assert.doesNotMatch(landingViewSource, /className="h-10 min-w-fit px-3 sm:px-4"/);
+});
+
+test("desktop header actions and navigation remain visible from sm upward", () => {
+  assert.match(toolViewSource, /<Tabs value=\{currentPlatform\} onValueChange=\{setCurrentPlatform\} className="hidden sm:block">/);
+  assert.match(toolViewSource, /className="h-9 w-fit overflow-hidden p-0\.5"/);
+  assert.match(toolViewSource, /className="hidden sm:inline-flex"/);
+  assert.match(toolViewSource, /<Button variant="outline" size="default" className="hidden sm:inline-flex" style=\{headerActionButtonStyle\} asChild>/);
+  assert.match(toolViewSource, /<a href=\{appConfig\.featureSuggestionUrl\} rel="noreferrer" target="_blank">/);
+  assert.match(toolViewSource, /<ChangelogButton className="hidden sm:inline-flex"/);
+});
+
+test("search page owns compact platform result tabs", () => {
+  assert.match(toolViewSource, /const searchPlatforms = \[/);
+  assert.match(toolViewSource, /\{ key: "missevan", label: "猫耳" \}/);
+  assert.match(toolViewSource, /\{ key: "manbo", label: "漫播" \}/);
+  assert.match(toolViewSource, /activeSearchPlatform/);
+  assert.match(toolViewSource, /setActiveSearchPlatform/);
+  assert.match(toolViewSource, /searchResultSummaryText/);
+  assert.match(toolViewSource, /猫耳 \$\{missevanResultCount\}/);
+  assert.match(toolViewSource, /漫播 \$\{manboResultCount\}/);
+
+  const searchPageStart = toolViewSource.indexOf('currentPlatform !== "report" ? (');
+  const searchResultsStart = toolViewSource.indexOf("<SearchResults", searchPageStart);
+  assert.notEqual(searchResultsStart, -1, "SearchResults should render in the search page");
+  const searchResultsEnd = toolViewSource.indexOf("/>", searchResultsStart);
+  const beforeSearchResults = toolViewSource.slice(searchPageStart, searchResultsStart);
+  const searchResultsProps = toolViewSource.slice(searchResultsStart, searchResultsEnd);
+  assert.doesNotMatch(beforeSearchResults, /<Tabs value=\{activeBrowsePlatform\}/, "platform tabs should not render as a standalone ToolView row");
+  assert.match(searchResultsProps, /platformTabs=\{visibleSearchPlatforms\}/);
+  assert.match(searchResultsProps, /activePlatform=\{activeBrowsePlatform\}/);
+  assert.match(searchResultsProps, /onPlatformChange=\{setActiveSearchPlatform\}/);
+  assert.match(searchResultsProps, /platformResultCounts=\{\{\s*missevan: missevanResultCount,\s*manbo: manboResultCount,\s*\}\}/);
+});
+
+test("frontend unified keyword search uses backend aggregate route", () => {
+  assert.match(searchPanelSource, /classifyUnifiedSearchInput/);
+  assert.match(searchPanelSource, /queryUnifiedKeywordSearch/);
+  assert.match(searchPanelSource, /function buildUnifiedSearchPath/);
+  assert.match(searchPanelSource, /\/unified-search\?keyword=\$\{encodeURIComponent\(keyword\)\}&offset=0&limit=5/);
+  assert.match(searchPanelSource, /queryBackendUnifiedSearch\(keyword\)/);
+  assert.match(searchPanelSource, /onUpdatePlatformResults\?\.\("missevan"/);
+  assert.match(searchPanelSource, /onUpdatePlatformResults\?\.\("manbo"/);
+
+  const unifiedStart = searchPanelSource.indexOf("async function queryUnifiedKeywordSearch");
+  assert.notEqual(unifiedStart, -1, "unified keyword search function should exist");
+  const unifiedEnd = searchPanelSource.indexOf("async function queryNumericLibraryLookup", unifiedStart);
+  assert.notEqual(unifiedEnd, -1, "unified keyword search should end before numeric lookup");
+  const unifiedSource = searchPanelSource.slice(unifiedStart, unifiedEnd);
+  assert.doesNotMatch(unifiedSource, /queryPlatformKeywordSearch/);
+  assert.doesNotMatch(unifiedSource, /apiFallback: false/);
+  assert.doesNotMatch(unifiedSource, /apiFallback: true/);
+});
+
+test("backend unified search route aggregates libraries before API fallback", () => {
+  const routeStart = serverSource.indexOf('app.get("/unified-search"');
+  assert.notEqual(routeStart, -1, "unified search route should exist");
+  const routeEnd = serverSource.indexOf('app.get("/search"', routeStart);
+  assert.notEqual(routeEnd, -1, "unified search route should sit before the legacy Missevan search route");
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+
+  assert.match(routeSource, /Promise\.all\(\[\s*ensureInfoStoreLoaded\(missevanInfoStore\),\s*ensureInfoStoreLoaded\(manboInfoStore\),\s*\]\)/);
+  assert.equal(routeSource.match(/refreshMissevanCooldownState/g)?.length ?? 0, 1);
+  assert.match(routeSource, /runMissevanLibraryUnifiedSearch/);
+  assert.match(routeSource, /runManboLibraryUnifiedSearch/);
+  assert.match(routeSource, /const shouldUseApiFallback[\s\S]*missevanLibraryResult\.meta\.matchedCount[\s\S]*manboLibraryResult\.meta\.matchedCount/);
+  assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit\),\s*runManboLibraryUnifiedSearch\(normalizedKeyword, offset, limit\),\s*\]\)/);
+  assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanApiUnifiedSearch\(normalizedKeyword, offset, limit\),\s*runManboApiUnifiedSearch\(normalizedKeyword, offset, limit\),\s*\]\)/);
+  assert.match(serverSource, /async function runManboApiUnifiedSearch\(keyword, offset, limit\)[\s\S]*const pagedResults = apiResults\.slice\(offset, offset \+ limit\)[\s\S]*results: pagedResults[\s\S]*buildSearchPageMeta\(keyword, apiResults\.length, offset, limit\)/);
+  assert.match(routeSource, /normalizeSettledUnifiedSearchResult\("missevan"/);
+  assert.match(routeSource, /normalizeSettledUnifiedSearchResult\("manbo"/);
+  assert.match(routeSource, /results:\s*\{\s*missevan:[\s\S]*manbo:/);
+  assert.match(routeSource, /usedApiFallback/);
+});
+
+test("unified search panels are unframed", () => {
+  assert.doesNotMatch(searchPanelSource, /CardContent/);
+  assert.doesNotMatch(searchPanelSource, /<Card/);
+  assert.match(searchPanelSource, /return \(\s*<div className="flex flex-col gap-3"/);
+  assert.match(searchResultsSource, /TabsList className="h-auto justify-start gap-1 bg-transparent p-0 border-0!"/);
+});
+
+test("search result platform tabs live in the result card header with counts", () => {
+  assert.match(searchResultsSource, /platformTabs = \[\]/);
+  assert.match(searchResultsSource, /activePlatform = platform/);
+  assert.match(searchResultsSource, /platformResultCounts = \{\}/);
+  assert.match(searchResultsSource, /onPlatformChange/);
+  assert.match(searchResultsSource, /function getPlatformResultCountText\(nextPlatform\)/);
+  assert.match(searchResultsSource, /<Card[\s\S]*className="[^"]*pt-2\.5[\s\S]*pb-4/);
+  assert.match(searchResultsSource, /<CardContent className="pt-0">/);
+  assert.match(searchResultsSource, /<Tabs value=\{activePlatform\} onValueChange=\{onPlatformChange\}/);
+  assert.match(searchResultsSource, /PlatformTabLabel platform=\{item\.key\} iconClassName="size-3\.5"/);
+  assert.match(searchResultsSource, /getPlatformResultCountText\(item\.key\)/);
+  assert.match(searchResultsSource, /border-b border-border\/75 pb-1\.5/);
+  const platformTabsStart = searchResultsSource.indexOf("<Tabs value={activePlatform}");
+  const platformTabsEnd = searchResultsSource.indexOf("</Tabs>", platformTabsStart);
+  assert.notEqual(platformTabsStart, -1, "platform tabs should render inside SearchResults");
+  assert.notEqual(platformTabsEnd, -1, "platform tabs should close inside SearchResults");
+  const platformTabsSource = searchResultsSource.slice(platformTabsStart, platformTabsEnd);
+  assert.match(platformTabsSource, /rounded-md/);
+  assert.match(platformTabsSource, /hover:bg-muted\/55/);
+  assert.doesNotMatch(platformTabsSource, /rounded-none/);
+});
+
+test("search input area uses compact mobile controls", () => {
+  assert.match(searchPanelSource, /grid-cols-\[minmax\(0,1fr\)_4\.5rem\]/);
+  assert.match(searchPanelSource, /h-\[4\.375rem\] min-h-\[4\.375rem\] max-h-\[4\.375rem\]/);
+  assert.match(searchPanelSource, /bg-white dark:bg-background/);
+  assert.match(searchPanelSource, /text-sm!/);
+  assert.match(searchPanelSource, /className="h-8 gap-1 px-2 text-sm!/);
+});
+
+test("mobile batch action menu uses compact buttons", () => {
+  assert.match(searchResultsSource, /const mobileActionButtonClass = `h-8 min-w-fit gap-1 px-2 \$\{mobileBatchTextClass\}`/);
+  assert.match(searchResultsSource, /const mobileBatchTextClass = "text-xs! font-medium"/);
+  assert.match(searchResultsSource, /function ActionPanel\(\{ variant = "desktop" \}\)/);
+});
+
+test("ongoing titles keep content type badges visible while truncating long names", () => {
+  const titleButtonStart = ongoingPanelSource.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
+  assert.notEqual(titleButtonStart, -1, "title button markup should exist");
+  const titleButtonEnd = ongoingPanelSource.indexOf("</button>", titleButtonStart);
+  assert.notEqual(titleButtonEnd, -1, "title button should have a closing tag");
+  const titleButtonMarkup = ongoingPanelSource.slice(titleButtonStart, titleButtonEnd);
+
+  assert.doesNotMatch(ongoingPanelSource, /text-lg! font-semibold! leading-6!/);
+  assert.match(ongoingPanelSource, /text-base! font-semibold! leading-5!/);
+  assert.doesNotMatch(ongoingPanelSource, /grid-cols-\[minmax\(0,1fr\)_auto\]/);
+  assert.doesNotMatch(titleButtonMarkup, /line-clamp-2/);
+  assert.match(titleButtonMarkup, /className="break-words rounded-sm[\s\S]*underline underline-offset-4/);
+  assert.doesNotMatch(ongoingPanelSource, /ongoingTitleUnderlineClassName/);
+  assert.doesNotMatch(ongoingPanelSource, /\[background-size:100%_2px\]/);
+  assert.doesNotMatch(ongoingPanelSource, /\[box-decoration-break:clone\]/);
+  assert.match(ongoingPanelSource, /getInlineTaggedTitleDisplayText/);
+  assert.match(ranksPanelSource, /getInlineTaggedTitleDisplayText/);
+  assert.match(appUtilsSource, /export function getInlineTaggedTitleDisplayText/);
+  assert.match(ongoingPanelSource, /titleTags\.map/);
+  assert.match(ongoingPanelSource, /ml-1 inline-flex/);
+  assert.match(ongoingPanelSource, /shrink-0/);
+});
+
+test("title display truncation does not replace original search payload names", () => {
+  assert.match(ongoingPanelSource, /name: item\.name/);
+  assert.doesNotMatch(ongoingPanelSource, /name: displayTitle/);
+  assert.match(ranksPanelSource, /name: item\.name/);
+  assert.doesNotMatch(ranksPanelSource, /name: displayTitle/);
+});
+
+test("ongoing mobile filter tabs use compact touch-aligned sizing", () => {
+  assert.match(ongoingPanelSource, /const mobileOngoingPlatformTabClassName = "h-7 min-w-0 px-1\.5 text-sm!"/);
+  assert.match(ongoingPanelSource, /const mobileOngoingWindowTabClassName = "h-7 min-w-0 px-1 text-\[12px\]! leading-none"/);
+  assert.doesNotMatch(ongoingPanelSource, /mobileOngoingPlatformTabClassName = "[^"]*-mt-0\.5/);
+  assert.doesNotMatch(ongoingPanelSource, /mobileOngoingPlatformTabClassName = "[^"]*mb-0\.5/);
+  assert.doesNotMatch(ongoingPanelSource, /mobileOngoingWindowTabClassName = "[^"]*-mt-0\.5/);
+  assert.doesNotMatch(ongoingPanelSource, /mobileOngoingWindowTabClassName = "[^"]*mb-0\.5/);
+  assert.match(ongoingPanelSource, /className="flex h-\[2\.375rem\] items-center gap-1\.5 px-1\.5"/);
+  assert.match(ongoingPanelSource, /className=\{mobileOngoingPlatformTabClassName\}/);
+  assert.match(ongoingPanelSource, /className=\{mobileOngoingWindowTabClassName\}/);
+});
+
+test("batch action counters remain scoped to the active result platform", () => {
+  assert.match(searchResultsSource, /const actionResults = allResults\.length \? allResults : results/);
+  assert.match(searchResultsSource, /const selectedDramaCount = actionResults\.filter/);
+  assert.match(searchResultsSource, /const importedDramaCount = dramas\.length/);
+  assert.match(searchResultsSource, /const selectedEpisodeCount = selectedEpisodes\.length/);
+
+  const searchResultsStart = toolViewSource.indexOf("<SearchResults");
+  const outputPanelStart = toolViewSource.indexOf("<OutputPanel");
+  const searchResultsProps = toolViewSource.slice(searchResultsStart, outputPanelStart);
+  assert.match(searchResultsProps, /dramas=\{currentBrowseState\?\.dramas \|\| \[\]\}/);
+  assert.match(searchResultsProps, /allResults=\{getAllSearchResults\(currentBrowseState\)\}/);
+  assert.match(searchResultsProps, /selectedEpisodes=\{currentBrowseState\?\.selectedEpisodesSnapshot \|\| \[\]\}/);
+  assert.match(searchResultsProps, /platform=\{activeBrowsePlatform\}/);
+});
+
+test("search metric legend is persistent above search panel", () => {
+  assert.match(searchResultsSource, /export function MetricLegend/);
+  assert.match(toolViewSource, /import \{ SearchResults, MetricLegend \} from "@\/app\/SearchResults";/);
+
+  const searchPageStart = toolViewSource.indexOf('currentPlatform !== "report" ? (');
+  assert.notEqual(searchPageStart, -1, "search page branch should exist");
+  const searchPanelIndex = toolViewSource.indexOf("<SearchPanel", searchPageStart);
+  assert.notEqual(searchPanelIndex, -1, "search panel should render in search page branch");
+  const legendIndex = toolViewSource.indexOf("<MetricLegend", searchPageStart);
+  assert.notEqual(legendIndex, -1, "metric legend should render in search page branch");
+  assert.ok(legendIndex < searchPanelIndex, "metric legend should render above the search panel");
+
+  assert.doesNotMatch(searchResultsSource, /results\.length \? <MetricLegend className="lg:hidden"/);
+  const asideStart = searchResultsSource.indexOf("<aside");
+  const asideEnd = searchResultsSource.indexOf("</aside>", asideStart);
+  assert.notEqual(asideStart, -1, "search results desktop aside should still exist");
+  assert.notEqual(asideEnd, -1, "search results desktop aside should close");
+  const asideSource = searchResultsSource.slice(asideStart, asideEnd);
+  assert.doesNotMatch(asideSource, /<MetricLegend/);
+});
+
+test("external drama title jump clears both search result panes before injecting target import", () => {
+  const openStart = toolViewSource.indexOf("async function openDramaInSearch");
+  assert.notEqual(openStart, -1, "openDramaInSearch should exist");
+  const openEnd = toolViewSource.indexOf("async function loadSearchPage", openStart);
+  assert.notEqual(openEnd, -1, "openDramaInSearch should end before loadSearchPage");
+  const openSource = toolViewSource.slice(openStart, openEnd);
+
+  assert.match(toolViewSource, /onOpenSearchResult=\{openDramaInSearch\}/);
+  assert.match(openSource, /resetSearchFlow\("missevan"\);[\s\S]*resetSearchFlow\("manbo"\);/);
+  assert.ok(
+    openSource.indexOf('resetSearchFlow("missevan");') < openSource.indexOf("setManualSearchResults(targetPlatform"),
+    "both search panes should clear before target manual results are set"
+  );
+  assert.match(openSource, /updateSharedSearchForm\(\{[\s\S]*keyword: String\(name \?\? ""\)\.trim\(\),[\s\S]*manualInput,/);
+  assert.match(openSource, /setManualSearchResults\(targetPlatform, results, \{ limit: dramaIds\.length, scroll: false \}\)/);
+  assert.match(openSource, /openSearchPlatform\(targetPlatform\)/);
+  assert.doesNotMatch(toolViewSource, /openDramaResultDialog/);
+  assert.doesNotMatch(toolViewSource, /resultDialog/);
+});
+
+test("addDramas imports missing dramas with one batch request for the active platform", () => {
+  const addStart = toolViewSource.indexOf("async function addDramas");
+  assert.notEqual(addStart, -1, "addDramas should exist");
+  const addEnd = toolViewSource.indexOf("async function loadMoreSearchResults", addStart);
+  assert.notEqual(addEnd, -1, "addDramas should end before loadMoreSearchResults");
+  const addSource = toolViewSource.slice(addStart, addEnd);
+
+  assert.match(addSource, /const missingIds = ids[\s\S]*filter\(\(id\) => !existingDramaMap\.has\(String\(id\)\)\)/);
+  assert.match(addSource, /const batchResult = await fetchDramasByIds\(platform, missingIds\)/);
+  assert.doesNotMatch(addSource, /for \(let index = 0; index < ids\.length; index \+= 1\)[\s\S]*await fetchDramaById\(platform, id\)/);
+  assert.match(toolViewSource, /async function fetchDramasByIds\(platform, dramaIds, signal, options = \{\}\)/);
+  assert.match(toolViewSource, /postJson\(getDramasEndpoint\(platform\), payload, signal, "Failed to load dramas"\)/);
+});
+
+test("SearchResults keeps only page layout after dialog rollback", () => {
+  assert.doesNotMatch(searchResultsSource, /variant = "page"/);
+  assert.doesNotMatch(searchResultsSource, /isDialogVariant/);
+  assert.match(searchResultsSource, /<div className="grid gap-4 lg:grid-cols-\[minmax\(0,1fr\)_11rem\] lg:items-start">/);
+  assert.match(searchResultsSource, /results\.length \? \(/);
+  assert.match(searchResultsSource, /className="fixed inset-x-3 bottom-3 z-40 lg:hidden"/);
+});
+
+test("platform id icon is globally reusable", () => {
+  assert.match(platformTabLabelSource, /export function PlatformIdIcon/);
+  assert.match(platformTabLabelSource, /platformTabMeta\[key\]/);
+  assert.match(platformTabLabelSource, /aria-label=\{label \|\| `\$\{meta\?\.label \|\| "平台"\} ID`\}/);
+});
+
+test("work id rows use platform icons instead of HashIcon", () => {
+  assert.match(searchResultsSource, /PlatformIdIcon platform=\{platform\} aria-label=\{idLabel\}/);
+  assert.match(ongoingPanelSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
+  assert.match(ranksPanelSource, /PlatformIdIcon[\s\S]*platform=\{platform\}[\s\S]*aria-label=\{isMissevanPeak \? "包含作品ID" : "作品ID"\}/);
+  assert.match(ranksPanelSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
+  assert.match(rankTrendUiSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
+
+  const searchWorkIdLine = searchResultsSource.slice(searchResultsSource.indexOf("aria-label={idLabel}") - 140, searchResultsSource.indexOf("aria-label={idLabel}") + 180);
+  assert.doesNotMatch(searchWorkIdLine, /HashIcon/);
+  const ongoingWorkIdLine = ongoingPanelSource.slice(ongoingPanelSource.indexOf('aria-label="作品ID"') - 140, ongoingPanelSource.indexOf('aria-label="作品ID"') + 180);
+  assert.doesNotMatch(ongoingWorkIdLine, /HashIcon/);
+  const ranksWorkIdLine = ranksPanelSource.slice(ranksPanelSource.indexOf("包含作品ID") - 180, ranksPanelSource.indexOf("包含作品ID") + 220);
+  assert.doesNotMatch(ranksWorkIdLine, /HashIcon/);
+  assert.match(rankTrendUiSource, /\#\{rank\.position\}/, "rank position text should keep hash semantics");
+});
+
+test("search empty state uses concise shared copy", () => {
+  assert.match(searchResultsSource, /<div className="text-base font-semibold">还没有结果<\/div>/);
+  assert.doesNotMatch(searchResultsSource, /还没有导入结果/);
+  assert.doesNotMatch(searchResultsSource, /先搜索关键词/);
+  assert.doesNotMatch(searchResultsSource, /继续粘贴作品ID/);
+});
+
+test("search form is shared while tabs only switch result panes", () => {
+  assert.match(toolViewSource, /const \[sharedSearchForm, setSharedSearchForm\] = useState\(\{\s*keyword: "",\s*manualInput: "",\s*\}\)/);
+  assert.match(toolViewSource, /function updateSharedSearchForm\(patch\)/);
+  assert.match(toolViewSource, /formState=\{sharedSearchForm\}/);
+  assert.match(toolViewSource, /onUpdateFormState=\{updateSharedSearchForm\}/);
+  assert.doesNotMatch(toolViewSource, /formState=\{currentBrowseState\?\.searchForm\}/);
+  assert.doesNotMatch(toolViewSource, /onUpdatePlatformFormState=\{updateSearchFormForPlatform\}/);
+
+  const searchResultsStart = toolViewSource.indexOf("<SearchResults");
+  const outputPanelStart = toolViewSource.indexOf("<OutputPanel");
+  assert.notEqual(searchResultsStart, -1, "SearchResults should render");
+  assert.notEqual(outputPanelStart, -1, "OutputPanel should render");
+  const searchResultsProps = toolViewSource.slice(searchResultsStart, outputPanelStart);
+  assert.match(searchResultsProps, /results=\{currentBrowseState\?\.searchResults \|\| \[\]\}/);
+  assert.match(searchResultsProps, /platform=\{activeBrowsePlatform\}/);
+});
+
+test("output stats and history are shared across platform tab switching", () => {
+  assert.match(toolViewSource, /const \[sharedOutputPlatform, setSharedOutputPlatform\] = useState/);
+  assert.match(toolViewSource, /const sharedOutputState = platformStates\[sharedOutputPlatform\]/);
+  assert.match(toolViewSource, /const sharedStatsState = sharedOutputState\?\.stats \|\| null/);
+  assert.match(toolViewSource, /const sharedHistoryEntries = getMergedHistoryEntries\(\)/);
+  assert.match(toolViewSource, /function getMergedHistoryEntries\(\)/);
+  assert.match(toolViewSource, /platformLabel: \(entry\.platform \|\| platform\) === "manbo" \? "漫播" : "猫耳"/);
+  assert.match(toolViewSource, /setSharedOutputPlatform\(platform\)/);
+
+  const outputStart = toolViewSource.indexOf("<OutputPanel");
+  assert.notEqual(outputStart, -1, "OutputPanel should render");
+  const outputEnd = toolViewSource.indexOf("/>", outputStart);
+  assert.notEqual(outputEnd, -1, "OutputPanel props should end");
+  const outputProps = toolViewSource.slice(outputStart, outputEnd);
+  assert.match(outputProps, /historyEntries=\{sharedHistoryEntries\}/);
+  assert.match(outputProps, /platform=\{sharedOutputPlatform\}/);
+  assert.match(outputProps, /currentAction=\{sharedStatsState\?\.currentAction\}/);
+  assert.doesNotMatch(outputProps, /currentBrowseState\?\.historyEntries/);
+  assert.doesNotMatch(outputProps, /currentStatsState/);
+  assert.match(outputProps, /onClearHistory=\{clearAllHistoryEntries\}/);
+  assert.match(outputProps, /onDeleteHistoryEntry=\{\(entry\) => deleteHistoryEntry\(entry\.platform, entry\.id\)\}/);
+});
+
+test("history timestamps include platform label", () => {
+  assert.match(outputPanelSource, /function getHistoryPlatformLabel\(entry\)/);
+  assert.match(outputPanelSource, /entry\.createdAtLabel\}\s*\{getHistoryPlatformLabel\(entry\)/);
+  assert.match(outputPanelSource, /onDeleteHistoryEntry\?\.\(entry\)/);
+  assert.match(outputPanelSource, /aria-label=\{`删除 \$\{entry\.createdAtLabel\} \$\{getHistoryPlatformLabel\(entry\)\} 这条历史`\}/);
+});
+
+test("header description is replaced by Missevan access hint with existing links", () => {
+  assert.doesNotMatch(toolViewSource, /\{appConfig\.description\}/);
+  assert.match(toolViewSource, /renderHeaderAccessHint/);
+  assert.match(toolViewSource, /如果猫耳接口暂时受限，请/);
+  assert.match(toolViewSource, /href="\/nodes"[\s\S]*节点页/);
+  assert.match(toolViewSource, /href=\{appConfig\.desktopAppUrl\}[\s\S]*桌面版/);
 });
 
 test("desktop favorites skip info-store CV backfill", () => {
@@ -848,6 +1223,111 @@ test("rank trend chart starts paid ID line at the first nonzero history point", 
     /history\.find\(\(point\) => getTrendNumber\(point\.value\) != null\)/,
     "ordinary metrics should still use the first finite history value as their baseline"
   );
+});
+
+test("rank trend backend keeps sparse missing dates instead of dropping them", () => {
+  assert.match(ranksTrendUtilsSource, /function getMetricHistoryRange/);
+  assert.match(ranksTrendUtilsSource, /function getRepeatedTrendSampleDateSet/);
+  assert.match(ranksTrendUtilsSource, /function areTrendMetricValuesEqual/);
+  assert.match(ranksTrendUtilsSource, /metricConfigs = getRankTrendMetricConfigs\(platform\)/);
+  assert.match(ranksTrendUtilsSource, /const staleDateSet = getRepeatedTrendSampleDateSet/);
+  assert.match(ranksTrendUtilsSource, /staleDateSet\.has\(date\) \? null : getDramaMetrics/);
+  assert.match(ranksTrendUtilsSource, /const availableHistory = history\.filter\(\(point\) => point\.drama\)/);
+  assert.match(ranksTrendUtilsSource, /buildMetric\(config, history\)/);
+  assert.match(ranksTrendUtilsSource, /buildPeakSeriesMetric\(config, history\)/);
+  assert.match(ranksTrendUtilsSource, /const staleDateSet = getRepeatedPeakSeriesSampleDateSet/);
+  assert.match(ranksTrendUtilsSource, /staleDateSet\.has\(date\) \? \{ date \} : samplesByDate\[date\]/);
+  assert.doesNotMatch(
+    ranksTrendUtilsSource,
+    /\.map\(\(date\) => \(\{\s*date,\s*drama: getDramaMetrics\(snapshotsByDate\[date\], id\),\s*\}\)\)\s*\.filter\(\(point\) => point\.drama\)/,
+    "window trend history should preserve dates whose current drama is missing"
+  );
+  assert.doesNotMatch(
+    ranksTrendUtilsSource,
+    /\.map\(\(date\) => samplesByDate\[date\]\)\s*\.filter\(Boolean\)/,
+    "peak series history should preserve dates whose sample is missing"
+  );
+});
+
+test("rank trend details use no-data copy while chart skips null points", () => {
+  assert.match(rankTrendUiSource, /function formatTrendSnapshotValue\(value\)/);
+  assert.match(rankTrendUiSource, /value == null \? "无数据" : formatTrendValue\(value\)/);
+  assert.match(rankTrendUiSource, /formatTrendSnapshotValue\(row\.values\[column\.key\]\)/);
+  assert.match(rankTrendUiSource, /getTrendNumber\(point\[valueKey\]\) != null/);
+});
+
+test("rank trend chart legend toggles metrics and keeps at least one visible", () => {
+  assert.match(rankTrendUiSource, /function TrendMetricToggleLegend/);
+  assert.match(rankTrendUiSource, /type="checkbox"/);
+  assert.match(rankTrendUiSource, /checked=\{isChecked\}/);
+  assert.match(rankTrendUiSource, /onChange=\{\(\) => onToggleMetric\?\.\(metric\.key\)\}/);
+  assert.match(rankTrendUiSource, /const \[visibleMetricKeys, setVisibleMetricKeys\] = useState\(\(\) => new Set\(\)\)/);
+  assert.match(rankTrendUiSource, /function toggleVisibleMetric\(metricKey\)/);
+  assert.match(rankTrendUiSource, /const visibleCurrentMetricCount = currentMetricKeys\.filter\(\(key\) => current\.has\(key\)\)\.length/);
+  assert.match(rankTrendUiSource, /current\.has\(metricKey\) && currentMetricKeys\.includes\(metricKey\) && visibleCurrentMetricCount <= 1/);
+  assert.match(rankTrendUiSource, /const visibleCurrentMetricCount = legendMetrics\.filter\(\(metric\) => visibleMetricKeys\.has\(metric\.key\)\)\.length/);
+  assert.match(rankTrendUiSource, /const knownMetricKeysRef = useRef\(new Set\(\)\)/);
+  assert.match(rankTrendUiSource, /function resetVisibleTrendMetrics\(\)/);
+  assert.match(rankTrendUiSource, /knownMetricKeysRef\.current = new Set\(\)/);
+  assert.match(rankTrendUiSource, /const chartMetricKeys = chartMetricKeySignature\.split\("\|"\)\.filter\(Boolean\)/);
+  assert.match(rankTrendUiSource, /const newMetricKeys = chartMetricKeys\.filter\(\(key\) => !knownMetricKeys\.has\(key\)\)/);
+  assert.match(rankTrendUiSource, /const hasVisibleCurrentMetric = chartMetricKeys\.some\(\(key\) => next\.has\(key\)\)/);
+  assert.match(rankTrendUiSource, /if \(!hasVisibleCurrentMetric\) \{[\s\S]*next\.add\(chartMetricKeys\[0\]\)/);
+  assert.doesNotMatch(rankTrendUiSource, /if \(!chartMetricKeys\.length\) \{\s*setVisibleMetricKeys\(new Set\(\)\);\s*setKnownMetricKeys\(new Set\(\)\);\s*return;\s*\}/);
+  assert.doesNotMatch(rankTrendUiSource, /\}, \[open, chartMetricKeySignature, knownMetricKeys\]\)/);
+  assert.match(rankTrendUiSource, /const visibleChartMetrics = visibleMetricKeys\.size[\s\S]*\? chartMetrics\.filter\(\(metric\) => visibleMetricKeys\.has\(metric\.key\)\)[\s\S]*: chartMetrics/);
+  assert.match(rankTrendUiSource, /<RankTrendLineChart[\s\S]*metrics=\{visibleChartMetrics\}[\s\S]*legendMetrics=\{chartMetrics\}/);
+  assert.doesNotMatch(rankTrendUiSource, /\}, \[open, activeWindowKey, chartMetricKeySignature\]\)/);
+
+  const lineChartStart = rankTrendUiSource.indexOf("function RankTrendLineChart");
+  const lineChartEnd = rankTrendUiSource.indexOf("function getSnapshotColumns", lineChartStart);
+  assert.notEqual(lineChartStart, -1, "RankTrendLineChart should exist");
+  assert.notEqual(lineChartEnd, -1, "RankTrendLineChart should end before snapshot helpers");
+  const lineChartSource = rankTrendUiSource.slice(lineChartStart, lineChartEnd);
+  assert.doesNotMatch(lineChartSource, /className="size-2 rounded-full"/);
+  assert.match(lineChartSource, /<TrendMetricToggleLegend/);
+});
+
+test("rank trend chart data points show hover and touch tooltips", () => {
+  const lineChartStart = rankTrendUiSource.indexOf("function RankTrendLineChart");
+  const lineChartEnd = rankTrendUiSource.indexOf("function getSnapshotColumns", lineChartStart);
+  assert.notEqual(lineChartStart, -1, "RankTrendLineChart should exist");
+  assert.notEqual(lineChartEnd, -1, "RankTrendLineChart should end before snapshot helpers");
+  const lineChartSource = rankTrendUiSource.slice(lineChartStart, lineChartEnd);
+
+  assert.match(lineChartSource, /const \[hoveredPoint, setHoveredPoint\] = useState\(null\)/);
+  assert.match(lineChartSource, /const \[selectedPoint, setSelectedPoint\] = useState\(null\)/);
+  assert.match(lineChartSource, /const chartMetricSignature = availableMetrics[\s\S]*\.map\(\(metric\) => `\$\{metric\.key\}:/);
+  assert.match(lineChartSource, /useEffect\(\(\) => \{[\s\S]*setHoveredPoint\(null\);[\s\S]*setSelectedPoint\(null\);[\s\S]*\}, \[windowKey, chartMetricSignature\]\)/);
+  assert.match(lineChartSource, /const activeTooltipPoint = selectedPoint \|\| hoveredPoint/);
+  assert.match(lineChartSource, /function buildTooltipPoint\(line, point, position, style\)/);
+  assert.match(lineChartSource, /value: formatTrendValue\(point\.value\)/);
+  assert.match(lineChartSource, /date: formatTrendDate\(point\.date\)/);
+  assert.match(lineChartSource, /onClick=\{\(\) => setSelectedPoint\(null\)\}/);
+  assert.match(lineChartSource, /onPointerEnter=\{\(\) => setHoveredPoint\(tooltipPoint\)\}/);
+  assert.match(lineChartSource, /onPointerLeave=\{\(\) => setHoveredPoint\(null\)\}/);
+  assert.match(lineChartSource, /onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*setSelectedPoint\(tooltipPoint\)/);
+  assert.match(lineChartSource, /className="absolute size-7 -translate-x-1\/2 -translate-y-1\/2 rounded-full/);
+  assert.match(lineChartSource, /borderColor: activeTooltipPoint\.color/);
+  assert.match(lineChartSource, /activeTooltipPoint\.date[\s\S]*activeTooltipPoint\.value/);
+  assert.match(lineChartSource, /formatTrendValue\(point\.value\)/);
+  assert.doesNotMatch(lineChartSource, /formatAxisPercent\(point\.percent\)/);
+});
+
+test("rank trend dialog uses compact window tabs and details trigger", () => {
+  const dialogStart = rankTrendUiSource.indexOf("export function RankTrendDialog");
+  assert.notEqual(dialogStart, -1, "RankTrendDialog should exist");
+  const dialogSource = rankTrendUiSource.slice(dialogStart);
+  assert.doesNotMatch(dialogSource, /TabsList className="grid w-full grid-cols-3"/);
+  assert.match(dialogSource, /TabsList className="inline-flex h-\[34px\] w-fit items-center justify-center gap-1 rounded-lg border border-border\/70 bg-background\/82 p-1 text-xs!"/);
+  assert.match(dialogSource, /TabsTrigger key=\{key\} className="h-\[26px\] min-w-0 rounded-md px-3 text-xs!"/);
+
+  const detailsStart = rankTrendUiSource.indexOf("function TrendSnapshotDetails");
+  const detailsEnd = rankTrendUiSource.indexOf("export function RankTrendDeltaBadge", detailsStart);
+  assert.notEqual(detailsStart, -1, "TrendSnapshotDetails should exist");
+  assert.notEqual(detailsEnd, -1, "TrendSnapshotDetails should end before delta badge");
+  const detailsSource = rankTrendUiSource.slice(detailsStart, detailsEnd);
+  assert.match(detailsSource, /className="flex h-9 w-full items-center justify-between gap-2 px-2\.5 text-left text-sm! font-medium text-foreground"/);
 });
 
 test("rank trend fetch does not reuse stale successful responses forever", () => {

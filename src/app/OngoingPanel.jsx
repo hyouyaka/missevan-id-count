@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  HashIcon,
   HeartIcon,
   MicIcon,
   PlayCircleIcon,
@@ -15,8 +14,9 @@ import {
   formatDeviceDateTime,
   formatPlainNumber,
   getBackendVersionFromResponse,
+  getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
-import { PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
   fetchRankTrendData,
@@ -44,6 +44,8 @@ const platformLabels = {
 
 const mobileMenuTabsListClassName =
   "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
+const mobileOngoingPlatformTabClassName = "h-7 min-w-0 px-1.5 text-sm!";
+const mobileOngoingWindowTabClassName = "h-7 min-w-0 px-1 text-[12px]! leading-none";
 
 const tagVariants = {
   猫耳: "missevanPlatform",
@@ -218,6 +220,14 @@ function OngoingCard({
     : ["view_count", "pay_count", "danmaku_uid_count"];
   const metricKeys = baseMetricKeys.filter((metricKey) => item?.metrics?.[metricKey]?.visible !== false);
   const titleTags = [item.content_type_label].filter(Boolean);
+  const mobileDisplayTitle = getInlineTaggedTitleDisplayText(item.name || "未命名剧集", {
+    hasTags: titleTags.length > 0,
+    viewport: "mobile",
+  });
+  const desktopDisplayTitle = getInlineTaggedTitleDisplayText(item.name || "未命名剧集", {
+    hasTags: titleTags.length > 0,
+    viewport: "desktop",
+  });
   const paymentTag = item.payment_label;
   const metricGridClassName = metricKeys.length >= 3 ? "grid-cols-3" : "grid-cols-2";
   const canOpenTrend = Boolean(platform && item?.id);
@@ -362,15 +372,16 @@ function OngoingCard({
               <div className="min-w-0">
                 <button
                   type="button"
-                  className="line-clamp-2 min-w-0 break-words rounded-sm text-left text-lg! font-semibold! leading-6! text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  className="break-words rounded-sm text-left text-base! font-semibold! leading-5! text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   onClick={openSearchResult}
                 >
-                  <span>{item.name || "未命名剧集"}</span>
+                  <span className="sm:hidden">{mobileDisplayTitle}</span>
+                  <span className="hidden sm:inline">{desktopDisplayTitle}</span>
                   {titleTags.map((label) => (
                     <Badge
                       key={`${item.id}-${label}`}
                       variant={tagVariants[label] || "outline"}
-                      className="ml-1 inline-flex h-[1.05rem] px-1.5 align-[0.12em] text-[0.6rem] leading-none"
+                      className="ml-1 inline-flex h-[1.05rem] shrink-0 px-1.5 align-[0.12em] text-[0.6rem] leading-none"
                     >
                       {label}
                     </Badge>
@@ -378,7 +389,7 @@ function OngoingCard({
                 </button>
               </div>
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <HashIcon aria-label="作品ID" className="size-3.5 shrink-0" />
+                <PlatformIdIcon platform={platform} aria-label="作品ID" className="size-3.5 shrink-0" />
                 <span className="min-w-0 break-all">{item.id}</span>
               </div>
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -520,11 +531,11 @@ export function OngoingPanel({
             </div>
           </div>
           <div className="grid gap-0 overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-sm sm:hidden">
-            <div className="flex h-10 items-center gap-1.5 px-1.5">
+            <div className="flex h-[2.375rem] items-center gap-1.5 px-1.5">
               <Tabs value={selectedPlatform} onValueChange={setSelectedPlatform} className="min-w-0 flex-[1.35] gap-0">
                 <TabsList aria-label="选择平台" className={`${mobileMenuTabsListClassName} grid-cols-2`}>
                   {["missevan", "manbo"].map((platform) => (
-                    <TabsTrigger key={platform} className="min-w-0 px-1.5" value={platform}>
+                    <TabsTrigger key={platform} className={mobileOngoingPlatformTabClassName} value={platform}>
                       <PlatformTabLabel platform={platform} />
                     </TabsTrigger>
                   ))}
@@ -534,7 +545,7 @@ export function OngoingPanel({
               <Tabs value={activeWindow} onValueChange={setSelectedWindow} className="min-w-0 flex-[0.85] gap-0">
                 <TabsList aria-label="选择增量周期" className={`${mobileMenuTabsListClassName} grid-cols-3`}>
                   {["3d", "7d", "30d"].map((key) => (
-                    <TabsTrigger key={key} className="min-w-0 px-1 text-[12px]! leading-none" value={key}>
+                    <TabsTrigger key={key} className={mobileOngoingWindowTabClassName} value={key}>
                       {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
                     </TabsTrigger>
                   ))}

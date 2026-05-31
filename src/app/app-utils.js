@@ -11,6 +11,25 @@ export function normalizeRegionBaseUrl(value) {
   return String(value ?? "").trim().replace(/\/+$/, "");
 }
 
+export function getInlineTaggedTitleDisplayText(title, options = {}) {
+  const normalized = String(title ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const viewport = options.viewport === "desktop" ? "desktop" : "mobile";
+  const hasTags = options.hasTags === true;
+  const maxLength = viewport === "desktop"
+    ? hasTags ? 30 : 42
+    : hasTags ? 18 : 22;
+  const characters = Array.from(normalized);
+  if (characters.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${characters.slice(0, maxLength).join("").trimEnd()}...`;
+}
+
 function normalizeExternalHttpUrl(value) {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -1302,6 +1321,68 @@ export function classifyMergedSearchInput(rawValue, platform = "missevan", optio
   if (areAllTokensImportable(rawItems, normalizedPlatform)) {
     return {
       action: "import",
+      keyword: "",
+      rawItems,
+    };
+  }
+
+  if (!isSearchKeywordLongEnough(keyword)) {
+    return {
+      action: "keyword_too_short",
+      keyword,
+      rawItems: [],
+    };
+  }
+
+  return {
+    action: "search",
+    keyword,
+    rawItems: [],
+  };
+}
+
+export function classifyUnifiedSearchInput(rawValue) {
+  const keyword = String(rawValue ?? "").trim();
+  if (!keyword) {
+    return {
+      action: "empty",
+      keyword: "",
+      rawItems: [],
+    };
+  }
+
+  const rawItems = parseRawItems(keyword);
+  const tokenPlatforms = rawItems.map((item) => {
+    if (isManboCrossImportToken(item)) {
+      return "manbo";
+    }
+    if (isMissevanCrossImportToken(item)) {
+      return "missevan";
+    }
+    return "";
+  });
+
+  if (tokenPlatforms.length > 0 && tokenPlatforms.every((item) => item === "manbo")) {
+    return {
+      action: "import",
+      targetPlatform: "manbo",
+      keyword: "",
+      rawItems,
+    };
+  }
+
+  if (tokenPlatforms.length > 0 && tokenPlatforms.every((item) => item === "missevan")) {
+    return {
+      action: "import",
+      targetPlatform: "missevan",
+      keyword: "",
+      rawItems,
+    };
+  }
+
+  if (tokenPlatforms.every(Boolean) && new Set(tokenPlatforms).size > 1) {
+    return {
+      action: "mixed_import",
       keyword: "",
       rawItems,
     };

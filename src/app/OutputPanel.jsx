@@ -154,6 +154,10 @@ function HistoryMetric({ metric, platform }) {
   );
 }
 
+function getHistoryPlatformLabel(entry) {
+  return entry?.platformLabel || (entry?.platform === "manbo" ? "漫播" : "猫耳");
+}
+
 function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
   const [collapsed, setCollapsed] = useState(true);
 
@@ -190,14 +194,14 @@ function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
             className={`${index > 0 ? "border-t border-border/70 pt-3" : ""} grid gap-2`}
           >
             <div className="flex items-start justify-between gap-2">
-              <div className="text-[11px] font-medium text-foreground/78">{entry.createdAtLabel}</div>
+              <div className="text-[11px] font-medium text-foreground/78">{entry.createdAtLabel} {getHistoryPlatformLabel(entry)}</div>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 className="size-6 text-muted-foreground"
-                onClick={() => onDeleteHistoryEntry?.(entry.id)}
-                aria-label={`删除 ${entry.createdAtLabel} 这条历史`}
+                onClick={() => onDeleteHistoryEntry?.(entry)}
+                aria-label={`删除 ${entry.createdAtLabel} ${getHistoryPlatformLabel(entry)} 这条历史`}
               >
                 <XIcon className="size-3.5" />
               </Button>
