@@ -38,6 +38,7 @@ import {
   buildAggregatedRankTrendResponse,
   buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
+  buildRankTrendAvailabilityResponse,
   buildRankTrendResponse,
   getPeakSeriesDailyViewDelta,
   isRankTrendAggregateSnapshot,
@@ -2114,6 +2115,28 @@ async function getLegacyRankTrendResponse(platform, dramaId) {
     indexSnapshot,
     metricSnapshotsByDate,
     listSnapshotsByDate,
+  });
+}
+
+async function getLegacyRankTrendAvailabilityResponse(platform, ids) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
+  const dates = normalizeRankTrendDates(indexSnapshot);
+  const metricEntries = await Promise.all(
+    dates.map(async (date) => [
+      date,
+      await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
+    ])
+  );
+  const metricSnapshotsByDate = Object.fromEntries(
+    metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
+  );
+
+  return buildRankTrendAvailabilityResponse({
+    platform: normalizedPlatform,
+    ids,
+    indexSnapshot,
+    metricSnapshotsByDate,
   });
 }
 
@@ -6963,6 +6986,59 @@ async function executeStatsTask(task) {
     });
   }
 }
+
+app.get("/ranks/trends/availability", async (req, res) => {
+  const platform = String(req.query.platform ?? "").trim();
+  const rawIds = Array.isArray(req.query.id) ? req.query.id : [req.query.id];
+  const ids = rawIds.map((id) => String(id ?? "").trim()).filter(Boolean);
+  const hasValidIds = platform === "manbo"
+    ? ids.length > 0 && ids.every((id) => isNumericId(id))
+    : ids.length > 0;
+  if (!["missevan", "manbo"].includes(platform) || !hasValidIds) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid rank trend availability request",
+    });
+  }
+
+  try {
+    let response = null;
+    try {
+      const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform);
+      if (isRankTrendAggregateSnapshot(aggregateSnapshot, platform)) {
+        response = buildRankTrendAvailabilityResponse({
+          platform,
+          ids,
+          aggregateSnapshot,
+        });
+      }
+    } catch (error) {
+      console.warn("Failed to read rank trend availability aggregate; falling back to legacy shards", error);
+    }
+
+    if (!response) {
+      response = await getLegacyRankTrendAvailabilityResponse(platform, ids);
+    }
+    if (response && typeof response === "object") {
+      response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
+    }
+    if (!response.success) {
+      return res.status(response.status || 503).json(response);
+    }
+
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    if (response.latestDate) {
+      res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
+    }
+    return res.json(response);
+  } catch (error) {
+    console.error("Failed to read rank trend availability", error);
+    return res.status(503).json({
+      success: false,
+      message: "Rank trend availability is unavailable",
+    });
+  }
+});
 
 app.get("/ranks/trends", async (req, res) => {
   const platform = String(req.query.platform ?? "").trim();

@@ -5,6 +5,7 @@ import {
   buildAggregatedRankTrendResponse,
   buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
+  buildRankTrendAvailabilityResponse,
   buildRankTrendResponse,
   getPeakSeriesDailyViewDelta,
 } from "./ranksTrendUtils.js";
@@ -592,6 +593,165 @@ test("buildAggregatedRankTrendResponse builds ordinary trend response from platf
   );
 });
 
+test("buildRankTrendAvailabilityResponse returns ids with historical metric samples", () => {
+  const response = buildRankTrendAvailabilityResponse({
+    platform: "missevan",
+    ids: ["93038", "rank-only", "missing"],
+    aggregateSnapshot: {
+      version: 1,
+      platform: "missevan",
+      updated_at: "2026-05-17T01:00:00.000Z",
+      dates: ["2026-05-15", "2026-05-16", "2026-05-17"],
+      dramas: {
+        "93038": {
+          id: "93038",
+          name: "一屋暗灯 全一季",
+          samples: {
+            "2026-05-15": {
+              metrics: {
+                view_count: 100,
+                danmaku_uid_count: 10,
+                subscription_num: 50,
+              },
+            },
+          },
+        },
+        "rank-only": {
+          id: "rank-only",
+          name: "只有榜单样本",
+          samples: {
+            "2026-05-17": {
+              ranks: [{ key: "new_daily", name: "新品日榜", position: 1 }],
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.platform, "missevan");
+  assert.deepEqual(response.ids, ["93038"]);
+  assert.equal(response.latestDate, "2026-05-17");
+  assert.equal(response.updatedAt, "2026-05-17T01:00:00.000Z");
+});
+
+test("buildRankTrendAvailabilityResponse preserves Manbo big integer ids", () => {
+  const response = buildRankTrendAvailabilityResponse({
+    platform: "manbo",
+    ids: ["1467142227078676553"],
+    aggregateSnapshot: {
+      version: 1,
+      platform: "manbo",
+      dates: ["2026-05-17"],
+      dramas: {
+        "1467142227078676553": {
+          id: "1467142227078676553",
+          samples: {
+            "2026-05-17": {
+              metrics: {
+                view_count: 1000,
+                danmaku_uid_count: 30,
+                pay_count: 20,
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(response.ids, ["1467142227078676553"]);
+});
+
+test("buildAggregatedRankTrendResponse anchors all windows to the drama latest metric sample", () => {
+  const response = buildAggregatedRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    aggregateSnapshot: {
+      version: 1,
+      platform: "missevan",
+      dates: ["2026-05-10", "2026-05-11", "2026-05-20", "2026-05-30"],
+      dramas: {
+        "93038": {
+          id: "93038",
+          name: "一屋暗灯 全一季",
+          samples: {
+            "2026-05-10": {
+              metrics: {
+                view_count: 100,
+                danmaku_uid_count: 10,
+                subscription_num: 50,
+              },
+            },
+            "2026-05-20": {
+              metrics: {
+                view_count: 180,
+                danmaku_uid_count: 18,
+                subscription_num: 58,
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.latestDate, "2026-05-20");
+  assert.equal(response.rankHistoryLatestDate, "2026-05-30");
+  assert.equal(response.windows["3d"].toDate, "2026-05-20");
+  assert.equal(response.windows["7d"].toDate, "2026-05-20");
+  assert.equal(response.windows["30d"].toDate, "2026-05-20");
+});
+
+test("buildAggregatedRankTrendResponse anchors windows to the latest non-repeated metric sample", () => {
+  const response = buildAggregatedRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    aggregateSnapshot: {
+      version: 1,
+      platform: "missevan",
+      dates: ["2026-05-01", "2026-05-20", "2026-05-30"],
+      dramas: {
+        "93038": {
+          id: "93038",
+          name: "一屋暗灯 全一季",
+          samples: {
+            "2026-05-01": {
+              metrics: {
+                view_count: 100,
+                danmaku_uid_count: 10,
+                subscription_num: 50,
+              },
+            },
+            "2026-05-20": {
+              metrics: {
+                view_count: 100,
+                danmaku_uid_count: 10,
+                subscription_num: 50,
+              },
+            },
+            "2026-05-30": {
+              metrics: {
+                view_count: 100,
+                danmaku_uid_count: 10,
+                subscription_num: 50,
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.latestDate, "2026-05-01");
+  assert.equal(response.windows["3d"].toDate, "2026-05-01");
+  assert.equal(response.windows["7d"].toDate, "2026-05-01");
+  assert.equal(response.windows["30d"].toDate, "2026-05-01");
+});
+
 test("buildAggregatedRankTrendResponse returns not found without falling back semantics", () => {
   const response = buildAggregatedRankTrendResponse({
     platform: "manbo",
@@ -833,6 +993,39 @@ test("buildPeakSeriesTrendResponse treats repeated playback samples as missing d
   );
   assert.equal(response.windows["3d"].metrics[0].delta, 100);
   assert.equal(response.windows["3d"].metrics[0].deltaPercent, 0.1);
+});
+
+test("buildPeakSeriesTrendResponse anchors windows to the latest non-repeated sample", () => {
+  const response = buildPeakSeriesTrendResponse({
+    id: "魔道祖师",
+    peakSnapshot: {
+      dates: ["2026-05-01", "2026-05-20", "2026-05-30"],
+      series: {
+        魔道祖师: {
+          name: "魔道祖师",
+          samples: {
+            "2026-05-01": {
+              view_count: 1000,
+              position: 1,
+            },
+            "2026-05-20": {
+              view_count: 1000,
+              position: 1,
+            },
+            "2026-05-30": {
+              view_count: 1000,
+              position: 1,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.latestDate, "2026-05-01");
+  assert.equal(response.windows["3d"].toDate, "2026-05-01");
+  assert.equal(response.windows["7d"].toDate, "2026-05-01");
+  assert.equal(response.windows["30d"].toDate, "2026-05-01");
 });
 
 test("getPeakSeriesDailyViewDelta uses latest minus previous available sample", () => {

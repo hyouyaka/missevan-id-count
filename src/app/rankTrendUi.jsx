@@ -37,6 +37,7 @@ export const trendActionButtonClassName =
   "w-fit border-[rgba(20,121,111,0.32)] bg-[rgb(20,121,111)] px-2.5 text-white shadow-[0_12px_24px_-16px_rgba(20,121,111,0.72)] hover:bg-[rgb(17,104,96)] hover:text-white";
 
 const rankTrendClientCache = new Map();
+const rankTrendAvailabilityCache = new Map();
 const ranksTrendLookupCache = {
   data: null,
   frontendVersion: "",
@@ -44,6 +45,7 @@ const ranksTrendLookupCache = {
   promise: null,
 };
 const RANKS_TREND_LOOKUP_TTL_MS = 30 * 60 * 1000;
+const RANK_TREND_AVAILABILITY_TTL_MS = 5 * 60 * 1000;
 const ongoingTrendLookupCache = new Map();
 const ONGOING_TREND_LOOKUP_TTL_MS = 5 * 60 * 1000;
 
@@ -207,6 +209,71 @@ export async function fetchRankTrendData({ platform, id, frontendVersion }) {
   })();
 
   rankTrendClientCache.set(cacheKey, { data: null, promise });
+  return promise;
+}
+
+export async function fetchRankTrendAvailabilityData({ platform, ids, frontendVersion } = {}) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((id) => String(id ?? "").trim())
+        .filter(Boolean)
+    )
+  ).sort();
+  if (!normalizedIds.length || (normalizedPlatform !== "missevan" && normalizedPlatform !== "manbo")) {
+    return { response: { ok: false }, data: null };
+  }
+
+  const normalizedVersion = String(frontendVersion ?? "").trim();
+  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedPlatform}:${normalizedIds.join("|")}`;
+  const now = Date.now();
+  const cached = rankTrendAvailabilityCache.get(cacheKey);
+  if (cached?.data && now - cached.loadedAt < RANK_TREND_AVAILABILITY_TTL_MS) {
+    return cached.data;
+  }
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const params = new URLSearchParams({
+    platform: normalizedPlatform,
+    schema: String(RANK_TREND_CLIENT_SCHEMA_VERSION),
+    _: String(Date.now()),
+  });
+  normalizedIds.forEach((id) => params.append("id", id));
+  const promise = (async () => {
+    try {
+      const response = await fetch(buildVersionedUrl(`/ranks/trends/availability?${params.toString()}`, frontendVersion), {
+        cache: "no-store",
+      });
+      const data = await response.json();
+      const payload = { response, data };
+      if (response.ok && data?.success) {
+        rankTrendAvailabilityCache.set(cacheKey, {
+          data: payload,
+          loadedAt: Date.now(),
+          promise: null,
+        });
+      }
+      return payload;
+    } finally {
+      const current = rankTrendAvailabilityCache.get(cacheKey);
+      if (current?.promise === promise) {
+        rankTrendAvailabilityCache.set(cacheKey, {
+          data: current.data || null,
+          loadedAt: current.loadedAt || 0,
+          promise: null,
+        });
+      }
+    }
+  })();
+
+  rankTrendAvailabilityCache.set(cacheKey, {
+    data: cached?.data || null,
+    loadedAt: cached?.loadedAt || 0,
+    promise,
+  });
   return promise;
 }
 
@@ -1198,6 +1265,13 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
   const windows = data?.windows || {};
   const metaTags = getTrendMetaTags(item, platform);
   const latestRankHistory = Array.isArray(data?.rankHistory) ? data.rankHistory.at(-1) : null;
+  const latestRankHistoryDate = String(latestRankHistory?.date ?? "").trim();
+  const rankHistoryLatestDate = String(data?.rankHistoryLatestDate ?? data?.latestDate ?? "").trim();
+  const shouldShowRankHistoryDate = Boolean(
+    latestRankHistoryDate &&
+      rankHistoryLatestDate &&
+      latestRankHistoryDate !== rankHistoryLatestDate
+  );
   const availableWindows = ["3d", "7d", "30d"].filter((key) => windows[key]);
   const activeWindowKey = availableWindows.includes(selectedWindow)
     ? selectedWindow
@@ -1347,7 +1421,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                   <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                     {latestRankHistory.ranks.map((rank) => (
                       <Badge key={`${latestRankHistory.date}-${rank.key}`} variant="outline">
-                        {rank.name} #{rank.position}
+                        {shouldShowRankHistoryDate ? `${formatTrendDate(latestRankHistoryDate)} ` : ""}{rank.name} #{rank.position}
                       </Badge>
                     ))}
                   </div>

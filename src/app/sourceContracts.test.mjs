@@ -1330,6 +1330,18 @@ test("rank trend dialog uses compact window tabs and details trigger", () => {
   assert.match(detailsSource, /className="flex h-9 w-full items-center justify-between gap-2 px-2\.5 text-left text-sm! font-medium text-foreground"/);
 });
 
+test("rank trend dialog dates historical rank badges", () => {
+  const dialogStart = rankTrendUiSource.indexOf("export function RankTrendDialog");
+  assert.notEqual(dialogStart, -1, "RankTrendDialog should exist");
+  const dialogSource = rankTrendUiSource.slice(dialogStart);
+
+  assert.match(dialogSource, /latestRankHistoryDate/);
+  assert.match(dialogSource, /rankHistoryLatestDate/);
+  assert.match(dialogSource, /latestRankHistoryDate !== rankHistoryLatestDate/);
+  assert.match(dialogSource, /formatTrendDate\(latestRankHistoryDate\)/);
+  assert.match(dialogSource, /\{rank\.name\} #\{rank\.position\}/);
+});
+
 test("rank trend fetch does not reuse stale successful responses forever", () => {
   const fetchStart = rankTrendUiSource.indexOf("export async function fetchRankTrendData");
   assert.notEqual(fetchStart, -1, "rank trend fetch helper should exist");
@@ -1339,6 +1351,15 @@ test("rank trend fetch does not reuse stale successful responses forever", () =>
 
   assert.doesNotMatch(fetchSource, /if \(cached\?\.data\) \{\s*return cached\.data;\s*\}/);
   assert.match(fetchSource, /cache: "no-store"/);
+});
+
+test("search result trend eligibility uses historical availability lookup", () => {
+  assert.match(rankTrendUiSource, /export async function fetchRankTrendAvailabilityData/);
+  assert.match(searchResultsSource, /fetchRankTrendAvailabilityData\(\{[\s\S]*ids: trendLookupIds/);
+  assert.doesNotMatch(searchResultsSource, /fetchRanksTrendLookupData\(frontendVersion\)/);
+  assert.doesNotMatch(searchResultsSource, /fetchOngoingTrendLookupData\(\{ platform, frontendVersion \}\)/);
+  assert.doesNotMatch(searchResultsSource, /buildSearchTrendEligibleIdSet/);
+  assert.doesNotMatch(searchResultsSource, /buildOngoingTrendEligibleIdSet/);
 });
 
 test("rank trend backend reads ordinary trends from aggregate platform keys", () => {
@@ -1369,6 +1390,22 @@ test("rank trend backend reads ordinary trends from aggregate platform keys", ()
   assert.notEqual(routeEnd, -1, "rank trend route should end before ongoing route");
   const routeSource = serverSource.slice(routeStart, routeEnd);
 
+  assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
+});
+
+test("rank trend availability route reads historical aggregate samples", () => {
+  assert.match(serverSource, /buildRankTrendAvailabilityResponse/);
+  assert.match(serverSource, /async function getLegacyRankTrendAvailabilityResponse/);
+
+  const routeStart = serverSource.indexOf('app.get("/ranks/trends/availability"');
+  assert.notEqual(routeStart, -1, "rank trend availability route should exist");
+  const routeEnd = serverSource.indexOf('app.get("/ranks/trends"', routeStart);
+  assert.notEqual(routeEnd, -1, "availability route should be defined before detail trend route");
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+
+  assert.match(routeSource, /getCachedRankTrendAggregateSnapshot\(platform\)/);
+  assert.match(routeSource, /buildRankTrendAvailabilityResponse/);
+  assert.match(routeSource, /getLegacyRankTrendAvailabilityResponse/);
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
 });
 

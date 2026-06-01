@@ -411,6 +411,74 @@ function buildAggregateMetricSnapshotsByDate(aggregateSnapshot, platform, id) {
   return snapshotsByDate;
 }
 
+function hasMetricSample(sample) {
+  return Boolean(
+    sample?.metrics &&
+      typeof sample.metrics === "object" &&
+      Object.keys(sample.metrics).length > 0
+  );
+}
+
+export function buildRankTrendAvailabilityResponse({
+  platform,
+  ids,
+  aggregateSnapshot,
+  indexSnapshot,
+  metricSnapshotsByDate,
+} = {}) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const idList = normalizeStringIdList(ids);
+  if (!getRankTrendMetricConfigs(normalizedPlatform).length || !idList.length) {
+    return {
+      success: false,
+      status: 400,
+      message: "Invalid rank trend availability request",
+    };
+  }
+
+  if (isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform)) {
+    const dates = normalizeRankTrendDates(aggregateSnapshot);
+    const dramas = aggregateSnapshot?.dramas && typeof aggregateSnapshot.dramas === "object"
+      ? aggregateSnapshot.dramas
+      : {};
+    return {
+      success: true,
+      platform: normalizedPlatform,
+      ids: idList.filter((id) => {
+        const samples = dramas[id]?.samples && typeof dramas[id].samples === "object"
+          ? dramas[id].samples
+          : {};
+        return dates.some((date) => hasMetricSample(samples[date]));
+      }),
+      latestDate: dates.at(-1) || "",
+      updatedAt: normalizeGeneratedAt(aggregateSnapshot),
+    };
+  }
+
+  const legacyDates = normalizeRankTrendDates(indexSnapshot).filter((date) =>
+    metricSnapshotsByDate?.[date]
+  );
+  if (legacyDates.length) {
+    return {
+      success: true,
+      platform: normalizedPlatform,
+      ids: idList.filter((id) =>
+        legacyDates.some((date) => getDramaMetrics(metricSnapshotsByDate[date], id))
+      ),
+      latestDate: legacyDates.at(-1) || "",
+      updatedAt: normalizeGeneratedAt(indexSnapshot),
+    };
+  }
+
+  return {
+    success: false,
+    status: 503,
+    platform: normalizedPlatform,
+    ids: [],
+    message: "Rank trend availability is unavailable",
+  };
+}
+
 export function buildMetricSnapshotsFromRankTrendAggregate(aggregateSnapshot, platform) {
   const normalizedPlatform = String(platform ?? "").trim();
   const dates = normalizeRankTrendDates(aggregateSnapshot);
@@ -614,11 +682,11 @@ export function buildRankTrendResponse({
   const dates = normalizeRankTrendDates(indexSnapshot).filter((date) =>
     metricSnapshotsByDate?.[date]
   );
-  const latestDate = [...dates]
-    .reverse()
-    .find((date) => getDramaMetrics(metricSnapshotsByDate[date], normalizedId));
+  const metricDates = dates.filter((date) =>
+    getDramaMetrics(metricSnapshotsByDate[date], normalizedId)
+  );
 
-  if (!latestDate) {
+  if (!metricDates.length) {
     return {
       success: false,
       status: 404,
@@ -628,19 +696,23 @@ export function buildRankTrendResponse({
     };
   }
 
-  const latestDrama = getDramaMetrics(metricSnapshotsByDate[latestDate], normalizedId);
   const staleDateSet = getRepeatedTrendSampleDateSet({
     dates,
     snapshotsByDate: metricSnapshotsByDate,
     platform: normalizedPlatform,
     id: normalizedId,
   });
+  const latestDate =
+    [...metricDates].reverse().find((date) => !staleDateSet.has(date)) ||
+    metricDates.at(-1);
+  const latestDrama = getDramaMetrics(metricSnapshotsByDate[latestDate], normalizedId);
   return {
     success: true,
     platform: normalizedPlatform,
     id: normalizedId,
     name: String(latestDrama?.name ?? "").trim(),
     latestDate,
+    rankHistoryLatestDate: dates.at(-1) || "",
     rankHistory: buildRankHistory(dates, listSnapshotsByDate, normalizedId),
     windows: Object.fromEntries(
       TREND_WINDOWS.map((windowConfig) => [
@@ -719,8 +791,7 @@ export function buildPeakSeriesTrendResponse({
 
   const seriesName = String(matchedSeries.record?.name ?? matchedSeries.key).trim() || normalizedId;
   const samples = normalizePeakSeriesSamples(matchedSeries.record);
-  const latestSample = samples.at(-1);
-  if (!latestSample) {
+  if (!samples.length) {
     return {
       success: false,
       status: 404,
@@ -733,6 +804,9 @@ export function buildPeakSeriesTrendResponse({
   const dates = getPeakSeriesDates(peakSnapshot, matchedSeries.record);
   const samplesByDate = Object.fromEntries(samples.map((sample) => [sample.date, sample]));
   const staleDateSet = getRepeatedPeakSeriesSampleDateSet({ dates, samplesByDate });
+  const latestSample =
+    [...samples].reverse().find((sample) => !staleDateSet.has(sample.date)) ||
+    samples.at(-1);
 
   return {
     success: true,
@@ -741,6 +815,7 @@ export function buildPeakSeriesTrendResponse({
     name: `系列：${seriesName}`,
     dramaIds: normalizeStringIdList(matchedSeries.record?.dramaIds),
     latestDate: latestSample.date,
+    rankHistoryLatestDate: dates.at(-1) || "",
     dailyViewDelta: getPeakSeriesDailyViewDelta(matchedSeries.record),
     rankHistory: buildPeakSeriesRankHistory(samples),
     windows: Object.fromEntries(

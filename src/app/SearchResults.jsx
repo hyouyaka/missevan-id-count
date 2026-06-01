@@ -29,10 +29,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatPlainNumber, getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
 import {
-  buildOngoingTrendEligibleIdSet,
-  buildSearchTrendEligibleIdSet,
-  fetchOngoingTrendLookupData,
-  fetchRanksTrendLookupData,
+  fetchRankTrendAvailabilityData,
   fetchRankTrendData,
   logRankTrendOpen,
   rankTrendTagVariants,
@@ -196,13 +193,17 @@ export function SearchResults({
   const loadedCount = Number(loadedResultCount || visibleResults.length || 0);
   const totalCount = Number(totalResults || 0);
   const selectedDramaIdSet = new Set(actionResults.filter((result) => result.checked).map((result) => String(result.id)));
-  const trendLookupKey = useMemo(() => {
+  const trendLookupIds = useMemo(() => {
     const sourceResults = Array.isArray(allResults) && allResults.length > 0 ? allResults : results;
-    return sourceResults
-      .map((item) => String(item?.id ?? "").trim())
-      .filter(Boolean)
-      .join("|");
+    return Array.from(
+      new Set(
+        sourceResults
+          .map((item) => String(item?.id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
   }, [allResults, results]);
+  const trendLookupKey = trendLookupIds.join("|");
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [trendEligibility, setTrendEligibility] = useState({
     platform: "",
@@ -245,33 +246,21 @@ export function SearchResults({
       isLoaded: current.platform === platform ? current.isLoaded : false,
     }));
 
-    Promise.allSettled([
-      fetchRanksTrendLookupData(frontendVersion),
-      fetchOngoingTrendLookupData({ platform, frontendVersion }),
-    ])
-      .then(([ranksResult, ongoingResult]) => {
+    fetchRankTrendAvailabilityData({
+      platform,
+      ids: trendLookupIds,
+      frontendVersion,
+    })
+      .then(({ response, data } = {}) => {
         if (cancelled) {
           return;
         }
 
-        const ids = new Set();
-        if (ranksResult.status === "fulfilled") {
-          const { response, data } = ranksResult.value || {};
-          if (response?.ok && data?.success) {
-            buildSearchTrendEligibleIdSet(data, platform).forEach((id) => ids.add(id));
-          }
-        }
-
-        if (ongoingResult.status === "fulfilled") {
-          const { response, data } = ongoingResult.value || {};
-          if (response?.ok && data?.success) {
-            buildOngoingTrendEligibleIdSet(data).forEach((id) => ids.add(id));
-          }
-        }
-
         setTrendEligibility({
           platform,
-          ids,
+          ids: response?.ok && data?.success
+            ? new Set((Array.isArray(data.ids) ? data.ids : []).map((id) => String(id)))
+            : new Set(),
           isLoaded: true,
         });
       })
