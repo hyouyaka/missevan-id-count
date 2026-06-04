@@ -222,6 +222,117 @@ test("library search ignores season suffixes during matching", async () => {
   assert.equal(searchMissevanLibraryRecords(records, "第一季").length, 0);
 });
 
+test("library search matches full-season Missevan queries by stripping query suffixes", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "501",
+      soundIds: [],
+      title: "一屋暗灯 全一季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+  ];
+
+  assert.equal(searchMissevanLibraryRecords(records, "一屋暗灯")[0]?.dramaId, "501");
+  assert.equal(searchMissevanLibraryRecords(records, "一屋暗灯 全一季")[0]?.dramaId, "501");
+  assert.equal(searchMissevanLibraryRecords(records, "一屋暗灯全一季")[0]?.dramaId, "501");
+  assert.equal(searchMissevanLibraryRecords(records, "第一季").length, 0);
+});
+
+test("library search preserves explicit Missevan season intent before stripped query matches", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "601",
+      soundIds: [],
+      title: "魔道祖师 第一季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+    {
+      dramaId: "602",
+      soundIds: [],
+      title: "魔道祖师 第二季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+  ];
+
+  assert.deepEqual(
+    searchMissevanLibraryRecords(records, "魔道祖师 第二季").map((item) => item.dramaId),
+    ["602", "601"]
+  );
+});
+
+test("library search matches full-season Manbo queries by stripping query suffixes", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchManboLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "1467142227078676553",
+      name: "一屋暗灯 全一季",
+      aliases: [],
+      mainCvNicknames: [],
+      mainCvNames: [],
+      mainCvRoleNames: [],
+      seriesTitle: "",
+      author: "",
+      catalogName: "广播剧",
+    },
+  ];
+
+  assert.equal(searchManboLibraryRecords(records, "一屋暗灯")[0]?.dramaId, "1467142227078676553");
+  assert.equal(searchManboLibraryRecords(records, "一屋暗灯 全一季")[0]?.dramaId, "1467142227078676553");
+  assert.equal(searchManboLibraryRecords(records, "一屋暗灯全一季")[0]?.dramaId, "1467142227078676553");
+  assert.equal(searchManboLibraryRecords(records, "第一季").length, 0);
+});
+
+test("library search preserves explicit Manbo season intent before stripped query matches", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchManboLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "701",
+      name: "魔道祖师 第一季",
+      aliases: [],
+      mainCvNicknames: [],
+      mainCvNames: [],
+      mainCvRoleNames: [],
+      seriesTitle: "",
+      author: "",
+      catalogName: "广播剧",
+    },
+    {
+      dramaId: "702",
+      name: "魔道祖师 第二季",
+      aliases: [],
+      mainCvNicknames: [],
+      mainCvNames: [],
+      mainCvRoleNames: [],
+      seriesTitle: "",
+      author: "",
+      catalogName: "广播剧",
+    },
+  ];
+
+  assert.deepEqual(
+    searchManboLibraryRecords(records, "魔道祖师 第二季").map((item) => item.dramaId),
+    ["702", "701"]
+  );
+});
+
 test("library search keeps numeric Missevan drama and sound ID matching", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords } = await import("./server.js");

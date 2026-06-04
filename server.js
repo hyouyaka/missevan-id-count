@@ -2773,9 +2773,40 @@ function escapeRegExp(value) {
   return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function pushSearchBranch(branches, keyword, category = null) {
+  const rawKeyword = normalizeTextValue(keyword);
+  if (!rawKeyword) {
+    return;
+  }
+  const normalizedKeyword = normalizeSearchText(rawKeyword);
+  if (!normalizedKeyword) {
+    return;
+  }
+
+  const hasBranch = (branchKeyword) => branches.some(
+    (branch) =>
+      branch.category === category &&
+      normalizeSearchText(branch.keyword) === branchKeyword
+  );
+  if (!hasBranch(normalizedKeyword)) {
+    branches.push({ keyword: rawKeyword, category });
+  }
+
+  const strippedKeyword = stripSearchSeasonSuffix(rawKeyword);
+  const normalizedStrippedKeyword = normalizeSearchText(strippedKeyword);
+  if (
+    normalizedStrippedKeyword &&
+    normalizedStrippedKeyword !== normalizedKeyword &&
+    !hasBranch(normalizedStrippedKeyword)
+  ) {
+    branches.push({ keyword: strippedKeyword, category });
+  }
+}
+
 function buildSearchBranches(keyword) {
   const rawKeyword = normalizeTextValue(keyword);
-  const branches = [{ keyword: rawKeyword, category: null }];
+  const branches = [];
+  pushSearchBranch(branches, rawKeyword);
   if (!rawKeyword) {
     return branches;
   }
@@ -2795,10 +2826,7 @@ function buildSearchBranches(keyword) {
         continue;
       }
 
-      branches.push({
-        keyword: splitKeyword,
-        category: category.key,
-      });
+      pushSearchBranch(branches, splitKeyword, category.key);
       return branches;
     }
   }
@@ -2878,6 +2906,19 @@ function getMissevanRecordPinyinUnits(record) {
   ]);
 }
 
+function getExactSeasonTitleSearchScore(value, rawKeyword, boost = 0) {
+  const normalizedKeyword = normalizeSearchText(rawKeyword);
+  const normalizedStrippedKeyword = normalizeSearchText(stripSearchSeasonSuffix(rawKeyword));
+  if (
+    !normalizedKeyword ||
+    !normalizedStrippedKeyword ||
+    normalizedKeyword === normalizedStrippedKeyword
+  ) {
+    return 0;
+  }
+  return normalizeSearchText(value) === normalizedKeyword ? 1080 + boost : 0;
+}
+
 function scoreManboLibraryRecord(record, keyword) {
   const rawKeyword = normalizeTextValue(keyword);
   const normalizedKeywords = buildSearchKeywordVariants(rawKeyword);
@@ -2904,7 +2945,11 @@ function scoreManboLibraryRecord(record, keyword) {
     [{ value: getManboRecordPinyinUnits(record), boost: 210 }],
     rawKeyword
   );
-  return Math.max(textScore, pinyinScore);
+  const exactSeasonTitleScore = Math.max(
+    getExactSeasonTitleSearchScore(record.name, rawKeyword, 20),
+    getExactSeasonTitleSearchScore(record.seriesTitle, rawKeyword)
+  );
+  return Math.max(exactSeasonTitleScore, textScore, pinyinScore);
 }
 
 function scoreMissevanLibraryRecord(record, keyword) {
@@ -2934,7 +2979,11 @@ function scoreMissevanLibraryRecord(record, keyword) {
     [{ value: getMissevanRecordPinyinUnits(record), boost: 210 }],
     rawKeyword
   );
-  return Math.max(textScore, pinyinScore);
+  const exactSeasonTitleScore = Math.max(
+    getExactSeasonTitleSearchScore(record.title, rawKeyword, 20),
+    getExactSeasonTitleSearchScore(record.seriesTitle, rawKeyword)
+  );
+  return Math.max(exactSeasonTitleScore, textScore, pinyinScore);
 }
 
 function buildScoredManboLibraryMatches(records, keyword, category = null) {
