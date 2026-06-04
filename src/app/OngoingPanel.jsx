@@ -19,6 +19,7 @@ import {
 import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
+  CompareActionButton,
   fetchRankTrendData,
   logRankTrendOpen,
   RankTrendButton,
@@ -213,6 +214,7 @@ function OngoingCard({
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
+  onAddCompareItem,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const baseMetricKeys = platform === "missevan"
@@ -323,6 +325,19 @@ function OngoingCard({
     });
   }
 
+  function addCompareItem() {
+    if (!canOpenTrend) {
+      return;
+    }
+    onAddCompareItem?.({
+      platform,
+      id: String(item.id),
+      title: item.name || "",
+      cover: item.cover || "",
+      mainCvText: item.main_cv_text || "",
+    });
+  }
+
   return (
     <>
       <Card
@@ -361,11 +376,20 @@ function OngoingCard({
                 ) : null}
               </div>
               {canOpenTrend ? (
-                <RankTrendButton
-                  onClick={openTrendDialog}
-                  aria-label={`查看${item.name}趋势`}
-                  title="查看趋势"
-                />
+                <div className="flex w-full justify-end overflow-visible">
+                  <div className="flex w-max flex-nowrap items-center gap-1">
+                    <RankTrendButton
+                      onClick={openTrendDialog}
+                      aria-label={`查看${item.name}趋势`}
+                      title="查看趋势"
+                    />
+                    <CompareActionButton
+                      onClick={addCompareItem}
+                      aria-label={`加入${item.name}对比`}
+                      title="加入对比"
+                    />
+                  </div>
+                </div>
               ) : null}
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-0.5">
@@ -429,6 +453,7 @@ export function OngoingPanel({
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
+  onAddCompareItem,
 }) {
   const [selectedPlatform, setSelectedPlatform] = useState("missevan");
   const [selectedWindow, setSelectedWindow] = useState("3d");
@@ -613,6 +638,7 @@ export function OngoingPanel({
               favoriteKeys={favoriteKeys}
               favoriteActionsDisabled={favoriteActionsDisabled}
               onToggleFavorite={onToggleFavorite}
+              onAddCompareItem={onAddCompareItem}
             />
           ))}
         </div>

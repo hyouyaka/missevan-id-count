@@ -4,6 +4,16 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.6.2",
+    changes: [
+      "请保存本工具新地址：https://mmtoolkit.app/，旧地址将于7月底失效",
+      "新增“对比”功能，可从搜索、更新、榜单页面加入作品对比，支持普通剧集和猫耳巅峰榜系列趋势对比，可切换绝对值和增量曲线，并可单独显示或隐藏每部剧集曲线",
+      "优化趋势曲线，改为在单指标之间切换，并添加增量曲线显示，方便观察数据变化趋势",
+      "新增后台任务中心，统一显示统计任务和收藏刷新进度，任务运行时仍可浏览榜单、搜索和收藏；任务完成后会提示查看结果",
+      "优化移动端图表、按钮、对比和横坐标显示，修复缺失数据和增量曲线的展示细节",
+    ],
+  },
+  {
     version: "1.6.1",
     changes: [
       "请保存本工具新地址：https://mmtoolkit.app/，旧地址将于7月底失效",

@@ -32,7 +32,6 @@ export default defineConfig({
       "/getrewardsummary": backendTarget,
       "/getrewardmeta": backendTarget,
       "/getsounddanmaku": backendTarget,
-      "/getdanmaku": backendTarget,
       "/image-proxy": backendTarget,
       "/app-config": backendTarget,
       "/usage-log": backendTarget,

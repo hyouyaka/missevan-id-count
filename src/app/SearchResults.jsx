@@ -33,6 +33,7 @@ import {
   fetchRankTrendData,
   logRankTrendOpen,
   rankTrendTagVariants,
+  CompareActionButton,
   RankTrendButton,
   RankTrendDialog,
 } from "@/app/rankTrendUi";
@@ -179,7 +180,9 @@ export function SearchResults({
   platformResultCounts = {},
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
   onToggleFavorite,
+  onAddCompareItem,
 }) {
   const idLabel = "作品ID";
   const episodeIdLabel = platform === "manbo" ? "Set ID" : "Sound ID";
@@ -483,6 +486,19 @@ export function SearchResults({
     }
   }
 
+  function addCompareItem(item) {
+    if (!canShowSearchTrend(item)) {
+      return;
+    }
+    onAddCompareItem?.({
+      platform,
+      id: String(item?.id ?? "").trim(),
+      title: item?.name || "",
+      cover: item?.cover || "",
+      mainCvText: item?.main_cv_text || item?.mainCvText || "",
+    });
+  }
+
   function closeTrendDialog(open) {
     setTrendDialog((current) => ({
       ...current,
@@ -771,6 +787,7 @@ export function SearchResults({
             <Button
               variant="secondary"
               className={mobileActionButtonClass}
+              disabled={statisticsActionsDisabled}
               onClick={() => runMobileAction(() => onStartRevenueEstimate?.(getSelectedDramaIds()))}
             >
               <HandCoinsIcon data-icon="inline-start" />
@@ -779,6 +796,7 @@ export function SearchResults({
             <Button
               variant="secondary"
               className={mobileActionButtonClass}
+              disabled={statisticsActionsDisabled}
               onClick={() => runMobileAction(() => onStartPlayCountStatistics?.(getSelectedEpisodeIds()))}
             >
               <PlayCircleIcon data-icon="inline-start" />
@@ -787,6 +805,7 @@ export function SearchResults({
             <Button
               variant="secondary"
               className={mobileActionButtonClass}
+              disabled={statisticsActionsDisabled}
               onClick={() => runMobileAction(() => onStartIdStatistics?.(getSelectedEpisodeIds()))}
             >
               <UserSearchIcon data-icon="inline-start" />
@@ -864,6 +883,7 @@ export function SearchResults({
           <Button
             variant="secondary"
             className={actionButtonBaseClass}
+            disabled={statisticsActionsDisabled}
             onClick={() => {
               setMobileActionsOpen(false);
               onStartRevenueEstimate?.(getSelectedDramaIds());
@@ -875,6 +895,7 @@ export function SearchResults({
           <Button
             variant="secondary"
             className={actionButtonBaseClass}
+            disabled={statisticsActionsDisabled}
             onClick={() => {
               setMobileActionsOpen(false);
               onStartPlayCountStatistics?.(getSelectedEpisodeIds());
@@ -886,6 +907,7 @@ export function SearchResults({
           <Button
             variant="secondary"
             className={actionButtonBaseClass}
+            disabled={statisticsActionsDisabled}
             onClick={() => {
               setMobileActionsOpen(false);
               onStartIdStatistics?.(getSelectedEpisodeIds());
@@ -1028,11 +1050,18 @@ export function SearchResults({
                               </div>
                             ))}
                             {canShowTrend ? (
-                              <RankTrendButton
-                                onClick={() => openTrendDialog(item)}
-                                aria-label={`查看${item.name}趋势`}
-                                title="查看趋势"
-                              />
+                              <>
+                                <RankTrendButton
+                                  onClick={() => openTrendDialog(item)}
+                                  aria-label={`查看${item.name}趋势`}
+                                  title="查看趋势"
+                                />
+                                <CompareActionButton
+                                  onClick={() => addCompareItem(item)}
+                                  aria-label={`加入${item.name}对比`}
+                                  title="加入对比"
+                                />
+                              </>
                             ) : null}
                           </div>
                         </div>
@@ -1063,6 +1092,7 @@ export function SearchResults({
                           type="button"
                           variant="secondary"
                           className={resultActionButtonClass}
+                          disabled={statisticsActionsDisabled}
                           onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
                         >
                           <UserSearchIcon data-icon="inline-start" />
@@ -1072,6 +1102,7 @@ export function SearchResults({
                           type="button"
                           variant="secondary"
                           className={resultActionButtonClass}
+                          disabled={statisticsActionsDisabled}
                           onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
                         >
                           <HandCoinsIcon data-icon="inline-start" />
@@ -1095,11 +1126,18 @@ export function SearchResults({
                           </div>
                         ))}
                       {canShowTrend ? (
-                        <RankTrendButton
-                          onClick={() => openTrendDialog(item)}
-                          aria-label={`查看${item.name}趋势`}
-                          title="查看趋势"
-                        />
+                        <>
+                          <RankTrendButton
+                            onClick={() => openTrendDialog(item)}
+                            aria-label={`查看${item.name}趋势`}
+                            title="查看趋势"
+                          />
+                          <CompareActionButton
+                            onClick={() => addCompareItem(item)}
+                            aria-label={`加入${item.name}对比`}
+                            title="加入对比"
+                          />
+                        </>
                       ) : null}
                     </div>
 
@@ -1138,6 +1176,7 @@ export function SearchResults({
                         type="button"
                         variant="secondary"
                         className={mobileResultActionButtonClass}
+                        disabled={statisticsActionsDisabled}
                         onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
                       >
                         <UserSearchIcon data-icon="inline-start" />
@@ -1147,6 +1186,7 @@ export function SearchResults({
                         type="button"
                         variant="secondary"
                         className={mobileResultActionButtonClass}
+                        disabled={statisticsActionsDisabled}
                         onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
                       >
                         <HandCoinsIcon data-icon="inline-start" />

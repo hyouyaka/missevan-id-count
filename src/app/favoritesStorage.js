@@ -511,16 +511,6 @@ async function updateIndexedDbFavoriteIfExists(key, updater) {
   }));
 }
 
-async function removeIndexedDbFavorite(platform, dramaId) {
-  const key = createFavoriteKey(platform, dramaId);
-  if (!key) {
-    return;
-  }
-  await runStore(FAVORITES_STORE, "readwrite", (store) => {
-    store.delete(key);
-  });
-}
-
 async function removeIndexedDbFavoriteWithSnapshots(platform, dramaId) {
   const key = createFavoriteKey(platform, dramaId);
   if (!key) {
@@ -741,20 +731,6 @@ export async function updateFavoriteIfExists(key, updater) {
     };
   });
   return updatedFavorite;
-}
-
-export async function removeFavorite(platform, dramaId) {
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return removeIndexedDbFavorite(platform, dramaId);
-  }
-  const key = createFavoriteKey(platform, dramaId);
-  if (!key) {
-    return;
-  }
-  await updateDesktopFavoritesBackup((current) => ({
-    ...current,
-    favorites: current.favorites.filter((favorite) => favorite.key !== key),
-  }));
 }
 
 export async function removeFavoriteWithSnapshots(platform, dramaId) {

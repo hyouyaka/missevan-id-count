@@ -259,7 +259,6 @@ let accessDeniedCooldownMode = "none";
 let cooldownStateLoaded = false;
 let cooldownPersistenceWarningLogged = false;
 let cooldownRefreshPromise = null;
-let lastCooldownRefreshAt = 0;
 let lastCooldownRefreshSucceeded = false;
 
 app.use(cors());
@@ -618,11 +617,6 @@ function refreshStatsTaskHeartbeat(task) {
   task.updatedAt = task.lastSeenAt;
 }
 
-function hasManboTaskHeartbeatExpired(task) {
-  return Date.now() - Number(task?.lastSeenAt ?? task?.createdAt ?? 0) >
-    MANBO_STATS_TASK_HEARTBEAT_TIMEOUT_MS;
-}
-
 function formatPlayCountWan(value) {
   const count = Number(value);
 
@@ -708,10 +702,6 @@ function getCooldownStatePayload() {
     accessDeniedCooldownMode,
     accessDeniedUseShortCooldown,
   };
-}
-
-function getSerializedCooldownState() {
-  return JSON.stringify(getCooldownStatePayload());
 }
 
 function applyLoadedCooldownState(payload) {
@@ -840,7 +830,6 @@ async function loadAccessDeniedCooldown() {
     const raw = await upstashClient.command(["GET", MISSEVAN_COOLDOWN_KEY]);
     cooldownStateLoaded = true;
     lastCooldownRefreshSucceeded = true;
-    lastCooldownRefreshAt = Date.now();
     if (!raw) {
       accessDeniedUntil = 0;
       accessDeniedCooldownMode = "none";
@@ -926,7 +915,6 @@ function markAccessDeniedCooldown() {
   accessDeniedUseShortCooldown = useShortCooldown;
   cooldownStateLoaded = true;
   lastCooldownRefreshSucceeded = true;
-  lastCooldownRefreshAt = Date.now();
   void persistAccessDeniedCooldown();
 }
 
@@ -940,7 +928,6 @@ function markSuccessfulMissevanRequest() {
   accessDeniedUseShortCooldown = false;
   cooldownStateLoaded = true;
   lastCooldownRefreshSucceeded = true;
-  lastCooldownRefreshAt = Date.now();
   void clearPersistedAccessDeniedCooldown();
 }
 
@@ -1311,25 +1298,6 @@ function extractManboFreeMainCount(text) {
     /\u524d\s*([0-9\u96f6\u4e00\u4e8c\u4e24\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u767e\u5343\u4e07]+)\s*[\u96c6\u671f][^\uff0c\u3002\n]{0,12}\u514d\u8d39/u
   );
   return match ? parseChineseInteger(match[1]) : null;
-}
-
-function extractManboMainEpisodeNumber(title) {
-  const text = String(title ?? "").trim();
-  if (!text) {
-    return null;
-  }
-
-  const epMatch = text.match(/(?:^|[^\w])EP\s*0*([0-9]{1,3})(?:[^\d]|$)/i);
-  if (epMatch) {
-    return Number(epMatch[1]);
-  }
-
-  const cnMatch = text.match(/\u7b2c\s*([0-9\u96f6\u4e00\u4e8c\u4e24\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u767e\u5343\u4e07]+)\s*[\u671f\u96c6\u8bdd\u7ae0\u8282\u5377]/u);
-  if (cnMatch) {
-    return parseChineseInteger(cnMatch[1]);
-  }
-
-  return null;
 }
 
 function inferManboEpisodeNeedPay(set, dramaMeta) {
@@ -6354,21 +6322,6 @@ async function executeManboPlayCountTask(task) {
   });
 }
 
-async function executeUnsupportedPlayCountTask(task) {
-  updateStatsTask(task, {
-    status: "completed",
-    progress: 100,
-    currentAction: "Manbo 暂不支持播放量统计",
-    failedCount: task.totalCount,
-    result: {
-      playCountResults: [],
-      playCountSelectedEpisodeCount: task.totalCount,
-      playCountTotal: 0,
-      playCountFailed: true,
-    },
-  });
-}
-
 async function executeMissevanRevenueTask(task) {
   const dramaIds = Array.isArray(task.dramaIds) ? task.dramaIds : [];
   const results = [];
@@ -7467,6 +7420,40 @@ app.post("/usage-log", async (req, res) => {
     const platform = String(payload.platform ?? "").trim();
     const action = String(payload.action ?? "").trim();
     const error = String(payload.error ?? "").trim();
+
+    if (action === "compare") {
+      const dramaIds = (Array.isArray(payload.dramaIds) ? payload.dramaIds : [])
+        .map((id) => normalizeTextValue(id).slice(0, 80))
+        .filter(Boolean)
+        .slice(0, 6);
+      const dramaTitles = (Array.isArray(payload.dramaTitles) ? payload.dramaTitles : [])
+        .map((title) => normalizeTextValue(title).slice(0, 200))
+        .filter(Boolean)
+        .slice(0, 6);
+      const platforms = (Array.isArray(payload.platforms) ? payload.platforms : [])
+        .map((item) => normalizeTextValue(item).slice(0, 40))
+        .filter(Boolean)
+        .slice(0, 6);
+      const compareKinds = (Array.isArray(payload.compareKinds) ? payload.compareKinds : [])
+        .map((item) => normalizeTextValue(item).slice(0, 40))
+        .filter(Boolean)
+        .slice(0, 6);
+      if (!dramaIds.length || !dramaTitles.length) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid usage log payload",
+        });
+      }
+      await writeUsageLog({
+        action,
+        dramaIds,
+        dramaTitles,
+        ...(platforms.length ? { platforms } : {}),
+        ...(compareKinds.length ? { compareKinds } : {}),
+        success: true,
+      });
+      return res.json({ success: true });
+    }
 
     if (action === "trend") {
       if (!["missevan", "manbo"].includes(platform)) {

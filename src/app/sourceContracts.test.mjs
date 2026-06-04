@@ -33,39 +33,15 @@ test("Missevan fallback dialog places confirm before cancel", () => {
   assert.ok(actionIndex < cancelIndex, "expected confirm button to render before cancel button");
 });
 
-test("Manbo empty search falls back to Missevan library search only", () => {
-  const manboBranchStart = searchPanelSource.indexOf('if (platform === "manbo")');
-  assert.notEqual(manboBranchStart, -1, "Manbo keyword search branch should exist");
-  const fallbackStart = searchPanelSource.indexOf("const fallbackResponse", manboBranchStart);
-  assert.notEqual(fallbackStart, -1, "Manbo empty search should try Missevan fallback");
-  const fallbackEnd = searchPanelSource.indexOf("showBlockingNotice", fallbackStart);
-  assert.notEqual(fallbackEnd, -1, "Manbo fallback branch should end before empty-result notice");
-  const fallbackBranch = searchPanelSource.slice(fallbackStart, fallbackEnd);
-
-  assert.match(fallbackBranch, /buildSearchPath\("missevan", keyword, \{ apiFallback: false, localOnly: true \}\)/);
-  assert.match(fallbackBranch, /onMissevanFallbackResults/);
-  assert.doesNotMatch(
-    fallbackBranch,
-    /`\/search\?keyword=\$\{encodeURIComponent\(keyword\)\}&offset=0&limit=5`/
-  );
-});
-
 test("Manbo numeric import only accepts 18 to 20 digit IDs", () => {
   assert.match(appUtilsSource, /\\d\{18,20\}/, "Manbo numeric import should use an 18-20 digit range");
   assert.doesNotMatch(appUtilsSource, /if \(\^\\d\+\$\.test\(raw\)\) \{\s*return true;/, "Manbo import should not accept any numeric token");
-});
-
-test("Missevan numeric import failure has short-keyword and API-fallback branches", () => {
-  assert.match(searchPanelSource, /emptyResultNotice === "short_keyword"/);
-  assert.match(searchPanelSource, /allowMissevanApiFallback/);
 });
 
 test("Manbo API search results are the only Manbo search results registered as new ids", () => {
   assert.match(toolViewSource, /expectedSource = normalizedPlatform === "manbo" \? "manbo_api" : "missevan_api"/);
   assert.match(toolViewSource, /item\?\.search_source === expectedSource/);
   assert.match(toolViewSource, /platform: normalizedPlatform/);
-  assert.match(toolViewSource, /confirmMissevanFallbackSearch/);
-  assert.match(toolViewSource, /onMissevanFallbackResults=\{confirmMissevanFallbackSearch\}/);
 });
 
 test("Manbo search supports local-only fallback mode", () => {
@@ -82,25 +58,6 @@ test("Manbo search supports local-only fallback mode", () => {
   assert.ok(apiCallIndex > localOnlyIndex, "Manbo API fetch should occur after local-only branch");
 });
 
-test("Missevan API search falls back to Manbo library when API titles miss keyword", () => {
-  assert.match(searchPanelSource, /shouldUseManboLibraryFallbackForMissevanSearch/);
-  assert.match(searchPanelSource, /onManboFallbackResults/);
-  assert.match(searchPanelSource, /buildSearchPath\("manbo", keyword, \{ apiFallback: false \}\)/);
-  assert.match(toolViewSource, /confirmManboFallbackSearch/);
-  assert.match(toolViewSource, /onManboFallbackResults=\{confirmManboFallbackSearch\}/);
-});
-
-test("Missevan API results remain available when Manbo fallback has no matches", () => {
-  const fallbackStart = searchPanelSource.indexOf("if (shouldUseManboLibraryFallbackForMissevanSearch");
-  assert.notEqual(fallbackStart, -1, "Missevan API mismatch fallback branch should exist");
-  const successStart = searchPanelSource.indexOf("if (data.success)", fallbackStart);
-  assert.notEqual(successStart, -1, "Missevan API success branch should remain after fallback");
-  const fallbackMissBranch = searchPanelSource.slice(fallbackStart, successStart);
-
-  assert.doesNotMatch(fallbackMissBranch, /showBlockingNotice/);
-  assert.doesNotMatch(fallbackMissBranch, /catch \(fallbackError\)[\s\S]*?\}\s*return;\s*\}/);
-});
-
 test("search result cards show original author between ID and main CV with a distinct icon", () => {
   assert.match(searchResultsSource, /FeatherIcon/, "search result author row should use a distinct author icon");
   assert.match(searchResultsSource, /aria-label="原作名"/, "author icon should expose the original-author label");
@@ -114,13 +71,6 @@ test("search result cards show original author between ID and main CV with a dis
   assert.ok(idRowIndex >= 0, "ID row should exist");
   assert.ok(authorRowIndex > idRowIndex, "author row should render below ID");
   assert.ok(cvRowIndex > authorRowIndex, "CV row should render below author");
-});
-
-test("desktop primary search does not disable public API fallback", () => {
-  assert.match(searchPanelSource, /function buildSearchPath/);
-  assert.match(searchPanelSource, /isDesktopApp/);
-  assert.match(searchPanelSource, /!isDesktopApp \|\| options\.localOnly === true/);
-  assert.match(searchPanelSource, /apiFallback=0/);
 });
 
 test("mobile search result actions stay in one fixed four-column row", () => {
@@ -338,9 +288,6 @@ test("search page owns compact platform result tabs", () => {
   assert.match(toolViewSource, /\{ key: "manbo", label: "漫播" \}/);
   assert.match(toolViewSource, /activeSearchPlatform/);
   assert.match(toolViewSource, /setActiveSearchPlatform/);
-  assert.match(toolViewSource, /searchResultSummaryText/);
-  assert.match(toolViewSource, /猫耳 \$\{missevanResultCount\}/);
-  assert.match(toolViewSource, /漫播 \$\{manboResultCount\}/);
 
   const searchPageStart = toolViewSource.indexOf('currentPlatform !== "report" ? (');
   const searchResultsStart = toolViewSource.indexOf("<SearchResults", searchPageStart);
@@ -366,12 +313,26 @@ test("frontend unified keyword search uses backend aggregate route", () => {
 
   const unifiedStart = searchPanelSource.indexOf("async function queryUnifiedKeywordSearch");
   assert.notEqual(unifiedStart, -1, "unified keyword search function should exist");
-  const unifiedEnd = searchPanelSource.indexOf("async function queryNumericLibraryLookup", unifiedStart);
-  assert.notEqual(unifiedEnd, -1, "unified keyword search should end before numeric lookup");
+  const unifiedEnd = searchPanelSource.indexOf("async function runMergedSearch", unifiedStart);
+  assert.notEqual(unifiedEnd, -1, "unified keyword search should end before merged-search submit handler");
   const unifiedSource = searchPanelSource.slice(unifiedStart, unifiedEnd);
   assert.doesNotMatch(unifiedSource, /queryPlatformKeywordSearch/);
   assert.doesNotMatch(unifiedSource, /apiFallback: false/);
   assert.doesNotMatch(unifiedSource, /apiFallback: true/);
+});
+
+test("merged search import branch is protected by pending state", () => {
+  const submitStart = searchPanelSource.indexOf("async function runMergedSearch");
+  assert.notEqual(submitStart, -1, "merged search submit handler should exist");
+  const submitEnd = searchPanelSource.indexOf("return (", submitStart);
+  assert.notEqual(submitEnd, -1, "merged search submit handler should end before render");
+  const submitSource = searchPanelSource.slice(submitStart, submitEnd);
+
+  assert.match(searchPanelSource, /const searchPendingRef = useRef\(false\)/);
+  assert.match(searchPanelSource, /function setSearchPending\(value\)[\s\S]*searchPendingRef\.current = Boolean\(value\)[\s\S]*setIsSearchPending\(Boolean\(value\)\)/);
+  assert.match(submitSource, /if \(searchPendingRef\.current\) \{\s*return;\s*\}/);
+  assert.match(submitSource, /nextClassified\.action === "import"[\s\S]*setSearchPending\(true\)[\s\S]*await onCrossPlatformImport\?\./);
+  assert.match(submitSource, /finally \{\s*setSearchPending\(false\);\s*\}/);
 });
 
 test("backend unified search route aggregates libraries before API fallback", () => {
@@ -519,8 +480,8 @@ test("search metric legend is persistent above search panel", () => {
 test("external drama title jump clears both search result panes before injecting target import", () => {
   const openStart = toolViewSource.indexOf("async function openDramaInSearch");
   assert.notEqual(openStart, -1, "openDramaInSearch should exist");
-  const openEnd = toolViewSource.indexOf("async function loadSearchPage", openStart);
-  assert.notEqual(openEnd, -1, "openDramaInSearch should end before loadSearchPage");
+  const openEnd = toolViewSource.indexOf("function beginRun", openStart);
+  assert.notEqual(openEnd, -1, "openDramaInSearch should end before stats run helpers");
   const openSource = toolViewSource.slice(openStart, openEnd);
 
   assert.match(toolViewSource, /onOpenSearchResult=\{openDramaInSearch\}/);
@@ -568,7 +529,6 @@ test("work id rows use platform icons instead of HashIcon", () => {
   assert.match(searchResultsSource, /PlatformIdIcon platform=\{platform\} aria-label=\{idLabel\}/);
   assert.match(ongoingPanelSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
   assert.match(ranksPanelSource, /PlatformIdIcon[\s\S]*platform=\{platform\}[\s\S]*aria-label=\{isMissevanPeak \? "包含作品ID" : "作品ID"\}/);
-  assert.match(ranksPanelSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
   assert.match(rankTrendUiSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
 
   const searchWorkIdLine = searchResultsSource.slice(searchResultsSource.indexOf("aria-label={idLabel}") - 140, searchResultsSource.indexOf("aria-label={idLabel}") + 180);
@@ -913,8 +873,8 @@ test("favorite actions are disabled globally during favorite refresh", () => {
   assert.match(toolViewSource, /<OngoingPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
   assert.match(toolViewSource, /<FavoritesPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
   assert.match(toolViewSource, /<SearchResults[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
-  assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| selectedKeys\.size === 0\}/);
-  assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| favorites\.length === 0\}/);
+  assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| statisticsActionsDisabled \|\| selectedKeys\.size === 0\}/);
+  assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| statisticsActionsDisabled \|\| favorites\.length === 0\}/);
   assert.match(favoritesPanelSource, /disabled=\{favoriteActionsDisabled\}/);
   assert.match(favoritesPanelSource, /\{refreshState\.isRunning \? "刷新中" : "选中"\}/);
   assert.match(favoritesPanelSource, /\{refreshState\.isRunning \? "刷新中" : "全部"\}/);
@@ -1207,22 +1167,15 @@ test("rank trend dialog shows metric refresh time in device timezone", () => {
   assert.match(rankTrendUiSource, /generatedAt/, "trend UI should read generatedAt from metric window data");
 });
 
-test("rank trend chart starts paid ID line at the first nonzero history point", () => {
-  const percentPointsStart = rankTrendUiSource.indexOf("function buildTrendPercentPoints");
-  assert.notEqual(percentPointsStart, -1, "trend percent point builder should exist");
-  const percentPointsEnd = rankTrendUiSource.indexOf("function isPeakSeriesChart", percentPointsStart);
-  assert.notEqual(percentPointsEnd, -1, "trend percent point builder should end before peak chart logic");
-  const percentPointSource = rankTrendUiSource.slice(percentPointsStart, percentPointsEnd);
+test("rank trend chart uses shared single-axis chart helpers", () => {
+  const chartUtilsSource = readFileSync(new URL("./rankTrendChartUtils.js", import.meta.url), "utf8");
 
-  assert.match(percentPointSource, /metric\?\.key === "danmaku_uid_count"/);
-  assert.match(percentPointSource, /value > 0/);
-  assert.match(percentPointSource, /hasReachedBasePoint/);
-  assert.match(percentPointSource, /percent: null/);
-  assert.match(
-    rankTrendUiSource,
-    /history\.find\(\(point\) => getTrendNumber\(point\.value\) != null\)/,
-    "ordinary metrics should still use the first finite history value as their baseline"
-  );
+  assert.match(rankTrendUiSource, /buildTrendChartLines as buildSingleAxisTrendChartLines/);
+  assert.match(rankTrendUiSource, /getTrendAxisY as getSingleAxisTrendAxisY/);
+  assert.match(rankTrendUiSource, /buildSingleAxisTrendChartLines\(availableMetrics, \{ chartMode \}\)/);
+  assert.match(chartUtilsSource, /export function buildTrendValuePoints/);
+  assert.match(chartUtilsSource, /export function buildTrendDeltaPoints/);
+  assert.match(chartUtilsSource, /\.filter\(\(point\) => !point\?\.isPreWindow\)/);
 });
 
 test("rank trend backend keeps sparse missing dates instead of dropping them", () => {
@@ -1232,9 +1185,11 @@ test("rank trend backend keeps sparse missing dates instead of dropping them", (
   assert.match(ranksTrendUtilsSource, /metricConfigs = getRankTrendMetricConfigs\(platform\)/);
   assert.match(ranksTrendUtilsSource, /const staleDateSet = getRepeatedTrendSampleDateSet/);
   assert.match(ranksTrendUtilsSource, /staleDateSet\.has\(date\) \? null : getDramaMetrics/);
-  assert.match(ranksTrendUtilsSource, /const availableHistory = history\.filter\(\(point\) => point\.drama\)/);
-  assert.match(ranksTrendUtilsSource, /buildMetric\(config, history\)/);
-  assert.match(ranksTrendUtilsSource, /buildPeakSeriesMetric\(config, history\)/);
+  assert.match(ranksTrendUtilsSource, /const windowHistory = history\.filter\(\(point\) => !point\.isPreWindow\)/);
+  assert.match(ranksTrendUtilsSource, /const availableHistory = windowHistory\.filter\(\(point\) => point\.drama\)/);
+  assert.match(ranksTrendUtilsSource, /buildMetric\(config, history, windowHistory\)/);
+  assert.match(ranksTrendUtilsSource, /buildPeakSeriesMetric\(config, history, windowHistory\)/);
+  assert.match(ranksTrendUtilsSource, /isPreWindow: true/);
   assert.match(ranksTrendUtilsSource, /const staleDateSet = getRepeatedPeakSeriesSampleDateSet/);
   assert.match(ranksTrendUtilsSource, /staleDateSet\.has\(date\) \? \{ date \} : samplesByDate\[date\]/);
   assert.doesNotMatch(
@@ -1250,34 +1205,29 @@ test("rank trend backend keeps sparse missing dates instead of dropping them", (
 });
 
 test("rank trend details use no-data copy while chart skips null points", () => {
+  const chartUtilsSource = readFileSync(new URL("./rankTrendChartUtils.js", import.meta.url), "utf8");
+
   assert.match(rankTrendUiSource, /function formatTrendSnapshotValue\(value\)/);
   assert.match(rankTrendUiSource, /value == null \? "无数据" : formatTrendValue\(value\)/);
   assert.match(rankTrendUiSource, /formatTrendSnapshotValue\(row\.values\[column\.key\]\)/);
-  assert.match(rankTrendUiSource, /getTrendNumber\(point\[valueKey\]\) != null/);
+  assert.match(chartUtilsSource, /getTrendNumber\(point\.axisValue\) == null/);
+  assert.match(chartUtilsSource, /position: getTrendNumber\(point\.axisValue\) == null/);
 });
 
-test("rank trend chart legend toggles metrics and keeps at least one visible", () => {
-  assert.match(rankTrendUiSource, /function TrendMetricToggleLegend/);
-  assert.match(rankTrendUiSource, /type="checkbox"/);
-  assert.match(rankTrendUiSource, /checked=\{isChecked\}/);
-  assert.match(rankTrendUiSource, /onChange=\{\(\) => onToggleMetric\?\.\(metric\.key\)\}/);
-  assert.match(rankTrendUiSource, /const \[visibleMetricKeys, setVisibleMetricKeys\] = useState\(\(\) => new Set\(\)\)/);
-  assert.match(rankTrendUiSource, /function toggleVisibleMetric\(metricKey\)/);
-  assert.match(rankTrendUiSource, /const visibleCurrentMetricCount = currentMetricKeys\.filter\(\(key\) => current\.has\(key\)\)\.length/);
-  assert.match(rankTrendUiSource, /current\.has\(metricKey\) && currentMetricKeys\.includes\(metricKey\) && visibleCurrentMetricCount <= 1/);
-  assert.match(rankTrendUiSource, /const visibleCurrentMetricCount = legendMetrics\.filter\(\(metric\) => visibleMetricKeys\.has\(metric\.key\)\)\.length/);
-  assert.match(rankTrendUiSource, /const knownMetricKeysRef = useRef\(new Set\(\)\)/);
-  assert.match(rankTrendUiSource, /function resetVisibleTrendMetrics\(\)/);
-  assert.match(rankTrendUiSource, /knownMetricKeysRef\.current = new Set\(\)/);
-  assert.match(rankTrendUiSource, /const chartMetricKeys = chartMetricKeySignature\.split\("\|"\)\.filter\(Boolean\)/);
-  assert.match(rankTrendUiSource, /const newMetricKeys = chartMetricKeys\.filter\(\(key\) => !knownMetricKeys\.has\(key\)\)/);
-  assert.match(rankTrendUiSource, /const hasVisibleCurrentMetric = chartMetricKeys\.some\(\(key\) => next\.has\(key\)\)/);
-  assert.match(rankTrendUiSource, /if \(!hasVisibleCurrentMetric\) \{[\s\S]*next\.add\(chartMetricKeys\[0\]\)/);
-  assert.doesNotMatch(rankTrendUiSource, /if \(!chartMetricKeys\.length\) \{\s*setVisibleMetricKeys\(new Set\(\)\);\s*setKnownMetricKeys\(new Set\(\)\);\s*return;\s*\}/);
-  assert.doesNotMatch(rankTrendUiSource, /\}, \[open, chartMetricKeySignature, knownMetricKeys\]\)/);
-  assert.match(rankTrendUiSource, /const visibleChartMetrics = visibleMetricKeys\.size[\s\S]*\? chartMetrics\.filter\(\(metric\) => visibleMetricKeys\.has\(metric\.key\)\)[\s\S]*: chartMetrics/);
-  assert.match(rankTrendUiSource, /<RankTrendLineChart[\s\S]*metrics=\{visibleChartMetrics\}[\s\S]*legendMetrics=\{chartMetrics\}/);
-  assert.doesNotMatch(rankTrendUiSource, /\}, \[open, activeWindowKey, chartMetricKeySignature\]\)/);
+test("rank trend chart legend selects exactly one metric with radio controls", () => {
+  assert.match(rankTrendUiSource, /function TrendMetricRadioLegend/);
+  assert.match(rankTrendUiSource, /type="radio"/);
+  assert.match(rankTrendUiSource, /name="rank-trend-metric"/);
+  assert.match(rankTrendUiSource, /checked=\{isSelected\}/);
+  assert.match(rankTrendUiSource, /onChange=\{\(\) => onSelectMetric\?\.\(metric\.key\)\}/);
+  assert.match(rankTrendUiSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\("view_count"\)/);
+  assert.match(rankTrendUiSource, /function selectTrendMetric\(metricKey\)/);
+  assert.match(rankTrendUiSource, /const selectedChartMetric = chartMetrics\.find\(\(metric\) => metric\.key === selectedMetricKey\) \|\| chartMetrics\[0\] \|\| null/);
+  assert.match(rankTrendUiSource, /const visibleChartMetrics = selectedChartMetric \? \[selectedChartMetric\] : \[\]/);
+  assert.match(rankTrendUiSource, /setSelectedMetricKey\("view_count"\)/);
+  assert.doesNotMatch(rankTrendUiSource, /visibleMetricKeys/);
+  assert.doesNotMatch(rankTrendUiSource, /TrendMetricToggleLegend/);
+  assert.doesNotMatch(rankTrendUiSource, /type="checkbox"/);
 
   const lineChartStart = rankTrendUiSource.indexOf("function RankTrendLineChart");
   const lineChartEnd = rankTrendUiSource.indexOf("function getSnapshotColumns", lineChartStart);
@@ -1285,7 +1235,9 @@ test("rank trend chart legend toggles metrics and keeps at least one visible", (
   assert.notEqual(lineChartEnd, -1, "RankTrendLineChart should end before snapshot helpers");
   const lineChartSource = rankTrendUiSource.slice(lineChartStart, lineChartEnd);
   assert.doesNotMatch(lineChartSource, /className="size-2 rounded-full"/);
-  assert.match(lineChartSource, /<TrendMetricToggleLegend/);
+  assert.match(lineChartSource, /<TrendMetricRadioLegend/);
+  assert.doesNotMatch(lineChartSource, /rightAxis/);
+  assert.match(lineChartSource, /\.markers\.map/);
 });
 
 test("rank trend chart data points show hover and touch tooltips", () => {
@@ -1298,10 +1250,10 @@ test("rank trend chart data points show hover and touch tooltips", () => {
   assert.match(lineChartSource, /const \[hoveredPoint, setHoveredPoint\] = useState\(null\)/);
   assert.match(lineChartSource, /const \[selectedPoint, setSelectedPoint\] = useState\(null\)/);
   assert.match(lineChartSource, /const chartMetricSignature = availableMetrics[\s\S]*\.map\(\(metric\) => `\$\{metric\.key\}:/);
-  assert.match(lineChartSource, /useEffect\(\(\) => \{[\s\S]*setHoveredPoint\(null\);[\s\S]*setSelectedPoint\(null\);[\s\S]*\}, \[windowKey, chartMetricSignature\]\)/);
+  assert.match(lineChartSource, /useEffect\(\(\) => \{[\s\S]*setHoveredPoint\(null\);[\s\S]*setSelectedPoint\(null\);[\s\S]*\}, \[windowKey, chartMetricSignature, chartMode\]\)/);
   assert.match(lineChartSource, /const activeTooltipPoint = selectedPoint \|\| hoveredPoint/);
   assert.match(lineChartSource, /function buildTooltipPoint\(line, point, position, style\)/);
-  assert.match(lineChartSource, /value: formatTrendValue\(point\.value\)/);
+  assert.match(lineChartSource, /value: chartMode === "increment" \? formatSignedTrendValue\(point\.displayValue\) : formatTrendValue\(point\.value\)/);
   assert.match(lineChartSource, /date: formatTrendDate\(point\.date\)/);
   assert.match(lineChartSource, /onClick=\{\(\) => setSelectedPoint\(null\)\}/);
   assert.match(lineChartSource, /onPointerEnter=\{\(\) => setHoveredPoint\(tooltipPoint\)\}/);
@@ -1327,7 +1279,268 @@ test("rank trend dialog uses compact window tabs and details trigger", () => {
   assert.notEqual(detailsStart, -1, "TrendSnapshotDetails should exist");
   assert.notEqual(detailsEnd, -1, "TrendSnapshotDetails should end before delta badge");
   const detailsSource = rankTrendUiSource.slice(detailsStart, detailsEnd);
-  assert.match(detailsSource, /className="flex h-9 w-full items-center justify-between gap-2 px-2\.5 text-left text-sm! font-medium text-foreground"/);
+  assert.match(detailsSource, /className="flex h-8 w-full items-center justify-between gap-2 px-2\.5 text-left text-xs! font-medium text-foreground"/);
+});
+
+test("rank trend dialog exposes absolute and increment curve modes", () => {
+  assert.match(rankTrendUiSource, /aria-label="趋势曲线类型"/);
+  assert.match(rankTrendUiSource, /<Tabs value=\{selectedChartMode\} onValueChange=\{setSelectedChartMode\}/);
+  assert.match(rankTrendUiSource, /<TabsTrigger className="h-\[26px\] min-w-0 rounded-md px-3 text-xs!" value="absolute">[\s\S]*绝对值/);
+  assert.match(rankTrendUiSource, /<TabsTrigger className="h-\[26px\] min-w-0 rounded-md px-3 text-xs!" value="increment">[\s\S]*增量/);
+  assert.doesNotMatch(rankTrendUiSource, /<select[\s\S]*aria-label="趋势曲线类型"/);
+  assert.doesNotMatch(rankTrendUiSource, /<option value="absolute">绝对值曲线<\/option>/);
+  assert.match(rankTrendUiSource, /chartMode=\{selectedChartMode\}/);
+  assert.match(rankTrendUiSource, /buildSingleAxisTrendChartLines/);
+  assert.doesNotMatch(rankTrendUiSource, /buildDualAxisTrendChartLines/);
+});
+
+test("rank trend expanded details replace the disclosure title with the table header", () => {
+  const detailsStart = rankTrendUiSource.indexOf("function TrendSnapshotDetails");
+  const detailsEnd = rankTrendUiSource.indexOf("export function RankTrendDeltaBadge", detailsStart);
+  assert.notEqual(detailsStart, -1, "TrendSnapshotDetails should exist");
+  assert.notEqual(detailsEnd, -1, "TrendSnapshotDetails should end before delta badge");
+  const detailsSource = rankTrendUiSource.slice(detailsStart, detailsEnd);
+
+  assert.match(detailsSource, /aria-label="收起数据明细"/);
+  assert.match(detailsSource, /\{column\.label\}/);
+  assert.match(detailsSource, /!isOpen \? \(/);
+  assert.match(detailsSource, /className="flex h-8 w-full[\s\S]*text-xs!/);
+  assert.match(detailsSource, /table className="w-full table-fixed border-collapse text-\[0\.68rem\]"/);
+  assert.match(detailsSource, /columns\.map\(\(column, index\) =>/);
+  assert.match(detailsSource, /const isLastColumn = index === columns\.length - 1/);
+  assert.match(detailsSource, /isLastColumn \? "relative pr-8" : ""/);
+  assert.match(detailsSource, /index === columns\.length - 1 \? "pr-8" : ""/);
+  assert.doesNotMatch(detailsSource, /colSpan=\{columns\.length\}/);
+  assert.doesNotMatch(detailsSource, /index === 0 \? \(/);
+});
+
+test("tool shell includes a global background task center and inline compare basket", () => {
+  assert.match(toolViewSource, /BackgroundTaskCenter/);
+  assert.match(toolViewSource, /backgroundTask/);
+  assert.match(toolViewSource, /statisticsActionsDisabled/);
+  assert.match(toolViewSource, /DramaCompareBasket/);
+  assert.match(toolViewSource, /DramaCompareDialog/);
+  assert.match(toolViewSource, /MAX_COMPARE_ITEMS = 6/);
+  assert.match(toolViewSource, /\$\{progress\}%/);
+  assert.match(toolViewSource, /const \[compareBasketOpen, setCompareBasketOpen\] = useState\(false\)/);
+  assert.match(toolViewSource, /w-\[min\(60vw,18rem\)\]/);
+  assert.match(toolViewSource, /max-h-\[13\.5rem\] overflow-y-auto/);
+  assert.match(toolViewSource, /对比 \{items\.length\}\/\{MAX_COMPARE_ITEMS\}/);
+  assert.match(toolViewSource, /text-sm!\s*">\s*<ArrowLeftRightIcon[\s\S]*对比/);
+  assert.match(toolViewSource, /const compareBasketTitleSummary = items\.map/);
+  assert.match(toolViewSource, /-ml-\d/);
+  assert.match(toolViewSource, /aria-label="收起对比"[\s\S]*<ChevronDownIcon/);
+  assert.doesNotMatch(toolViewSource, /对比篮/);
+  assert.match(toolViewSource, /toast\.success\("已加入对比。"\)/);
+  assert.doesNotMatch(toolViewSource, /toast\.success\("已加入对比篮。"\)/);
+  const addCompareStart = toolViewSource.indexOf("function addDramaToCompareBasket");
+  const addCompareEnd = toolViewSource.indexOf("function removeDramaFromCompareBasket", addCompareStart);
+  assert.notEqual(addCompareStart, -1, "addDramaToCompareBasket should exist");
+  assert.notEqual(addCompareEnd, -1, "addDramaToCompareBasket should end before remove handler");
+  const addCompareSource = toolViewSource.slice(addCompareStart, addCompareEnd);
+  assert.doesNotMatch(addCompareSource, /setCompareBasketOpen\(true\)/);
+  assert.doesNotMatch(toolViewSource, /\{ key: "compare", label: "对比信息" \}/);
+  assert.doesNotMatch(toolViewSource, /<ComparePanel/);
+});
+
+test("favorites refresh reports through the background task center", () => {
+  assert.match(favoritesPanelSource, /onBackgroundTaskChange/);
+  assert.match(favoritesPanelSource, /type: "favorites_refresh"/);
+  assert.match(toolViewSource, /onBackgroundTaskChange=\{setBackgroundTask\}/);
+});
+
+test("inline compare actions appear beside every trend action", () => {
+  assert.match(rankTrendUiSource, /export function CompareActionButton/);
+  assert.match(rankTrendUiSource, /ArrowLeftRightIcon/);
+  assert.doesNotMatch(rankTrendUiSource, /GitCompareArrowsIcon/);
+  assert.doesNotMatch(toolViewSource, /GitCompareArrowsIcon/);
+  assert.match(searchResultsSource, /<RankTrendButton[\s\S]*<CompareActionButton/);
+  assert.match(ongoingPanelSource, /<RankTrendButton[\s\S]*<CompareActionButton/);
+  assert.match(ranksPanelSource, /<RankTrendButton[\s\S]*<CompareActionButton/);
+  assert.match(ongoingPanelSource, /justify-end overflow-visible/);
+  assert.match(ongoingPanelSource, /w-max flex-nowrap/);
+});
+
+test("trend and compare dialogs default to 7-day absolute playback", () => {
+  const trendDialogStart = rankTrendUiSource.indexOf("export function RankTrendDialog");
+  assert.notEqual(trendDialogStart, -1, "RankTrendDialog should exist");
+  const trendDialogSource = rankTrendUiSource.slice(trendDialogStart);
+  assert.match(trendDialogSource, /const \[selectedWindow, setSelectedWindow\] = useState\("7d"\)/);
+  assert.match(trendDialogSource, /const \[selectedChartMode, setSelectedChartMode\] = useState\("absolute"\)/);
+  assert.match(trendDialogSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\("view_count"\)/);
+  assert.match(trendDialogSource, /setSelectedWindow\("7d"\)/);
+  assert.match(trendDialogSource, /setSelectedChartMode\("absolute"\)/);
+  assert.match(trendDialogSource, /setSelectedMetricKey\("view_count"\)/);
+
+  const compareDialogStart = toolViewSource.indexOf("function DramaCompareDialog");
+  const compareDialogEnd = toolViewSource.indexOf("function DramaCompareBasket", compareDialogStart);
+  assert.notEqual(compareDialogStart, -1, "DramaCompareDialog should exist");
+  assert.notEqual(compareDialogEnd, -1, "DramaCompareDialog should end before basket");
+  const compareDialogSource = toolViewSource.slice(compareDialogStart, compareDialogEnd);
+  assert.match(compareDialogSource, /const \[selectedMetric, setSelectedMetric\] = useState\("view_count"\)/);
+  assert.match(compareDialogSource, /const \[selectedWindow, setSelectedWindow\] = useState\("7d"\)/);
+  assert.match(compareDialogSource, /const \[selectedChartMode, setSelectedChartMode\] = useState\("absolute"\)/);
+  assert.match(compareDialogSource, /setSelectedMetric\("view_count"\)/);
+  assert.match(compareDialogSource, /setSelectedWindow\("7d"\)/);
+  assert.match(compareDialogSource, /setSelectedChartMode\("absolute"\)/);
+});
+
+test("trend and compare charts position date labels from visible chart markers", () => {
+  assert.match(rankTrendUiSource, /getTrendAxisLabelMarkers/);
+  assert.doesNotMatch(rankTrendUiSource, /function getTrendAxisLabelPoints/);
+  assert.match(rankTrendUiSource, /const axisLabelMarkers = getTrendAxisLabelMarkers\(chartLines\[0\]\?\.markers \|\| \[\], windowKey\)/);
+  assert.match(rankTrendUiSource, /axisLabelMarkers\.map\(\(\{ point, position \}\) =>/);
+  assert.match(rankTrendUiSource, /left: `\$\{\(position\.x \/ 320\) \* 100\}%`/);
+  assert.doesNotMatch(rankTrendUiSource, /axisLabelPoints\.map/);
+  assert.doesNotMatch(rankTrendUiSource, /inset-x-3 bottom-2 flex justify-between/);
+
+  const chartStart = toolViewSource.indexOf("function CompareTrendChart");
+  const chartEnd = toolViewSource.indexOf("function DramaCompareDialog", chartStart);
+  assert.notEqual(chartStart, -1, "CompareTrendChart should exist");
+  assert.notEqual(chartEnd, -1, "CompareTrendChart should end before dialog");
+  const chartSource = toolViewSource.slice(chartStart, chartEnd);
+  assert.match(chartSource, /getTrendAxisLabelMarkers\(chartData\?\.lines\?\.\[0\]\?\.markers \|\| \[\], windowKey\)/);
+  assert.match(chartSource, /axisLabelMarkers\.map\(\(\{ point, position \}\) =>/);
+  assert.doesNotMatch(chartSource, /const axisPoints = chartMetrics\.find/);
+  assert.doesNotMatch(toolViewSource, /function getCompareDateLabelPoints/);
+});
+
+test("rank trend chart does not clip positioned date labels", () => {
+  const lineChartStart = rankTrendUiSource.indexOf("function RankTrendLineChart");
+  const lineChartEnd = rankTrendUiSource.indexOf("function getSnapshotColumns", lineChartStart);
+  assert.notEqual(lineChartStart, -1, "RankTrendLineChart should exist");
+  assert.notEqual(lineChartEnd, -1, "RankTrendLineChart should end before snapshot helpers");
+  const lineChartSource = rankTrendUiSource.slice(lineChartStart, lineChartEnd);
+
+  assert.match(lineChartSource, /className="relative h-48 w-full overflow-visible rounded-md bg-card sm:h-52"/);
+  assert.doesNotMatch(lineChartSource, /className="relative h-48 w-full overflow-hidden rounded-md bg-card sm:h-52"/);
+  assert.match(lineChartSource, /axisLabelMarkers\.map\(\(\{ point, position \}\) =>/);
+  assert.match(lineChartSource, /className="absolute -translate-x-1\/2 whitespace-nowrap"/);
+});
+
+test("seven-day chart labels show every other visible point and the final point", () => {
+  const chartUtilsSource = readFileSync(new URL("./rankTrendChartUtils.js", import.meta.url), "utf8");
+  assert.match(chartUtilsSource, /export function getTrendAxisLabelMarkers/);
+  assert.match(chartUtilsSource, /windowKey === "7d"/);
+  assert.match(chartUtilsSource, /index % 2 === 0 \|\| index === lastIndex/);
+  assert.match(chartUtilsSource, /!entry\?\.point\?\.isPreWindow/);
+});
+
+test("compare palette and card checkbox keep fixed color identity", () => {
+  const paletteStart = toolViewSource.indexOf("const comparePalette = [");
+  const paletteEnd = toolViewSource.indexOf("];", paletteStart);
+  assert.notEqual(paletteStart, -1, "comparePalette should exist");
+  assert.notEqual(paletteEnd, -1, "comparePalette should end before semicolon");
+  const paletteSource = toolViewSource.slice(paletteStart, paletteEnd);
+  assert.match(paletteSource, /"#28559A"/);
+  assert.match(paletteSource, /"#E86A4A"/);
+  assert.match(paletteSource, /"#1F9D88"/);
+  assert.match(paletteSource, /"#7C5CCB"/);
+  assert.match(paletteSource, /"#D23B86"/);
+  assert.match(paletteSource, /"#6B7280"/);
+  assert.doesNotMatch(paletteSource, /var\(--chart-/);
+  assert.doesNotMatch(paletteSource, /rgb\(32,54,112\)/);
+
+  const dialogStart = toolViewSource.indexOf("function DramaCompareDialog");
+  const dialogEnd = toolViewSource.indexOf("function DramaCompareBasket", dialogStart);
+  assert.notEqual(dialogStart, -1, "DramaCompareDialog should exist");
+  assert.notEqual(dialogEnd, -1, "DramaCompareDialog should end before basket");
+  const dialogSource = toolViewSource.slice(dialogStart, dialogEnd);
+  assert.match(dialogSource, /className="relative flex w-\[120px\] shrink-0/);
+  assert.match(dialogSource, /className="absolute right-2 top-2 inline-flex items-center gap-1"/);
+  assert.match(dialogSource, /style=\{\{ accentColor: lineColor \}\}/);
+});
+
+test("compare dialog filters metrics, avoids loading loops, and fits mobile width", () => {
+  assert.match(toolViewSource, /import \{[\s\S]*formatPlainNumber[\s\S]*\} from "@\/app\/app-utils";/);
+  assert.doesNotMatch(toolViewSource, /axis\.ticks\.map/);
+
+  const chartStart = toolViewSource.indexOf("function CompareTrendChart");
+  const chartEnd = toolViewSource.indexOf("function DramaCompareDialog", chartStart);
+  assert.notEqual(chartStart, -1, "CompareTrendChart should exist");
+  assert.notEqual(chartEnd, -1, "CompareTrendChart should end before dialog");
+  const chartSource = toolViewSource.slice(chartStart, chartEnd);
+
+  const dialogStart = toolViewSource.indexOf("function DramaCompareDialog");
+  const dialogEnd = toolViewSource.indexOf("function DramaCompareBasket", dialogStart);
+  assert.notEqual(dialogStart, -1, "DramaCompareDialog should exist");
+  assert.notEqual(dialogEnd, -1, "DramaCompareDialog should end before basket");
+  const dialogSource = toolViewSource.slice(dialogStart, dialogEnd);
+
+  assert.match(dialogSource, /const handleVersionResponseRef = useRef\(handleVersionResponse\)/);
+  assert.match(dialogSource, /const compareItemsKey = items\.map/);
+  assert.match(dialogSource, /\}, \[open, compareItemsKey, frontendVersion\]\)/);
+  assert.doesNotMatch(dialogSource, /\}, \[open, items, frontendVersion, handleVersionResponse\]\)/);
+  assert.match(dialogSource, /const availableMetricOptions = COMPARE_METRICS\.filter/);
+  assert.match(dialogSource, /availableMetricOptions\.map/);
+  assert.match(dialogSource, /const isPeakSeriesCompare = trendItems\.some/);
+  assert.match(dialogSource, /option\.key === "view_count"/);
+  assert.match(dialogSource, /const hasSelectedMetricOption = Boolean\(selectedMetricOption\)/);
+  assert.match(dialogSource, /selectedCompareItemKeys/);
+  assert.match(dialogSource, /toggleCompareItemLine/);
+  assert.match(dialogSource, /const coloredCompareItems = items\.map/);
+  assert.match(dialogSource, /const coloredTrendItems = trendItems\.map/);
+  assert.match(dialogSource, /const visibleTrendItems = coloredTrendItems\.filter/);
+  assert.match(toolViewSource, /color: item\.compareColor \|\| comparePalette/);
+  assert.match(chartSource, /filterNonZeroTrendMetrics/);
+  assert.match(chartSource, /overflow-visible/);
+  assert.match(dialogSource, /type="checkbox"/);
+  assert.match(dialogSource, /checked=\{selectedCompareItemKeys\.has\(item\.key\)\}/);
+  assert.match(dialogSource, /style=\{\{ accentColor: lineColor \}\}/);
+  assert.match(dialogSource, /const itemIdText = item\.compareKind === "peak_series"/);
+  assert.match(dialogSource, /item\.dramaIds/);
+  assert.match(dialogSource, /items=\{visibleTrendItems\}/);
+  assert.match(dialogSource, /对比趋势数据暂不可用/);
+  assert.match(dialogSource, /AlertDialogDescription/);
+  assert.doesNotMatch(dialogSource, /availableMetricOptions\[0\] \|\|\s*COMPARE_METRICS\[0\]/);
+  assert.doesNotMatch(dialogSource, /metricOptions\.map/);
+  assert.match(dialogSource, /overflow-x-hidden/);
+  assert.doesNotMatch(dialogSource, /min-w-\[34rem\]/);
+  assert.match(dialogSource, /className="relative flex w-\[120px\] shrink-0/);
+  assert.match(dialogSource, /sm:flex-row/);
+  assert.match(dialogSource, /flex-col[\s\S]*sm:flex-row/);
+  assert.match(dialogSource, /line-clamp-2[\s\S]*PlatformIdIcon[\s\S]*<span className="line-clamp-2[\s\S]*text-left"\>\{itemIdText\}<\/span>/);
+  assert.match(dialogSource, /MicIcon[\s\S]*<span className="line-clamp-2[\s\S]*text-left"\>\{item\.mainCvText \|\| "CV 暂无"\}<\/span>/);
+  assert.match(dialogSource, /truncate font-medium text-foreground/);
+  assert.match(chartSource, /left: `\$\{\(position\.x \/ 320\) \* 100\}%`/);
+});
+
+test("rank trend details can display increment values without showing pre-window rows", () => {
+  const detailsStart = rankTrendUiSource.indexOf("function TrendSnapshotDetails");
+  const detailsEnd = rankTrendUiSource.indexOf("export function RankTrendDeltaBadge", detailsStart);
+  assert.notEqual(detailsStart, -1, "TrendSnapshotDetails should exist");
+  assert.notEqual(detailsEnd, -1, "TrendSnapshotDetails should end before delta badge");
+  const detailsSource = rankTrendUiSource.slice(detailsStart, detailsEnd);
+
+  assert.match(detailsSource, /function TrendSnapshotDetails\(\{ metrics, platform, chartMode = "absolute" \}\)/);
+  assert.match(detailsSource, /buildSnapshotRows\(columns, chartMode\)/);
+  assert.match(rankTrendUiSource, /point\?\.isPreWindow/);
+  assert.match(detailsSource, /formatTrendSnapshotDeltaValue/);
+  assert.match(detailsSource, /chartMode === "increment"/);
+  assert.match(rankTrendUiSource, /<TrendSnapshotDetails[\s\S]*metrics=\{activeMetrics\}[\s\S]*platform=\{platform\}[\s\S]*chartMode=\{selectedChartMode\}/);
+});
+
+test("compare action writes usage logs with ids and titles", () => {
+  assert.match(toolViewSource, /function logCompareUsage/);
+  assert.match(toolViewSource, /action: "compare"/);
+  assert.match(toolViewSource, /dramaIds: items\.map/);
+  assert.match(toolViewSource, /dramaTitles: items\.map/);
+  assert.match(toolViewSource, /compareKinds: items\.map/);
+  assert.match(toolViewSource, /onOpenCompare=\{openCompareDialogFromBasket\}/);
+  assert.match(serverSource, /if \(action === "compare"\)/);
+  assert.match(serverSource, /dramaIds/);
+  assert.match(serverSource, /dramaTitles/);
+  assert.match(serverSource, /compareKinds/);
+});
+
+test("peak rank compare entries stay playback-only and cannot mix with drama compare entries", () => {
+  assert.match(toolViewSource, /compareKind: String\(rawItem\?\.compareKind \?\? "drama"\)/);
+  assert.match(toolViewSource, /normalized\.compareKind === "peak_series"/);
+  assert.match(toolViewSource, /current\.some\(\(item\) => item\.compareKind !== normalized\.compareKind\)/);
+  assert.match(toolViewSource, /巅峰榜系列只能和其他巅峰榜系列对比/);
+  assert.match(toolViewSource, /普通剧集不能和巅峰榜系列混合对比/);
+  assert.match(ranksPanelSource, /compareKind: isMissevanPeak \? "peak_series" : "drama"/);
+  assert.match(ranksPanelSource, /title: isMissevanPeak \? `系列：\$\{item\.name \|\| ""\}` : item\.name \|\| ""/);
 });
 
 test("rank trend dialog dates historical rank badges", () => {
@@ -1345,8 +1558,8 @@ test("rank trend dialog dates historical rank badges", () => {
 test("rank trend fetch does not reuse stale successful responses forever", () => {
   const fetchStart = rankTrendUiSource.indexOf("export async function fetchRankTrendData");
   assert.notEqual(fetchStart, -1, "rank trend fetch helper should exist");
-  const fetchEnd = rankTrendUiSource.indexOf("export async function fetchRanksTrendLookupData", fetchStart);
-  assert.notEqual(fetchEnd, -1, "rank trend fetch helper should end before lookup helper");
+  const fetchEnd = rankTrendUiSource.indexOf("export async function fetchRankTrendAvailabilityData", fetchStart);
+  assert.notEqual(fetchEnd, -1, "rank trend fetch helper should end before availability helper");
   const fetchSource = rankTrendUiSource.slice(fetchStart, fetchEnd);
 
   assert.doesNotMatch(fetchSource, /if \(cached\?\.data\) \{\s*return cached\.data;\s*\}/);

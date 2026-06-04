@@ -213,8 +213,8 @@ function getRepeatedPeakSeriesSampleDateSet({ dates, samplesByDate }) {
   return staleDateSet;
 }
 
-function buildPeakSeriesMetric(config, history) {
-  const range = getMetricHistoryRange(history, (sample) =>
+function buildPeakSeriesMetric(config, history, rangeHistory = history) {
+  const range = getMetricHistoryRange(rangeHistory, (sample) =>
     normalizeFiniteNumber(sample?.[config.key])
   );
   const fromValue = range.fromValue;
@@ -236,6 +236,7 @@ function buildPeakSeriesMetric(config, history) {
         {
           date: sample.date,
           value: normalizeFiniteNumber(sample?.[config.key]),
+          ...(sample?.isPreWindow ? { isPreWindow: true } : {}),
         },
         sample
       )
@@ -246,13 +247,23 @@ function buildPeakSeriesMetric(config, history) {
 function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesByDate, staleDateSet }) {
   const latestTime = parseDateKey(latestDate);
   const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
-  const history = dates
-    .filter((date) => {
-      const time = parseDateKey(date);
-      return Number.isFinite(time) && time >= earliestAllowedTime && time <= latestTime;
-    })
-    .map((date) => (staleDateSet.has(date) ? { date } : samplesByDate[date] || { date }));
-  const availableHistory = history.filter((sample) =>
+  const preWindowTime = earliestAllowedTime - DAY_MS;
+  const preWindowDate = dates.find((date) => parseDateKey(date) === preWindowTime) || "";
+  const windowDates = dates.filter((date) => {
+    const time = parseDateKey(date);
+    return Number.isFinite(time) && time >= earliestAllowedTime && time <= latestTime;
+  });
+  const historyDates = preWindowDate ? [preWindowDate, ...windowDates] : windowDates;
+  const history = historyDates.map((date) => {
+    const sample = staleDateSet.has(date) ? { date } : samplesByDate[date] || { date };
+    return {
+      ...sample,
+      date,
+      ...(date === preWindowDate ? { isPreWindow: true } : {}),
+    };
+  });
+  const windowHistory = history.filter((sample) => !sample.isPreWindow);
+  const availableHistory = windowHistory.filter((sample) =>
     normalizeFiniteNumber(sample?.view_count) != null
   );
 
@@ -265,7 +276,7 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
       toDate: availableHistory.at(-1)?.date || "",
       insufficientData: true,
       metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
-        buildPeakSeriesMetric(config, history)
+        buildPeakSeriesMetric(config, history, windowHistory)
       ),
     }, availableHistory.at(-1));
   }
@@ -280,7 +291,7 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
     toDate: toSample.date,
     insufficientData: false,
     metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
-      buildPeakSeriesMetric(config, history)
+      buildPeakSeriesMetric(config, history, windowHistory)
     ),
   }, toSample);
 }
@@ -588,8 +599,8 @@ function buildAggregateListSnapshotsByDate(aggregateSnapshot, platform, id) {
   return snapshotsByDate;
 }
 
-function buildMetric(config, history) {
-  const range = getMetricHistoryRange(history, (point) =>
+function buildMetric(config, history, rangeHistory = history) {
+  const range = getMetricHistoryRange(rangeHistory, (point) =>
     normalizeFiniteNumber(point.drama?.[config.key])
   );
   const fromValue = range.fromValue;
@@ -611,6 +622,7 @@ function buildMetric(config, history) {
         {
           date: point.date,
           value: normalizeFiniteNumber(point.drama?.[config.key]),
+          ...(point?.isPreWindow ? { isPreWindow: true } : {}),
         },
         point.drama
       )
@@ -621,16 +633,21 @@ function buildMetric(config, history) {
 function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, platform, id, staleDateSet }) {
   const latestTime = parseDateKey(latestDate);
   const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
+  const preWindowTime = earliestAllowedTime - DAY_MS;
+  const preWindowDate = dates.find((date) => parseDateKey(date) === preWindowTime) || "";
   const windowDates = dates.filter((date) => {
     const time = parseDateKey(date);
     return Number.isFinite(time) && time >= earliestAllowedTime && time <= latestTime;
   });
-  const history = windowDates
+  const historyDates = preWindowDate ? [preWindowDate, ...windowDates] : windowDates;
+  const history = historyDates
     .map((date) => ({
       date,
       drama: staleDateSet.has(date) ? null : getDramaMetrics(snapshotsByDate[date], id),
+      ...(date === preWindowDate ? { isPreWindow: true } : {}),
     }));
-  const availableHistory = history.filter((point) => point.drama);
+  const windowHistory = history.filter((point) => !point.isPreWindow);
+  const availableHistory = windowHistory.filter((point) => point.drama);
 
   if (availableHistory.length < 2) {
     return withGeneratedAt({
@@ -641,7 +658,7 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
       toDate: availableHistory.at(-1)?.date || "",
       insufficientData: true,
       metrics: getRankTrendMetricConfigs(platform).map((config) =>
-        buildMetric(config, history)
+        buildMetric(config, history, windowHistory)
       ),
     }, availableHistory.at(-1)?.drama);
   }
@@ -656,7 +673,7 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
     toDate: toPoint.date,
     insufficientData: false,
     metrics: getRankTrendMetricConfigs(platform).map((config) =>
-      buildMetric(config, history)
+      buildMetric(config, history, windowHistory)
     ),
   }, toPoint.drama);
 }

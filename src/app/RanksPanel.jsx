@@ -11,7 +11,6 @@ import {
   StarIcon,
   TrophyIcon,
   UsersRoundIcon,
-  XIcon,
 } from "lucide-react";
 
 import {
@@ -25,6 +24,7 @@ import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
   canShowRankTrend,
+  CompareActionButton,
   fetchRankTrendData as fetchSharedRankTrendData,
   formatRankTrendDelta,
   logRankTrendOpen,
@@ -34,14 +34,6 @@ import {
   RankTrendDialog as SharedRankTrendDialog,
 } from "@/app/rankTrendUi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -59,8 +51,6 @@ const ranksClientCache = {
   frontendVersion: "",
   promise: null,
 };
-const RANK_TREND_CLIENT_SCHEMA_VERSION = 4;
-const rankTrendClientCache = new Map();
 const mobileRankTabClassName = "min-w-0 px-1.5 text-[12px]! leading-none";
 const mobileMenuTabsListClassName =
   "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
@@ -263,11 +253,11 @@ function RankItemCard({
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
+  onAddCompareItem,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const metrics = getRankMetrics(platform, item, rankKey);
   const isMissevanPeak = platform === "missevan" && item.type === "peak";
-  const isPeakRank = rankKey === "peak" || item.type === "peak";
   const dramaIdText = Array.isArray(item.drama_ids) && item.drama_ids.length ? item.drama_ids.join("，") : "";
   const recentUpdatedDate = isMissevanPeak ? "" : formatRankUpdatedDate(item.updated_at);
   const paymentTag = getRankPaymentTag(item);
@@ -399,6 +389,21 @@ function RankItemCard({
     });
   }
 
+  function addCompareItem() {
+    if (!canShowTrend) {
+      return;
+    }
+    onAddCompareItem?.({
+      platform,
+      id: String(trendLookupId ?? "").trim(),
+      title: isMissevanPeak ? `系列：${item.name || ""}` : item.name || "",
+      cover: item.cover || "",
+      mainCvText: item.main_cv_text || "",
+      compareKind: isMissevanPeak ? "peak_series" : "drama",
+      dramaIds: isMissevanPeak ? searchDramaIds : [],
+    });
+  }
+
   return (
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
       <CardContent className="px-3.5">
@@ -510,11 +515,18 @@ function RankItemCard({
                   日增：{formatRankTrendDelta(peakDailyDeltaMetric)}
                 </RankTrendDeltaBadge>
                 {canShowTrend ? (
-                  <RankTrendButton
-                    onClick={openTrendDialog}
-                    aria-label={`查看${item.name}趋势`}
-                    title="查看趋势"
-                  />
+                  <>
+                    <RankTrendButton
+                      onClick={openTrendDialog}
+                      aria-label={`查看${item.name}趋势`}
+                      title="查看趋势"
+                    />
+                    <CompareActionButton
+                      onClick={addCompareItem}
+                      aria-label={`加入${item.name}对比`}
+                      title="加入对比"
+                    />
+                  </>
                 ) : null}
               </div>
             ) : null}
@@ -546,11 +558,18 @@ function RankItemCard({
                 </div>
               ))}
             {!isMissevanPeak && canShowTrend ? (
-              <RankTrendButton
-                onClick={openTrendDialog}
-                aria-label={`查看${item.name}趋势`}
-                title="查看趋势"
-              />
+              <>
+                <RankTrendButton
+                  onClick={openTrendDialog}
+                  aria-label={`查看${item.name}趋势`}
+                  title="查看趋势"
+                />
+                <CompareActionButton
+                  onClick={addCompareItem}
+                  aria-label={`加入${item.name}对比`}
+                  title="加入对比"
+                />
+              </>
             ) : null}
           </div>
         ) : null}
@@ -577,6 +596,7 @@ function RankColumn({
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
+  onAddCompareItem,
 }) {
   return (
     <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
@@ -601,6 +621,7 @@ function RankColumn({
               favoriteKeys={favoriteKeys}
               favoriteActionsDisabled={favoriteActionsDisabled}
               onToggleFavorite={onToggleFavorite}
+              onAddCompareItem={onAddCompareItem}
             />
           ))}
         </div>
@@ -663,474 +684,6 @@ async function fetchRanksData(frontendVersion) {
   return ranksClientCache.promise;
 }
 
-async function fetchRankTrendData({ platform, id, frontendVersion }) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const normalizedId = String(id ?? "").trim();
-  const normalizedVersion = String(frontendVersion ?? "").trim();
-  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedPlatform}:${normalizedId}`;
-  const cached = rankTrendClientCache.get(cacheKey);
-  if (cached?.data) {
-    return cached.data;
-  }
-  if (cached?.promise) {
-    return cached.promise;
-  }
-
-  const params = new URLSearchParams({
-    platform: normalizedPlatform,
-    id: normalizedId,
-    schema: String(RANK_TREND_CLIENT_SCHEMA_VERSION),
-  });
-  const promise = (async () => {
-    try {
-      const response = await fetch(buildVersionedUrl(`/ranks/trends?${params.toString()}`, frontendVersion), {
-        cache: "no-cache",
-      });
-      const data = await response.json();
-      const payload = {
-        response,
-        data,
-      };
-      if (response.ok && data?.success) {
-        rankTrendClientCache.set(cacheKey, { data: payload, promise: null });
-      }
-      return payload;
-    } finally {
-      const current = rankTrendClientCache.get(cacheKey);
-      if (current?.promise === promise) {
-        rankTrendClientCache.set(cacheKey, { data: current.data || null, promise: null });
-      }
-    }
-  })();
-
-  rankTrendClientCache.set(cacheKey, { data: null, promise });
-  return promise;
-}
-
-const trendMetricStyles = {
-  view_count: {
-    color: "var(--chart-1)",
-    background: "rgba(36, 74, 134, 0.1)",
-  },
-  danmaku_uid_count: {
-    color: "var(--chart-3)",
-    background: "rgba(31, 157, 138, 0.1)",
-  },
-  subscription_num: {
-    color: "var(--chart-2)",
-    background: "rgba(230, 107, 79, 0.11)",
-  },
-  pay_count: {
-    color: "var(--chart-2)",
-    background: "rgba(230, 107, 79, 0.11)",
-  },
-};
-
-function getTrendMetricStyle(metric) {
-  return trendMetricStyles[metric?.key] || trendMetricStyles.view_count;
-}
-
-function getTrendNumber(value) {
-  if (value == null || String(value).trim() === "") {
-    return null;
-  }
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function shouldDisplayTrendMetric(metric, platform) {
-  if (platform !== "manbo" || metric?.key !== "pay_count") {
-    return true;
-  }
-  const values = [metric.fromValue, metric.toValue, metric.delta]
-    .map((value) => getTrendNumber(value))
-    .filter((value) => value != null);
-  return values.some((value) => value !== 0);
-}
-
-function getDisplayTrendMetrics(metrics, platform) {
-  return (Array.isArray(metrics) ? metrics : []).filter((metric) =>
-    shouldDisplayTrendMetric(metric, platform)
-  );
-}
-
-function isEmptyPaidDanmakuTrendMetric(metric) {
-  if (metric?.key !== "danmaku_uid_count") {
-    return false;
-  }
-  const fromValue = getTrendNumber(metric.fromValue);
-  const toValue = getTrendNumber(metric.toValue);
-  return fromValue != null && toValue != null && fromValue === 0 && toValue === 0;
-}
-
-function getChartTrendMetrics(metrics) {
-  return (Array.isArray(metrics) ? metrics : []).filter(
-    (metric) => !isEmptyPaidDanmakuTrendMetric(metric)
-  );
-}
-
-function getTrendMetaTags(item, platform) {
-  const platformLabel = platform === "missevan" ? "猫耳" : "漫播";
-  return [platformLabel, getRankPaymentTag(item), ...getRankTitleTags(item)]
-    .map((label) => String(label ?? "").trim())
-    .filter(Boolean);
-}
-
-function getTrendPointPosition(point, index, points, minValue, maxValue) {
-  const width = 320;
-  const height = 170;
-  const left = 18;
-  const right = 18;
-  const top = 20;
-  const bottom = 30;
-  const value = getTrendNumber(point.value);
-  const x = points.length <= 1 ? width / 2 : left + (index / (points.length - 1)) * (width - left - right);
-  const range = maxValue - minValue;
-  const normalized = range === 0 || value == null ? 0.5 : (value - minValue) / range;
-  const y = top + (1 - normalized) * (height - top - bottom);
-  return { x, y };
-}
-
-function clampTrendY(value) {
-  return Math.min(144, Math.max(18, value));
-}
-
-function clampTrendX(value) {
-  return Math.min(304, Math.max(16, value));
-}
-
-function offsetTrendPositions(positions, offset) {
-  if (!offset || positions.length < 2) {
-    return positions;
-  }
-  const first = positions[0];
-  const last = positions.at(-1);
-  const dx = last.x - first.x;
-  const dy = last.y - first.y;
-  const length = Math.hypot(dx, dy) || 1;
-  const normalX = -dy / length;
-  const normalY = dx / length;
-  return positions.map((point) => ({
-    ...point,
-    x: clampTrendX(point.x + normalX * offset),
-    y: clampTrendY(point.y + normalY * offset),
-  }));
-}
-
-function buildTrendPolyline(metric) {
-  const points = Array.isArray(metric?.history) ? metric.history : [];
-  const values = points
-    .map((point) => getTrendNumber(point.value))
-    .filter((value) => value != null);
-  if (values.length < 2) {
-    return null;
-  }
-
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const positions = points.map((point, index) =>
-    getTrendPointPosition(point, index, points, minValue, maxValue)
-  );
-  const segment = points
-    .map((point, index) => ({ point, position: positions[index] }))
-    .filter(({ point }) => getTrendNumber(point.value) != null);
-
-  if (segment.length < 2) {
-    return null;
-  }
-
-  return {
-    points,
-    positions,
-    segments: [segment],
-  };
-}
-
-function buildTrendChartLines(metrics) {
-  const signatureCounts = new Map();
-  return metrics
-    .map((metric) => {
-      const line = buildTrendPolyline(metric);
-      if (!line) {
-        return null;
-      }
-
-      const renderedEntries = line.segments.flatMap((segment) => segment);
-      const signature = renderedEntries
-        .map(({ position }) => position)
-        .map((point) => `${Math.round(point.x)}:${Math.round(point.y)}`)
-        .join("|");
-      const seenCount = signatureCounts.get(signature) || 0;
-      signatureCounts.set(signature, seenCount + 1);
-      const offset = seenCount * 8;
-      const positions = offsetTrendPositions(
-        renderedEntries.map(({ position }) => position),
-        offset
-      );
-      const positionByDate = new Map(
-        renderedEntries.map(({ point }, index) => [String(point?.date ?? ""), positions[index]])
-      );
-      const segments = line.segments
-        .map((segment) =>
-          segment
-            .map(({ point }) => ({
-              point,
-              position: positionByDate.get(String(point?.date ?? "")),
-            }))
-            .filter((segmentPoint) => segmentPoint.position)
-        )
-        .filter((segment) => segment.length > 1);
-
-      return {
-        ...line,
-        metric,
-        positions,
-        segments,
-      };
-    })
-    .filter(Boolean);
-}
-
-function RankTrendLineChart({ metrics }) {
-  const availableMetrics = Array.isArray(metrics) ? metrics : [];
-  const chartLines = buildTrendChartLines(availableMetrics);
-  const axisPoints =
-    availableMetrics.find((metric) => Array.isArray(metric.history) && metric.history.length)?.history || [];
-
-  return (
-    <div className="rounded-lg border border-border/80 bg-background/82 p-2.5 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.22)]">
-      <div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        {availableMetrics.map((metric) => {
-          const style = getTrendMetricStyle(metric);
-          return (
-            <span key={metric.key} className="inline-flex items-center gap-1 text-[0.7rem] font-medium text-foreground">
-              <span
-                aria-hidden="true"
-                className="size-2 rounded-full"
-                style={{ backgroundColor: style.color }}
-              />
-              {metric.label}
-            </span>
-          );
-        })}
-      </div>
-      <div className="relative h-48 w-full overflow-hidden rounded-md bg-card sm:h-52">
-        <svg aria-label="趋势折线图" className="size-full" preserveAspectRatio="none" viewBox="0 0 320 170">
-          {[35, 65, 95, 125].map((y) => (
-            <line
-              key={y}
-              x1="18"
-              x2="302"
-              y1={y}
-              y2={y}
-              stroke="var(--border)"
-              strokeDasharray="4 6"
-              strokeWidth="1"
-            />
-          ))}
-          {chartLines.map((line) => {
-            const metric = line.metric;
-            const style = getTrendMetricStyle(metric);
-            return (
-              <g key={metric.key}>
-                {line.segments.map((segment, index) => (
-                  <polyline
-                    key={`${metric.key}-${index}`}
-                    fill="none"
-                    points={segment.map(({ position }) => `${position.x},${position.y}`).join(" ")}
-                    stroke={style.color}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2.5"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ))}
-              </g>
-            );
-          })}
-        </svg>
-        {chartLines.flatMap((line) => {
-          const style = getTrendMetricStyle(line.metric);
-          return line.segments.flatMap((segment) => segment).map(({ point, position }) => (
-            <span
-              key={`${line.metric.key}-${point.date}`}
-              aria-hidden="true"
-              className="pointer-events-none absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-card"
-              style={{
-                borderColor: style.color,
-                left: `${(position.x / 320) * 100}%`,
-                top: `${(position.y / 170) * 100}%`,
-              }}
-            />
-          ));
-        })}
-        <div className="pointer-events-none absolute inset-x-3 bottom-2 flex justify-between text-[0.65rem] font-medium text-muted-foreground">
-          {axisPoints.map((point) => (
-            <span key={point.date}>{formatTrendDate(point.date)}</span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TrendMetricRow({ metric }) {
-  const style = getTrendMetricStyle(metric);
-  const emptyPaidEpisodes = isEmptyPaidDanmakuTrendMetric(metric);
-  const hasDelta =
-    !emptyPaidEpisodes && metric?.available && metric.delta != null && Number.isFinite(Number(metric.delta));
-  const deltaStyle = hasDelta
-    ? {
-        backgroundColor: style.color,
-        borderColor: style.color,
-        color: "white",
-      }
-    : undefined;
-  return (
-    <div className="flex items-center justify-between gap-2.5 rounded-lg border border-border/70 bg-background/82 p-2.5">
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          className="flex size-7 shrink-0 items-center justify-center rounded-md border"
-          style={{
-            backgroundColor: style.background,
-            borderColor: style.color,
-            color: style.color,
-            boxShadow: `inset 0 0 0 1px ${style.color}`,
-          }}
-        >
-          <MetricIcon label={metric.label} className="size-3.5" />
-        </span>
-        <div className="min-w-0">
-          <div className="text-[0.82rem] font-medium leading-4">{metric.label}</div>
-          <div className="text-[0.7rem] text-muted-foreground">
-            当前：<span className="tabular-nums text-foreground">{formatTrendValue(metric.toValue)}</span>
-          </div>
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center justify-end pl-2">
-        <Badge
-          variant={hasDelta ? "outline" : "outline"}
-          className={hasDelta ? "h-6 border-transparent px-2 text-xs shadow-none" : "h-6 px-2 text-xs"}
-          style={deltaStyle}
-        >
-          {formatTrendDelta(emptyPaidEpisodes ? { ...metric, emptyPaidEpisodes } : metric)}
-        </Badge>
-      </div>
-    </div>
-  );
-}
-
-function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
-  const [selectedWindow, setSelectedWindow] = useState("3d");
-  const data = trendState.data;
-  const windows = data?.windows || {};
-  const metaTags = getTrendMetaTags(item, platform);
-  const latestRankHistory = Array.isArray(data?.rankHistory) ? data.rankHistory.at(-1) : null;
-  const availableWindows = ["3d", "7d", "30d"].filter((key) => windows[key]);
-  const activeWindowKey = availableWindows.includes(selectedWindow)
-    ? selectedWindow
-    : availableWindows[0] || "3d";
-  const activeWindow = windows[activeWindowKey];
-  const activeMetrics = getDisplayTrendMetrics(activeWindow?.metrics, platform);
-  const chartMetrics = getChartTrendMetrics(activeMetrics);
-
-  useEffect(() => {
-    if (open) {
-      setSelectedWindow("3d");
-    }
-  }, [open, item?.id]);
-
-  return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent
-        scrollable
-        className="w-[calc(100vw-1.5rem)] max-w-[30rem] gap-3 overflow-visible p-3 pt-4 sm:max-w-[32rem] sm:p-4 sm:pt-5"
-      >
-        <AlertDialogCancel
-          aria-label="关闭趋势弹窗"
-          className="absolute right-3 top-3"
-          size="icon-xs"
-          title="关闭"
-          variant="secondary"
-        >
-          <XIcon />
-        </AlertDialogCancel>
-        <AlertDialogHeader className="gap-1 place-items-start pr-8 text-left">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <AlertDialogTitle className="text-base">{data?.name || item?.name || "作品"}</AlertDialogTitle>
-            {metaTags.map((label) => (
-              <Badge
-                key={`${item?.id || data?.id || data?.name}-${label}`}
-                variant={rankTagVariants[label] || "outline"}
-                className={metaBadgeClassName}
-              >
-                {label}
-              </Badge>
-            ))}
-          </div>
-          <AlertDialogDescription className="flex items-center gap-1 text-left text-xs">
-            <PlatformIdIcon platform={platform} aria-label="作品ID" className="size-3.5 shrink-0" />
-            <span className="break-all">{item?.id}</span>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-
-        {trendState.isLoading ? (
-          <Alert>
-            <RefreshCwIcon className="size-4 animate-spin" />
-            <AlertTitle>正在读取趋势</AlertTitle>
-            <AlertDescription>正在从榜单快照中计算指标变化。</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {!trendState.isLoading && trendState.error ? (
-          <Alert className="border-destructive/30 bg-destructive/10">
-            <AlertTitle>趋势暂不可用</AlertTitle>
-            <AlertDescription>{trendState.error}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {!trendState.isLoading && !trendState.error && data?.success ? (
-          <div className="grid min-w-0 gap-2.5">
-            <Tabs value={activeWindowKey} onValueChange={setSelectedWindow}>
-              <TabsList className="grid w-full grid-cols-3">
-                {availableWindows.map((key) => (
-                  <TabsTrigger key={key} className="min-w-0 px-2" value={key}>
-                    {windows[key].label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-
-            {activeWindow ? (
-              <div className="grid min-w-0 gap-2.5">
-                <div className="text-xs leading-5 text-muted-foreground">
-                  {formatTrendDate(activeWindow.fromDate)} → {formatTrendDate(activeWindow.toDate)}
-                  {activeWindow.insufficientData ? "，数据不足" : ""}
-                </div>
-                {latestRankHistory?.ranks?.length ? (
-                  <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
-                    {latestRankHistory.ranks.map((rank) => (
-                      <Badge key={`${latestRankHistory.date}-${rank.key}`} variant="outline">
-                        {rank.name} #{rank.position}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : null}
-                <RankTrendLineChart metrics={chartMetrics} />
-                <div className="grid gap-1.5">
-                  {activeMetrics.map((metric) => (
-                    <TrendMetricRow key={`${activeWindow.key}-${metric.key}`} metric={metric} />
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
 export function RanksPanel({
   frontendVersion = "0.0.0",
   handleVersionResponse,
@@ -1138,6 +691,7 @@ export function RanksPanel({
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
+  onAddCompareItem,
 }) {
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -1386,6 +940,7 @@ export function RanksPanel({
                 favoriteKeys={favoriteKeys}
                 favoriteActionsDisabled={favoriteActionsDisabled}
                 onToggleFavorite={onToggleFavorite}
+                onAddCompareItem={onAddCompareItem}
               />
             ))}
           </div>
@@ -1401,6 +956,7 @@ export function RanksPanel({
                 favoriteKeys={favoriteKeys}
                 favoriteActionsDisabled={favoriteActionsDisabled}
                 onToggleFavorite={onToggleFavorite}
+                onAddCompareItem={onAddCompareItem}
               />
             ) : null}
           </div>

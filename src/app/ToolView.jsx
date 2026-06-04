@@ -2,14 +2,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCwIcon,
   AlertTriangleIcon,
+  ArrowLeftRightIcon,
+  ChevronDownIcon,
   ChartNoAxesColumnIncreasingIcon,
   Clock3Icon,
   FileSpreadsheetIcon,
+  PlayCircleIcon,
+  HeartIcon,
+  MicIcon,
+  ShoppingCartIcon,
   MenuIcon,
   MessageSquarePlusIcon,
   ScrollTextIcon,
   SearchIcon,
   StarIcon,
+  Trash2Icon,
+  UsersRoundIcon,
+  XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -22,6 +31,14 @@ import { OutputPanel } from "@/app/OutputPanel";
 import { RanksPanel } from "@/app/RanksPanel";
 import { SearchPanel } from "@/app/SearchPanel";
 import { SearchResults, MetricLegend } from "@/app/SearchResults";
+import { PlatformIdIcon } from "@/app/platformTabLabel";
+import { fetchRankTrendData } from "@/app/rankTrendUi";
+import {
+  buildTrendChartLines,
+  filterNonZeroTrendMetrics,
+  getTrendAxisLabelMarkers,
+  getTrendAxisY,
+} from "@/app/rankTrendChartUtils";
 import { canParseShareUrl, decryptShareUrl, extractResolvedId } from "@/utils/manboCrypto";
 import {
   createFavoriteKey,
@@ -31,7 +48,6 @@ import {
 } from "@/app/favoritesStorage";
 import {
   buildRevenueSummary,
-  buildUniqueUserIds,
   buildVersionedUrl,
   collectSelectedEpisodesFromDramas,
   createPlatformState,
@@ -39,15 +55,13 @@ import {
   createStatsHistoryEntry,
   createStatsState,
   extractResponseItems,
+  formatPlainNumber,
   getBackendVersionFromResponse,
   getDefaultAppConfig,
   getRemainingCooldownHours,
-  getSummaryRevenueMode,
-  getSummaryRevenueTotals,
   isAbortError,
   loadPersistedHistoryEntries,
   mergeAppConfig,
-  normalizeOptionalNumber,
   normalizeVersion,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
@@ -68,6 +82,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
@@ -87,6 +102,694 @@ function MainNavigationTabLabel({ platform }) {
       {Icon ? <Icon aria-hidden="true" className="size-3.5 shrink-0 sm:size-4" /> : null}
       <span className="min-w-0 truncate">{platform.label}</span>
     </span>
+  );
+}
+
+function createIdleBackgroundTask() {
+  return {
+    isRunning: false,
+    status: "idle",
+    type: "",
+    title: "",
+    description: "",
+    progress: 0,
+    action: "",
+    resultTarget: "",
+    highlighted: false,
+  };
+}
+
+function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  if (!task?.isRunning && !task?.highlighted) {
+    return null;
+  }
+
+  const title = task.title || (task.type === "favorites_refresh" ? "收藏刷新" : "后台任务");
+  const action = task.action || task.description || (task.isRunning ? "运行中" : "已完成");
+  const progress = Number(task.progress ?? 0) || 0;
+  const statusText = task.isRunning ? "进行中" : task.status === "failed" ? "失败" : task.status === "cancelled" ? "已取消" : "已完成";
+
+  const detail = (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-foreground">{title}</div>
+          <div className="truncate text-xs text-muted-foreground">{action}</div>
+        </div>
+        <Badge variant={task.isRunning ? "default" : "secondary"} className="shrink-0">{statusText}</Badge>
+      </div>
+      <Progress value={progress} className="h-2.5 rounded-full bg-muted" indicatorClassName="bg-primary" />
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="tabular-nums">{progress}%</span>
+        <div className="flex items-center gap-1.5">
+          {task.resultTarget ? (
+            <Button type="button" size="xs" variant="secondary" onClick={onOpenResults}>
+              查看结果
+            </Button>
+          ) : null}
+          {!task.isRunning ? (
+            <Button type="button" size="xs" variant="ghost" onClick={onDismiss}>
+              收起
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="fixed inset-x-3 bottom-3 z-40 hidden sm:block">
+        <div className={`mx-auto max-w-xl rounded-lg border border-border/80 bg-background/98 p-3 shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl ${isDesktopApp ? "ring-1 ring-primary/16" : ""}`}>
+          {detail}
+        </div>
+      </div>
+      <div className="fixed bottom-3 right-3 z-40 sm:hidden">
+        <Button
+          type="button"
+          variant={task.isRunning ? "secondary" : "outline"}
+          size="icon-lg"
+          aria-expanded={mobileOpen}
+          aria-label="后台任务中心"
+          className="relative shadow-[0_18px_42px_-24px_rgba(15,23,42,0.46)]"
+          onClick={() => setMobileOpen((current) => !current)}
+        >
+          <RefreshCwIcon aria-hidden="true" className={task.isRunning ? "size-4 animate-spin" : "size-4"} />
+          <span className="absolute -right-1.5 -top-1 min-w-7 rounded-full bg-primary px-1.5 py-0.5 text-center text-[0.58rem] font-semibold leading-none text-primary-foreground tabular-nums">
+            {`${progress}%`}
+          </span>
+        </Button>
+        {mobileOpen ? (
+          <div className="absolute bottom-12 right-0 w-[min(21rem,calc(100vw-1.5rem))] rounded-lg border border-border/80 bg-background/98 p-3 shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl">
+            {detail}
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+const MAX_COMPARE_ITEMS = 6;
+const COMPARE_WINDOWS = ["3d", "7d", "30d"];
+const COMPARE_CHART_MODES = [
+  { key: "absolute", label: "绝对值" },
+  { key: "increment", label: "增量" },
+];
+const COMPARE_METRICS = [
+  { key: "view_count", label: "播放量", icon: PlayCircleIcon },
+  { key: "subscription_num", label: "追剧人数", icon: HeartIcon },
+  { key: "danmaku_uid_count", label: "付费ID数", icon: UsersRoundIcon },
+  { key: "pay_count", label: "付费/收听人数", icon: ShoppingCartIcon },
+];
+const comparePalette = [
+  "#28559A",
+  "#E86A4A",
+  "#1F9D88",
+  "#7C5CCB",
+  "#D23B86",
+  "#6B7280",
+];
+
+function buildProxyImageUrl(url) {
+  return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
+}
+
+function formatTrendDate(value) {
+  const normalized = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized)
+    ? `${normalized.slice(5, 7)}/${normalized.slice(8, 10)}`
+    : normalized || "未知";
+}
+
+function formatSignedPlainNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "暂无";
+  }
+  return `${number > 0 ? "+" : ""}${formatPlainNumber(number)}`;
+}
+
+function formatOptionalPlainNumber(value) {
+  if (value == null || String(value).trim() === "") {
+    return "暂无";
+  }
+  return formatPlainNumber(value);
+}
+
+function formatComparePercent(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) {
+    return "暂无";
+  }
+  const rounded = Math.round(percent * 1000) / 10;
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(Math.abs(rounded) >= 100 ? 0 : 1)}%`;
+}
+
+function getCompareItemKey(item) {
+  return `${String(item?.compareKind ?? "drama").trim()}:${String(item?.platform ?? "").trim()}:${String(item?.id ?? "").trim()}`;
+}
+
+function getMetricFromTrend(trendData, windowKey, metricKey) {
+  const metrics = Array.isArray(trendData?.windows?.[windowKey]?.metrics)
+    ? trendData.windows[windowKey].metrics
+    : [];
+  return metrics.find((metric) => metric.key === metricKey) || null;
+}
+
+function hasCompareMetricValues(metric) {
+  const history = Array.isArray(metric?.history) ? metric.history : [];
+  return history.some((point) => point?.value != null && String(point.value).trim() !== "");
+}
+
+function isCompareMetricAvailableForItem(item, windowKey, metricKey) {
+  const metric = getMetricFromTrend(item?.trendData, windowKey, metricKey);
+  return Boolean(metric && metric.available !== false && hasCompareMetricValues(metric));
+}
+
+function getMetricLatestValue(trendData, windowKey, metricKey) {
+  const metric = getMetricFromTrend(trendData, windowKey, metricKey);
+  const history = Array.isArray(metric?.history) ? metric.history : [];
+  const latest = [...history].reverse().find((point) => point?.value != null && String(point.value).trim() !== "");
+  return latest?.value ?? null;
+}
+
+function getCompareAxisTick(value, metricKey) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "";
+  }
+  if (metricKey === "view_count" || Math.abs(number) >= 10000) {
+    const wan = number / 10000;
+    return `${wan.toLocaleString("zh-CN", { maximumFractionDigits: Math.abs(wan) >= 100 ? 0 : 1 })}万`;
+  }
+  return formatPlainNumber(Math.round(number));
+}
+
+function buildCompareChartMetrics(items, windowKey, metricOption) {
+  if (!metricOption?.key) {
+    return [];
+  }
+  return items
+    .map((item, index) => {
+      const metric = getMetricFromTrend(item.trendData, windowKey, metricOption.key);
+      if (!metric) {
+        return null;
+      }
+      return {
+        ...metric,
+        key: `${item.key}:${metricOption.key}`,
+        label: item.title,
+        item,
+        color: item.compareColor || comparePalette[index % comparePalette.length],
+      };
+    })
+    .filter(Boolean);
+}
+
+function CompareTrendChart({ items, windowKey, metricOption, chartMode }) {
+  const chartMetrics = filterNonZeroTrendMetrics(buildCompareChartMetrics(items, windowKey, metricOption));
+  const chartData = buildTrendChartLines(chartMetrics, { chartMode });
+  const axis = chartData?.axis || chartData?.axes?.left;
+  const axisLabelMarkers = getTrendAxisLabelMarkers(chartData?.lines?.[0]?.markers || [], windowKey);
+
+  if (!metricOption?.key || !chartMetrics.length || !axis?.domain || !Array.isArray(chartData?.lines) || !chartData.lines.length) {
+    return (
+      <div className="flex h-56 items-center justify-center rounded-lg border border-dashed border-border bg-card text-sm text-muted-foreground">
+        当前指标暂无可对比趋势
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border/80 bg-card p-2.5 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.22)]">
+      <div className="relative h-56 overflow-visible rounded-md bg-background">
+        <svg aria-label="剧集对比趋势图" className="size-full" preserveAspectRatio="none" viewBox="0 0 320 170">
+          {(axis.ticks || []).map((tick) => (
+            <line
+              key={`compare-grid-${tick}`}
+              x1="44"
+              x2="302"
+              y1={getTrendAxisY(tick, axis.domain)}
+              y2={getTrendAxisY(tick, axis.domain)}
+              stroke="var(--border)"
+              strokeDasharray="4 6"
+              strokeWidth="1"
+            />
+          ))}
+          {chartData.lines.map((line) => (
+            <g key={line.metric.key}>
+              {(line.segments || []).map((segment, index) => (
+                <polyline
+                  key={`${line.metric.key}-${index}`}
+                  fill="none"
+                  points={segment.map(({ position }) => `${position.x},${position.y}`).join(" ")}
+                  stroke={line.metric.color}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2.5"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </g>
+          ))}
+        </svg>
+        <div className="pointer-events-none absolute inset-y-0 left-1 top-0 w-12 text-[0.52rem] font-medium text-muted-foreground">
+          {(axis.ticks || []).map((tick) => {
+            const y = getTrendAxisY(tick, axis.domain);
+            return (
+              <span
+                key={`compare-axis-${tick}`}
+                className="absolute right-1 -translate-y-1/2 tabular-nums"
+                style={{ top: `${(y / 170) * 100}%` }}
+              >
+                {getCompareAxisTick(tick, metricOption.key)}
+              </span>
+            );
+          })}
+        </div>
+        {chartData.lines.flatMap((line) =>
+          (line.markers || []).map(({ point, position }) => (
+              <span
+                key={`${line.metric.key}-${point.date}`}
+                aria-hidden="true"
+                className="pointer-events-none absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-card"
+                style={{
+                  borderColor: line.metric.color,
+                  left: `${(position.x / 320) * 100}%`,
+                  top: `${(position.y / 170) * 100}%`,
+                }}
+              />
+            ))
+        )}
+        <div className="pointer-events-none absolute inset-x-0 bottom-1 text-[0.58rem] text-muted-foreground">
+          {axisLabelMarkers.map(({ point, position }) => (
+            <span
+              key={`compare-date-${point.date}`}
+              className="absolute -translate-x-1/2 whitespace-nowrap"
+              style={{ left: `${(position.x / 320) * 100}%` }}
+            >
+              {formatTrendDate(point.date)}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[0.68rem] text-muted-foreground">
+        {chartData.lines.map((line) => (
+          <span key={`compare-legend-${line.metric.key}`} className="inline-flex min-w-0 items-center gap-1">
+            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: line.metric.color }} />
+            <span className="max-w-28 truncate">{line.metric.label}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handleVersionResponse }) {
+  const [selectedMetric, setSelectedMetric] = useState("view_count");
+  const [selectedWindow, setSelectedWindow] = useState("7d");
+  const [selectedChartMode, setSelectedChartMode] = useState("absolute");
+  const [trendItems, setTrendItems] = useState([]);
+  const [selectedCompareItemKeys, setSelectedCompareItemKeys] = useState(() => new Set());
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const handleVersionResponseRef = useRef(handleVersionResponse);
+  const compareItemsKey = items.map((item) => item.key).join("|");
+
+  useEffect(() => {
+    handleVersionResponseRef.current = handleVersionResponse;
+  }, [handleVersionResponse]);
+
+  useEffect(() => {
+    if (open) {
+      setSelectedMetric("view_count");
+      setSelectedWindow("7d");
+      setSelectedChartMode("absolute");
+      setSelectedCompareItemKeys(new Set(items.map((item) => item.key)));
+    }
+  }, [open, compareItemsKey, items]);
+
+  useEffect(() => {
+    if (!open || !items.length) {
+      setTrendItems([]);
+      return;
+    }
+    let cancelled = false;
+    async function loadCompareTrends() {
+      setIsLoading(true);
+      setErrorMessage("");
+      const loaded = [];
+      try {
+        for (const item of items) {
+          const { response, data } = await fetchRankTrendData({
+            platform: item.platform,
+            id: item.id,
+            frontendVersion,
+          });
+          handleVersionResponseRef.current?.({
+            ...data,
+            backendVersion: getBackendVersionFromResponse(response, data),
+            frontendVersion,
+          });
+          if (!response.ok || !data?.success) {
+            continue;
+          }
+          loaded.push({ ...item, trendData: data });
+        }
+        if (!cancelled) {
+          setTrendItems(loaded);
+          setErrorMessage(loaded.length ? "" : "对比趋势数据暂不可用。");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to load compare trends", error);
+          setTrendItems([]);
+          setErrorMessage("对比趋势数据暂不可用。");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+    loadCompareTrends();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, compareItemsKey, frontendVersion]);
+
+  const isPeakSeriesCompare = trendItems.some((item) => item.compareKind === "peak_series") ||
+    (!trendItems.length && items.some((item) => item.compareKind === "peak_series"));
+  const availableMetricOptions = COMPARE_METRICS.filter((option) => {
+    if (!trendItems.length) {
+      return isPeakSeriesCompare ? option.key === "view_count" : true;
+    }
+    if (isPeakSeriesCompare) {
+      return option.key === "view_count" && trendItems.every((item) => isCompareMetricAvailableForItem(item, selectedWindow, option.key));
+    }
+    return trendItems.every((item) => isCompareMetricAvailableForItem(item, selectedWindow, option.key));
+  });
+  const selectedMetricOption =
+    availableMetricOptions.find((option) => option.key === selectedMetric) ||
+    availableMetricOptions[0] ||
+    null;
+  const hasSelectedMetricOption = Boolean(selectedMetricOption);
+  const coloredCompareItems = items.map((item, index) => ({
+    ...item,
+    compareColor: comparePalette[index % comparePalette.length],
+  }));
+  const colorByCompareKey = new Map(coloredCompareItems.map((item) => [item.key, item.compareColor]));
+  const coloredTrendItems = trendItems.map((item) => ({
+    ...item,
+    compareColor: colorByCompareKey.get(item.key) || item.compareColor,
+  }));
+  const visibleTrendItems = coloredTrendItems.filter((item) => selectedCompareItemKeys.has(item.key));
+
+  useEffect(() => {
+    if (selectedMetricOption?.key && selectedMetricOption.key !== selectedMetric) {
+      setSelectedMetric(selectedMetricOption.key);
+    }
+  }, [selectedMetric, selectedMetricOption?.key]);
+
+  function toggleCompareItemLine(itemKey) {
+    setSelectedCompareItemKeys((current) => {
+      const next = new Set(current);
+      if (next.has(itemKey)) {
+        next.delete(itemKey);
+      } else {
+        next.add(itemKey);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent
+        scrollable
+        className="w-[calc(100vw-1.5rem)] max-w-[58rem] gap-3 overflow-x-hidden p-3 pt-4 sm:p-4"
+      >
+        <AlertDialogCancel
+          aria-label="关闭剧集对比"
+          className="absolute right-3 top-3"
+          size="icon-xs"
+          title="关闭"
+          variant="secondary"
+        >
+          <XIcon />
+        </AlertDialogCancel>
+        <AlertDialogHeader className="gap-1 place-items-start pr-8 text-left">
+          <AlertDialogTitle className="text-base">剧集对比</AlertDialogTitle>
+          <AlertDialogDescription className="sr-only">
+            查看已选剧集的历史趋势对比。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="grid min-w-0 gap-3 w-full">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
+            <Tabs value={selectedMetric} onValueChange={setSelectedMetric} className="min-w-0 w-full sm:flex-1">
+              <TabsList
+                className="grid h-auto w-full min-w-0 items-center justify-stretch gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!"
+                style={{ gridTemplateColumns: `repeat(${Math.max(availableMetricOptions.length, 1)}, minmax(0, 1fr))` }}
+              >
+              {availableMetricOptions.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <TabsTrigger
+                    key={option.key}
+                    className="h-[26px] min-w-0 rounded-md px-1.5 text-xs! sm:px-2.5"
+                    title={option.label}
+                    value={option.key}
+                  >
+                    <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">{option.label}</span>
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+            </Tabs>
+            <Tabs value={selectedWindow} onValueChange={setSelectedWindow} className="w-fit shrink-0">
+              <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
+                {COMPARE_WINDOWS.map((key) => (
+                  <TabsTrigger key={key} className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
+                    {key.replace("d", "日")}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <Tabs value={selectedChartMode} onValueChange={setSelectedChartMode} className="w-fit shrink-0">
+              <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
+                {COMPARE_CHART_MODES.map((mode) => (
+                  <TabsTrigger key={mode.key} className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={mode.key}>
+                    {mode.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+          <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
+            {coloredCompareItems.map((item) => {
+              const lineColor = item.compareColor;
+              const trendItem = trendItems.find((entry) => entry.key === item.key);
+              const itemIdText = item.compareKind === "peak_series"
+                ? (
+                    Array.isArray(item.dramaIds) && item.dramaIds.length
+                      ? item.dramaIds.join("，")
+                      : Array.isArray(trendItem?.trendData?.dramaIds) && trendItem.trendData.dramaIds.length
+                        ? trendItem.trendData.dramaIds.join("，")
+                        : item.id
+                  )
+                : item.id;
+              return (
+                <div
+                  key={item.key}
+                className="relative flex w-[120px] shrink-0 flex-col items-center gap-2 rounded-lg border border-border/80 bg-card p-2 text-center sm:w-48 sm:flex-row sm:pr-7 sm:text-left"
+              >
+                <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/50">
+                  {item.cover ? (
+                    <img alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
+                  ) : (
+                    <div className="flex size-full items-center justify-center text-[0.65rem] text-muted-foreground">暂无封面</div>
+                  )}
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col items-center sm:items-start">
+                  <div className="line-clamp-2 text-xs font-semibold leading-4 text-foreground">{item.title}</div>
+                  <div className="mt-1 flex min-w-0 items-start justify-start gap-1 text-left text-[0.68rem] leading-4 text-muted-foreground">
+                    <PlatformIdIcon platform={item.platform} className="size-3.5 shrink-0" />
+                    <span className="line-clamp-2 min-w-0 break-all text-left">{itemIdText}</span>
+                  </div>
+                  <div className="mt-0.5 flex min-w-0 items-start justify-start gap-1 text-left text-[0.68rem] leading-4 text-muted-foreground">
+                    <MicIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                    <span className="line-clamp-2 min-w-0 break-words text-left">{item.mainCvText || "CV 暂无"}</span>
+                  </div>
+                </div>
+                <label className="absolute right-2 top-2 inline-flex items-center gap-1" title="显示/隐藏曲线">
+                  <input
+                    type="checkbox"
+                    aria-label={`显示${item.title}曲线`}
+                    checked={selectedCompareItemKeys.has(item.key)}
+                    className="size-3.5 rounded border-border"
+                    style={{ accentColor: lineColor }}
+                    onChange={() => toggleCompareItemLine(item.key)}
+                  />
+                </label>
+              </div>
+              );
+            })}
+          </div>
+          {isLoading ? (
+            <Alert>
+              <RefreshCwIcon className="size-4 animate-spin" />
+              <AlertTitle>正在读取对比趋势</AlertTitle>
+              <AlertDescription>正在读取已选剧集的历史数据</AlertDescription>
+            </Alert>
+          ) : errorMessage || !hasSelectedMetricOption ? (
+            <Alert className="border-destructive/30 bg-destructive/10">
+              <AlertTitle>对比暂不可用</AlertTitle>
+              <AlertDescription>{errorMessage || "对比趋势数据暂不可用。"}</AlertDescription>
+            </Alert>
+          ) : (
+            <CompareTrendChart
+              items={visibleTrendItems}
+              windowKey={selectedWindow}
+              metricOption={selectedMetricOption}
+              chartMode={selectedChartMode}
+            />
+          )}
+          {hasSelectedMetricOption ? (
+          <div className="w-full min-w-0 overflow-hidden rounded-lg border border-border/80 bg-card">
+            <table className="w-full table-fixed text-[0.68rem] sm:text-xs">
+              <thead className="bg-muted/50 text-muted-foreground">
+                <tr>
+                  <th className="w-[36%] px-2 py-2 text-left font-medium sm:px-3">剧集</th>
+                  <th className="px-2 py-2 text-right font-medium sm:px-3">{selectedMetricOption.label}</th>
+                  <th className="px-2 py-2 text-right font-medium sm:px-3">{selectedWindow.replace("d", "日")}变化</th>
+                  <th className="px-2 py-2 text-right font-medium sm:px-3">{selectedWindow.replace("d", "日")}增幅</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/70">
+                {coloredCompareItems.map((item) => {
+                  const trendItem = coloredTrendItems.find((entry) => entry.key === item.key);
+                  const metric = getMetricFromTrend(trendItem?.trendData, selectedWindow, selectedMetricOption.key);
+                  return (
+                    <tr key={`compare-row-${item.key}`}>
+                      <td className="px-2 py-2 sm:px-3">
+                        <span className="flex w-full min-w-0 items-center gap-1.5">
+                          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: item.compareColor }} />
+                          <span className="min-w-0 truncate font-medium text-foreground">{item.title}</span>
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums sm:px-3">{formatOptionalPlainNumber(getMetricLatestValue(trendItem?.trendData, selectedWindow, selectedMetricOption.key))}</td>
+                      <td className="px-2 py-2 text-right tabular-nums sm:px-3">{formatSignedPlainNumber(metric?.delta)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums sm:px-3">{formatComparePercent(metric?.deltaPercent)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          ) : null}
+        </div>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemoveItem, onClear }) {
+  if (!items.length) {
+    return null;
+  }
+  const latestItem = items.at(-1);
+  const compareBasketTitleSummary = items.map((item) => item.title).filter(Boolean).join("，");
+  const previewItems = items.slice(-4);
+
+  if (!open) {
+    return (
+      <div className="fixed bottom-20 right-3 z-30 sm:bottom-3 sm:left-3 sm:right-auto">
+        <button
+          type="button"
+          className="hidden max-w-72 items-center gap-2 rounded-lg border border-border/80 bg-background/98 p-2 text-left shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl sm:flex"
+          aria-label="展开对比"
+          onClick={() => onOpenChange(true)}
+        >
+          <div className="flex shrink-0 items-center pl-2">
+            {previewItems.map((item, index) => (
+              <div
+                key={`compare-preview-${item.key}`}
+                className={`size-9 overflow-hidden rounded-md border border-background bg-muted shadow-sm ${index === 0 ? "" : "-ml-2"}`}
+              >
+                {item.cover ? (
+                  <img alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
+                ) : (
+                  <ArrowLeftRightIcon aria-hidden="true" className="m-2 size-5 text-muted-foreground" />
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-foreground">对比 {items.length}/{MAX_COMPARE_ITEMS}</div>
+            <div className="truncate text-xs text-muted-foreground">{compareBasketTitleSummary || latestItem.title}</div>
+          </div>
+        </button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon-lg"
+          className="relative shadow-[0_18px_42px_-24px_rgba(15,23,42,0.46)] sm:hidden"
+          aria-label="展开对比"
+          onClick={() => onOpenChange(true)}
+        >
+          <ArrowLeftRightIcon aria-hidden="true" className="size-4" />
+          <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-primary px-1.5 py-0.5 text-center text-[0.58rem] font-semibold leading-none text-primary-foreground tabular-nums">
+            {items.length}
+          </span>
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-20 right-3 z-30 w-[min(60vw,18rem)] sm:bottom-3 sm:left-3 sm:right-auto sm:w-80">
+      <div className="grid gap-2 rounded-lg border border-border/80 bg-background/98 p-2 shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 truncate text-sm font-semibold text-foreground">对比 {items.length}/{MAX_COMPARE_ITEMS}</div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button type="button" size="icon-xs" variant="ghost" aria-label="清空对比" title="清空" onClick={onClear}>
+              <Trash2Icon />
+            </Button>
+            <Button type="button" size="xs" variant="secondary" onClick={onOpenCompare} className="text-sm!">
+              <ArrowLeftRightIcon data-icon="inline-start" />
+              对比
+            </Button>
+            <Button type="button" size="icon-xs" variant="ghost" aria-label="收起对比" title="收起" onClick={() => onOpenChange(false)}>
+              <ChevronDownIcon />
+            </Button>
+          </div>
+        </div>
+        <div className="grid max-h-[13.5rem] overflow-y-auto gap-1.5 pr-0.5">
+          {items.map((item) => (
+            <div key={`basket-row-${item.key}`} className="flex min-w-0 items-center gap-2 rounded-md bg-muted/45 p-1.5">
+              <div className="size-12 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted">
+              {item.cover ? (
+                <img alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
+              ) : null}
+              </div>
+              <div className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{item.title}</div>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={`移出${item.title}`}
+                title={`移出${item.title}`}
+                onClick={() => onRemoveItem(item.key)}
+              >
+                <XIcon />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -127,6 +830,10 @@ export function ToolView({ initialAppConfig }) {
     progress: 0,
     currentTitle: "",
   });
+  const [backgroundTask, setBackgroundTask] = useState(() => createIdleBackgroundTask());
+  const [compareItems, setCompareItems] = useState([]);
+  const [compareBasketOpen, setCompareBasketOpen] = useState(false);
+  const [compareDialogOpen, setCompareDialogOpen] = useState(false);
   const [favoriteRefreshRevision, setFavoriteRefreshRevision] = useState(0);
   const [cancelFavoriteRequest, setCancelFavoriteRequest] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -138,12 +845,88 @@ export function ToolView({ initialAppConfig }) {
   const appConfigRef = useRef(appConfig);
   const platformStatesRef = useRef(platformStates);
   const favoriteRefreshStateRef = useRef(favoriteRefreshState);
+  const backgroundTaskRef = useRef(backgroundTask);
   const runtimeMetaRef = useRef({
     missevan: createRuntimeMeta(),
     manbo: createRuntimeMeta(),
   });
   const resultsPanelRef = useRef(null);
   const outputPanelRef = useRef(null);
+
+  function addDramaToCompareBasket(rawItem) {
+    const compareKind = String(rawItem?.compareKind ?? "drama").trim() || "drama";
+    const rawTitle = String(rawItem?.title ?? rawItem?.name ?? "").trim() || "未命名剧集";
+    const normalized = {
+      compareKind: String(rawItem?.compareKind ?? "drama").trim() || "drama",
+      platform: String(rawItem?.platform ?? "").trim(),
+      id: String(rawItem?.id ?? rawItem?.dramaId ?? rawItem?.trendLookupId ?? "").trim(),
+      title: compareKind === "peak_series" && !rawTitle.startsWith("系列：") ? `系列：${rawTitle}` : rawTitle,
+      cover: String(rawItem?.cover ?? rawItem?.coverUrl ?? "").trim(),
+      mainCvText: String(rawItem?.mainCvText ?? rawItem?.main_cv_text ?? "").replace(/^主要CV：/, "").trim(),
+      dramaIds: (Array.isArray(rawItem?.dramaIds) ? rawItem.dramaIds : [])
+        .map((id) => String(id ?? "").trim())
+        .filter(Boolean),
+    };
+    if (!normalized.platform || !normalized.id) {
+      toast.warning("这部剧集暂时不能加入对比。");
+      return;
+    }
+    const key = getCompareItemKey(normalized);
+    setCompareItems((current) => {
+      if (normalized.compareKind === "peak_series" && current.some((item) => item.compareKind !== normalized.compareKind)) {
+        toast.warning("巅峰榜系列只能和其他巅峰榜系列对比。");
+        return current;
+      }
+      if (normalized.compareKind !== "peak_series" && current.some((item) => item.compareKind === "peak_series")) {
+        toast.warning("普通剧集不能和巅峰榜系列混合对比。");
+        return current;
+      }
+      if (current.some((item) => item.key === key)) {
+        toast.info("已在对比中。");
+        return current;
+      }
+      if (current.length >= MAX_COMPARE_ITEMS) {
+        toast.warning(`对比最多添加 ${MAX_COMPARE_ITEMS} 部剧集。`);
+        return current;
+      }
+      toast.success("已加入对比。");
+      return [...current, { ...normalized, key }];
+    });
+  }
+
+  function removeDramaFromCompareBasket(key) {
+    setCompareItems((current) => current.filter((item) => item.key !== key));
+  }
+
+  function clearCompareBasket() {
+    setCompareItems([]);
+    setCompareBasketOpen(false);
+    setCompareDialogOpen(false);
+  }
+
+  function logCompareUsage(items = []) {
+    if (!Array.isArray(items) || !items.length) {
+      return;
+    }
+    fetch(buildVersionedUrl("/usage-log", appConfigRef.current.frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "compare",
+        platforms: items.map((item) => item.platform),
+        dramaIds: items.map((item) => item.id),
+        dramaTitles: items.map((item) => item.title),
+        compareKinds: items.map((item) => item.compareKind),
+      }),
+    }).catch((error) => {
+      console.error("Failed to log compare usage", error);
+    });
+  }
+
+  function openCompareDialogFromBasket() {
+    logCompareUsage(compareItems);
+    setCompareDialogOpen(true);
+  }
 
   useEffect(() => {
     currentPlatformRef.current = currentPlatform;
@@ -171,6 +954,10 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     favoriteRefreshStateRef.current = favoriteRefreshState;
   }, [favoriteRefreshState]);
+
+  useEffect(() => {
+    backgroundTaskRef.current = backgroundTask;
+  }, [backgroundTask]);
 
   useEffect(() => {
     savePersistedHistoryEntries({
@@ -398,6 +1185,7 @@ export function ToolView({ initialAppConfig }) {
     () => new Set((Array.isArray(favoriteItems) ? favoriteItems : []).map((item) => item.key)),
     [favoriteItems]
   );
+  const statisticsActionsDisabled = Boolean(backgroundTask.isRunning);
   const favoriteActionsDisabled = favoriteRefreshState.isRunning;
 
   async function handleFavoriteRefreshSettled() {
@@ -546,10 +1334,6 @@ export function ToolView({ initialAppConfig }) {
       const nextSlice = updater(current[platform]);
       return { ...current, [platform]: nextSlice };
     });
-  }
-
-  function updateSearchForm(patch) {
-    updateSharedSearchForm(patch);
   }
 
   function updateSharedSearchForm(patch) {
@@ -771,6 +1555,34 @@ export function ToolView({ initialAppConfig }) {
     sharedOutputPlatformRef.current = platform;
   }
 
+  function isAnyBackgroundTaskRunning() {
+    return Boolean(
+      backgroundTaskRef.current?.isRunning ||
+        favoriteRefreshStateRef.current?.isRunning ||
+        Object.values(platformStatesRef.current || {}).some((state) => state?.stats?.isRunning)
+    );
+  }
+
+  function warnIfBackgroundTaskRunning() {
+    if (!isAnyBackgroundTaskRunning()) {
+      return false;
+    }
+    toast.warning("后台任务运行中，请等待完成后再开始新的统计。");
+    return true;
+  }
+
+  function openBackgroundTaskResult() {
+    const target = backgroundTaskRef.current?.resultTarget;
+    if (target === "favorites") {
+      setCurrentPlatform("favorites");
+      return;
+    }
+    if (target === "stats") {
+      setCurrentPlatform("search");
+      scrollToPanel(outputPanelRef);
+    }
+  }
+
   function getAllSearchResults(state) {
     if (state?.searchResultSource !== "search") {
       return state?.searchResults || [];
@@ -960,56 +1772,6 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  function confirmMissevanFallbackSearch({ keyword, results, meta }) {
-    setNotice({
-      title: "",
-      description: "未找到漫播剧集，是否显示猫耳搜索结果？",
-      actionLabel: "是",
-      cancelLabel: "取消",
-      onAction: () => {
-        updateSharedSearchForm({
-          keyword,
-          manualInput: "",
-        });
-        updateSearchFormForPlatform("missevan", {
-          keyword,
-          manualInput: "",
-        });
-        setSearchResults("missevan", results, "search", {
-          ...(meta || {}),
-          keyword,
-        });
-        openSearchPlatform("missevan");
-        scrollToPanel(resultsPanelRef);
-      },
-    });
-  }
-
-  function confirmManboFallbackSearch({ keyword, results, meta }) {
-    setNotice({
-      title: "",
-      description: "未找到准确猫耳剧集，是否显示漫播搜索结果？",
-      actionLabel: "是",
-      cancelLabel: "取消",
-      onAction: () => {
-        updateSharedSearchForm({
-          keyword,
-          manualInput: "",
-        });
-        updateSearchFormForPlatform("manbo", {
-          keyword,
-          manualInput: "",
-        });
-        setSearchResults("manbo", results, "search", {
-          ...(meta || {}),
-          keyword,
-        });
-        openSearchPlatform("manbo");
-        scrollToPanel(resultsPanelRef);
-      },
-    });
-  }
-
   async function openDramaInSearch({ platform, id, ids, name, paymentLabel, contentTypeLabel, usageAction }) {
     const targetPlatform = platform === "manbo" ? "manbo" : "missevan";
     const dramaIds = Array.from(
@@ -1104,77 +1866,6 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  async function loadSearchPage(page, platform = getActiveWorkPlatform()) {
-    const state = platformStatesRef.current[platform];
-    const keyword = String(state?.searchKeyword ?? "").trim();
-    const pageSize = Number(state?.searchPageSize ?? 5) || 5;
-    const safePage = Math.max(1, Number(page ?? 1) || 1);
-    const cachedPage = state?.searchPageCache?.[safePage];
-    if (!keyword || state?.searchResultSource === "manual" || state?.isLoadingMoreResults) {
-      return;
-    }
-    if (Array.isArray(cachedPage)) {
-      updatePlatformState(platform, (current) => ({
-        ...current,
-        searchCurrentPage: safePage,
-        searchResults: cachedPage,
-      }));
-      scrollToPanel(resultsPanelRef);
-      return;
-    }
-
-    updatePlatformState(platform, (current) => ({
-      ...current,
-      isLoadingMoreResults: true,
-    }));
-
-    try {
-      const offset = (safePage - 1) * pageSize;
-      const endpoint =
-        platform === "manbo"
-          ? `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`
-          : `/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`;
-      const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
-        cache: "no-store",
-      });
-      const data = await parseVersionedJsonResponse(response);
-
-      if (!data?.success) {
-        if (platform === "missevan" && data?.accessDenied) {
-          resetSearchFlow(platform);
-          await showMissevanAccessHint();
-        } else if (platform === "manbo" && data?.unavailable) {
-          toast.error("漫播搜索不可用，请改用 ID 或链接导入。");
-          updatePlatformState(platform, (current) => ({
-            ...current,
-            isLoadingMoreResults: false,
-          }));
-        } else {
-          toast.error("加载搜索结果失败，请稍后重试。");
-          updatePlatformState(platform, (current) => ({
-            ...current,
-            isLoadingMoreResults: false,
-          }));
-        }
-        return;
-      }
-
-      updateSearchPage(platform, safePage, data.results || [], data.meta || {});
-      scrollToPanel(resultsPanelRef);
-    } catch (error) {
-      console.error("Failed to load search page", error);
-      if (platform === "missevan" && error?.accessDenied) {
-        await showMissevanAccessHint();
-      } else {
-        toast.error("加载搜索结果失败，请稍后重试。");
-      }
-      updatePlatformState(platform, (current) => ({
-        ...current,
-        isLoadingMoreResults: false,
-      }));
-    }
-  }
-
   function beginRun(platform) {
     const meta = runtimeMetaRef.current[platform];
     meta.activeRunId += 1;
@@ -1192,6 +1883,17 @@ export function ToolView({ initialAppConfig }) {
         elapsedMs: 0,
       },
     }));
+    setBackgroundTask({
+      isRunning: true,
+      status: "running",
+      type: "statistics",
+      title: platform === "manbo" ? "漫播统计任务" : "猫耳统计任务",
+      description: "正在准备统计",
+      progress: 0,
+      action: "正在准备统计",
+      resultTarget: "stats",
+      highlighted: true,
+    });
     meta.activeElapsedTimer = setInterval(() => {
       updatePlatformState(platform, (state) => ({
         ...state,
@@ -1212,6 +1914,7 @@ export function ToolView({ initialAppConfig }) {
   function cancelPollingRun(platform) {
     const meta = runtimeMetaRef.current[platform];
     const taskId = platformStatesRef.current[platform]?.stats?.activeTaskId || "";
+    const wasRunning = Boolean(platformStatesRef.current[platform]?.stats?.isRunning || taskId);
     meta.activeAbortController?.abort?.();
     meta.activeAbortController = null;
     if (meta.activeElapsedTimer) {
@@ -1228,6 +1931,18 @@ export function ToolView({ initialAppConfig }) {
         elapsedMs: state.stats.startedAt > 0 ? Date.now() - state.stats.startedAt : state.stats.elapsedMs,
       },
     }));
+    setBackgroundTask((current) =>
+      wasRunning && current.type === "statistics"
+        ? {
+            ...current,
+            isRunning: false,
+            status: "cancelled",
+            title: "统计已取消",
+            action: "统计已取消",
+            highlighted: true,
+          }
+        : current
+    );
     return taskId;
   }
 
@@ -1238,7 +1953,7 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  function finishRun(platform, runId) {
+  function finishRun(platform, runId, status = "completed") {
     const meta = runtimeMetaRef.current[platform];
     if (runId !== meta.activeRunId) {
       return;
@@ -1258,6 +1973,30 @@ export function ToolView({ initialAppConfig }) {
         elapsedMs: state.stats.startedAt > 0 ? Date.now() - state.stats.startedAt : state.stats.elapsedMs,
       },
     }));
+    setBackgroundTask((current) => {
+      if (current.type !== "statistics") {
+        return current;
+      }
+      if (current.status === "cancelled") {
+        return current;
+      }
+      if (status === "idle") {
+        return createIdleBackgroundTask();
+      }
+      if (status === "completed") {
+        toast.success("统计完成，结果已更新。");
+      }
+      return {
+        ...current,
+        isRunning: false,
+        status,
+        title: status === "completed" ? "统计完成" : "统计失败",
+        action: status === "completed" ? "结果已更新，可前往查看。" : "统计未完成，请稍后重试。",
+        progress: status === "completed" ? 100 : current.progress,
+        resultTarget: "stats",
+        highlighted: true,
+      };
+    });
   }
 
   function isRunActive(platform, runId) {
@@ -1317,14 +2056,30 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function applyTaskSnapshot(platform, snapshot) {
+    const progress = Number(snapshot?.progress ?? 0);
+    const currentAction = snapshot?.currentAction || "统计中";
+    setBackgroundTask((current) =>
+      current.type === "statistics"
+        ? {
+            ...current,
+            isRunning: snapshot?.status !== "completed" && snapshot?.status !== "cancelled" && snapshot?.status !== "failed",
+            status: snapshot?.status || current.status || "running",
+            progress,
+            action: currentAction,
+            description: currentAction,
+            resultTarget: "stats",
+            highlighted: true,
+          }
+        : current
+    );
     updatePlatformState(platform, (state) => {
       const result = snapshot?.result || {};
       return {
         ...state,
         stats: {
           ...state.stats,
-          progress: Number(snapshot?.progress ?? 0),
-          currentAction: snapshot?.currentAction || "统计中",
+          progress,
+          currentAction,
           totalDanmaku: Number(snapshot?.totalDanmaku ?? state.stats.totalDanmaku ?? 0),
           totalUsers: Number(snapshot?.totalUsers ?? state.stats.totalUsers ?? 0),
           playCountResults: Array.isArray(result.playCountResults) ? result.playCountResults : state.stats.playCountResults,
@@ -1465,44 +2220,6 @@ export function ToolView({ initialAppConfig }) {
 
   function getDramasEndpoint(platform) {
     return platform === "manbo" ? "/manbo/getdramas" : "/getdramas";
-  }
-
-  async function fetchDramaById(platform, dramaId, signal, options = {}) {
-    const loaded = (Array.isArray(options.loadedDramas) ? options.loadedDramas : []).find((item) => String(item?.drama?.id) === String(dramaId))
-      || getLoadedDramaById(platform, dramaId);
-    if (loaded) {
-      return loaded;
-    }
-    const searchResult = (Array.isArray(options.searchResults) ? options.searchResults : []).find((item) => String(item?.id) === String(dramaId))
-      || getSearchResultById(platform, dramaId);
-    const payload = { drama_ids: [dramaId] };
-    if (platform === "missevan") {
-      const soundIdMap = {};
-      if (Number(searchResult?.sound_id) > 0) {
-        soundIdMap[dramaId] = Number(searchResult.sound_id);
-      }
-      payload.sound_id_map = soundIdMap;
-    }
-    const data = await postJson(getDramasEndpoint(platform), payload, signal, "Failed to load drama");
-    const result = extractResponseItems(data)[0];
-    if (!result?.success) {
-      const error = new Error(`Failed to load drama: ${dramaId}`);
-      error.accessDenied = Boolean(result?.accessDenied);
-      throw error;
-    }
-    return {
-      ...result.info,
-      expanded: false,
-      episodes: {
-        ...result.info.episodes,
-        episode: Array.isArray(result.info?.episodes?.episode)
-          ? result.info.episodes.episode.map((episode) => ({
-              ...episode,
-              selected: false,
-            }))
-          : [],
-      },
-    };
   }
 
   function normalizeFetchedDrama(result, shouldExpandImported = false) {
@@ -1808,6 +2525,9 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function startPlayCountStatistics(soundIds, options = {}) {
+    if (warnIfBackgroundTaskRunning()) {
+      return;
+    }
     const platform = resolveStatsPlatform(options?.platform);
     const selectedEpisodeSource = Array.isArray(options?.selectedEpisodes)
       ? options.selectedEpisodes
@@ -1818,7 +2538,7 @@ export function ToolView({ initialAppConfig }) {
     const { runId, signal } = beginRun(platform);
     if (!selectedEpisodes.length) {
       toast.warning("请先选择分集。");
-      finishRun(platform, runId);
+      finishRun(platform, runId, "idle");
       return;
     }
     activateSharedOutputPlatform(platform);
@@ -1835,11 +2555,13 @@ export function ToolView({ initialAppConfig }) {
       },
     }));
     scrollToPanel(outputPanelRef);
+    let finalStatus = "completed";
     try {
       await startStatsTask(platform, "play_count", { episodes: selectedEpisodes }, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
+        finalStatus = "failed";
         updatePlatformState(platform, (state) => ({
           ...state,
           stats: {
@@ -1847,20 +2569,25 @@ export function ToolView({ initialAppConfig }) {
             currentAction: "统计失败",
           },
         }));
+      } else {
+        finalStatus = "cancelled";
       }
     } finally {
-      finishRun(platform, runId);
+      finishRun(platform, runId, finalStatus);
     }
   }
 
   async function startIdStatisticsForEpisodes(selectedEpisodes, emptyMessage = "请先选择分集。", options = {}) {
+    if (warnIfBackgroundTaskRunning()) {
+      return;
+    }
     const platform = resolveStatsPlatform(options?.platform);
     await cancelActiveRun(platform);
     resetOutputs(platform);
     const { runId, signal } = beginRun(platform);
     if (!selectedEpisodes.length) {
       toast.warning(emptyMessage);
-      finishRun(platform, runId);
+      finishRun(platform, runId, "idle");
       return;
     }
     activateSharedOutputPlatform(platform);
@@ -1877,11 +2604,13 @@ export function ToolView({ initialAppConfig }) {
       },
     }));
     scrollToPanel(outputPanelRef);
+    let finalStatus = "completed";
     try {
       await startStatsTask(platform, "id", { episodes: selectedEpisodes }, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
+        finalStatus = "failed";
         updatePlatformState(platform, (state) => ({
           ...state,
           stats: {
@@ -1889,9 +2618,11 @@ export function ToolView({ initialAppConfig }) {
             currentAction: "统计失败",
           },
         }));
+      } else {
+        finalStatus = "cancelled";
       }
     } finally {
-      finishRun(platform, runId);
+      finishRun(platform, runId, finalStatus);
     }
   }
 
@@ -1905,6 +2636,9 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function startDramaPaidIdStatistics(dramaId, options = {}) {
+    if (warnIfBackgroundTaskRunning()) {
+      return;
+    }
     const normalizedDramaId = String(dramaId ?? "").trim();
     if (!normalizedDramaId) {
       toast.warning("请先选择作品。");
@@ -1941,6 +2675,9 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function startRevenueEstimate(dramaIds, options = {}) {
+    if (warnIfBackgroundTaskRunning()) {
+      return;
+    }
     if (!dramaIds?.length) {
       toast.warning("请先选择作品。");
       return;
@@ -1958,12 +2695,14 @@ export function ToolView({ initialAppConfig }) {
       },
     }));
     scrollToPanel(outputPanelRef);
+    let finalStatus = "completed";
     try {
       await registerApiSearchDramaIds(platform, dramaIds);
       await startStatsTask(platform, "revenue", { dramaIds }, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
+        finalStatus = "failed";
         updatePlatformState(platform, (state) => ({
           ...state,
           stats: {
@@ -1971,9 +2710,11 @@ export function ToolView({ initialAppConfig }) {
             currentAction: "统计失败",
           },
         }));
+      } else {
+        finalStatus = "cancelled";
       }
     } finally {
-      finishRun(platform, runId);
+      finishRun(platform, runId, finalStatus);
     }
   }
 
@@ -1995,7 +2736,6 @@ export function ToolView({ initialAppConfig }) {
 
   const missevanResultCount = getPlatformResultCount("missevan");
   const manboResultCount = getPlatformResultCount("manbo");
-  const searchResultSummaryText = `猫耳 ${missevanResultCount} / 漫播 ${manboResultCount}`;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pb-24 pt-3 sm:px-5 sm:pb-8 lg:gap-5 lg:px-6">
@@ -2119,6 +2859,7 @@ export function ToolView({ initialAppConfig }) {
           handleVersionResponse={updateVersionStatusFromResponse}
           onToggleFavorite={toggleFavorite}
           onOpenSearchResult={openDramaInSearch}
+          onAddCompareItem={addDramaToCompareBasket}
         />
       ) : currentPlatform === "ongoing" ? (
         <OngoingPanel
@@ -2128,15 +2869,18 @@ export function ToolView({ initialAppConfig }) {
           handleVersionResponse={updateVersionStatusFromResponse}
           onToggleFavorite={toggleFavorite}
           onOpenSearchResult={openDramaInSearch}
+          onAddCompareItem={addDramaToCompareBasket}
         />
       ) : currentPlatform === "favorites" ? (
         <FavoritesPanel
           favorites={favoriteItems}
           favoriteActionsDisabled={favoriteActionsDisabled}
+          statisticsActionsDisabled={statisticsActionsDisabled}
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
           isDesktopApp={appConfig.desktopApp}
           onFavoritesChange={reloadFavoriteItems}
+          onBackgroundTaskChange={setBackgroundTask}
           refreshState={favoriteRefreshState}
           refreshRevision={favoriteRefreshRevision}
           onRefreshStateChange={setFavoriteRefreshState}
@@ -2150,7 +2894,6 @@ export function ToolView({ initialAppConfig }) {
           <SearchPanel
             cooldownHours={appConfig.cooldownHours}
             cooldownUntil={appConfig.cooldownUntil}
-            desktopAppUrl={appConfig.desktopAppUrl}
             formState={sharedSearchForm}
             frontendVersion={appConfig.frontendVersion}
             handleVersionResponse={updateVersionStatusFromResponse}
@@ -2162,15 +2905,10 @@ export function ToolView({ initialAppConfig }) {
               })
             }
             onNotice={setNotice}
-            onResetState={() => resetSearchFlow(activeBrowsePlatform)}
             onResetPlatformState={resetSearchFlow}
             onSelectPlatform={setActiveSearchPlatform}
             onUpdateFormState={updateSharedSearchForm}
-            onUpdateResults={(results, source, meta) => setSearchResults(activeBrowsePlatform, results, source, meta)}
             onUpdatePlatformResults={(platform, results, source, meta) => setSearchResults(platform, results, source, meta)}
-            onMissevanFallbackResults={confirmMissevanFallbackSearch}
-            onManboFallbackResults={confirmManboFallbackSearch}
-            platform={activeBrowsePlatform}
           />
 
           <section ref={resultsPanelRef} className="grid gap-3">
@@ -2180,6 +2918,7 @@ export function ToolView({ initialAppConfig }) {
               handleVersionResponse={updateVersionStatusFromResponse}
               favoriteKeys={favoriteKeySet}
               favoriteActionsDisabled={favoriteActionsDisabled}
+              statisticsActionsDisabled={statisticsActionsDisabled}
               onAddDramas={addDramas}
               onSelectionChange={updateSelection}
               onSetDramas={setDramas}
@@ -2189,6 +2928,7 @@ export function ToolView({ initialAppConfig }) {
               onStartPlayCountStatistics={startPlayCountStatistics}
               onStartRevenueEstimate={startRevenueEstimate}
               onToggleFavorite={toggleFavorite}
+              onAddCompareItem={addDramaToCompareBasket}
               onLoadMoreResults={() => loadMoreSearchResults(activeBrowsePlatform)}
               allResults={getAllSearchResults(currentBrowseState)}
               hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
@@ -2239,6 +2979,27 @@ export function ToolView({ initialAppConfig }) {
         <DesktopReportPanel handleVersionResponse={updateVersionStatusFromResponse} />
       )}
 
+      <BackgroundTaskCenter
+        task={backgroundTask}
+        isDesktopApp={appConfig.desktopApp}
+        onOpenResults={openBackgroundTaskResult}
+        onDismiss={() => setBackgroundTask(createIdleBackgroundTask())}
+      />
+      <DramaCompareBasket
+        items={compareItems}
+        open={compareBasketOpen}
+        onOpenChange={setCompareBasketOpen}
+        onOpenCompare={openCompareDialogFromBasket}
+        onRemoveItem={removeDramaFromCompareBasket}
+        onClear={clearCompareBasket}
+      />
+      <DramaCompareDialog
+        open={compareDialogOpen}
+        onOpenChange={setCompareDialogOpen}
+        items={compareItems}
+        frontendVersion={appConfig.frontendVersion}
+        handleVersionResponse={updateVersionStatusFromResponse}
+      />
       <MessageDialog notice={notice} onClose={() => setNotice(null)} />
       <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
 

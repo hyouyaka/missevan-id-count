@@ -272,6 +272,101 @@ test("buildRankTrendResponse preserves explicit null and zero metric values", ()
   assert.equal(danmakuMetric.deltaPercent, null);
 });
 
+test("buildRankTrendResponse keeps one pre-window history point for increment charts without changing window deltas", () => {
+  const response = buildRankTrendResponse({
+    platform: "missevan",
+    id: "15861",
+    indexSnapshot: {
+      version: 1,
+      dates: ["2026-05-30", "2026-05-31", "2026-06-01", "2026-06-02", "2026-06-03"],
+      updated_at: "2026-06-03T01:00:00.000Z",
+    },
+    metricSnapshotsByDate: {
+      "2026-05-30": {
+        date: "2026-05-30",
+        platform: "missevan",
+        dramas: {
+          "15861": {
+            name: "魔道祖师 第一季",
+            view_count: 900,
+            danmaku_uid_count: 90,
+            subscription_num: 9000,
+            generated_at: "2026-05-30T01:00:00.000Z",
+          },
+        },
+      },
+      "2026-05-31": {
+        date: "2026-05-31",
+        platform: "missevan",
+        dramas: {
+          "15861": {
+            name: "魔道祖师 第一季",
+            view_count: 1000,
+            danmaku_uid_count: 100,
+            subscription_num: 10000,
+            generated_at: "2026-05-31T01:00:00.000Z",
+          },
+        },
+      },
+      "2026-06-01": {
+        date: "2026-06-01",
+        platform: "missevan",
+        dramas: {
+          "15861": {
+            name: "魔道祖师 第一季",
+            view_count: 1300,
+            danmaku_uid_count: 130,
+            subscription_num: 10300,
+            generated_at: "2026-06-01T01:00:00.000Z",
+          },
+        },
+      },
+      "2026-06-02": {
+        date: "2026-06-02",
+        platform: "missevan",
+        dramas: {
+          "15861": {
+            name: "魔道祖师 第一季",
+            view_count: 1500,
+            danmaku_uid_count: 140,
+            subscription_num: 10600,
+            generated_at: "2026-06-02T01:00:00.000Z",
+          },
+        },
+      },
+      "2026-06-03": {
+        date: "2026-06-03",
+        platform: "missevan",
+        dramas: {
+          "15861": {
+            name: "魔道祖师 第一季",
+            view_count: 1800,
+            danmaku_uid_count: 150,
+            subscription_num: 11000,
+            generated_at: "2026-06-03T01:00:00.000Z",
+          },
+        },
+      },
+    },
+  });
+
+  const viewMetric = response.windows["3d"].metrics.find((metric) => metric.key === "view_count");
+
+  assert.equal(response.windows["3d"].fromDate, "2026-05-31");
+  assert.equal(response.windows["3d"].toDate, "2026-06-03");
+  assert.equal(viewMetric.delta, 800);
+  assert.deepEqual(
+    viewMetric.history.map((point) => [point.date, point.value, Boolean(point.isPreWindow)]),
+    [
+      ["2026-05-30", 900, true],
+      ["2026-05-31", 1000, false],
+      ["2026-06-01", 1300, false],
+      ["2026-06-02", 1500, false],
+      ["2026-06-03", 1800, false],
+    ]
+  );
+});
+
 test("buildRankTrendResponse keeps missing drama dates as null points without filling calendar gaps", () => {
   const response = buildRankTrendResponse({
     platform: "missevan",
@@ -912,6 +1007,43 @@ test("buildPeakSeriesTrendResponse builds playback-only windows from series samp
       ]
     );
   }
+});
+
+test("buildPeakSeriesTrendResponse keeps one pre-window history point for increment charts", () => {
+  const response = buildPeakSeriesTrendResponse({
+    id: "魔道祖师",
+    peakSnapshot: {
+      dates: ["2026-05-30", "2026-05-31", "2026-06-01", "2026-06-02", "2026-06-03"],
+      series: {
+        魔道祖师: {
+          name: "魔道祖师",
+          samples: {
+            "2026-05-30": { view_count: 9000, position: 1 },
+            "2026-05-31": { view_count: 10000, position: 1 },
+            "2026-06-01": { view_count: 13000, position: 1 },
+            "2026-06-02": { view_count: 15000, position: 1 },
+            "2026-06-03": { view_count: 18000, position: 1 },
+          },
+        },
+      },
+    },
+  });
+
+  const viewMetric = response.windows["3d"].metrics[0];
+
+  assert.equal(response.windows["3d"].fromDate, "2026-05-31");
+  assert.equal(response.windows["3d"].toDate, "2026-06-03");
+  assert.equal(viewMetric.delta, 8000);
+  assert.deepEqual(
+    viewMetric.history.map((point) => [point.date, point.value, Boolean(point.isPreWindow)]),
+    [
+      ["2026-05-30", 9000, true],
+      ["2026-05-31", 10000, false],
+      ["2026-06-01", 13000, false],
+      ["2026-06-02", 15000, false],
+      ["2026-06-03", 18000, false],
+    ]
+  );
 });
 
 test("buildPeakSeriesTrendResponse keeps missing peak dates as null points", () => {

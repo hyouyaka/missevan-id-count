@@ -33,7 +33,6 @@ import {
   exportFavoritesData,
   FAVORITE_DELTA_METRICS,
   FAVORITE_SORT_OPTIONS,
-  getFavoriteDelta,
   getFavoriteByKey,
   getLatestSnapshot,
   getSnapshotsForFavorite,
@@ -147,10 +146,6 @@ function formatDeltaValue(value, metricKey = "", platform = "") {
     return `${number > 0 ? "+" : ""}${formatPlainNumber(number)}`;
   }
   return formatSignedCompactMetricValue(number);
-}
-
-function getMetricOptions(platform, all = FAVORITE_DELTA_METRICS) {
-  return all.filter((item) => item.platforms.includes(platform) || item.platforms.length > 1);
 }
 
 function getVisibleMetricKeys(platform) {
@@ -565,9 +560,11 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
 export function FavoritesPanel({
   favorites = [],
   favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
   frontendVersion = "0.0.0",
   handleVersionResponse,
   isDesktopApp = false,
+  onBackgroundTaskChange = () => {},
   onFavoritesChange,
   onRefreshSettled,
   onRefreshStateChange = () => {},
@@ -699,12 +696,27 @@ export function FavoritesPanel({
   }
 
   async function refreshMany(targetFavorites) {
+    if (statisticsActionsDisabled) {
+      toast.warning("后台任务运行中，请等待完成后再刷新收藏。");
+      return;
+    }
     const queue = (Array.isArray(targetFavorites) ? targetFavorites : []).filter(Boolean);
     if (!queue.length) {
       toast.warning("请先选择收藏作品。");
       return;
     }
     onRefreshStateChange({ isRunning: true, progress: 0, currentTitle: "" });
+    onBackgroundTaskChange({
+      isRunning: true,
+      status: "running",
+      type: "favorites_refresh",
+      title: "收藏刷新",
+      description: "正在准备刷新收藏",
+      progress: 0,
+      action: "正在准备刷新收藏",
+      resultTarget: "favorites",
+      highlighted: true,
+    });
     let failedCount = 0;
     try {
       for (let index = 0; index < queue.length; index += 1) {
@@ -713,6 +725,17 @@ export function FavoritesPanel({
           isRunning: true,
           progress: Math.floor((index / queue.length) * 100),
           currentTitle: favorite.title,
+        });
+        onBackgroundTaskChange({
+          isRunning: true,
+          status: "running",
+          type: "favorites_refresh",
+          title: "收藏刷新",
+          description: `正在刷新：${favorite.title || "收藏作品"}`,
+          progress: Math.floor((index / queue.length) * 100),
+          action: `正在刷新：${favorite.title || "收藏作品"}`,
+          resultTarget: "favorites",
+          highlighted: true,
         });
         try {
           await refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp });
@@ -742,6 +765,17 @@ export function FavoritesPanel({
       } else {
         toast.success("收藏刷新完成。");
       }
+      onBackgroundTaskChange({
+        isRunning: false,
+        status: failedCount > 0 ? "failed" : "completed",
+        type: "favorites_refresh",
+        title: failedCount > 0 ? "收藏刷新完成，部分失败" : "收藏刷新完成",
+        description: failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
+        progress: 100,
+        action: failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
+        resultTarget: "favorites",
+        highlighted: true,
+      });
       await onRefreshSettled?.();
     } finally {
       onRefreshStateChange({ isRunning: false, progress: 100, currentTitle: "" });
@@ -813,7 +847,7 @@ export function FavoritesPanel({
             type="button"
             variant="secondary"
             className="h-9 gap-1 px-2 text-sm sm:px-3"
-            disabled={refreshState.isRunning || favoriteActionsDisabled || selectedKeys.size === 0}
+            disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || selectedKeys.size === 0}
             onClick={() => refreshMany(favorites.filter((favorite) => selectedKeys.has(favorite.key)))}
           >
             <RefreshCwIcon data-icon="inline-start" className={refreshState.isRunning ? "animate-spin" : ""} />
@@ -823,7 +857,7 @@ export function FavoritesPanel({
             type="button"
             variant="outline"
             className="h-9 gap-1 px-2 text-sm sm:px-3"
-            disabled={refreshState.isRunning || favoriteActionsDisabled || favorites.length === 0}
+            disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || favorites.length === 0}
             onClick={() => refreshMany(sortedFavorites)}
           >
             <RefreshCwIcon data-icon="inline-start" className={refreshState.isRunning ? "animate-spin" : ""} />
