@@ -492,6 +492,48 @@ test("Missevan getdm jitter delay stays within the configured range", async () =
   }
 });
 
+test("Missevan request interval config falls back and normalizes unsafe values", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { getMissevanRequestIntervalConfig, getMissevanRequestJitterDelayMs } = await import("./server.js");
+
+  assert.deepEqual(
+    getMissevanRequestIntervalConfig({ hostedDeployment: true }),
+    { minMs: 800, maxMs: 1400 }
+  );
+  assert.deepEqual(
+    getMissevanRequestIntervalConfig({ hostedDeployment: false }),
+    { minMs: 250, maxMs: 500 }
+  );
+  assert.deepEqual(
+    getMissevanRequestIntervalConfig({
+      hostedDeployment: true,
+      minIntervalMs: "bad",
+      maxIntervalMs: "",
+    }),
+    { minMs: 800, maxMs: 1400 }
+  );
+  assert.deepEqual(
+    getMissevanRequestIntervalConfig({
+      hostedDeployment: true,
+      minIntervalMs: 0,
+      maxIntervalMs: 0,
+    }),
+    { minMs: 800, maxMs: 1400 }
+  );
+  assert.deepEqual(
+    getMissevanRequestIntervalConfig({
+      hostedDeployment: false,
+      minIntervalMs: 1200,
+      maxIntervalMs: 300,
+    }),
+    { minMs: 300, maxMs: 1200 }
+  );
+
+  assert.equal(getMissevanRequestJitterDelayMs(0, { minMs: 800, maxMs: 1400 }), 800);
+  assert.equal(getMissevanRequestJitterDelayMs(0.5, { minMs: 800, maxMs: 1400 }), 1100);
+  assert.equal(getMissevanRequestJitterDelayMs(1, { minMs: 800, maxMs: 1400 }), 1400);
+});
+
 test("Missevan API search usage log entries describe real external calls", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildMissevanSearchApiUsageLog } = await import("./server.js");

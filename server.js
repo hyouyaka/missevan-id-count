@@ -244,6 +244,10 @@ const MANBO_FETCH_TIMEOUT_MS = Math.max(
 );
 const MISSEVAN_GETDM_MIN_INTERVAL_MS = 200;
 const MISSEVAN_GETDM_MAX_INTERVAL_MS = 400;
+const MISSEVAN_HOSTED_REQUEST_MIN_INTERVAL_MS = 800;
+const MISSEVAN_HOSTED_REQUEST_MAX_INTERVAL_MS = 1400;
+const MISSEVAN_LOCAL_REQUEST_MIN_INTERVAL_MS = 250;
+const MISSEVAN_LOCAL_REQUEST_MAX_INTERVAL_MS = 500;
 const IMAGE_PROXY_TIMEOUT_MS = 8000;
 const IMAGE_PROXY_RETRIES = 2;
 const IMAGE_PROXY_RETRY_DELAY_MS = 250;
@@ -262,8 +266,8 @@ let cooldownStateLoaded = false;
 let cooldownPersistenceWarningLogged = false;
 let cooldownRefreshPromise = null;
 let lastCooldownRefreshSucceeded = false;
-let nextMissevanGetdmRequestAt = 0;
-let missevanGetdmThrottleTail = Promise.resolve();
+let nextMissevanRequestAt = 0;
+let missevanRequestThrottleTail = Promise.resolve();
 
 app.use(cors());
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
@@ -584,23 +588,72 @@ export function getMissevanGetdmJitterDelayMs(randomValue = Math.random()) {
   );
 }
 
-async function waitForMissevanGetdmRequestSlot() {
-  const previousTail = missevanGetdmThrottleTail;
+function getFinitePositiveIntervalValue(value, fallbackValue) {
+  if (value == null || String(value).trim() === "") {
+    return fallbackValue;
+  }
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized > 0
+    ? normalized
+    : fallbackValue;
+}
+
+export function getMissevanRequestIntervalConfig(options = {}) {
+  const hostedDeployment = options.hostedDeployment ?? isHostedDeployment();
+  const fallbackMinMs = hostedDeployment
+    ? MISSEVAN_HOSTED_REQUEST_MIN_INTERVAL_MS
+    : MISSEVAN_LOCAL_REQUEST_MIN_INTERVAL_MS;
+  const fallbackMaxMs = hostedDeployment
+    ? MISSEVAN_HOSTED_REQUEST_MAX_INTERVAL_MS
+    : MISSEVAN_LOCAL_REQUEST_MAX_INTERVAL_MS;
+  const rawMinMs = options.minIntervalMs ?? process.env.MISSEVAN_REQUEST_MIN_INTERVAL_MS;
+  const rawMaxMs = options.maxIntervalMs ?? process.env.MISSEVAN_REQUEST_MAX_INTERVAL_MS;
+  const firstValue = getFinitePositiveIntervalValue(rawMinMs, fallbackMinMs);
+  const secondValue = getFinitePositiveIntervalValue(rawMaxMs, fallbackMaxMs);
+
+  return {
+    minMs: Math.min(firstValue, secondValue),
+    maxMs: Math.max(firstValue, secondValue),
+  };
+}
+
+const MISSEVAN_REQUEST_INTERVAL_CONFIG = getMissevanRequestIntervalConfig();
+
+export function getMissevanRequestJitterDelayMs(
+  randomValue = Math.random(),
+  config = MISSEVAN_REQUEST_INTERVAL_CONFIG
+) {
+  const numericRandomValue = Number(randomValue);
+  const normalizedRandomValue = Number.isFinite(numericRandomValue)
+    ? Math.min(1, Math.max(0, numericRandomValue))
+    : Math.random();
+  const minMs = getFinitePositiveIntervalValue(config?.minMs, MISSEVAN_LOCAL_REQUEST_MIN_INTERVAL_MS);
+  const maxMs = getFinitePositiveIntervalValue(config?.maxMs, minMs);
+  const safeMinMs = Math.min(minMs, maxMs);
+  const safeMaxMs = Math.max(minMs, maxMs);
+
+  return Math.round(
+    safeMinMs + normalizedRandomValue * (safeMaxMs - safeMinMs)
+  );
+}
+
+async function waitForMissevanRequestSlot() {
+  const previousTail = missevanRequestThrottleTail;
   let releaseSlot = () => {};
-  missevanGetdmThrottleTail = new Promise((resolve) => {
+  missevanRequestThrottleTail = new Promise((resolve) => {
     releaseSlot = resolve;
   });
 
   await previousTail;
 
   try {
-    const waitMs = Math.max(0, nextMissevanGetdmRequestAt - Date.now());
+    const waitMs = Math.max(0, nextMissevanRequestAt - Date.now());
     if (waitMs > 0) {
       await sleep(waitMs);
     }
 
-    nextMissevanGetdmRequestAt =
-      Date.now() + getMissevanGetdmJitterDelayMs();
+    nextMissevanRequestAt =
+      Date.now() + getMissevanRequestJitterDelayMs();
   } finally {
     releaseSlot();
   }
@@ -4241,17 +4294,79 @@ function buildFetchOptions(url, options = {}) {
   return fetchOptions;
 }
 
+function getMissevanRequestLogEndpoint(url) {
+  try {
+    const targetUrl = typeof url === "string" ? new URL(url) : url;
+    return String(targetUrl.pathname || "")
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "") || "root";
+  } catch (_error) {
+    return "unknown";
+  }
+}
+
+function writeMissevanRequestUsageLog(url, details = {}) {
+  void writeUsageLog({
+    platform: "missevan",
+    action: "missevan_request",
+    endpoint: getMissevanRequestLogEndpoint(url),
+    attempt: Math.max(0, Number(details.attempt ?? 0) || 0),
+    status: details.status ?? "",
+    durationMs: Math.max(0, Math.round(Number(details.durationMs ?? 0) || 0)),
+    success: Boolean(details.success),
+    accessDenied: Boolean(details.accessDenied),
+    cooldownBlocked: Boolean(details.cooldownBlocked),
+  });
+}
+
+function ensureMissevanFetchOptions(options = {}) {
+  if (!options.missevan || options.beforeAttempt) {
+    return options;
+  }
+  return {
+    ...options,
+    beforeAttempt: waitForMissevanRequestSlot,
+  };
+}
+
 async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {}) {
+  options = ensureMissevanFetchOptions(options);
   if (options.missevan && isInAccessDeniedCooldown()) {
+    writeMissevanRequestUsageLog(url, {
+      attempt: 0,
+      status: "cooldown",
+      success: false,
+      accessDenied: true,
+      cooldownBlocked: true,
+    });
     throw createCooldownError();
   }
 
   let lastError;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const { signal, cleanup } = createTimeoutSignal(options.timeoutMs);
+    let cleanup = () => {};
+    let requestStartedAt = 0;
+    let responseStatus = "";
+    let requestLogged = false;
 
     try {
+      await options.beforeAttempt?.();
+      if (options.missevan && isInAccessDeniedCooldown()) {
+        writeMissevanRequestUsageLog(url, {
+          attempt: attempt + 1,
+          status: "cooldown",
+          success: false,
+          accessDenied: true,
+          cooldownBlocked: true,
+        });
+        throw createCooldownError();
+      }
+
+      const timeout = createTimeoutSignal(options.timeoutMs);
+      const signal = timeout.signal;
+      cleanup = timeout.cleanup;
+      requestStartedAt = Date.now();
       const response = await fetch(
         url,
         buildFetchOptions(url, {
@@ -4259,19 +4374,62 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
           signal,
         })
       );
+      responseStatus = response.status;
 
       if (!response.ok) {
+        if (options.missevan) {
+          writeMissevanRequestUsageLog(url, {
+            attempt: attempt + 1,
+            status: response.status,
+            durationMs: Date.now() - requestStartedAt,
+            success: false,
+            accessDenied: response.status === 418,
+          });
+          requestLogged = true;
+        }
         throw new Error(`HTTP ${response.status}`);
       }
 
       const data = await response.json();
       if (options.missevan) {
+        writeMissevanRequestUsageLog(url, {
+          attempt: attempt + 1,
+          status: response.status,
+          durationMs: Date.now() - requestStartedAt,
+          success: true,
+          accessDenied: false,
+        });
+        requestLogged = true;
         markSuccessfulMissevanRequest();
       }
       return data;
     } catch (error) {
+      if (isCooldownError(error)) {
+        throw error;
+      }
+
       if (options.missevan && isAccessDeniedError(error)) {
         markAccessDeniedCooldown();
+        if (!requestLogged) {
+          writeMissevanRequestUsageLog(url, {
+            attempt: attempt + 1,
+            status: responseStatus || "error",
+            durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
+            success: false,
+            accessDenied: true,
+          });
+        }
+        throw error;
+      }
+
+      if (options.missevan && !requestLogged) {
+        writeMissevanRequestUsageLog(url, {
+          attempt: attempt + 1,
+          status: responseStatus || "error",
+          durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
+          success: false,
+          accessDenied: false,
+        });
       }
 
       lastError = error;
@@ -4287,7 +4445,15 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
 }
 
 async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {}) {
+  options = ensureMissevanFetchOptions(options);
   if (options.missevan && isInAccessDeniedCooldown()) {
+    writeMissevanRequestUsageLog(url, {
+      attempt: 0,
+      status: "cooldown",
+      success: false,
+      accessDenied: true,
+      cooldownBlocked: true,
+    });
     throw createCooldownError();
   }
 
@@ -4295,10 +4461,20 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     let cleanup = () => {};
+    let requestStartedAt = 0;
+    let responseStatus = "";
+    let requestLogged = false;
 
     try {
       await options.beforeAttempt?.();
       if (options.missevan && isInAccessDeniedCooldown()) {
+        writeMissevanRequestUsageLog(url, {
+          attempt: attempt + 1,
+          status: "cooldown",
+          success: false,
+          accessDenied: true,
+          cooldownBlocked: true,
+        });
         throw createCooldownError();
       }
 
@@ -4306,6 +4482,7 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       const signal = timeout.signal;
       cleanup = timeout.cleanup;
 
+      requestStartedAt = Date.now();
       const response = await fetch(
         url,
         buildFetchOptions(url, {
@@ -4313,13 +4490,32 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
           signal,
         })
       );
+      responseStatus = response.status;
 
       if (!response.ok) {
+        if (options.missevan) {
+          writeMissevanRequestUsageLog(url, {
+            attempt: attempt + 1,
+            status: response.status,
+            durationMs: Date.now() - requestStartedAt,
+            success: false,
+            accessDenied: response.status === 418,
+          });
+          requestLogged = true;
+        }
         throw new Error(`HTTP ${response.status}`);
       }
 
       const text = await response.text();
       if (options.missevan) {
+        writeMissevanRequestUsageLog(url, {
+          attempt: attempt + 1,
+          status: response.status,
+          durationMs: Date.now() - requestStartedAt,
+          success: true,
+          accessDenied: false,
+        });
+        requestLogged = true;
         markSuccessfulMissevanRequest();
       }
       return text;
@@ -4330,6 +4526,26 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
 
       if (options.missevan && isAccessDeniedError(error)) {
         markAccessDeniedCooldown();
+        if (!requestLogged) {
+          writeMissevanRequestUsageLog(url, {
+            attempt: attempt + 1,
+            status: responseStatus || "error",
+            durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
+            success: false,
+            accessDenied: true,
+          });
+        }
+        throw error;
+      }
+
+      if (options.missevan && !requestLogged) {
+        writeMissevanRequestUsageLog(url, {
+          attempt: attempt + 1,
+          status: responseStatus || "error",
+          durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
+          success: false,
+          accessDenied: false,
+        });
       }
 
       lastError = error;
@@ -4781,7 +4997,7 @@ async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "", rawSo
       250,
       {
         missevan: true,
-        beforeAttempt: waitForMissevanGetdmRequestSlot,
+        beforeAttempt: waitForMissevanRequestSlot,
       }
     );
     const lines = text.split("\n").filter((line) => line.includes('<d p='));

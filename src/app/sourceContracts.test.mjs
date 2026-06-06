@@ -1109,16 +1109,31 @@ test("favorite stats task source flows into danmaku usage logs", () => {
   );
 });
 
-test("Missevan getdm requests are paced with a dedicated jitter limiter", () => {
+test("Missevan external requests are paced with a shared jitter limiter", () => {
   assert.match(
     serverSource,
-    /MISSEVAN_GETDM_MIN_INTERVAL_MS\s*=\s*200/,
-    "Missevan getdm minimum interval should be 200ms"
+    /MISSEVAN_HOSTED_REQUEST_MIN_INTERVAL_MS\s*=\s*800/,
+    "hosted Missevan request minimum interval should be 800ms"
   );
   assert.match(
     serverSource,
-    /MISSEVAN_GETDM_MAX_INTERVAL_MS\s*=\s*400/,
-    "Missevan getdm maximum interval should be 400ms"
+    /MISSEVAN_HOSTED_REQUEST_MAX_INTERVAL_MS\s*=\s*1400/,
+    "hosted Missevan request maximum interval should be 1400ms"
+  );
+  assert.match(
+    serverSource,
+    /MISSEVAN_LOCAL_REQUEST_MIN_INTERVAL_MS\s*=\s*250/,
+    "local Missevan request minimum interval should be 250ms"
+  );
+  assert.match(
+    serverSource,
+    /MISSEVAN_LOCAL_REQUEST_MAX_INTERVAL_MS\s*=\s*500/,
+    "local Missevan request maximum interval should be 500ms"
+  );
+  assert.match(
+    serverSource,
+    /async function waitForMissevanRequestSlot/,
+    "Missevan requests should share one limiter function"
   );
   assert.match(
     serverSource.slice(
@@ -1128,17 +1143,38 @@ test("Missevan getdm requests are paced with a dedicated jitter limiter", () => 
     /await options\.beforeAttempt\?\.\(\);/,
     "text fetch retries should run the optional per-attempt hook before fetch"
   );
-  assert.doesNotMatch(
+  assert.match(
     serverSource.slice(
       serverSource.indexOf("async function fetchJsonWithRetry"),
       serverSource.indexOf("\nasync function fetchTextWithRetry")
     ),
-    /beforeAttempt/,
-    "JSON Missevan requests should not inherit the getdm-only limiter hook"
+    /await options\.beforeAttempt\?\.\(\);/,
+    "JSON Missevan requests should also run the optional per-attempt hook before fetch"
+  );
+  const fetchJsonSource = serverSource.slice(
+    serverSource.indexOf("async function fetchJsonWithRetry"),
+    serverSource.indexOf("\nasync function fetchTextWithRetry")
   );
   const fetchTextSource = serverSource.slice(
     serverSource.indexOf("async function fetchTextWithRetry"),
     serverSource.indexOf("\nfunction formatImageProxyError")
+  );
+  const jsonAttemptCooldownIndex = fetchJsonSource.indexOf("if (options.missevan && isInAccessDeniedCooldown())", 1);
+  const jsonFetchIndex = fetchJsonSource.indexOf("const response = await fetch");
+  assert.ok(
+    jsonAttemptCooldownIndex >= 0 && jsonFetchIndex >= 0 && jsonAttemptCooldownIndex < jsonFetchIndex,
+    "JSON Missevan requests should check cooldown inside each retry attempt before fetch"
+  );
+  const jsonCooldownRethrowIndex = fetchJsonSource.indexOf("if (isCooldownError(error))");
+  const jsonAccessDeniedThrowIndex = fetchJsonSource.indexOf("throw error", fetchJsonSource.indexOf("if (options.missevan && isAccessDeniedError(error))"));
+  const jsonRetrySleepIndex = fetchJsonSource.indexOf("await sleep(delayMs * (attempt + 1))");
+  assert.ok(
+    jsonCooldownRethrowIndex >= 0 && jsonCooldownRethrowIndex < jsonRetrySleepIndex,
+    "cooldown errors raised before JSON fetch should not retry"
+  );
+  assert.ok(
+    jsonAccessDeniedThrowIndex >= 0 && jsonAccessDeniedThrowIndex < jsonRetrySleepIndex,
+    "HTTP 418 JSON responses should mark cooldown and stop before retry sleep"
   );
   const cooldownRethrowIndex = fetchTextSource.indexOf("if (isCooldownError(error))");
   const retrySleepIndex = fetchTextSource.indexOf("await sleep(delayMs * (attempt + 1))");
@@ -1148,14 +1184,42 @@ test("Missevan getdm requests are paced with a dedicated jitter limiter", () => 
   );
   const danmakuStart = serverSource.indexOf("async function fetchDanmakuSummary");
   const cacheIndex = serverSource.indexOf("const cached = getCachedValue", danmakuStart);
-  const limiterIndex = serverSource.indexOf("beforeAttempt: waitForMissevanGetdmRequestSlot", danmakuStart);
+  const limiterIndex = serverSource.indexOf("beforeAttempt: waitForMissevanRequestSlot", danmakuStart);
   const getdmCallStart = serverSource.indexOf("const text = await fetchTextWithRetry", danmakuStart);
   const getdmCallEnd = serverSource.indexOf(");", getdmCallStart);
   const getdmCallSource = serverSource.slice(getdmCallStart, getdmCallEnd);
   assert.match(getdmCallSource, /www\.missevan\.com\/sound\/getdm\?soundid=\$\{soundId\}/);
   assert.match(getdmCallSource, /missevan: true/);
-  assert.match(getdmCallSource, /beforeAttempt: waitForMissevanGetdmRequestSlot/);
+  assert.match(getdmCallSource, /beforeAttempt: waitForMissevanRequestSlot/);
   assert.ok(cacheIndex >= 0 && limiterIndex >= 0 && cacheIndex < limiterIndex, "cached getdm summaries should not wait for a limiter slot");
+});
+
+test("Missevan external request logs are endpoint-scoped and query-free", () => {
+  const logHelperSource = serverSource.slice(
+    serverSource.indexOf("function writeMissevanRequestUsageLog"),
+    serverSource.indexOf("\nfunction ensureMissevanFetchOptions")
+  );
+  assert.notEqual(logHelperSource.length, 0, "Missevan request log helper should exist");
+  assert.match(serverSource, /function getMissevanRequestLogEndpoint/);
+  assert.match(serverSource, /action: "missevan_request"/);
+  assert.match(serverSource, /endpoint/);
+  assert.match(serverSource, /attempt/);
+  assert.match(serverSource, /status/);
+  assert.match(serverSource, /durationMs/);
+  assert.match(serverSource, /cooldownBlocked/);
+  assert.doesNotMatch(
+    logHelperSource,
+    /\burl\s*:/,
+    "Missevan request logs should not store full request URLs"
+  );
+  assert.doesNotMatch(
+    serverSource.slice(
+      serverSource.indexOf("function getMissevanRequestLogEndpoint"),
+      serverSource.indexOf("\nasync function fetchJsonWithRetry")
+    ),
+    /searchParams/,
+    "Missevan request endpoint normalization should not include query params"
+  );
 });
 
 test("Missevan favorite refresh avoids running duplicate danmaku tasks", () => {
