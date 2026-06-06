@@ -321,6 +321,21 @@ test("frontend unified keyword search uses backend aggregate route", () => {
   assert.doesNotMatch(unifiedSource, /apiFallback: true/);
 });
 
+test("Missevan access-denied search notice takes priority over empty-result copy", () => {
+  const unifiedStart = searchPanelSource.indexOf("async function queryUnifiedKeywordSearch");
+  assert.notEqual(unifiedStart, -1, "unified keyword search function should exist");
+  const unifiedEnd = searchPanelSource.indexOf("async function runMergedSearch", unifiedStart);
+  assert.notEqual(unifiedEnd, -1, "unified keyword search should end before merged-search submit handler");
+  const unifiedSource = searchPanelSource.slice(unifiedStart, unifiedEnd);
+
+  const accessDeniedIndex = unifiedSource.indexOf("finalResults.missevan?.accessDenied");
+  const emptyResultIndex = unifiedSource.indexOf("未找到结果，可尝试导入作品ID或链接。");
+  assert.notEqual(accessDeniedIndex, -1, "Missevan access-denied branch should exist");
+  assert.notEqual(emptyResultIndex, -1, "empty-result copy should exist");
+  assert.ok(accessDeniedIndex < emptyResultIndex, "access-denied branch should run before empty-result copy");
+  assert.match(unifiedSource, /else if \(\s*!finalResults\.missevan\?\.accessDenied[\s\S]*!hasPlatformMatches\(finalResults\.missevan\)[\s\S]*!hasPlatformMatches\(finalResults\.manbo\)/);
+});
+
 test("merged search import branch is protected by pending state", () => {
   const submitStart = searchPanelSource.indexOf("async function runMergedSearch");
   assert.notEqual(submitStart, -1, "merged search submit handler should exist");
@@ -346,9 +361,11 @@ test("backend unified search route aggregates libraries before API fallback", ()
   assert.equal(routeSource.match(/refreshMissevanCooldownState/g)?.length ?? 0, 1);
   assert.match(routeSource, /runMissevanLibraryUnifiedSearch/);
   assert.match(routeSource, /runManboLibraryUnifiedSearch/);
-  assert.match(routeSource, /const shouldUseApiFallback[\s\S]*missevanLibraryResult\.meta\.matchedCount[\s\S]*manboLibraryResult\.meta\.matchedCount/);
+  assert.match(routeSource, /const fallbackPlan = buildUnifiedSearchFallbackPlan\(\s*missevanLibraryResult,\s*manboLibraryResult\s*\)/);
+  assert.match(routeSource, /if \(!fallbackPlan\.usedApiFallback\)/);
   assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit\),\s*runManboLibraryUnifiedSearch\(normalizedKeyword, offset, limit\),\s*\]\)/);
-  assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanApiUnifiedSearch\(normalizedKeyword, offset, limit\),\s*runManboApiUnifiedSearch\(normalizedKeyword, offset, limit\),\s*\]\)/);
+  assert.match(routeSource, /fallbackPlan\.missevan[\s\S]*runMissevanApiUnifiedSearch\(normalizedKeyword, offset, limit\)[\s\S]*Promise\.resolve\(missevanLibraryResult\)/);
+  assert.match(routeSource, /fallbackPlan\.manbo[\s\S]*runManboApiUnifiedSearch\(normalizedKeyword, offset, limit\)[\s\S]*Promise\.resolve\(manboLibraryResult\)/);
   assert.match(serverSource, /async function runManboApiUnifiedSearch\(keyword, offset, limit\)[\s\S]*const pagedResults = apiResults\.slice\(offset, offset \+ limit\)[\s\S]*results: pagedResults[\s\S]*buildSearchPageMeta\(keyword, apiResults\.length, offset, limit\)/);
   assert.match(routeSource, /normalizeSettledUnifiedSearchResult\("missevan"/);
   assert.match(routeSource, /normalizeSettledUnifiedSearchResult\("manbo"/);
@@ -1007,6 +1024,55 @@ test("favorite stats task source flows into danmaku usage logs", () => {
     /fetchManboDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*String\(episode\?\.name \?\? ""\)\.trim\(\),\s*task\.source\s*\)/,
     "Manbo revenue danmaku logs should inherit the stats task source"
   );
+});
+
+test("Missevan getdm requests are paced with a dedicated jitter limiter", () => {
+  assert.match(
+    serverSource,
+    /MISSEVAN_GETDM_MIN_INTERVAL_MS\s*=\s*200/,
+    "Missevan getdm minimum interval should be 200ms"
+  );
+  assert.match(
+    serverSource,
+    /MISSEVAN_GETDM_MAX_INTERVAL_MS\s*=\s*400/,
+    "Missevan getdm maximum interval should be 400ms"
+  );
+  assert.match(
+    serverSource.slice(
+      serverSource.indexOf("async function fetchTextWithRetry"),
+      serverSource.indexOf("\nfunction formatImageProxyError")
+    ),
+    /await options\.beforeAttempt\?\.\(\);/,
+    "text fetch retries should run the optional per-attempt hook before fetch"
+  );
+  assert.doesNotMatch(
+    serverSource.slice(
+      serverSource.indexOf("async function fetchJsonWithRetry"),
+      serverSource.indexOf("\nasync function fetchTextWithRetry")
+    ),
+    /beforeAttempt/,
+    "JSON Missevan requests should not inherit the getdm-only limiter hook"
+  );
+  const fetchTextSource = serverSource.slice(
+    serverSource.indexOf("async function fetchTextWithRetry"),
+    serverSource.indexOf("\nfunction formatImageProxyError")
+  );
+  const cooldownRethrowIndex = fetchTextSource.indexOf("if (isCooldownError(error))");
+  const retrySleepIndex = fetchTextSource.indexOf("await sleep(delayMs * (attempt + 1))");
+  assert.ok(
+    cooldownRethrowIndex >= 0 && retrySleepIndex >= 0 && cooldownRethrowIndex < retrySleepIndex,
+    "cooldown errors raised after waiting for a getdm slot should not retry"
+  );
+  const danmakuStart = serverSource.indexOf("async function fetchDanmakuSummary");
+  const cacheIndex = serverSource.indexOf("const cached = getCachedValue", danmakuStart);
+  const limiterIndex = serverSource.indexOf("beforeAttempt: waitForMissevanGetdmRequestSlot", danmakuStart);
+  const getdmCallStart = serverSource.indexOf("const text = await fetchTextWithRetry", danmakuStart);
+  const getdmCallEnd = serverSource.indexOf(");", getdmCallStart);
+  const getdmCallSource = serverSource.slice(getdmCallStart, getdmCallEnd);
+  assert.match(getdmCallSource, /www\.missevan\.com\/sound\/getdm\?soundid=\$\{soundId\}/);
+  assert.match(getdmCallSource, /missevan: true/);
+  assert.match(getdmCallSource, /beforeAttempt: waitForMissevanGetdmRequestSlot/);
+  assert.ok(cacheIndex >= 0 && limiterIndex >= 0 && cacheIndex < limiterIndex, "cached getdm summaries should not wait for a limiter slot");
 });
 
 test("Missevan favorite refresh avoids running duplicate danmaku tasks", () => {

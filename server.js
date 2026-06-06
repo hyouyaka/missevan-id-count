@@ -242,6 +242,8 @@ const MANBO_FETCH_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.MANBO_FETCH_TIMEOUT_MS ?? 10000) || 10000
 );
+const MISSEVAN_GETDM_MIN_INTERVAL_MS = 200;
+const MISSEVAN_GETDM_MAX_INTERVAL_MS = 400;
 const IMAGE_PROXY_TIMEOUT_MS = 8000;
 const IMAGE_PROXY_RETRIES = 2;
 const IMAGE_PROXY_RETRY_DELAY_MS = 250;
@@ -260,6 +262,8 @@ let cooldownStateLoaded = false;
 let cooldownPersistenceWarningLogged = false;
 let cooldownRefreshPromise = null;
 let lastCooldownRefreshSucceeded = false;
+let nextMissevanGetdmRequestAt = 0;
+let missevanGetdmThrottleTail = Promise.resolve();
 
 app.use(cors());
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
@@ -566,6 +570,40 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+export function getMissevanGetdmJitterDelayMs(randomValue = Math.random()) {
+  const numericRandomValue = Number(randomValue);
+  const normalizedRandomValue = Number.isFinite(numericRandomValue)
+    ? Math.min(1, Math.max(0, numericRandomValue))
+    : Math.random();
+  return Math.round(
+    MISSEVAN_GETDM_MIN_INTERVAL_MS +
+      normalizedRandomValue *
+        (MISSEVAN_GETDM_MAX_INTERVAL_MS - MISSEVAN_GETDM_MIN_INTERVAL_MS)
+  );
+}
+
+async function waitForMissevanGetdmRequestSlot() {
+  const previousTail = missevanGetdmThrottleTail;
+  let releaseSlot = () => {};
+  missevanGetdmThrottleTail = new Promise((resolve) => {
+    releaseSlot = resolve;
+  });
+
+  await previousTail;
+
+  try {
+    const waitMs = Math.max(0, nextMissevanGetdmRequestAt - Date.now());
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+
+    nextMissevanGetdmRequestAt =
+      Date.now() + getMissevanGetdmJitterDelayMs();
+  } finally {
+    releaseSlot();
+  }
 }
 
 function createTaskId() {
@@ -3857,23 +3895,44 @@ function buildEmptyUnifiedPlatformSearchResult(keyword, offset, limit, source = 
   };
 }
 
-function normalizeSettledUnifiedSearchResult(platform, settled, fallbackResult, stage) {
+export function normalizeSettledUnifiedSearchResult(platform, settled, fallbackResult, stage) {
   if (settled.status === "fulfilled") {
     return settled.value;
   }
   const error = settled.reason;
   const message = error instanceof Error ? error.message : String(error);
+  const accessDenied = platform === "missevan" && isMissevanAccessDenied(error);
   console.error(`Unified ${stage} search failed platform=${platform}`, error);
   return {
     ...fallbackResult,
     success: false,
     unavailable: true,
+    ...(accessDenied ? { accessDenied: true } : {}),
     error: message,
     meta: {
       ...(fallbackResult.meta || {}),
       source: `${stage}_error`,
       error: message,
     },
+  };
+}
+
+function hasUnifiedSearchMatches(result) {
+  const results = Array.isArray(result?.results) ? result.results : [];
+  const matchedCount = Number(result?.meta?.matchedCount ?? result?.meta?.totalMatched ?? results.length) || 0;
+  return matchedCount > 0 || results.length > 0;
+}
+
+export function buildUnifiedSearchFallbackPlan(missevanResult, manboResult) {
+  const missevanHasMatches = hasUnifiedSearchMatches(missevanResult);
+  const manboHasMatches = hasUnifiedSearchMatches(manboResult);
+  const missevan = !missevanHasMatches && !missevanResult?.unavailable && !manboHasMatches;
+  const manbo = !manboHasMatches && !manboResult?.unavailable && !missevanHasMatches;
+
+  return {
+    missevan,
+    manbo,
+    usedApiFallback: missevan || manbo,
   };
 }
 
@@ -4235,9 +4294,18 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
   let lastError;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const { signal, cleanup } = createTimeoutSignal(options.timeoutMs);
+    let cleanup = () => {};
 
     try {
+      await options.beforeAttempt?.();
+      if (options.missevan && isInAccessDeniedCooldown()) {
+        throw createCooldownError();
+      }
+
+      const timeout = createTimeoutSignal(options.timeoutMs);
+      const signal = timeout.signal;
+      cleanup = timeout.cleanup;
+
       const response = await fetch(
         url,
         buildFetchOptions(url, {
@@ -4256,6 +4324,10 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       }
       return text;
     } catch (error) {
+      if (isCooldownError(error)) {
+        throw error;
+      }
+
       if (options.missevan && isAccessDeniedError(error)) {
         markAccessDeniedCooldown();
       }
@@ -4707,7 +4779,10 @@ async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "", rawSo
       `https://www.missevan.com/sound/getdm?soundid=${soundId}`,
       2,
       250,
-      { missevan: true }
+      {
+        missevan: true,
+        beforeAttempt: waitForMissevanGetdmRequestSlot,
+      }
     );
     const lines = text.split("\n").filter((line) => line.includes('<d p='));
     const users = new Set();
@@ -7264,19 +7339,22 @@ app.get("/unified-search", async (req, res) => {
       }),
       "library"
     );
-    const shouldUseApiFallback =
-      !missevanLibraryResult.unavailable &&
-      !manboLibraryResult.unavailable &&
-      Number(missevanLibraryResult.meta.matchedCount ?? 0) === 0 &&
-      Number(manboLibraryResult.meta.matchedCount ?? 0) === 0;
+    const fallbackPlan = buildUnifiedSearchFallbackPlan(
+      missevanLibraryResult,
+      manboLibraryResult
+    );
 
-    if (!shouldUseApiFallback) {
+    if (!fallbackPlan.usedApiFallback) {
       return res.json(buildUnifiedResponse(missevanLibraryResult, manboLibraryResult));
     }
 
     const [missevanApiSettled, manboApiSettled] = await Promise.allSettled([
-      runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit),
-      runManboApiUnifiedSearch(normalizedKeyword, offset, limit),
+      fallbackPlan.missevan
+        ? runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit)
+        : Promise.resolve(missevanLibraryResult),
+      fallbackPlan.manbo
+        ? runManboApiUnifiedSearch(normalizedKeyword, offset, limit)
+        : Promise.resolve(manboLibraryResult),
     ]);
     const missevanApiResult = normalizeSettledUnifiedSearchResult("missevan",
       missevanApiSettled,
@@ -7291,7 +7369,11 @@ app.get("/unified-search", async (req, res) => {
       "api"
     );
 
-    return res.json(buildUnifiedResponse(missevanApiResult, manboApiResult, true));
+    return res.json(buildUnifiedResponse(
+      missevanApiResult,
+      manboApiResult,
+      fallbackPlan.usedApiFallback
+    ));
   } catch (error) {
     console.error(`Failed to run unified search keyword=${normalizedKeyword}`, error);
     return res.status(500).json({

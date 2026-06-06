@@ -477,6 +477,21 @@ test("Missevan API fallback option is disabled only by apiFallback=0", async () 
   assert.equal(shouldUseMissevanApiFallback(0), false);
 });
 
+test("Missevan getdm jitter delay stays within the configured range", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { getMissevanGetdmJitterDelayMs } = await import("./server.js");
+
+  assert.equal(getMissevanGetdmJitterDelayMs(0), 200);
+  assert.equal(getMissevanGetdmJitterDelayMs(0.5), 300);
+  assert.equal(getMissevanGetdmJitterDelayMs(1), 400);
+
+  for (const randomValue of [-1, 0, 0.2, 0.75, 1, 2, Number.NaN]) {
+    const delayMs = getMissevanGetdmJitterDelayMs(randomValue);
+    assert.ok(delayMs >= 200, `expected ${delayMs} to be at least 200`);
+    assert.ok(delayMs <= 400, `expected ${delayMs} to be at most 400`);
+  }
+});
+
 test("Missevan API search usage log entries describe real external calls", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildMissevanSearchApiUsageLog } = await import("./server.js");
@@ -503,6 +518,87 @@ test("Missevan API search usage log entries describe real external calls", async
       cached: false,
       accessDenied: true,
       error: "ACCESS_DENIED_COOLDOWN:test",
+    }
+  );
+});
+
+test("unified search preserves Missevan access denied failures", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeSettledUnifiedSearchResult } = await import("./server.js");
+
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const result = normalizeSettledUnifiedSearchResult(
+      "missevan",
+      {
+        status: "rejected",
+        reason: new Error("ACCESS_DENIED_COOLDOWN:120"),
+      },
+      {
+        success: false,
+        results: [],
+        meta: {
+          keyword: "一屋暗灯",
+          matchedCount: 0,
+          source: "library_error",
+        },
+      },
+      "library"
+    );
+
+    assert.equal(result.success, false);
+    assert.equal(result.accessDenied, true);
+    assert.equal(result.unavailable, true);
+    assert.equal(result.meta.source, "library_error");
+    assert.equal(result.meta.error, "ACCESS_DENIED_COOLDOWN:120");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test("unified search can fall back to Manbo API while Missevan is access denied", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildUnifiedSearchFallbackPlan } = await import("./server.js");
+
+  assert.deepEqual(
+    buildUnifiedSearchFallbackPlan(
+      {
+        success: false,
+        accessDenied: true,
+        unavailable: true,
+        meta: { matchedCount: 0 },
+      },
+      {
+        success: false,
+        results: [],
+        meta: { matchedCount: 0 },
+      }
+    ),
+    {
+      missevan: false,
+      manbo: true,
+      usedApiFallback: true,
+    }
+  );
+
+  assert.deepEqual(
+    buildUnifiedSearchFallbackPlan(
+      {
+        success: false,
+        results: [],
+        meta: { matchedCount: 0 },
+      },
+      {
+        success: false,
+        results: [],
+        meta: { matchedCount: 0 },
+      }
+    ),
+    {
+      missevan: true,
+      manbo: true,
+      usedApiFallback: true,
     }
   );
 });

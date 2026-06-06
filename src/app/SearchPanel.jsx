@@ -206,7 +206,11 @@ export function SearchPanel({
         } else {
           showMissevanCooldownNotice(config || { cooldownHours, cooldownUntil });
         }
-      } else if (!hasPlatformMatches(finalResults.missevan) && !hasPlatformMatches(finalResults.manbo)) {
+      } else if (
+        !finalResults.missevan?.accessDenied &&
+        !hasPlatformMatches(finalResults.missevan) &&
+        !hasPlatformMatches(finalResults.manbo)
+      ) {
         showBlockingNotice("", "未找到结果，可尝试导入作品ID或链接。");
       }
     } finally {
