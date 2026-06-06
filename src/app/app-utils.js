@@ -145,6 +145,21 @@ export function getRemainingCooldownHours(config = null, fallbackHours = 4) {
   return Number(config?.cooldownHours ?? fallbackHours ?? 4);
 }
 
+export function getRemainingCooldownMinutes(config = null, fallbackHours = 4) {
+  const until = Number(config?.cooldownUntil ?? 0);
+  if (until > Date.now()) {
+    return Math.max(1, Math.ceil((until - Date.now()) / 60000));
+  }
+  const hours = Number(config?.cooldownHours ?? fallbackHours ?? 4) || Number(fallbackHours ?? 4) || 4;
+  return Math.max(1, Math.ceil(hours * 60));
+}
+
+export function getMissevanAccessDeniedMessage(config = null, fallbackHours = 4) {
+  return `猫耳访问受限中，请${getRemainingCooldownMinutes(config, fallbackHours)}分钟后重试，或使用其他节点和桌面版。`;
+}
+
+export const MISSEVAN_DESKTOP_ACCESS_HINT = "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。";
+
 export function createStatsState() {
   return {
     progress: 0,

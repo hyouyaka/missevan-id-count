@@ -514,6 +514,27 @@ test("external drama title jump clears both search result panes before injecting
   assert.doesNotMatch(toolViewSource, /resultDialog/);
 });
 
+test("external drama title jump uses Missevan access-denied copy for cooldown failures", () => {
+  const openStart = toolViewSource.indexOf("async function openDramaInSearch");
+  assert.notEqual(openStart, -1, "openDramaInSearch should exist");
+  const openEnd = toolViewSource.indexOf("function beginRun", openStart);
+  assert.notEqual(openEnd, -1, "openDramaInSearch should end before stats run helpers");
+  const openSource = toolViewSource.slice(openStart, openEnd);
+  const precheckStart = openSource.indexOf("Number(appConfigRef.current.cooldownUntil");
+  assert.notEqual(precheckStart, -1, "openDramaInSearch should precheck local Missevan cooldown");
+  const accessDeniedStart = openSource.indexOf("data?.accessDenied");
+  assert.notEqual(accessDeniedStart, -1, "openDramaInSearch should handle backend access-denied responses");
+  const genericFailureStart = openSource.indexOf('toast.error("打开搜索结果失败，请稍后重试。")', accessDeniedStart);
+
+  assert.match(openSource, /getMissevanAccessDeniedMessage\(appConfigRef\.current\)/);
+  assert.match(openSource, /renderMissevanAccessDeniedMessage\(appConfigRef\.current\)/);
+  assert.match(openSource, /toast\.error\(renderMissevanAccessDeniedMessage\(appConfigRef\.current\)\)/);
+  assert.ok(
+    genericFailureStart === -1 || genericFailureStart > openSource.indexOf("return;", accessDeniedStart),
+    "access-denied branch should return before the generic jump failure toast"
+  );
+});
+
 test("addDramas imports missing dramas with one batch request for the active platform", () => {
   const addStart = toolViewSource.indexOf("async function addDramas");
   assert.notEqual(addStart, -1, "addDramas should exist");
@@ -614,9 +635,27 @@ test("history timestamps include platform label", () => {
 test("header description is replaced by Missevan access hint with existing links", () => {
   assert.doesNotMatch(toolViewSource, /\{appConfig\.description\}/);
   assert.match(toolViewSource, /renderHeaderAccessHint/);
-  assert.match(toolViewSource, /如果猫耳接口暂时受限，请/);
-  assert.match(toolViewSource, /href="\/nodes"[\s\S]*节点页/);
+  assert.match(appUtilsSource, /export function getRemainingCooldownMinutes/);
+  assert.match(appUtilsSource, /export function getMissevanAccessDeniedMessage/);
+  assert.match(appUtilsSource, /猫耳访问受限中，请\$\{getRemainingCooldownMinutes\(config, fallbackHours\)\}分钟后重试，或使用其他节点和桌面版。/);
+  assert.match(toolViewSource, /renderMissevanAccessDeniedMessage/);
+  assert.match(toolViewSource, /猫耳访问受限中，请\{getRemainingCooldownMinutes\(config, appConfig\.cooldownHours\)\}分钟后重试，或使用/);
+  assert.match(toolViewSource, /href="\/nodes"[\s\S]*其他节点/);
   assert.match(toolViewSource, /href=\{appConfig\.desktopAppUrl\}[\s\S]*桌面版/);
+  assert.doesNotMatch(toolViewSource, /如果猫耳接口暂时受限，请/);
+  assert.doesNotMatch(toolViewSource, /节点页/);
+});
+
+test("SearchPanel uses linked web access-denied notice while desktop keeps browser verification copy", () => {
+  assert.match(searchPanelSource, /desktopAppUrl/);
+  assert.match(searchPanelSource, /getMissevanAccessDeniedMessage/);
+  assert.match(searchPanelSource, /renderMissevanAccessDeniedMessage/);
+  assert.match(searchPanelSource, /猫耳访问受限中，请\{getRemainingCooldownMinutes\(config, cooldownHours\)\}分钟后重试，或使用/);
+  assert.match(searchPanelSource, /href="\/nodes"[\s\S]*其他节点/);
+  assert.match(searchPanelSource, /href=\{desktopAppUrl\}[\s\S]*桌面版/);
+  assert.match(searchPanelSource, /MISSEVAN_DESKTOP_ACCESS_HINT/);
+  assert.match(appUtilsSource, /MISSEVAN_DESKTOP_ACCESS_HINT = "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"/);
+  assert.doesNotMatch(searchPanelSource, /Missevan目前受限中/);
 });
 
 test("desktop favorites skip info-store CV backfill", () => {
@@ -950,6 +989,50 @@ test("favorite refresh skips writes when the favorite was removed mid-refresh", 
     refreshManySource,
     /if \(!activeFavorite\) \{[\s\S]*?continue;[\s\S]*?\}[\s\S]*?await saveSnapshot/,
     "failed refresh snapshots should be skipped after cancellation removes the target"
+  );
+});
+
+test("favorite refresh stops without writing snapshots when Missevan access is denied", () => {
+  const refreshStart = favoritesPanelSource.indexOf("async function refreshFavoriteSnapshot");
+  assert.notEqual(refreshStart, -1, "favorite refresh function should exist");
+  const refreshEnd = favoritesPanelSource.indexOf("\nexport function FavoritesPanel", refreshStart);
+  const refreshSource = favoritesPanelSource.slice(refreshStart, refreshEnd === -1 ? undefined : refreshEnd);
+  const refreshManyStart = favoritesPanelSource.indexOf("async function refreshMany");
+  assert.notEqual(refreshManyStart, -1, "favorite batch refresh function should exist");
+  const refreshManyEnd = favoritesPanelSource.indexOf("\n  async function exportData", refreshManyStart);
+  const refreshManySource = favoritesPanelSource.slice(
+    refreshManyStart,
+    refreshManyEnd === -1 ? undefined : refreshManyEnd
+  );
+  const accessDeniedGuardIndex = refreshSource.indexOf("if (isFavoriteAccessDeniedError(error))");
+  const updateIndex = refreshSource.indexOf("const nextFavorite = await updateFavoriteIfExists");
+  const batchAccessDeniedIndex = refreshManySource.indexOf("if (isFavoriteAccessDeniedError(error))");
+  const failedSnapshotIndex = refreshManySource.indexOf("await saveSnapshot", batchAccessDeniedIndex);
+
+  assert.match(favoritesPanelSource, /class FavoriteAccessDeniedError extends Error/);
+  assert.match(favoritesPanelSource, /function isFavoriteAccessDeniedError/);
+  assert.match(favoritesPanelSource, /getMissevanAccessDeniedMessage/);
+  assert.match(favoritesPanelSource, /if \(platform === "missevan" && snapshot\?\.accessDenied\)/);
+  assert.match(favoritesPanelSource, /if \(favorite\.platform === "missevan" && \(data\?\.accessDenied \|\| result\?\.accessDenied\)\)/);
+  assert.notEqual(accessDeniedGuardIndex, -1, "refreshFavoriteSnapshot should rethrow access-denied task errors");
+  assert.ok(
+    accessDeniedGuardIndex < updateIndex,
+    "access-denied task errors should stop before updating the favorite"
+  );
+  assert.match(
+    refreshSource,
+    /if \(isFavoriteAccessDeniedError\(error\)\) \{[\s\S]*?throw error;[\s\S]*?\}[\s\S]*?errors\.push/,
+    "access-denied revenue failures should not be converted into partial snapshots"
+  );
+  assert.notEqual(batchAccessDeniedIndex, -1, "batch refresh should handle access-denied errors");
+  assert.match(
+    refreshManySource,
+    /if \(isFavoriteAccessDeniedError\(error\)\) \{[\s\S]*?stoppedByAccessDenied = true;[\s\S]*?break;[\s\S]*?\}/,
+    "batch refresh should stop remaining favorites when Missevan is access denied"
+  );
+  assert.ok(
+    failedSnapshotIndex === -1 || batchAccessDeniedIndex < refreshManySource.indexOf("break;", batchAccessDeniedIndex) && refreshManySource.indexOf("break;", batchAccessDeniedIndex) < failedSnapshotIndex,
+    "access-denied branch should break before failed snapshot persistence"
   );
 });
 

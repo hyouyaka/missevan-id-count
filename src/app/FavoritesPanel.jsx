@@ -24,9 +24,12 @@ import {
   extractResponseItems,
   formatCompactMetricValue,
   formatDeviceDateTime,
+  getMissevanAccessDeniedMessage,
+  getRemainingCooldownMinutes,
   formatPlainNumber,
   formatSignedCompactMetricValue,
   getBackendVersionFromResponse,
+  MISSEVAN_DESKTOP_ACCESS_HINT,
 } from "@/app/app-utils";
 import {
   buildFavoritesBackup,
@@ -365,6 +368,9 @@ async function postJson(path, payload, frontendVersion, handleVersionResponse) {
     body: JSON.stringify(payload),
   });
   const data = await parseVersionedJson(response, frontendVersion, handleVersionResponse);
+  if (data?.accessDenied) {
+    throw createFavoriteAccessDeniedError(data?.message || data?.error || "猫耳访问受限");
+  }
   if (!response.ok) {
     throw new Error(data?.message || `请求失败：${response.status}`);
   }
@@ -376,6 +382,9 @@ async function getJson(path, frontendVersion, handleVersionResponse) {
     cache: "no-store",
   });
   const data = await parseVersionedJson(response, frontendVersion, handleVersionResponse);
+  if (data?.accessDenied) {
+    throw createFavoriteAccessDeniedError(data?.message || data?.error || "猫耳访问受限");
+  }
   if (!response.ok) {
     throw new Error(data?.message || `请求失败：${response.status}`);
   }
@@ -388,6 +397,22 @@ async function wait(delayMs) {
   });
 }
 
+class FavoriteAccessDeniedError extends Error {
+  constructor(message = "猫耳访问受限") {
+    super(message);
+    this.name = "FavoriteAccessDeniedError";
+    this.accessDenied = true;
+  }
+}
+
+function isFavoriteAccessDeniedError(error) {
+  return error?.accessDenied === true || error?.name === "FavoriteAccessDeniedError";
+}
+
+function createFavoriteAccessDeniedError(message) {
+  return new FavoriteAccessDeniedError(message);
+}
+
 async function runStatsTask({ platform, taskType, payload, frontendVersion, handleVersionResponse }) {
   const created = await postJson("/stat-tasks", { platform, taskType, ...payload }, frontendVersion, handleVersionResponse);
   const taskId = String(created?.taskId ?? "").trim();
@@ -397,6 +422,9 @@ async function runStatsTask({ platform, taskType, payload, frontendVersion, hand
 
   let snapshot = created;
   for (let index = 0; index < 240; index += 1) {
+    if (platform === "missevan" && snapshot?.accessDenied) {
+      throw createFavoriteAccessDeniedError(snapshot.currentAction || snapshot.error || "猫耳访问受限");
+    }
     if (snapshot.status === "completed") {
       return snapshot;
     }
@@ -442,6 +470,9 @@ async function fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionRe
     handleVersionResponse
   );
   const result = extractResponseItems(data)[0];
+  if (favorite.platform === "missevan" && (data?.accessDenied || result?.accessDenied)) {
+    throw createFavoriteAccessDeniedError(data?.message || result?.message || "猫耳访问受限");
+  }
   if (!result?.success || !result?.info) {
     throw new Error(result?.message || "作品详情读取失败");
   }
@@ -471,6 +502,9 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
         refreshedMainCvText = fetchedMainCvText;
       }
     } catch (error) {
+      if (isFavoriteAccessDeniedError(error)) {
+        throw error;
+      }
       console.warn("Failed to refresh favorite main CV", error);
     }
   }
@@ -512,6 +546,9 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
       rewardTotal = revenueResult?.rewardCoinTotal ?? null;
       paidIdCount = Number(revenueResult?.seasonPaidUserCount ?? revenueResult?.paidUserCount ?? 0) || 0;
     } catch (error) {
+      if (isFavoriteAccessDeniedError(error)) {
+        throw error;
+      }
       errors.push(error instanceof Error ? error.message : String(error));
     }
   } else {
@@ -561,6 +598,9 @@ export function FavoritesPanel({
   favorites = [],
   favoriteActionsDisabled = false,
   statisticsActionsDisabled = false,
+  cooldownHours = 4,
+  cooldownUntil = 0,
+  desktopAppUrl = "",
   frontendVersion = "0.0.0",
   handleVersionResponse,
   isDesktopApp = false,
@@ -695,6 +735,35 @@ export function FavoritesPanel({
     await saveFavoriteSettings(nextSettings);
   }
 
+  function getFavoriteAccessDeniedText() {
+    return isDesktopApp
+      ? MISSEVAN_DESKTOP_ACCESS_HINT
+      : getMissevanAccessDeniedMessage({ cooldownHours, cooldownUntil }, cooldownHours);
+  }
+
+  function renderFavoriteAccessDeniedMessage() {
+    if (isDesktopApp) {
+      return MISSEVAN_DESKTOP_ACCESS_HINT;
+    }
+    return (
+      <span aria-label={getFavoriteAccessDeniedText()}>
+        猫耳访问受限中，请{getRemainingCooldownMinutes({ cooldownHours, cooldownUntil }, cooldownHours)}分钟后重试，或使用
+        <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
+          其他节点
+        </a>
+        和
+        {desktopAppUrl ? (
+          <a className="font-medium text-primary underline underline-offset-4" href={desktopAppUrl} rel="noreferrer" target="_blank">
+            桌面版
+          </a>
+        ) : (
+          "桌面版"
+        )}
+        。
+      </span>
+    );
+  }
+
   async function refreshMany(targetFavorites) {
     if (statisticsActionsDisabled) {
       toast.warning("后台任务运行中，请等待完成后再刷新收藏。");
@@ -718,6 +787,7 @@ export function FavoritesPanel({
       highlighted: true,
     });
     let failedCount = 0;
+    let stoppedByAccessDenied = false;
     try {
       for (let index = 0; index < queue.length; index += 1) {
         const favorite = queue[index];
@@ -740,6 +810,11 @@ export function FavoritesPanel({
         try {
           await refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp });
         } catch (error) {
+          if (isFavoriteAccessDeniedError(error)) {
+            stoppedByAccessDenied = true;
+            console.warn("Stopped favorite refresh because Missevan access is denied", error);
+            break;
+          }
           const activeFavorite = await getFavoriteByKey(favorite.key).catch(() => null);
           if (!activeFavorite) {
             continue;
@@ -760,19 +835,21 @@ export function FavoritesPanel({
       }
       await reloadSnapshots();
       await onFavoritesChange?.();
-      if (failedCount > 0) {
+      if (stoppedByAccessDenied) {
+        toast.error(renderFavoriteAccessDeniedMessage());
+      } else if (failedCount > 0) {
         toast.warning(`刷新完成，${failedCount} 部作品失败。`);
       } else {
         toast.success("收藏刷新完成。");
       }
       onBackgroundTaskChange({
         isRunning: false,
-        status: failedCount > 0 ? "failed" : "completed",
+        status: stoppedByAccessDenied || failedCount > 0 ? "failed" : "completed",
         type: "favorites_refresh",
-        title: failedCount > 0 ? "收藏刷新完成，部分失败" : "收藏刷新完成",
-        description: failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
+        title: stoppedByAccessDenied ? "收藏刷新已停止" : failedCount > 0 ? "收藏刷新完成，部分失败" : "收藏刷新完成",
+        description: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
         progress: 100,
-        action: failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
+        action: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
         resultTarget: "favorites",
         highlighted: true,
       });

@@ -7,6 +7,9 @@ import {
   buildVersionedUrl,
   classifyUnifiedSearchInput,
   getBackendVersionFromResponse,
+  getMissevanAccessDeniedMessage,
+  getRemainingCooldownMinutes,
+  MISSEVAN_DESKTOP_ACCESS_HINT,
   normalizeVersion,
 } from "@/app/app-utils";
 
@@ -15,6 +18,7 @@ export function SearchPanel({
   isDesktopApp,
   cooldownHours,
   cooldownUntil,
+  desktopAppUrl,
   frontendVersion,
   handleVersionResponse,
   onUpdateFormState,
@@ -70,17 +74,29 @@ export function SearchPanel({
     onNotice?.({ title, description });
   }
 
-  function getRemainingCooldownMinutes(config = null) {
-    const until = Number(config?.cooldownUntil ?? cooldownUntil ?? 0);
-    if (until > Date.now()) {
-      return Math.max(1, Math.ceil((until - Date.now()) / 60000));
-    }
-    const fallbackHours = Number(config?.cooldownHours ?? cooldownHours ?? 4) || 4;
-    return Math.max(1, Math.ceil(fallbackHours * 60));
+  function renderMissevanAccessDeniedMessage(config = { cooldownHours, cooldownUntil }) {
+    const plainMessage = getMissevanAccessDeniedMessage(config, cooldownHours);
+    return (
+      <span aria-label={plainMessage}>
+        猫耳访问受限中，请{getRemainingCooldownMinutes(config, cooldownHours)}分钟后重试，或使用
+        <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
+          其他节点
+        </a>
+        和
+        {desktopAppUrl ? (
+          <a className="font-medium text-primary underline underline-offset-4" href={desktopAppUrl} rel="noreferrer" target="_blank">
+            桌面版
+          </a>
+        ) : (
+          "桌面版"
+        )}
+        。
+      </span>
+    );
   }
 
   function showMissevanCooldownNotice(config = null) {
-    showBlockingNotice("", `Missevan目前受限中，请${getRemainingCooldownMinutes(config)}分钟后再来`);
+    showBlockingNotice("", renderMissevanAccessDeniedMessage(config || { cooldownHours, cooldownUntil }));
   }
 
   function clearManualInput() {
@@ -201,7 +217,7 @@ export function SearchPanel({
         if (isDesktopApp) {
           showBlockingNotice(
             "Missevan 当前受限",
-            "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
+            MISSEVAN_DESKTOP_ACCESS_HINT
           );
         } else {
           showMissevanCooldownNotice(config || { cooldownHours, cooldownUntil });

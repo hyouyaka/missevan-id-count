@@ -58,10 +58,12 @@ import {
   formatPlainNumber,
   getBackendVersionFromResponse,
   getDefaultAppConfig,
-  getRemainingCooldownHours,
+  getMissevanAccessDeniedMessage,
+  getRemainingCooldownMinutes,
   isAbortError,
   loadPersistedHistoryEntries,
   mergeAppConfig,
+  MISSEVAN_DESKTOP_ACCESS_HINT,
   normalizeVersion,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
@@ -995,16 +997,6 @@ export function ToolView({ initialAppConfig }) {
   const sharedStatsState = sharedOutputState?.stats || null;
   const sharedRevenueSummary = sharedStatsState?.revenueSummary || buildRevenueSummary(sharedStatsState?.revenueResults || [], sharedOutputPlatform);
   const sharedHistoryEntries = getMergedHistoryEntries();
-  const stepOneHint = appConfig.desktopApp
-    ? "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
-    : `如果猫耳接口暂时受限，请 ${getRemainingCooldownHours(
-        {
-          cooldownHours: appConfig.cooldownHours,
-          cooldownUntil: appConfig.cooldownUntil,
-        },
-        appConfig.cooldownHours
-      )} 小时后再来。`;
-
   useEffect(() => {
     closeMobileMenu();
   }, [currentPlatform]);
@@ -1064,6 +1056,31 @@ export function ToolView({ initialAppConfig }) {
     setCurrentPlatform("search");
   }
 
+  function renderMissevanDesktopLink(config = appConfig) {
+    const desktopAppUrl = String(config?.desktopAppUrl || "").trim();
+    if (!desktopAppUrl) {
+      return "桌面版";
+    }
+    return (
+      <a className="font-medium text-primary underline underline-offset-4" href={desktopAppUrl} rel="noreferrer" target="_blank">
+        桌面版
+      </a>
+    );
+  }
+
+  function renderMissevanAccessDeniedMessage(config = appConfig) {
+    const plainMessage = getMissevanAccessDeniedMessage(config, appConfig.cooldownHours);
+    return (
+      <span aria-label={plainMessage}>
+        猫耳访问受限中，请{getRemainingCooldownMinutes(config, appConfig.cooldownHours)}分钟后重试，或使用
+        <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
+          其他节点
+        </a>
+        和{renderMissevanDesktopLink(config)}。
+      </span>
+    );
+  }
+
   function renderHeaderAccessHint() {
     if (!appConfig.missevanEnabled) {
       return null;
@@ -1072,27 +1089,31 @@ export function ToolView({ initialAppConfig }) {
     if (appConfig.desktopApp) {
       return (
         <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
-          {stepOneHint}
+          {MISSEVAN_DESKTOP_ACCESS_HINT}
+        </p>
+      );
+    }
+
+    if (Number(appConfig.cooldownUntil ?? 0) > Date.now()) {
+      return (
+        <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
+          {renderMissevanAccessDeniedMessage(appConfig)}
         </p>
       );
     }
 
     return (
       <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
-        {stepOneHint} 也可前往{" "}
         <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
-          节点页
+          其他节点
         </a>{" "}
-        选择其他节点，或直接使用
+        <span className="text-muted-foreground/70">/</span>{" "}
         {appConfig.desktopAppUrl ? (
-          <>
-            <a className="font-medium text-primary underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
-              桌面版
-            </a>
-            。
-          </>
+          <a className="font-medium text-primary underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
+            桌面版
+          </a>
         ) : (
-          "桌面版。"
+          "桌面版"
         )}
       </p>
     );
@@ -1796,10 +1817,10 @@ export function ToolView({ initialAppConfig }) {
         ...state,
         stats: {
           ...state.stats,
-          currentAction: getCooldownMessage(),
+          currentAction: getMissevanAccessDeniedMessage(appConfigRef.current),
         },
       }));
-      toast.error("打开搜索结果失败，请稍后重试。");
+      toast.error(renderMissevanAccessDeniedMessage(appConfigRef.current));
       return;
     }
 
@@ -1837,9 +1858,15 @@ export function ToolView({ initialAppConfig }) {
             ...state,
             stats: {
               ...state.stats,
-              currentAction: appConfigRef.current.desktopApp ? "访问受限，请先打开猫耳主页验证" : getCooldownMessage(),
+              currentAction: appConfigRef.current.desktopApp ? "访问受限，请先打开猫耳主页验证" : getMissevanAccessDeniedMessage(appConfigRef.current),
             },
           }));
+          if (appConfigRef.current.desktopApp) {
+            toast.error(MISSEVAN_DESKTOP_ACCESS_HINT);
+          } else {
+            toast.error(renderMissevanAccessDeniedMessage(appConfigRef.current));
+          }
+          return;
         }
         toast.error("打开搜索结果失败，请稍后重试。");
         return;
@@ -2178,10 +2205,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function getCooldownMessage() {
-    const remainingMs = Math.max(0, Number(appConfigRef.current.cooldownUntil ?? 0) - Date.now());
-    const remainingHours =
-      remainingMs > 0 ? Math.ceil((remainingMs / (60 * 60 * 1000)) * 10) / 10 : Number(appConfigRef.current.cooldownHours ?? 4);
-    return `请 ${remainingHours} 小时后再来。`;
+    return getMissevanAccessDeniedMessage(appConfigRef.current);
   }
 
   async function showMissevanAccessHint() {
@@ -2189,9 +2213,7 @@ export function ToolView({ initialAppConfig }) {
     if (!appConfigRef.current.desktopApp) {
       await refreshCooldownState();
     }
-    const message = appConfigRef.current.desktopApp
-      ? "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
-      : getCooldownMessage();
+    const message = appConfigRef.current.desktopApp ? MISSEVAN_DESKTOP_ACCESS_HINT : getCooldownMessage();
     updatePlatformState("missevan", (state) => ({
       ...state,
       stats: {
@@ -2201,7 +2223,7 @@ export function ToolView({ initialAppConfig }) {
     }));
     setNotice({
       title: "Missevan 当前受限",
-      description: message,
+      description: appConfigRef.current.desktopApp ? message : renderMissevanAccessDeniedMessage(appConfigRef.current),
     });
   }
 
@@ -2879,6 +2901,9 @@ export function ToolView({ initialAppConfig }) {
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
           isDesktopApp={appConfig.desktopApp}
+          cooldownHours={appConfig.cooldownHours}
+          cooldownUntil={appConfig.cooldownUntil}
+          desktopAppUrl={appConfig.desktopAppUrl}
           onFavoritesChange={reloadFavoriteItems}
           onBackgroundTaskChange={setBackgroundTask}
           refreshState={favoriteRefreshState}
@@ -2894,6 +2919,7 @@ export function ToolView({ initialAppConfig }) {
           <SearchPanel
             cooldownHours={appConfig.cooldownHours}
             cooldownUntil={appConfig.cooldownUntil}
+            desktopAppUrl={appConfig.desktopAppUrl}
             formState={sharedSearchForm}
             frontendVersion={appConfig.frontendVersion}
             handleVersionResponse={updateVersionStatusFromResponse}
