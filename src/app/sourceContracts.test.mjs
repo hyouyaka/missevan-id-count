@@ -18,6 +18,7 @@ const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
 const serverSource = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+const envConfigSource = readFileSync(new URL("../../envConfig.js", import.meta.url), "utf8");
 
 test("message dialog keeps horizontal confirm actions", () => {
   assert.match(messageDialogSource, /AlertDialogFooter\s+className=/);
@@ -1848,6 +1849,39 @@ test("ongoing backend reads metrics from rank trend aggregate before legacy shar
   assert.match(primarySource, /getCachedRankTrendAggregateSnapshot\(normalizedPlatform\)/);
   assert.match(primarySource, /buildMetricSnapshotsFromRankTrendAggregate\(aggregateSnapshot, normalizedPlatform\)/);
   assert.doesNotMatch(primarySource, /ranks:metrics:\$\{date\}:\$\{normalizedPlatform\}/);
+});
+
+test("rank and ongoing caches use the configured morning refresh window", () => {
+  assert.match(envConfigSource, /"RANKS_CACHE_TIME_ZONE"/);
+  assert.match(envConfigSource, /"RANKS_UPDATE_WINDOW_TTL_MS"/);
+  assert.match(serverSource, /const RANKS_CACHE_TIME_ZONE = String\(process\.env\.RANKS_CACHE_TIME_ZONE \?\? "Asia\/Shanghai"\)\.trim\(\) \|\| "Asia\/Shanghai"/);
+  assert.match(serverSource, /const RANKS_UPDATE_WINDOW_START_HOUR = 7/);
+  assert.match(serverSource, /const RANKS_UPDATE_WINDOW_END_HOUR = 10/);
+  assert.match(serverSource, /const RANKS_UPDATE_WINDOW_TTL_MS = Math\.max\(/);
+  assert.match(serverSource, /function getRanksCachePolicyForConfig\(/);
+  assert.match(serverSource, /function isRanksCacheEntryFreshForConfig\(loadedAt, now = Date\.now\(\), config = \{\}\)/);
+  assert.match(serverSource, /hour >= startHour && hour < endHour/);
+  assert.match(serverSource, /return getRanksCachePolicyForConfig\(now, \{/);
+  assert.match(serverSource, /timeZone: RANKS_CACHE_TIME_ZONE/);
+  assert.match(serverSource, /return \{ inUpdateWindow: false, ttlMs: Infinity \}/);
+});
+
+test("rank, ongoing, and trend caches share the dynamic ranks cache policy", () => {
+  assert.match(serverSource, /isRanksCacheEntryFresh\(ranksCache\.loadedAt, now\)/);
+  assert.match(serverSource, /isRanksCacheEntryFresh\(cached\.loadedAt, now\)/);
+  assert.doesNotMatch(serverSource, /now - ranksCache\.loadedAt < RANKS_CACHE_TTL_MS/);
+  assert.doesNotMatch(serverSource, /now - cached\.loadedAt < ONGOING_CACHE_TTL_MS/);
+
+  const ranksRouteStart = serverSource.indexOf('app.get("/ranks"');
+  assert.notEqual(ranksRouteStart, -1, "ranks route should exist");
+  const ranksRouteEnd = serverSource.indexOf('app.get("/health"', ranksRouteStart);
+  assert.notEqual(ranksRouteEnd, -1, "ranks route should end before health route");
+  const ranksRouteSource = serverSource.slice(ranksRouteStart, ranksRouteEnd);
+
+  assert.match(ranksRouteSource, /const cachePolicy = getRanksCachePolicy\(\)/);
+  assert.match(ranksRouteSource, /cachePolicy\.inUpdateWindow/);
+  assert.match(ranksRouteSource, /public, max-age=\$\{Math\.floor\(cachePolicy\.ttlMs \/ 1000\)\}/);
+  assert.match(ranksRouteSource, /"no-cache"/);
 });
 
 test("server compresses JSON responses but skips images", () => {

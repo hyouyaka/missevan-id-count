@@ -1217,3 +1217,52 @@ test("info store read failure preserves an already loaded snapshot", async () =>
   fallbackSnapshot.records[0].name = "修改副本";
   assert.equal(store.snapshot.records[0].name, "已加载作品");
 });
+
+test("ranks cache policy supports the Beijing morning update window", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { getRanksCachePolicyForConfig } = await import("./server.js");
+
+  const policy = getRanksCachePolicyForConfig(Date.parse("2026-01-10T23:30:00Z"), {
+    timeZone: "Asia/Shanghai",
+    startHour: 7,
+    endHour: 10,
+    ttlMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(policy.inUpdateWindow, true);
+  assert.equal(policy.ttlMs, 10 * 60 * 1000);
+});
+
+test("ranks cache remains permanently fresh outside the morning update window", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { getRanksCachePolicyForConfig, isRanksCacheEntryFreshForConfig } = await import("./server.js");
+  const now = Date.parse("2026-01-10T22:30:00Z");
+  const loadedAt = Date.parse("2026-01-01T12:00:00Z");
+  const config = {
+    timeZone: "Asia/Shanghai",
+    startHour: 7,
+    endHour: 10,
+    ttlMs: 10 * 60 * 1000,
+  };
+
+  assert.deepEqual(getRanksCachePolicyForConfig(now, config), {
+    inUpdateWindow: false,
+    ttlMs: Infinity,
+  });
+  assert.equal(isRanksCacheEntryFreshForConfig(loadedAt, now, config), true);
+});
+
+test("ranks cache expires after ten minutes once the morning update window starts", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { isRanksCacheEntryFreshForConfig } = await import("./server.js");
+  const loadedAt = Date.parse("2026-01-10T22:59:00Z");
+  const config = {
+    timeZone: "Asia/Shanghai",
+    startHour: 7,
+    endHour: 10,
+    ttlMs: 10 * 60 * 1000,
+  };
+
+  assert.equal(isRanksCacheEntryFreshForConfig(loadedAt, Date.parse("2026-01-10T23:08:00Z"), config), true);
+  assert.equal(isRanksCacheEntryFreshForConfig(loadedAt, Date.parse("2026-01-10T23:10:00Z"), config), false);
+});
