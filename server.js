@@ -115,6 +115,7 @@ const MANBO_INFO_KEY = "manbo:info:v1";
 const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
+const CV_RANKS_KEY = "ranks:cv:latest";
 const RANKS_INDEX_KEY = "ranks:index";
 const MISSEVAN_PEAK_SERIES_TREND_KEY = "ranks:trend:peak:missevan";
 const RANK_TREND_AGGREGATE_KEYS = Object.freeze({
@@ -184,7 +185,7 @@ const ranksCache = {
 const rankTrendAggregateCache = new Map();
 const rankTrendsCache = new Map();
 const ongoingCache = new Map();
-const RANKS_RESPONSE_SCHEMA_VERSION = 3;
+const RANKS_RESPONSE_SCHEMA_VERSION = 4;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 4;
 const ONGOING_RESPONSE_SCHEMA_VERSION = 3;
 
@@ -1936,7 +1937,91 @@ function buildNormalizedRank(rankKey, rankConfig, rank, platformPayload, platfor
   };
 }
 
-function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = null) {
+function normalizeCvRankWork(work, platform) {
+  if (!work || typeof work !== "object") {
+    return null;
+  }
+
+  const dramaId = normalizeTextValue(work.dramaId ?? work.id);
+  const title = normalizeTextValue(work.title ?? work.name);
+  if (!isNumericId(dramaId) || !title) {
+    return null;
+  }
+
+  return {
+    platform,
+    dramaId,
+    title,
+    cover: normalizeTextValue(work.cover),
+    mainCvs: normalizeStringArray(work.mainCvs ?? work.main_cvs, 20),
+    viewCount: normalizeRankNumber(work.viewCount ?? work.view_count) ?? 0,
+  };
+}
+
+function normalizeCvRankItem(item, index, platform) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const cvName = normalizeTextValue(item.cvName ?? item.name);
+  if (!cvName) {
+    return null;
+  }
+
+  const works = (Array.isArray(item.works) ? item.works : [])
+    .map((work) => normalizeCvRankWork(work, platform))
+    .filter(Boolean);
+  const explicitWorkCount = normalizeRankNumber(item.workCount ?? item.work_count);
+
+  return {
+    rank: normalizeRankNumber(item.rank) ?? index + 1,
+    cvName,
+    avatar: normalizeTextValue(item.avatar),
+    totalViewCount: normalizeRankNumber(item.totalViewCount ?? item.total_view_count) ?? 0,
+    workCount: explicitWorkCount ?? works.length,
+    topWorks: works.slice(0, 3),
+    works,
+  };
+}
+
+function buildNormalizedCvRankCategory(cvSnapshot, platform) {
+  const rankings = Array.isArray(cvSnapshot?.rankings?.[platform])
+    ? cvSnapshot.rankings[platform]
+    : [];
+  const items = rankings
+    .map((item, index) => normalizeCvRankItem(item, index, platform))
+    .filter(Boolean);
+
+  if (!items.length) {
+    return null;
+  }
+
+  const fetchedAt = normalizeTextValue(cvSnapshot?.generated_at ?? cvSnapshot?.generatedAt);
+  return {
+    key: "cv",
+    label: "CV榜",
+    ranks: [
+      {
+        key: "cv",
+        label: "CV榜",
+        name: "CV榜",
+        fetchedAt,
+        unitName: "总播放量",
+        items,
+      },
+    ],
+  };
+}
+
+function buildCvRanksSummary(cvSnapshot) {
+  return {
+    updatedAt: normalizeTextValue(cvSnapshot?.generated_at ?? cvSnapshot?.generatedAt),
+    missevanDramaCount: normalizeRankNumber(cvSnapshot?.missevanDramaCount) ?? 0,
+    manboDramaCount: normalizeRankNumber(cvSnapshot?.manboDramaCount) ?? 0,
+  };
+}
+
+function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = null, cvSnapshot = null) {
   const platformPayload =
     snapshot?.[platform] && typeof snapshot[platform] === "object"
       ? snapshot[platform]
@@ -1972,6 +2057,10 @@ function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = nul
       };
     })
     .filter(Boolean);
+  const cvCategory = buildNormalizedCvRankCategory(cvSnapshot, platform);
+  if (cvCategory) {
+    categories.push(cvCategory);
+  }
 
   return {
     key: platform,
@@ -1980,19 +2069,21 @@ function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = nul
   };
 }
 
-function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null) {
+export function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null, cvSnapshot = null) {
   const safeSnapshot =
     snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
       ? snapshot
       : {};
+  const cvSummary = buildCvRanksSummary(cvSnapshot);
 
   return {
     success: true,
     schemaVersion: RANKS_RESPONSE_SCHEMA_VERSION,
     updatedAt: normalizeTextValue(safeSnapshot?._meta?.updated_at),
+    cvSummary,
     platforms: {
-      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan", peakTrendSnapshot),
-      manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo"),
+      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan", peakTrendSnapshot, cvSnapshot),
+      manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo", null, cvSnapshot),
     },
   };
 }
@@ -2056,11 +2147,15 @@ async function getCachedRanksResponse() {
 
   ranksCache.loadPromise = (async () => {
     try {
-      const [snapshot, peakTrendSnapshot] = await Promise.all([
+      const [snapshot, peakTrendSnapshot, cvSnapshot] = await Promise.all([
         readRanksSnapshot(),
         readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY).catch(() => null),
+        readRanksJsonKey(CV_RANKS_KEY).catch((error) => {
+          console.warn("Failed to read CV ranks snapshot", error);
+          return null;
+        }),
       ]);
-      const response = buildNormalizedRanksResponse(snapshot, peakTrendSnapshot);
+      const response = buildNormalizedRanksResponse(snapshot, peakTrendSnapshot, cvSnapshot);
       ranksCache.response = response;
       ranksCache.loadedAt = Date.now();
       return response;
@@ -7505,6 +7600,7 @@ app.get("/ranks", async (req, res) => {
     return res.status(503).json({
       success: false,
       updatedAt: "",
+      cvSummary: { updatedAt: "", missevanDramaCount: 0, manboDramaCount: 0 },
       platforms: {
         missevan: { key: "missevan", label: "猫耳", categories: [] },
         manbo: { key: "manbo", label: "漫播", categories: [] },

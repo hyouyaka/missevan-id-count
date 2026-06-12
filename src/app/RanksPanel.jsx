@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BeanIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CoinsIcon,
   GemIcon,
   HeartIcon,
   MicIcon,
   PlayCircleIcon,
   RefreshCwIcon,
+  ScrollTextIcon,
   ShoppingCartIcon,
   StarIcon,
   TrophyIcon,
@@ -17,6 +20,7 @@ import {
   buildVersionedUrl,
   formatDeviceDateTime,
   formatPlainNumber,
+  formatRankCompactCount,
   getBackendVersionFromResponse,
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
@@ -54,6 +58,11 @@ const ranksClientCache = {
 const mobileRankTabClassName = "min-w-0 px-1.5 text-[12px]! leading-none";
 const mobileMenuTabsListClassName =
   "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
+
+function getRankTabsGridStyle(count) {
+  const columns = Math.max(1, Number(count) || 1);
+  return { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` };
+}
 
 function formatMobileRankMenuLabel(label) {
   const normalized = String(label ?? "").trim();
@@ -587,6 +596,251 @@ function RankItemCard({
   );
 }
 
+function getCvWorksPreviewText(works) {
+  const titles = (Array.isArray(works) ? works : [])
+    .slice(0, 3)
+    .map((work) => String(work?.title ?? "").trim())
+    .filter(Boolean);
+  return titles.length ? `TOP3：${titles.map((title) => `《${title}》`).join(" ")}` : "TOP3：暂无";
+}
+
+function CvWorksList({ works = [], platform, onOpenSearchResult }) {
+  function openWorkInSearch(work) {
+    if (!work?.dramaId || !work?.title) {
+      return;
+    }
+    onOpenSearchResult?.({
+      platform,
+      id: work.dramaId,
+      dramaId: work.dramaId,
+      name: work.title,
+      usageAction: "ranks_open_search_result",
+    });
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-border/80 bg-background/78 p-2.5 sm:p-3">
+      <div className="mb-2 text-sm font-semibold leading-5">作品列表</div>
+      <div
+        data-cv-works-scroll-region="true"
+        className="max-h-[24rem] overflow-y-auto overscroll-contain rounded-md border border-border/70 bg-card/70 [-webkit-overflow-scrolling:touch]"
+      >
+        {works.length ? (
+          <div className="divide-y divide-border/70">
+            {works.map((work) => {
+              const coverUrl = buildProxyImageUrl(work.cover);
+              const mainCvText = Array.isArray(work.mainCvs) && work.mainCvs.length ? work.mainCvs.join("，") : "暂无";
+              return (
+                <div
+                  key={`${platform}-${work.dramaId}`}
+                  className="grid grid-cols-[4rem_minmax(0,1fr)] gap-2 p-2.5 sm:grid-cols-[3.75rem_minmax(0,1fr)_minmax(8rem,0.45fr)_minmax(9rem,0.55fr)] sm:items-center"
+                >
+                  <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/45 sm:size-[3.75rem]">
+                    {coverUrl ? (
+                      <img alt={work.title} className="size-full object-cover" src={coverUrl} />
+                    ) : (
+                      <div className="flex size-full items-center justify-center text-[0.65rem] text-muted-foreground">
+                        暂无封面
+                      </div>
+                    )}
+                  </div>
+                  <div data-cv-work-mobile-detail="true" className="grid min-w-0 gap-1 sm:hidden">
+                    <button
+                      type="button"
+                      title={work.title}
+                      className="block max-w-full truncate rounded-sm text-left text-sm font-semibold leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      onClick={() => openWorkInSearch(work)}
+                    >
+                      {work.title}
+                    </button>
+                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <PlatformIdIcon platform={platform} aria-label="作品ID" className={metaIconClassName} title="作品ID" />
+                      <span className="min-w-0 truncate" title={work.dramaId}>{work.dramaId}</span>
+                    </div>
+                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <PlayCircleIcon aria-label="播放量" className={metaIconClassName} title="播放量" />
+                      <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                        {formatRankCompactCount(work.viewCount)}
+                      </span>
+                    </div>
+                    <div className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
+                      <MicIcon aria-label="主役CV" className={`${metaIconClassName} mt-0.5`} title="主役CV" />
+                      <span className="min-w-0 break-words">{mainCvText}</span>
+                    </div>
+                  </div>
+                  <div className="hidden min-w-0 sm:block">
+                    <button
+                      type="button"
+                      title={work.title}
+                      className="min-w-0 break-words rounded-sm text-left text-sm font-semibold leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      onClick={() => openWorkInSearch(work)}
+                    >
+                      {work.title}
+                    </button>
+                    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <PlatformIdIcon platform={platform} aria-label="作品ID" className={metaIconClassName} title="作品ID" />
+                      <span className="min-w-0 break-all" title={work.dramaId}>{work.dramaId}</span>
+                    </div>
+                  </div>
+                  <div className="hidden min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:flex sm:text-sm">
+                    <PlayCircleIcon aria-label="播放量" className={metaIconClassName} title="播放量" />
+                    <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                      {formatRankCompactCount(work.viewCount)}
+                    </span>
+                  </div>
+                  <div className="hidden min-w-0 items-start gap-1.5 text-xs text-muted-foreground sm:flex sm:text-sm">
+                    <MicIcon aria-label="主役CV" className={`${metaIconClassName} mt-0.5`} title="主役CV" />
+                    <span className="min-w-0 break-words">{mainCvText}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground">暂无作品明细</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CvRankItemCard({ item, platform, onOpenSearchResult }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const avatarUrl = buildProxyImageUrl(item.avatar);
+  const topWorksText = getCvWorksPreviewText(item.topWorks || item.works);
+
+  return (
+    <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
+      <CardContent className="px-3.5">
+        <div className="grid grid-cols-[auto_3.75rem_minmax(0,1fr)] items-center gap-3 sm:grid-cols-[auto_4.25rem_minmax(0,1fr)_minmax(10rem,auto)_auto]">
+          <RankBadge rank={item.rank} />
+          <div className="size-[3.75rem] overflow-hidden rounded-full border border-border/70 bg-muted/45 sm:size-[4.25rem]">
+            {avatarUrl ? (
+              <img alt={item.cvName} className="size-full object-cover" src={avatarUrl} />
+            ) : (
+              <div className="flex size-full items-center justify-center text-xs font-semibold text-muted-foreground">
+                CV
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="min-w-0 break-words text-base font-semibold leading-6 text-foreground sm:text-lg">
+              {item.cvName}
+            </div>
+            <div className="mt-0.5 min-w-0 break-words text-xs leading-5 text-muted-foreground sm:text-sm">
+              {topWorksText}
+            </div>
+          </div>
+          <div data-cv-mobile-summary-row="true" className="col-start-3 flex min-w-0 items-center justify-between gap-2 text-sm sm:hidden">
+            <div className="flex min-w-0 items-center gap-3">
+              <div
+                aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+                title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+                className="flex min-w-0 items-center gap-1.5"
+              >
+                <PlayCircleIcon aria-hidden="true" className={metaIconClassName} />
+                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                  {formatRankCompactCount(item.totalViewCount)}
+                </span>
+              </div>
+              <div
+                aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
+                title={`作品数: ${formatPlainNumber(item.workCount)}`}
+                className="flex min-w-0 items-center gap-1.5"
+              >
+                <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
+                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                  {formatPlainNumber(item.workCount)}
+                </span>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className="shrink-0 bg-background/84 sm:hidden"
+              onClick={() => setIsExpanded((current) => !current)}
+              aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
+              title={isExpanded ? "收起作品列表" : "展开作品列表"}
+            >
+              {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+            </Button>
+          </div>
+          <div className="hidden min-w-0 gap-1 text-sm sm:col-start-auto sm:flex sm:items-center sm:gap-4">
+            <div
+              aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+              title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+              className="flex min-w-0 items-center gap-1.5"
+            >
+              <PlayCircleIcon aria-hidden="true" className={metaIconClassName} />
+              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                {formatRankCompactCount(item.totalViewCount)}
+              </span>
+            </div>
+            <div
+              aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
+              title={`作品数: ${formatPlainNumber(item.workCount)}`}
+              className="flex min-w-0 items-center gap-1.5"
+            >
+              <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
+              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                {formatPlainNumber(item.workCount)}
+              </span>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            className="hidden bg-background/84 sm:inline-flex"
+            onClick={() => setIsExpanded((current) => !current)}
+            aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
+            title={isExpanded ? "收起作品列表" : "展开作品列表"}
+          >
+            {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+          </Button>
+        </div>
+        {isExpanded ? (
+          <CvWorksList works={item.works || []} platform={platform} onOpenSearchResult={onOpenSearchResult} />
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CvRankColumn({ rank, platform, onOpenSearchResult }) {
+  return (
+    <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
+      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold leading-6">{rank.name}</h2>
+          <div data-rank-count-row="true" className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
+            <span>{rank.items.length} 位 CV</span>
+            {rank.fetchedAt ? <span className="text-right sm:hidden">更新：{formatRankUpdatedAt(rank.fetchedAt)}</span> : null}
+          </div>
+        </div>
+        {rank.fetchedAt ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{formatRankUpdatedAt(rank.fetchedAt)}</div> : null}
+      </div>
+      {rank.items.length ? (
+        <div className="grid gap-3">
+          {rank.items.map((item) => (
+            <CvRankItemCard
+              key={`${rank.key}-${item.rank}-${item.cvName}`}
+              item={item}
+              platform={platform}
+              onOpenSearchResult={onOpenSearchResult}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-border/80 bg-muted/30 px-5 py-8 text-center text-sm text-muted-foreground">
+          该榜单暂无数据
+        </div>
+      )}
+    </section>
+  );
+}
+
 function RankColumn({
   rank,
   platform,
@@ -603,9 +857,12 @@ function RankColumn({
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-base font-semibold leading-6">{rank.name}</h2>
-          <div className="text-xs text-muted-foreground">{rank.items.length} 项</div>
+          <div data-rank-count-row="true" className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
+            <span>{rank.items.length} 项</span>
+            {rank.fetchedAt ? <span className="text-right sm:hidden">更新：{formatRankUpdatedAt(rank.fetchedAt)}</span> : null}
+          </div>
         </div>
-        {rank.fetchedAt ? <div className="text-xs text-muted-foreground">更新：{formatRankUpdatedAt(rank.fetchedAt)}</div> : null}
+        {rank.fetchedAt ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{formatRankUpdatedAt(rank.fetchedAt)}</div> : null}
       </div>
       {rank.items.length ? (
         <div className="grid gap-3">
@@ -819,11 +1076,18 @@ export function RanksPanel({
   }
 
   const hasRanks = availablePlatforms.length > 0;
+  const isCvCategory = category?.key === "cv";
+  const cvSummary = rankData?.cvSummary || {};
+  const rankIntro = isCvCategory
+    ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品。`
+    : "同步猫耳和漫播榜单，每日更新。";
+  const rankRefreshAt = isCvCategory ? cvSummary.updatedAt || activeRank?.fetchedAt : rankData?.updatedAt;
 
   return (
     <div className="grid gap-4 sm:gap-5">
-      <div className="px-1 text-sm leading-6 text-muted-foreground">
-        同步猫耳和漫播榜单，每日更新。此次榜单刷新于：{formatRankUpdatedAt(rankData?.updatedAt)}
+      <div className="flex flex-col gap-1 px-1 text-sm leading-6 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div>{rankIntro}</div>
+        <div className="sm:text-right">此次榜单刷新于：{formatRankUpdatedAt(rankRefreshAt)}</div>
       </div>
 
       {isLoading ? (
@@ -864,7 +1128,7 @@ export function RanksPanel({
               </Tabs>
               {platformData?.categories?.length ? (
                 <Tabs value={category?.key || ""} onValueChange={updateCategory} className="gap-0">
-                  <TabsList className="grid w-full grid-cols-4 justify-stretch sm:w-fit lg:inline-flex lg:justify-start">
+                  <TabsList className="grid w-full justify-stretch sm:w-fit lg:inline-flex lg:justify-start">
                     {platformData.categories.map((item) => (
                       <TabsTrigger key={item.key} className="px-3" value={item.key}>
                         {item.label}
@@ -893,7 +1157,10 @@ export function RanksPanel({
                       onValueChange={updateCategory}
                       className="min-w-0 flex-1 gap-0"
                     >
-                      <TabsList className={`${mobileMenuTabsListClassName} grid-cols-4`}>
+                      <TabsList
+                        className={mobileMenuTabsListClassName}
+                        style={getRankTabsGridStyle(platformData.categories.length)}
+                      >
                         {platformData.categories.map((item) => (
                           <TabsTrigger key={item.key} className={mobileRankTabClassName} value={item.key}>
                             {formatMobileRankMenuLabel(item.label)}
@@ -929,24 +1196,38 @@ export function RanksPanel({
           </div>
 
           <div className="hidden gap-3 lg:grid lg:grid-cols-[repeat(auto-fit,minmax(21rem,1fr))]">
-            {(category?.ranks || []).map((rank) => (
-              <RankColumn
-                key={rank.key}
+            {isCvCategory && activeRank ? (
+              <CvRankColumn
                 platform={selectedPlatform}
-                rank={rank}
-                frontendVersion={frontendVersion}
-                handleVersionResponse={handleVersionResponse}
+                rank={activeRank}
                 onOpenSearchResult={onOpenSearchResult}
-                favoriteKeys={favoriteKeys}
-                favoriteActionsDisabled={favoriteActionsDisabled}
-                onToggleFavorite={onToggleFavorite}
-                onAddCompareItem={onAddCompareItem}
               />
-            ))}
+            ) : (
+              (category?.ranks || []).map((rank) => (
+                <RankColumn
+                  key={rank.key}
+                  platform={selectedPlatform}
+                  rank={rank}
+                  frontendVersion={frontendVersion}
+                  handleVersionResponse={handleVersionResponse}
+                  onOpenSearchResult={onOpenSearchResult}
+                  favoriteKeys={favoriteKeys}
+                  favoriteActionsDisabled={favoriteActionsDisabled}
+                  onToggleFavorite={onToggleFavorite}
+                  onAddCompareItem={onAddCompareItem}
+                />
+              ))
+            )}
           </div>
 
           <div className="grid gap-3 lg:hidden">
-            {activeRank ? (
+            {isCvCategory && activeRank ? (
+              <CvRankColumn
+                platform={selectedPlatform}
+                rank={activeRank}
+                onOpenSearchResult={onOpenSearchResult}
+              />
+            ) : activeRank ? (
               <RankColumn
                 platform={selectedPlatform}
                 rank={activeRank}

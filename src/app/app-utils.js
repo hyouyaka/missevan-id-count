@@ -751,6 +751,20 @@ export function formatPlainNumber(value) {
   return Number.isFinite(count) ? `${Math.trunc(count)}` : "0";
 }
 
+export function formatRankCompactCount(value) {
+  const count = Number(value ?? 0);
+  if (!Number.isFinite(count) || count <= 0) {
+    return "0";
+  }
+  if (count < 10000) {
+    return `${Math.trunc(count)}`;
+  }
+  if (count < 100000000) {
+    return `${(count / 10000).toFixed(2)}万`;
+  }
+  return `${(count / 100000000).toFixed(2)}亿`;
+}
+
 export function formatPlayCountDisplay(value, failed) {
   if (failed) {
     return "部分分集统计失败";

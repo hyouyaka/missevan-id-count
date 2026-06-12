@@ -1375,6 +1375,63 @@ test("rank refresh timestamps use device timezone display", () => {
   assert.doesNotMatch(ranksPanelSource, /北京时间/, "rank refresh copy should not hardcode Beijing time");
 });
 
+test("CV ranks use a dedicated expandable works layout", () => {
+  assert.match(ranksPanelSource, /function CvRankColumn/);
+  assert.match(ranksPanelSource, /function CvRankItemCard/);
+  assert.match(ranksPanelSource, /function CvWorksList/);
+  assert.match(ranksPanelSource, /category\?\.key === "cv"/);
+  assert.match(ranksPanelSource, /data-cv-works-scroll-region="true"/);
+  assert.match(ranksPanelSource, /overflow-y-auto/);
+  assert.match(ranksPanelSource, /ScrollTextIcon/);
+  assert.match(ranksPanelSource, /ChevronDownIcon/);
+  assert.match(ranksPanelSource, /ChevronUpIcon/);
+});
+
+test("CV rank mobile cards use compact TOP3 copy without a CV badge", () => {
+  const cvItemStart = ranksPanelSource.indexOf("function CvRankItemCard");
+  assert.notEqual(cvItemStart, -1, "CV item card should exist");
+  const cvItemEnd = ranksPanelSource.indexOf("function CvRankColumn", cvItemStart);
+  assert.notEqual(cvItemEnd, -1, "CV item card should end before CV column");
+  const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
+
+  assert.match(ranksPanelSource, /TOP3：/);
+  assert.doesNotMatch(ranksPanelSource, /代表作：/);
+  assert.doesNotMatch(cvItemSource, /<Badge[\s\S]*CV[\s\S]*<\/Badge>/);
+  assert.match(cvItemSource, /data-cv-mobile-summary-row="true"/);
+  assert.match(cvItemSource, /sm:hidden/);
+  assert.match(cvItemSource, /<Button[\s\S]*sm:hidden/);
+});
+
+test("CV rank works expose platform ids and search result jumps", () => {
+  const cvWorksStart = ranksPanelSource.indexOf("function CvWorksList");
+  assert.notEqual(cvWorksStart, -1, "CV works list should exist");
+  const cvWorksEnd = ranksPanelSource.indexOf("function CvRankItemCard", cvWorksStart);
+  assert.notEqual(cvWorksEnd, -1, "CV works list should end before CV item card");
+  const cvWorksSource = ranksPanelSource.slice(cvWorksStart, cvWorksEnd);
+
+  assert.match(cvWorksSource, /PlatformIdIcon[\s\S]*platform=\{platform\}[\s\S]*aria-label="作品ID"/);
+  assert.match(cvWorksSource, /dramaId: work\.dramaId/);
+  assert.match(cvWorksSource, /usageAction: "ranks_open_search_result"/);
+  assert.match(cvWorksSource, /underline underline-offset-4/);
+  assert.match(cvWorksSource, /formatRankCompactCount\(work\.viewCount\)/);
+  assert.match(cvWorksSource, /title=\{work\.title\}/);
+  assert.match(cvWorksSource, /title=\{work\.dramaId\}/);
+  assert.match(cvWorksSource, /truncate/);
+  assert.match(cvWorksSource, /data-cv-work-mobile-detail="true"/);
+});
+
+test("rank category tabs adapt to the number of categories", () => {
+  assert.match(ranksPanelSource, /getRankTabsGridStyle/);
+  assert.match(ranksPanelSource, /style=\{getRankTabsGridStyle\(platformData\.categories\.length\)\}/);
+  assert.doesNotMatch(ranksPanelSource, /TabsList className="\$\{mobileMenuTabsListClassName\} grid-cols-4"/);
+});
+
+test("rank section headers keep counts and updates on one mobile row", () => {
+  assert.match(ranksPanelSource, /data-rank-count-row="true"/);
+  assert.match(ranksPanelSource, /className="hidden text-xs text-muted-foreground sm:block"/);
+  assert.match(ranksPanelSource, /className="text-right sm:hidden"/);
+});
+
 test("rank trend dialog shows metric refresh time in device timezone", () => {
   assert.match(rankTrendUiSource, /数据刷新于：/, "trend date row should include metric refresh copy");
   assert.match(rankTrendUiSource, /formatDeviceDateTime/, "trend refresh time should use the shared device-time formatter");

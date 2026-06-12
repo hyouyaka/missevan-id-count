@@ -10,6 +10,7 @@ import {
   getHistoryMetricIconKey,
   formatSignedCompactMetricValue,
   formatDeviceDateTime,
+  formatRankCompactCount,
   formatRevenueDisplayValue,
   getRevenueDisplayLabel,
   getInlineTaggedTitleDisplayText,
@@ -100,6 +101,14 @@ test("classifyMergedSearchInput routes Missevan keywords to search", () => {
     keyword: "撒野 CV",
     rawItems: [],
   });
+});
+
+test("formatRankCompactCount keeps two decimals for wan and yi units", () => {
+  assert.equal(formatRankCompactCount(9999), "9999");
+  assert.equal(formatRankCompactCount(10000), "1.00万");
+  assert.equal(formatRankCompactCount(123456), "12.35万");
+  assert.equal(formatRankCompactCount(100000000), "1.00亿");
+  assert.equal(formatRankCompactCount(1188561622), "11.89亿");
 });
 
 test("getInlineTaggedTitleDisplayText truncates long tagged mobile titles", () => {
