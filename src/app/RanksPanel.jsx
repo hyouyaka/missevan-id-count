@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import {
+  buildRankPlatformSwitchRoutePatch,
   buildVersionedUrl,
   formatDeviceDateTime,
   formatPlainNumber,
@@ -26,6 +27,7 @@ import {
 } from "@/app/app-utils";
 import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
+import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
 import {
   canShowRankTrend,
   CompareActionButton,
@@ -47,14 +49,6 @@ function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
 }
 
-const RANKS_CLIENT_CACHE_TTL_MS = 30 * 60 * 1000;
-const RANKS_EXPECTED_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
-const ranksClientCache = {
-  data: null,
-  loadedAt: 0,
-  frontendVersion: "",
-  promise: null,
-};
 const mobileRankTabClassName = "min-w-0 px-1.5 text-[12px]! leading-none";
 const mobileMenuTabsListClassName =
   "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
@@ -82,24 +76,6 @@ function formatRankUpdatedAt(value) {
 function formatRankUpdatedDate(value) {
   const formatted = formatRankUpdatedAt(value);
   return formatted === "未知" ? "" : formatted.slice(0, 10);
-}
-
-function isRanksClientCacheFresh(frontendVersion) {
-  const normalizedVersion = String(frontendVersion ?? "").trim();
-  if (!ranksClientCache.data || ranksClientCache.frontendVersion !== normalizedVersion) {
-    return false;
-  }
-  const now = Date.now();
-  if (now - ranksClientCache.loadedAt >= RANKS_CLIENT_CACHE_TTL_MS) {
-    return false;
-  }
-
-  const updatedAtMs = Date.parse(ranksClientCache.data?.data?.updatedAt || "");
-  if (Number.isFinite(updatedAtMs) && now >= updatedAtMs + RANKS_EXPECTED_REFRESH_INTERVAL_MS) {
-    return false;
-  }
-
-  return true;
 }
 
 function getTitleClassName(title) {
@@ -374,6 +350,7 @@ function RankItemCard({
       platform,
       id: searchDramaIds[0],
       ids: searchDramaIds,
+      titles: searchDramaIds.map(() => item.name),
       name: item.name,
       paymentLabel: paymentTag,
       contentTypeLabel: titleTags[0],
@@ -613,6 +590,7 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
       platform,
       id: work.dramaId,
       dramaId: work.dramaId,
+      titles: [work.title],
       name: work.title,
       usageAction: "ranks_open_search_result",
     });
@@ -655,7 +633,7 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                     </button>
                     <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       <PlatformIdIcon platform={platform} aria-label="作品ID" className={metaIconClassName} title="作品ID" />
-                      <span className="min-w-0 truncate" title={work.dramaId}>{work.dramaId}</span>
+                      <span className="min-w-0 truncate text-foreground" title={work.dramaId}>{work.dramaId}</span>
                     </div>
                     <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       <PlayCircleIcon aria-label="播放量" className={metaIconClassName} title="播放量" />
@@ -665,7 +643,7 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                     </div>
                     <div className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
                       <MicIcon aria-label="主役CV" className={`${metaIconClassName} mt-0.5`} title="主役CV" />
-                      <span className="min-w-0 break-words">{mainCvText}</span>
+                      <span className="min-w-0 break-words text-foreground">{mainCvText}</span>
                     </div>
                   </div>
                   <div className="hidden min-w-0 sm:block">
@@ -679,7 +657,7 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                     </button>
                     <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       <PlatformIdIcon platform={platform} aria-label="作品ID" className={metaIconClassName} title="作品ID" />
-                      <span className="min-w-0 break-all" title={work.dramaId}>{work.dramaId}</span>
+                      <span className="min-w-0 break-all text-foreground" title={work.dramaId}>{work.dramaId}</span>
                     </div>
                   </div>
                   <div className="hidden min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:flex sm:text-sm">
@@ -690,7 +668,7 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                   </div>
                   <div className="hidden min-w-0 items-start gap-1.5 text-xs text-muted-foreground sm:flex sm:text-sm">
                     <MicIcon aria-label="主役CV" className={`${metaIconClassName} mt-0.5`} title="主役CV" />
-                    <span className="min-w-0 break-words">{mainCvText}</span>
+                    <span className="min-w-0 break-words text-foreground">{mainCvText}</span>
                   </div>
                 </div>
               );
@@ -907,43 +885,11 @@ function getRank(category, rankKey) {
   return category?.ranks?.find((rank) => rank.key === rankKey) || category?.ranks?.[0] || null;
 }
 
-async function fetchRanksData(frontendVersion) {
-  const normalizedVersion = String(frontendVersion ?? "").trim();
-  if (isRanksClientCacheFresh(frontendVersion)) {
-    return ranksClientCache.data;
-  }
-
-  if (ranksClientCache.promise && ranksClientCache.frontendVersion === normalizedVersion) {
-    return ranksClientCache.promise;
-  }
-
-  ranksClientCache.frontendVersion = normalizedVersion;
-  ranksClientCache.promise = (async () => {
-    try {
-      const response = await fetch(buildVersionedUrl("/ranks", frontendVersion), {
-        cache: "no-cache",
-      });
-      const data = await response.json();
-      const payload = {
-        response,
-        data,
-      };
-      if (response.ok && data?.success) {
-        ranksClientCache.data = payload;
-        ranksClientCache.loadedAt = Date.now();
-      }
-      return payload;
-    } finally {
-      ranksClientCache.promise = null;
-    }
-  })();
-
-  return ranksClientCache.promise;
-}
-
 export function RanksPanel({
   frontendVersion = "0.0.0",
   handleVersionResponse,
+  routeState = null,
+  onRouteStateChange,
   onOpenSearchResult,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
@@ -953,19 +899,25 @@ export function RanksPanel({
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [selectedPlatform, setSelectedPlatform] = useState("missevan");
-  const [selectedCategory, setSelectedCategory] = useState("");
-  const [selectedRank, setSelectedRank] = useState("");
+  const [selectedPlatform, setSelectedPlatform] = useState(() =>
+    routeState?.platform === "manbo" ? "manbo" : "missevan"
+  );
+  const [selectedCategory, setSelectedCategory] = useState(() => String(routeState?.category || "").trim());
+  const [selectedRank, setSelectedRank] = useState(() => String(routeState?.rank || "").trim());
   const loggedRanksRef = useRef(new Set());
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadRanks() {
-      setIsLoading(true);
+      const cachedPayload = getCachedRanksData(frontendVersion);
+      if (cachedPayload?.data?.success) {
+        setRankData(cachedPayload.data);
+      }
+      setIsLoading(!cachedPayload);
       setErrorMessage("");
       try {
-        const { response, data } = await fetchRanksData(frontendVersion);
+        const { response, data } = await fetchRanksData(frontendVersion, { revalidate: true });
         handleVersionResponse?.({
           ...data,
           backendVersion: getBackendVersionFromResponse(response, data),
@@ -975,16 +927,20 @@ export function RanksPanel({
           return;
         }
         if (!response.ok || !data?.success) {
-          setRankData(null);
-          setErrorMessage("Ranks 暂不可用，请稍后重试。");
+          if (!cachedPayload?.data?.success) {
+            setRankData(null);
+            setErrorMessage("Ranks 暂不可用，请稍后重试。");
+          }
           return;
         }
         setRankData(data);
       } catch (error) {
         if (!cancelled) {
           console.error("Failed to load ranks", error);
-          setRankData(null);
-          setErrorMessage("Ranks 暂不可用，请稍后重试。");
+          if (!cachedPayload?.data?.success) {
+            setRankData(null);
+            setErrorMessage("Ranks 暂不可用，请稍后重试。");
+          }
         }
       } finally {
         if (!cancelled) {
@@ -1009,14 +965,39 @@ export function RanksPanel({
   }, [rankData]);
 
   useEffect(() => {
+    if (routeState?.view !== "ranks") {
+      return;
+    }
+    setSelectedPlatform(routeState.platform === "manbo" ? "manbo" : "missevan");
+    setSelectedCategory(String(routeState.category || "").trim());
+    setSelectedRank(String(routeState.rank || "").trim());
+  }, [routeState?.view, routeState?.platform, routeState?.category, routeState?.rank]);
+
+  useEffect(() => {
     if (!availablePlatforms.length) {
       return;
     }
 
     if (!availablePlatforms.some((platform) => platform.key === selectedPlatform)) {
-      setSelectedPlatform(availablePlatforms[0].key);
+      const nextPlatform = availablePlatforms[0];
+      const nextCategory = getFirstCategory(nextPlatform);
+      const nextRank = nextCategory?.ranks?.[0] || null;
+      setSelectedPlatform(nextPlatform.key);
+      setSelectedCategory(nextCategory?.key || "");
+      setSelectedRank(nextRank?.key || "");
+      if (routeState?.view === "ranks") {
+        onRouteStateChange?.(
+          {
+            view: "ranks",
+            platform: nextPlatform.key,
+            category: nextCategory?.key || "",
+            rank: nextRank?.key || "",
+          },
+          { replace: true }
+        );
+      }
     }
-  }, [availablePlatforms, selectedPlatform]);
+  }, [availablePlatforms, onRouteStateChange, routeState?.view, selectedPlatform]);
 
   useEffect(() => {
     if (!platformData?.categories?.length) {
@@ -1026,15 +1007,38 @@ export function RanksPanel({
     const nextCategory = getCategory(platformData, selectedCategory);
     if (nextCategory?.key && nextCategory.key !== selectedCategory) {
       setSelectedCategory(nextCategory.key);
-      setSelectedRank(nextCategory.ranks?.[0]?.key || "");
+      const nextRankKey = nextCategory.ranks?.[0]?.key || "";
+      setSelectedRank(nextRankKey);
+      if (routeState?.view === "ranks") {
+        onRouteStateChange?.(
+          {
+            view: "ranks",
+            platform: selectedPlatform,
+            category: nextCategory.key,
+            rank: nextRankKey,
+          },
+          { replace: true }
+        );
+      }
       return;
     }
 
     const nextRank = getRank(nextCategory, selectedRank);
     if (nextRank?.key && nextRank.key !== selectedRank) {
       setSelectedRank(nextRank.key);
+      if (routeState?.view === "ranks") {
+        onRouteStateChange?.(
+          {
+            view: "ranks",
+            platform: selectedPlatform,
+            category: nextCategory?.key || "",
+            rank: nextRank.key,
+          },
+          { replace: true }
+        );
+      }
     }
-  }, [platformData, selectedCategory, selectedRank]);
+  }, [onRouteStateChange, platformData, routeState?.view, selectedCategory, selectedPlatform, selectedRank]);
 
   useEffect(() => {
     if (isLoading || errorMessage || !category?.key || !category?.label) {
@@ -1063,23 +1067,44 @@ export function RanksPanel({
 
   function updatePlatform(platform) {
     const nextPlatform = getPlatformData(rankData, platform);
-    const nextCategory = getFirstCategory(nextPlatform);
-    setSelectedPlatform(platform);
-    setSelectedCategory(nextCategory?.key || "");
-    setSelectedRank(nextCategory?.ranks?.[0]?.key || "");
+    const nextRoute = buildRankPlatformSwitchRoutePatch(platform, nextPlatform, {
+      category: category?.key || selectedCategory,
+      rank: activeRank?.key || selectedRank,
+    });
+    setSelectedPlatform(nextRoute.platform);
+    setSelectedCategory(nextRoute.category);
+    setSelectedRank(nextRoute.rank);
+    onRouteStateChange?.(nextRoute);
   }
 
   function updateCategory(categoryKey) {
     const nextCategory = getCategory(platformData, categoryKey);
     setSelectedCategory(nextCategory?.key || "");
     setSelectedRank(nextCategory?.ranks?.[0]?.key || "");
+    onRouteStateChange?.({
+      view: "ranks",
+      platform: selectedPlatform,
+      category: nextCategory?.key || "",
+      rank: nextCategory?.ranks?.[0]?.key || "",
+    });
+  }
+
+  function updateRank(rankKey) {
+    const nextRank = getRank(category, rankKey);
+    setSelectedRank(nextRank?.key || "");
+    onRouteStateChange?.({
+      view: "ranks",
+      platform: selectedPlatform,
+      category: category?.key || "",
+      rank: nextRank?.key || "",
+    });
   }
 
   const hasRanks = availablePlatforms.length > 0;
   const isCvCategory = category?.key === "cv";
   const cvSummary = rankData?.cvSummary || {};
   const rankIntro = isCvCategory
-    ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品。`
+    ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品，每周更新。`
     : "同步猫耳和漫播榜单，每日更新。";
   const rankRefreshAt = isCvCategory ? cvSummary.updatedAt || activeRank?.fetchedAt : rankData?.updatedAt;
 
@@ -1173,7 +1198,7 @@ export function RanksPanel({
                         <div className="h-7 w-px shrink-0 bg-border/80" />
                         <Tabs
                           value={activeRank?.key || ""}
-                          onValueChange={setSelectedRank}
+                          onValueChange={updateRank}
                           className="w-[38%] min-w-[6.5rem] max-w-[8.75rem] shrink-0 gap-0"
                         >
                           <TabsList

@@ -12,6 +12,7 @@ const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.met
 const outputPanelSource = readFileSync(new URL("./OutputPanel.jsx", import.meta.url), "utf8");
 const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", import.meta.url), "utf8");
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
+const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils.js", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
@@ -229,12 +230,10 @@ test("desktop navigation replaces discovery pages with Excel report entry", () =
 test("mobile header actions collapse into a fixed top-right menu", () => {
   assert.match(toolViewSource, /MenuIcon/);
   assert.match(toolViewSource, /const \[mobileMenuOpen, setMobileMenuOpen\] = useState\(false\)/);
-  assert.match(toolViewSource, /const mobileMenuNavigationItems = visiblePlatforms/);
   assert.match(toolViewSource, /function closeMobileMenu\(\)/);
   assert.match(toolViewSource, /function openMobileChangelog\(\)/);
   assert.match(toolViewSource, /function openMobileFeatureSuggestion\(\)/);
   assert.match(toolViewSource, /window\.open\(appConfig\.featureSuggestionUrl, "_blank", "noreferrer"\)/);
-  assert.match(toolViewSource, /function selectMobileMenuPlatform\(key\)/);
   assert.match(toolViewSource, /window\.addEventListener\("keydown", handleMobileMenuKeyDown\)/);
   assert.match(toolViewSource, /event\.key === "Escape"/);
   assert.match(toolViewSource, /setMobileMenuOpen\(false\)/);
@@ -247,20 +246,46 @@ test("mobile header actions collapse into a fixed top-right menu", () => {
   assert.match(toolViewSource, /<MenuIcon aria-hidden="true"/);
   assert.match(toolViewSource, /<div className="fixed inset-0 z-40 bg-transparent sm:hidden" onClick=\{closeMobileMenu\}/);
   assert.match(toolViewSource, /id="mobile-main-menu"/);
-  assert.match(toolViewSource, /className="absolute right-0 mt-2 w-\[125px\]/);
+  assert.match(toolViewSource, /className="absolute right-0 mt-2/);
+  assert.match(toolViewSource, /w-\[min\(210px,calc\(100vw-1\.5rem\)\)\]/);
+  assert.match(toolViewSource, /data-mobile-menu-scroll-region="true"/);
+  assert.match(toolViewSource, /max-h-\[calc\(100dvh-5\.75rem\)\]/);
+  assert.match(toolViewSource, /overflow-y-auto/);
+  assert.match(toolViewSource, /overscroll-contain/);
   assert.doesNotMatch(toolViewSource, /id="mobile-main-menu"[\s\S]*?w-40/);
   assert.match(toolViewSource, /const mobileMenuItemClassName = "relative w-full justify-start overflow-hidden text-\[0\.82rem\] font-medium text-foreground/);
   assert.match(toolViewSource, /const mobileMenuActiveItemClassName = "bg-\[rgba\(45,72,139,0\.12\)\] text-\[rgb\(32,54,112\)\]/);
   assert.match(toolViewSource, /before:absolute before:inset-y-1\.5 before:left-1 before:w-1 before:rounded-full before:bg-primary/);
+  assert.doesNotMatch(toolViewSource, /after:absolute after:inset-y-1\.5 after:right-1 after:w-1 after:rounded-full after:bg-primary/);
 
-  assert.match(toolViewSource, /mobileMenuNavigationItems\.map\(\(platform\) => \(/);
-  assert.match(toolViewSource, /selectMobileMenuPlatform\(platform\.key\)/);
-  assert.match(toolViewSource, /variant="ghost"[\s\S]*className=\{\`\$\{mobileMenuItemClassName\} \$\{currentPlatform === platform\.key \? mobileMenuActiveItemClassName : ""\}\`\}/);
-  assert.match(toolViewSource, /<MainNavigationTabLabel platform=\{platform\} \/>/);
+  assert.match(toolViewSource, /<MobileMainNavigationMenu/);
+  assert.doesNotMatch(toolViewSource, /mobileMenuColumns/);
+  assert.doesNotMatch(toolViewSource, /id="mobile-main-menu"[\s\S]{0,300}overflow-x-auto/);
+  assert.doesNotMatch(toolViewSource, /flex-row-reverse/);
+  assert.match(toolViewSource, /const \[expandedMobileRootKey, setExpandedMobileRootKey\] = useState\(""\)/);
+  assert.match(toolViewSource, /const \[expandedMobilePlatformKey, setExpandedMobilePlatformKey\] = useState\(""\)/);
+  assert.match(toolViewSource, /function toggleMobileRoot\(key\)/);
+  assert.match(toolViewSource, /function toggleMobilePlatform\(key\)/);
+  assert.match(toolViewSource, /setExpandedMobilePlatformKey\(""\)/);
+  assert.match(toolViewSource, /navigate\(routePatch\)/);
+  assert.match(toolViewSource, /activateOnHover=\{false\}/);
+  assert.match(toolViewSource, /<ChevronUpIcon aria-hidden="true"/);
+  assert.match(toolViewSource, /<ChevronDownIcon aria-hidden="true"/);
+  assert.match(toolViewSource, /showChildrenHint=\{false\}/);
+  assert.match(toolViewSource, /const routePatch = item\?\.leafPatch \|\| item\?\.routePatch/);
+  assert.match(toolViewSource, /if \(!hasChildren && routePatch\) \{/);
+  assert.match(toolViewSource, /buildMobileRankNavigationItems/);
+  assert.match(toolViewSource, /const mobileRankItems = expandedMobileRootKey === "ranks" \? buildMobileRankNavigationItems\(menuItem\) : \[\]/);
+  assert.match(toolViewSource, /mobileRankItems\.map\(\(rankItem\) => renderMobileItem\(rankItem, \{ indent: true \}\)\)/);
+  assert.doesNotMatch(toolViewSource, /expandedMobileCategoryKey/);
+  assert.doesNotMatch(toolViewSource, /expandedCategory/);
+  assert.doesNotMatch(toolViewSource, /toggleMobileCategory/);
+  assert.doesNotMatch(toolViewSource, /categoryItem\.children\.map/);
+  assert.match(toolViewSource, /<MainNavigationTabLabel platform=\{item\.platform\} \/>/);
   assert.match(toolViewSource, /openMobileChangelog/);
   assert.match(toolViewSource, /更新日志/);
-  assert.match(toolViewSource, /appConfig\.featureSuggestionUrl \? \(/);
-  assert.match(toolViewSource, /<Button type="button" variant="ghost" size="sm" className=\{mobileMenuItemClassName\} onClick=\{openMobileFeatureSuggestion\}>/);
+  assert.match(toolViewSource, /featureSuggestionUrl \? \(/);
+  assert.match(toolViewSource, /<Button type="button" variant="ghost" size="sm" className=\{mobileMenuItemClassName\} onClick=\{onOpenFeatureSuggestion\}>/);
   assert.doesNotMatch(toolViewSource, /<Button variant="ghost" size="sm" className=\{mobileMenuItemClassName\} asChild>/);
   assert.match(toolViewSource, /<span className="inline-flex min-w-0 items-center justify-center gap-1\.5">[\s\S]*<MessageSquarePlusIcon aria-hidden="true" className="size-3\.5 shrink-0" \/>[\s\S]*<span className="min-w-0 truncate">功能建议<\/span>/);
   assert.match(toolViewSource, /功能建议/);
@@ -275,12 +300,170 @@ test("landing node footer actions use compact mobile sizing", () => {
 });
 
 test("desktop header actions and navigation remain visible from sm upward", () => {
-  assert.match(toolViewSource, /<Tabs value=\{currentPlatform\} onValueChange=\{setCurrentPlatform\} className="hidden sm:block">/);
-  assert.match(toolViewSource, /className="h-9 w-fit overflow-hidden p-0\.5"/);
+  assert.match(toolViewSource, /<DesktopMainNavigationMenu/);
+  assert.match(toolViewSource, /onPointerEnter/);
+  assert.match(toolViewSource, /onFocus/);
+  assert.match(toolViewSource, /onPointerLeave/);
+  assert.doesNotMatch(toolViewSource, /onPointerLeave=\{\(\) => setOpenKey\(""\)\}/);
+  assert.match(toolViewSource, /function scheduleCloseMenu\(\)/);
+  assert.match(toolViewSource, /function cancelCloseMenu\(\)/);
+  assert.match(toolViewSource, /data-menu-hover-bridge="true"/);
+  assert.match(toolViewSource, /const triggerRefs = useRef\(\{\}\)/);
+  assert.match(toolViewSource, /function updateMenuAnchor\(platformKey\)/);
+  assert.match(toolViewSource, /style=\{menuAnchorStyle\}/);
   assert.match(toolViewSource, /className="hidden sm:inline-flex"/);
   assert.match(toolViewSource, /<Button variant="outline" size="default" className="hidden sm:inline-flex" style=\{headerActionButtonStyle\} asChild>/);
   assert.match(toolViewSource, /<a href=\{appConfig\.featureSuggestionUrl\} rel="noreferrer" target="_blank">/);
   assert.match(toolViewSource, /<ChangelogButton className="hidden sm:inline-flex"/);
+});
+
+test("extended main navigation uses route menus and lazy rank data", () => {
+  assert.match(toolViewSource, /buildOngoingNavigationMenu/);
+  assert.match(toolViewSource, /buildRanksNavigationMenu/);
+  assert.match(toolViewSource, /fetchRanksData/);
+  assert.match(toolViewSource, /const isPlatformIcon = platform\.key === "missevan" \|\| platform\.key === "manbo"/);
+  assert.match(toolViewSource, /<PlatformIdIcon aria-hidden="true" platform=\{platform\.key\}/);
+  assert.match(toolViewSource, /function getDefaultRoutePatchForMenu\(menu\)/);
+  assert.match(toolViewSource, /function MainNavigationMenuItem\(\{[\s\S]*onActivateBranch/);
+  assert.match(toolViewSource, /navigateBranchesOnClick = false/);
+  assert.match(toolViewSource, /if \(hasChildren && !navigateBranchesOnClick && !branchActive\)/);
+  assert.match(toolViewSource, /function loadMainNavigationRanks\(\)/);
+  assert.match(toolViewSource, /onRequestRanksMenu=\{loadMainNavigationRanks\}/);
+  assert.match(toolViewSource, /onNavigateRoute=\{navigateToolRouteFromMenu\}/);
+  assert.match(toolViewSource, /function navigateToolRouteFromMenu\(routePatch\)/);
+  assert.doesNotMatch(toolViewSource, /<Tabs value=\{currentPlatform\} onValueChange=\{navigateCurrentPlatform\} className="hidden sm:block">/);
+});
+
+test("top-level discovery navigation falls back while rank menu data is unavailable", () => {
+  assert.match(toolViewSource, /function navigateDefaultRoute\(menu, fallbackRoutePatch = null\)/);
+  assert.match(toolViewSource, /const routePatch = getDefaultRoutePatchForMenu\(menu\) \|\| fallbackRoutePatch/);
+  assert.match(toolViewSource, /navigateDefaultRoute\(platform\.key === "ongoing" \? ongoingMenu : ranksMenu, \{ view: platform\.key \}\)/);
+  assert.match(toolViewSource, /const hasSubmenu = routeRootKeys\.has\(platform\.key\)/);
+  assert.match(toolViewSource, /leafPatch: hasSubmenu \? getDefaultRoutePatchForMenu\(sourceMenu\) \|\| \{ view: platform\.key \} : \{ view: platform\.key \}/);
+  assert.match(toolViewSource, /hasSubmenu/);
+  assert.doesNotMatch(toolViewSource, /children: routeRootKeys\.has\(platform\.key\) \? \[\{\}\] : \[\]/);
+});
+
+test("mobile root submenu toggle does not write route state", () => {
+  assert.match(toolViewSource, /onCommitRoute=\{navigateToolRouteFromMenu\}/);
+  assert.match(toolViewSource, /if \(hasChildren\) \{[\s\S]{0,80}onToggle\?\.\(\);[\s\S]{0,80}return;/);
+  assert.match(toolViewSource, /onCommitRoute\(routePatch\)/);
+  assert.doesNotMatch(toolViewSource, /onPreviewRoute=\{/);
+  assert.doesNotMatch(toolViewSource, /function navigateToolRoutePreview\(routePatch\)/);
+  assert.doesNotMatch(toolViewSource, /onPreviewRoute\(item\.pagePatch\)/);
+  assert.doesNotMatch(toolViewSource, /if \(hasChildren\) \{[\s\S]{0,160}onNavigateRoute\(item\.rootPatch\)/);
+});
+
+test("menu route navigation scrolls to top after selecting a page", () => {
+  assert.match(toolViewSource, /function scrollToPageTop\(\)/);
+  assert.match(toolViewSource, /window\.scrollTo\(\{ top: 0, left: 0, behavior: "smooth" \}\)/);
+
+  const menuStart = toolViewSource.indexOf("function navigateToolRouteFromMenu(routePatch)");
+  assert.notEqual(menuStart, -1, "menu route navigation helper should exist");
+  const menuEnd = toolViewSource.indexOf("async function loadMainNavigationRanks", menuStart);
+  assert.notEqual(menuEnd, -1, "menu route navigation helper should end before rank menu loading");
+  const menuSource = toolViewSource.slice(menuStart, menuEnd);
+  assert.match(menuSource, /navigateToolRoute\(routePatch\)/);
+  assert.match(menuSource, /scrollToPageTop\(\)/);
+  assert.match(menuSource, /setMobileMenuOpen\(false\)/);
+});
+
+test("header title is a same-style search page shortcut", () => {
+  assert.match(toolViewSource, /function openSearchHomeFromHeader\(\)/);
+  assert.match(toolViewSource, /navigateCurrentPlatform\("search"\)/);
+  assert.match(toolViewSource, /scrollToPageTop\(\)/);
+  assert.match(toolViewSource, /<h1 className="text-xl font-semibold tracking-tight sm:text-2xl">/);
+  assert.match(toolViewSource, /<button[\s\S]*type="button"[\s\S]*className="text-left text-inherit \[font:inherit\] \[letter-spacing:inherit\]"/);
+  assert.match(toolViewSource, /onClick=\{openSearchHomeFromHeader\}/);
+  assert.match(toolViewSource, /\{appConfig\.titleZh\}/);
+});
+
+test("extended main navigation reveals child columns progressively", () => {
+  assert.match(toolViewSource, /setActivePlatformKey\(""\)/);
+  assert.match(toolViewSource, /\{activePlatformKey && activePlatform\?\.children\?\.length \? \(/);
+  assert.match(toolViewSource, /showChildrenHint=\{false\}/);
+  assert.doesNotMatch(toolViewSource, /const \[activeCategoryKey/);
+  assert.doesNotMatch(toolViewSource, /activeCategory\?\.children\?\.length > 1/);
+  assert.doesNotMatch(toolViewSource, /const preferredPlatform = getNavigationItem\(nextMenu, currentRoute\?\.platform\)/);
+  assert.doesNotMatch(toolViewSource, /setActiveCategoryKey\(preferredPlatform\?\.children\?\.\[0\]\?\.key \|\| ""\)/);
+});
+
+test("desktop main navigation supports no-hover wide touch devices", () => {
+  const desktopMenuStart = toolViewSource.indexOf("function DesktopMainNavigationMenu");
+  assert.notEqual(desktopMenuStart, -1, "desktop menu should exist");
+  const desktopMenuEnd = toolViewSource.indexOf("function MobileMainNavigationMenu", desktopMenuStart);
+  assert.notEqual(desktopMenuEnd, -1, "desktop menu should end before mobile menu");
+  const desktopMenuSource = toolViewSource.slice(desktopMenuStart, desktopMenuEnd);
+
+  assert.match(desktopMenuSource, /\(hover: hover\) and \(pointer: fine\)/);
+  assert.match(desktopMenuSource, /hoverCapable/);
+  assert.match(desktopMenuSource, /onPointerEnter=\{hoverCapable \? \(\) => handleOpen\(platform\.key\) : undefined\}/);
+  assert.match(desktopMenuSource, /if \(hasRouteMenu && !hoverCapable\)/);
+  assert.match(desktopMenuSource, /handleToggleTouchMenu\(platform\.key\)/);
+  assert.match(desktopMenuSource, /navigateDefaultRoute\(platform\.key === "ongoing" \? ongoingMenu : ranksMenu, \{ view: platform\.key \}\)/);
+  assert.match(desktopMenuSource, /activateOnHover=\{hoverCapable\}/);
+  assert.match(desktopMenuSource, /function expandPlatformBranch\(item\)/);
+  assert.match(desktopMenuSource, /onExpandBranch=\{!hoverCapable \? \(\) => expandPlatformBranch\(item\) : undefined\}/);
+  assert.match(toolViewSource, /onExpandBranch/);
+  assert.match(toolViewSource, /aria-label=\{`\$\{item\.label\}\$\{branchActive \? "收起" : "展开"\}`\}/);
+  assert.match(toolViewSource, /onClick=\{onExpandBranch\}/);
+  assert.match(desktopMenuSource, /navigateBranchesOnClick=\{true\}/);
+  assert.doesNotMatch(desktopMenuSource, /navigateBranchesOnClick=\{hoverCapable\}/);
+});
+
+test("tool main navigation is synchronized with browser history", () => {
+  assert.match(toolViewSource, /readToolRouteStateFromLocation/);
+  assert.match(toolViewSource, /normalizeToolRouteState/);
+  assert.match(toolViewSource, /buildToolRouteUrl/);
+  assert.match(toolViewSource, /const \[toolRouteState, setToolRouteState\] = useState\(\(\) =>/);
+  assert.match(toolViewSource, /const currentPlatform = toolRouteState\.view/);
+  assert.match(toolViewSource, /function applyCurrentPlatformFromUrl\(\)/);
+  assert.match(toolViewSource, /function navigateToolRoute\(patch, options = \{\}\)/);
+  assert.match(toolViewSource, /function navigateCurrentPlatform\(nextPlatform\)/);
+  assert.match(toolViewSource, /window\.history\[\s*replace \? "replaceState" : "pushState"\s*\]\(\{ toolRoute: nextState \}, "", nextUrl\)/);
+  assert.match(toolViewSource, /window\.addEventListener\("popstate", handleToolViewPopState\)/);
+  assert.match(toolViewSource, /window\.removeEventListener\("popstate", handleToolViewPopState\)/);
+  assert.match(toolViewSource, /navigateToolRouteFromMenu/);
+  assert.doesNotMatch(toolViewSource, /<Tabs value=\{currentPlatform\} onValueChange=\{setCurrentPlatform\}/);
+});
+
+test("discovery panels receive route state and route update callbacks", () => {
+  const ranksStart = toolViewSource.indexOf("<RanksPanel");
+  const ranksEnd = toolViewSource.indexOf("/>", ranksStart);
+  const ranksProps = toolViewSource.slice(ranksStart, ranksEnd);
+  const ongoingStart = toolViewSource.indexOf("<OngoingPanel");
+  const ongoingEnd = toolViewSource.indexOf("/>", ongoingStart);
+  const ongoingProps = toolViewSource.slice(ongoingStart, ongoingEnd);
+
+  assert.match(ranksProps, /routeState=\{toolRouteState\}/);
+  assert.match(ranksProps, /onRouteStateChange=\{navigateToolRoute\}/);
+  assert.match(ongoingProps, /routeState=\{toolRouteState\}/);
+  assert.match(ongoingProps, /onRouteStateChange=\{navigateToolRoute\}/);
+});
+
+test("rank and ongoing detail tabs write route state instead of only local state", () => {
+  assert.match(ranksPanelSource, /routeState/);
+  assert.match(ranksPanelSource, /onRouteStateChange/);
+  assert.match(ranksPanelSource, /buildRankPlatformSwitchRoutePatch/);
+  assert.match(ranksPanelSource, /const nextRoute = buildRankPlatformSwitchRoutePatch\(/);
+  assert.match(ranksPanelSource, /function updateRank\(rankKey\)/);
+  assert.match(ranksPanelSource, /onValueChange=\{updateRank\}/);
+  assert.doesNotMatch(ranksPanelSource, /function updatePlatform\(platform\) \{[\s\S]{0,260}const nextCategory = getFirstCategory\(nextPlatform\)/);
+  assert.doesNotMatch(ranksPanelSource, /onValueChange=\{setSelectedRank\}/);
+
+  assert.match(ongoingPanelSource, /routeState/);
+  assert.match(ongoingPanelSource, /onRouteStateChange/);
+  assert.match(ongoingPanelSource, /function updateWindow\(windowKey\)/);
+  assert.doesNotMatch(ongoingPanelSource, /onValueChange=\{setSelectedPlatform\}/);
+  assert.doesNotMatch(ongoingPanelSource, /onValueChange=\{setSelectedWindow\}/);
+});
+
+test("CV rank work details keep id, playback, and CV text visually aligned", () => {
+  assert.match(ranksPanelSource, /data-cv-work-mobile-detail="true"/);
+  assert.match(ranksPanelSource, /<span className="min-w-0 truncate text-foreground" title=\{work\.dramaId\}>\{work\.dramaId\}<\/span>/);
+  assert.match(ranksPanelSource, /<span className="min-w-0 break-all text-foreground" title=\{work\.dramaId\}>\{work\.dramaId\}<\/span>/);
+  assert.match(ranksPanelSource, /<span className="min-w-0 break-words text-foreground">\{mainCvText\}<\/span>/);
+  assert.match(ranksPanelSource, /<span className="min-w-0 break-all font-medium tabular-nums text-foreground">/);
 });
 
 test("search page owns compact platform result tabs", () => {
@@ -513,6 +696,37 @@ test("external drama title jump clears both search result panes before injecting
   assert.match(openSource, /openSearchPlatform\(targetPlatform\)/);
   assert.doesNotMatch(toolViewSource, /openDramaResultDialog/);
   assert.doesNotMatch(toolViewSource, /resultDialog/);
+});
+
+test("external drama title jump includes titles in import usage logs", () => {
+  const openStart = toolViewSource.indexOf("async function openDramaInSearch");
+  assert.notEqual(openStart, -1, "openDramaInSearch should exist");
+  const openEnd = toolViewSource.indexOf("function beginRun", openStart);
+  assert.notEqual(openEnd, -1, "openDramaInSearch should end before stats run helpers");
+  const openSource = toolViewSource.slice(openStart, openEnd);
+
+  assert.match(openSource, /titles,/);
+  assert.match(openSource, /const dramaTitles = normalizeDramaSearchTitles\(titles, dramaIds, dramaName\)/);
+  assert.match(openSource, /titles: dramaTitles/);
+  assert.match(ranksPanelSource, /titles: searchDramaIds\.map\(\(\) => item\.name\)/);
+  assert.match(ranksPanelSource, /titles: \[work\.title\]/);
+  assert.match(ongoingPanelSource, /titles: \[item\.name\]/);
+  assert.match(serverSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, inputItems\.length\)/);
+  assert.match(serverSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, items\.length\)/);
+  assert.match(serverSource, /\.\.\.\(usageTitles\.length \? \{ titles: usageTitles \} : \{\}\)/);
+});
+
+test("rank and ongoing panels render cached data before background refresh", () => {
+  assert.match(ranksDataSource, /export function getCachedRanksData\(frontendVersion\)/);
+  assert.match(ranksPanelSource, /getCachedRanksData\(frontendVersion\)/);
+  assert.match(ranksPanelSource, /setIsLoading\(!cachedPayload\)/);
+  assert.match(toolViewSource, /getCachedRanksData\(appConfigRef\.current\.frontendVersion\)/);
+
+  assert.match(ongoingPanelSource, /function getCachedOngoingData\(\{ platform, frontendVersion \}\)/);
+  assert.match(ongoingPanelSource, /ongoingClientCache\.set\(cacheKey, \{[\s\S]*data: payload/);
+  assert.doesNotMatch(ongoingPanelSource, /ongoingClientCache\.delete\(cacheKey\)/);
+  assert.match(ongoingPanelSource, /const cachedPayload = getCachedOngoingData\(\{/);
+  assert.match(ongoingPanelSource, /setIsLoading\(!cachedPayload\)/);
 });
 
 test("external drama title jump uses Missevan access-denied copy for cooldown failures", () => {
@@ -1903,30 +2117,62 @@ test("ongoing backend reads metrics from rank trend aggregate before legacy shar
   assert.notEqual(fallbackEnd, -1, "ongoing fallback should end before cached loader");
   const primarySource = serverSource.slice(fallbackEnd, serverSource.indexOf("async function getLegacyRankTrendResponse", fallbackEnd));
 
-  assert.match(primarySource, /getCachedRankTrendAggregateSnapshot\(normalizedPlatform\)/);
+  assert.match(primarySource, /getCachedRankTrendAggregateSnapshot\(normalizedPlatform, \{ force: forceRefresh \}\)/);
   assert.match(primarySource, /buildMetricSnapshotsFromRankTrendAggregate\(aggregateSnapshot, normalizedPlatform\)/);
   assert.doesNotMatch(primarySource, /ranks:metrics:\$\{date\}:\$\{normalizedPlatform\}/);
 });
 
-test("rank and ongoing caches use the configured morning refresh window", () => {
-  assert.match(envConfigSource, /"RANKS_CACHE_TIME_ZONE"/);
-  assert.match(envConfigSource, /"RANKS_UPDATE_WINDOW_TTL_MS"/);
-  assert.match(serverSource, /const RANKS_CACHE_TIME_ZONE = String\(process\.env\.RANKS_CACHE_TIME_ZONE \?\? "Asia\/Shanghai"\)\.trim\(\) \|\| "Asia\/Shanghai"/);
-  assert.match(serverSource, /const RANKS_UPDATE_WINDOW_START_HOUR = 7/);
-  assert.match(serverSource, /const RANKS_UPDATE_WINDOW_END_HOUR = 10/);
-  assert.match(serverSource, /const RANKS_UPDATE_WINDOW_TTL_MS = Math\.max\(/);
-  assert.match(serverSource, /function getRanksCachePolicyForConfig\(/);
-  assert.match(serverSource, /function isRanksCacheEntryFreshForConfig\(loadedAt, now = Date\.now\(\), config = \{\}\)/);
-  assert.match(serverSource, /hour >= startHour && hour < endHour/);
-  assert.match(serverSource, /return getRanksCachePolicyForConfig\(now, \{/);
-  assert.match(serverSource, /timeZone: RANKS_CACHE_TIME_ZONE/);
-  assert.match(serverSource, /return \{ inUpdateWindow: false, ttlMs: Infinity \}/);
+test("admin ongoing force refresh bypasses rank trend aggregate cache", () => {
+  assert.match(serverSource, /async function getCachedRankTrendAggregateSnapshot\(platform, options = \{\}\)/);
+  assert.match(serverSource, /const forceRefresh = options\?\.force === true/);
+  const ongoingStart = serverSource.indexOf("async function getCachedOngoingResponse");
+  assert.notEqual(ongoingStart, -1, "ongoing cached loader should exist");
+  const ongoingEnd = serverSource.indexOf("async function getLegacyRankTrendResponse", ongoingStart);
+  assert.notEqual(ongoingEnd, -1, "ongoing cached loader should end before legacy trend loader");
+  const ongoingSource = serverSource.slice(ongoingStart, ongoingEnd);
+
+  assert.match(ongoingSource, /if \(!forceRefresh && cached\?\.loadPromise\)/);
+  assert.doesNotMatch(ongoingSource, /if \(cached\?\.loadPromise\)\s*\{\s*return cached\.loadPromise;\s*\}/);
 });
 
-test("rank, ongoing, and trend caches share the dynamic ranks cache policy", () => {
-  assert.match(serverSource, /isRanksCacheEntryFresh\(ranksCache\.loadedAt, now\)/);
+test("rank route uses fixed UTC-04 meta probing before reading large Upstash keys", () => {
+  assert.match(serverSource, /const RANKS_META_KEY = "ranks:meta"/);
+  assert.match(serverSource, /function getFixedUtcMinusFourParts\(now = Date\.now\(\)\)/);
+  assert.match(serverSource, /export function getRanksMetaProbePlan\(now = Date\.now\(\)\)/);
+  assert.match(serverSource, /start: 19 \* 60 \+ 6/);
+  assert.match(serverSource, /expectedStart: 20 \* 60 \+ 36/);
+  assert.match(serverSource, /expectedEnd: 21 \* 60 \+ 36/);
+  assert.match(serverSource, /stop: 0/);
+  assert.match(serverSource, /start: 23 \* 60 \+ 6/);
+  assert.match(serverSource, /expectedStart: 16/);
+  assert.match(serverSource, /expectedEnd: 66/);
+  assert.match(serverSource, /stop: 4 \* 60/);
+  assert.match(serverSource, /const RANKS_META_POST_REFRESH_TTL_MS = 30 \* 60 \* 1000/);
+  assert.match(serverSource, /export function getRanksMetaProbeCycleIds\(now = Date\.now\(\)\)/);
+  assert.match(serverSource, /export function getRanksMetaProbeTtlForState\(probePlan, cycleIds = \{\}, postRefreshBackoff = \{\}\)/);
+  assert.match(serverSource, /async function readCachedRanksMeta\(probePlan, now = Date\.now\(\), cycleIds = getRanksMetaProbeCycleIds\(now\)\)/);
+  assert.match(serverSource, /buildRanksMetaRefreshDecision/);
+});
+
+test("rank route refreshes normal and CV caches independently from meta changes", () => {
+  assert.match(serverSource, /normalSnapshot: null/);
+  assert.match(serverSource, /cvSnapshot: null/);
+  assert.match(serverSource, /async function readNormalRanksBundle\(\)/);
+  assert.match(serverSource, /async function readCvRanksBundle\(options = \{\}\)/);
+  assert.match(serverSource, /const tolerateError = options\?\.tolerateError === true/);
+  assert.match(serverSource, /readCvRanksBundle\(\{ tolerateError: true \}\)/);
+  assert.match(serverSource, /if \(decision\.refreshNormal\)/);
+  assert.match(serverSource, /if \(decision\.refreshCv\)/);
+  assert.match(serverSource, /readRanksJsonKey\(RANKS_META_KEY\)/);
+  assert.match(serverSource, /readRanksSnapshot\(\)/);
+  assert.match(serverSource, /readRanksJsonKey\(CV_RANKS_KEY\)/);
+  assert.match(serverSource, /recordRanksMetaPostRefreshBackoff\("normal", probeCycleIds, now\)/);
+  assert.match(serverSource, /recordRanksMetaPostRefreshBackoff\("cv", probeCycleIds, now\)/);
+  assert.doesNotMatch(serverSource, /isRanksCacheEntryFresh\(ranksCache\.loadedAt, now\)/);
+});
+
+test("rank, ongoing, and trend caches keep dynamic policy outside the meta-driven rank route", () => {
   assert.match(serverSource, /isRanksCacheEntryFresh\(cached\.loadedAt, now\)/);
-  assert.doesNotMatch(serverSource, /now - ranksCache\.loadedAt < RANKS_CACHE_TTL_MS/);
   assert.doesNotMatch(serverSource, /now - cached\.loadedAt < ONGOING_CACHE_TTL_MS/);
 
   const ranksRouteStart = serverSource.indexOf('app.get("/ranks"');
@@ -1935,10 +2181,64 @@ test("rank, ongoing, and trend caches share the dynamic ranks cache policy", () 
   assert.notEqual(ranksRouteEnd, -1, "ranks route should end before health route");
   const ranksRouteSource = serverSource.slice(ranksRouteStart, ranksRouteEnd);
 
-  assert.match(ranksRouteSource, /const cachePolicy = getRanksCachePolicy\(\)/);
-  assert.match(ranksRouteSource, /cachePolicy\.inUpdateWindow/);
-  assert.match(ranksRouteSource, /public, max-age=\$\{Math\.floor\(cachePolicy\.ttlMs \/ 1000\)\}/);
+  assert.match(ranksRouteSource, /const \{ response, cacheStatus \} = await getCachedRanksResponse\(\)/);
+  assert.match(ranksRouteSource, /const now = Date\.now\(\)/);
+  assert.match(ranksRouteSource, /getRanksMetaProbePlan\(now\)/);
+  assert.match(ranksRouteSource, /getRanksMetaProbeCycleIds\(now\)/);
+  assert.match(ranksRouteSource, /"X-Ranks-Cache-Status"/);
+  assert.match(ranksRouteSource, /"X-Ranks-Normal-Updated-At"/);
+  assert.match(ranksRouteSource, /"X-Ranks-CV-Updated-At"/);
   assert.match(ranksRouteSource, /"no-cache"/);
+});
+
+test("rank frontend fetch can revalidate even when local cache is fresh", () => {
+  assert.match(ranksDataSource, /export async function fetchRanksData\(frontendVersion, options = \{\}\)/);
+  assert.match(ranksDataSource, /const revalidate = options\?\.revalidate === true/);
+  assert.match(ranksDataSource, /if \(!revalidate && isRanksClientCacheFresh\(frontendVersion\)\)/);
+  assert.match(ranksDataSource, /ranksClientCache\.data\?\.data\?\.updatedAt/);
+  assert.doesNotMatch(ranksDataSource, /ranksClientCache\.data\?\.data\?\.data\?\.updatedAt/);
+  assert.match(ranksPanelSource, /fetchRanksData\(frontendVersion, \{ revalidate: true \}\)/);
+  assert.match(toolViewSource, /fetchRanksData\(appConfigRef\.current\.frontendVersion, \{ revalidate: true \}\)/);
+
+  const menuLoadStart = toolViewSource.indexOf("async function loadMainNavigationRanks");
+  assert.notEqual(menuLoadStart, -1, "main navigation rank loader should exist");
+  const menuLoadEnd = toolViewSource.indexOf("function openMobileChangelog", menuLoadStart);
+  assert.notEqual(menuLoadEnd, -1, "main navigation rank loader should end before mobile changelog handler");
+  const menuLoadSource = toolViewSource.slice(menuLoadStart, menuLoadEnd);
+  assert.match(menuLoadSource, /mainNavigationRanksStatus === "loading"/);
+  assert.doesNotMatch(menuLoadSource, /mainNavigationRanksStatus === "loading" \|\| mainNavigationRanksStatus === "ready"/);
+});
+
+test("main navigation ranks keeps cached menu when revalidation fails", () => {
+  const menuLoadStart = toolViewSource.indexOf("async function loadMainNavigationRanks");
+  assert.notEqual(menuLoadStart, -1, "main navigation rank loader should exist");
+  const menuLoadEnd = toolViewSource.indexOf("function openMobileChangelog", menuLoadStart);
+  assert.notEqual(menuLoadEnd, -1, "main navigation rank loader should end before mobile changelog handler");
+  const menuLoadSource = toolViewSource.slice(menuLoadStart, menuLoadEnd);
+
+  assert.match(menuLoadSource, /const hasCachedPayload = Boolean\(cachedPayload\?\.data\?\.success\)/);
+  assert.match(menuLoadSource, /if \(!response\.ok \|\| !data\?\.success\) \{[\s\S]{0,120}if \(!hasCachedPayload\) \{/);
+  assert.doesNotMatch(menuLoadSource, /if \(!response\.ok \|\| !data\?\.success\) \{\s*setMainNavigationRanksData\(null\)/);
+});
+
+test("ongoing frontend fetch can revalidate even when local cache is fresh", () => {
+  assert.match(ongoingPanelSource, /async function fetchOngoingData\(\{ platform, frontendVersion, revalidate = false \}\)/);
+  assert.match(ongoingPanelSource, /if \(!revalidate && cached\?\.data && Date\.now\(\) - cached\.loadedAt < ONGOING_CLIENT_CACHE_TTL_MS\)/);
+  assert.match(ongoingPanelSource, /const cachedPayload = getCachedOngoingData\(\{/);
+  assert.match(ongoingPanelSource, /setIsLoading\(!cachedPayload\)/);
+  assert.match(ongoingPanelSource, /fetchOngoingData\(\{[\s\S]*revalidate: true/);
+});
+
+test("admin cache refresh route is token-gated and request-triggered", () => {
+  assert.match(serverSource, /const ADMIN_CACHE_REFRESH_TOKEN = String\(process\.env\.ADMIN_CACHE_REFRESH_TOKEN \|\| ""\)\.trim\(\)/);
+  assert.match(serverSource, /export async function executeAdminCacheRefresh/);
+  assert.match(serverSource, /app\.post\("\/admin\/cache\/refresh"/);
+  assert.match(serverSource, /Authorization/);
+  assert.match(serverSource, /Bearer \$\{ADMIN_CACHE_REFRESH_TOKEN\}/);
+  assert.match(serverSource, /action: "cache_refresh"/);
+  assert.match(serverSource, /await writeUsageLog\(logEntry\)/);
+  assert.doesNotMatch(serverSource, /setInterval\([\s\S]*getCachedRanksResponse/);
+  assert.doesNotMatch(serverSource, /setInterval\([\s\S]*getCachedOngoingResponse/);
 });
 
 test("server compresses JSON responses but skips images", () => {

@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 
 const SUPPORTED_ENV_KEYS = [
+  "ADMIN_CACHE_REFRESH_TOKEN",
   "APP_DATA_DIR",
   "DESKTOP_APP",
   "DESKTOP_EXE_DIR",

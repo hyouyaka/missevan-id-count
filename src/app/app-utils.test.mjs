@@ -4,9 +4,16 @@ import assert from "node:assert/strict";
 import {
   buildRevenuePaidMetricSegments,
   buildRevenueSummary,
+  buildMobileRankNavigationItems,
+  buildOngoingNavigationMenu,
+  buildRankPlatformSwitchRoutePatch,
+  buildRanksNavigationMenu,
+  buildToolRouteUrl,
+  buildToolViewUrl,
   classifyMergedSearchInput,
   classifyUnifiedSearchInput,
   createStatsHistoryEntry,
+  getAllowedToolViews,
   getHistoryMetricIconKey,
   formatSignedCompactMetricValue,
   formatDeviceDateTime,
@@ -17,6 +24,8 @@ import {
   getRevenuePaidCountLabel,
   loadPersistedHistoryEntries,
   parseRawItems,
+  readToolRouteStateFromLocation,
+  readToolViewFromLocation,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
   selectDramaEpisodesByMode,
@@ -54,6 +63,405 @@ function createStorageMock() {
     },
   };
 }
+
+test("tool view URL helper defaults to search without query", () => {
+  assert.equal(readToolViewFromLocation({ search: "" }), "search");
+});
+
+test("tool view URL helper reads valid view query", () => {
+  assert.equal(readToolViewFromLocation({ search: "?view=ranks" }), "ranks");
+});
+
+test("tool view URL helper rejects unavailable desktop views", () => {
+  assert.equal(readToolViewFromLocation({ search: "?view=ranks" }, { desktopApp: true }), "search");
+});
+
+test("tool view URL helper exposes platform-specific allowed views", () => {
+  assert.deepEqual(getAllowedToolViews(), ["search", "ongoing", "ranks", "favorites"]);
+  assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "favorites", "report"]);
+});
+
+test("tool view URL builder omits default search view", () => {
+  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "search"), "/tool");
+});
+
+test("tool view URL builder preserves unrelated query params", () => {
+  assert.equal(
+    buildToolViewUrl({ pathname: "/tool", search: "?foo=bar", hash: "" }, "favorites"),
+    "/tool?foo=bar&view=favorites"
+  );
+});
+
+test("tool view URL builder preserves hash while replacing existing view", () => {
+  assert.equal(
+    buildToolViewUrl({ pathname: "/tool", search: "?view=ranks&foo=bar", hash: "#section" }, "ongoing"),
+    "/tool?view=ongoing&foo=bar#section"
+  );
+});
+
+test("tool route state reader includes detail params with normalized fallbacks", () => {
+  assert.deepEqual(
+    readToolRouteStateFromLocation({
+      search: "?view=ongoing&platform=manbo&window=7d&category=ignored&rank=ignored",
+    }),
+    {
+      view: "ongoing",
+      platform: "manbo",
+      window: "7d",
+      category: "ignored",
+      rank: "ignored",
+    }
+  );
+  assert.deepEqual(readToolRouteStateFromLocation({ search: "?view=bad&platform=bad&window=bad" }), {
+    view: "search",
+    platform: "missevan",
+    window: "3d",
+    category: "",
+    rank: "",
+  });
+});
+
+test("tool route URL builder keeps only ongoing route params", () => {
+  assert.equal(
+    buildToolRouteUrl(
+      { pathname: "/", search: "?view=ranks&platform=missevan&category=cv&rank=weekly&foo=bar", hash: "#top" },
+      { view: "ongoing", platform: "manbo", window: "7d" }
+    ),
+    "/?foo=bar&view=ongoing&platform=manbo&window=7d#top"
+  );
+});
+
+test("tool route URL builder keeps only ranks route params", () => {
+  assert.equal(
+    buildToolRouteUrl(
+      { pathname: "/", search: "?view=ongoing&platform=manbo&window=30d&foo=bar", hash: "" },
+      { view: "ranks", platform: "missevan", category: "cv", rank: "weekly" }
+    ),
+    "/?foo=bar&view=ranks&platform=missevan&category=cv&rank=weekly"
+  );
+});
+
+test("tool route URL builder clears detail params for root views", () => {
+  assert.equal(
+    buildToolRouteUrl(
+      { pathname: "/tool", search: "?view=ranks&platform=manbo&category=cv&rank=weekly&foo=bar", hash: "" },
+      { view: "favorites" }
+    ),
+    "/tool?foo=bar&view=favorites"
+  );
+  assert.equal(
+    buildToolRouteUrl(
+      { pathname: "/tool", search: "?view=ongoing&platform=manbo&window=7d&foo=bar", hash: "" },
+      { view: "search" }
+    ),
+    "/tool?foo=bar"
+  );
+});
+
+test("ongoing navigation menu exposes platform route patches that default to 7 days", () => {
+  assert.deepEqual(buildOngoingNavigationMenu(), [
+    {
+      key: "missevan",
+      label: "猫耳",
+      platform: { key: "missevan", label: "猫耳" },
+      routePatch: { view: "ongoing", platform: "missevan", window: "7d" },
+    },
+    {
+      key: "manbo",
+      label: "漫播",
+      platform: { key: "manbo", label: "漫播" },
+      routePatch: { view: "ongoing", platform: "manbo", window: "7d" },
+    },
+  ]);
+});
+
+test("ranks navigation menu derives platform category and rank route patches from payload", () => {
+  const menu = buildRanksNavigationMenu({
+    data: {
+      platforms: {
+        missevan: {
+          key: "missevan",
+          label: "猫耳",
+          categories: [
+            {
+              key: "new",
+              label: "新品榜",
+              ranks: [
+                { key: "new_daily", label: "日榜" },
+                { key: "new_weekly", label: "周榜" },
+              ],
+            },
+            {
+              key: "cv",
+              label: "CV榜",
+              ranks: [{ key: "cv", label: "CV榜" }],
+            },
+          ],
+        },
+        manbo: {
+          key: "manbo",
+          label: "漫播",
+          categories: [
+            {
+              key: "box_office",
+              label: "畅销榜",
+              ranks: [
+                { key: "box_office_total", label: "总榜" },
+                { key: "box_office_vip", label: "会员榜" },
+                { key: "box_office_paid", label: "付费榜" },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(menu[0].routePatch, {
+    view: "ranks",
+    platform: "missevan",
+    category: "new",
+    rank: "new_daily",
+  });
+  assert.deepEqual(menu[0].platform, { key: "missevan", label: "猫耳" });
+  assert.deepEqual(menu[0].children[0].routePatch, {
+    view: "ranks",
+    platform: "missevan",
+    category: "new",
+    rank: "new_daily",
+  });
+  assert.deepEqual(menu[0].children[0].children[1], {
+    key: "new_weekly",
+    label: "周榜",
+    routePatch: {
+      view: "ranks",
+      platform: "missevan",
+      category: "new",
+      rank: "new_weekly",
+    },
+  });
+  assert.equal(menu[0].children[1].children, undefined);
+  assert.deepEqual(menu[1].children[0].routePatch, {
+    view: "ranks",
+    platform: "manbo",
+    category: "box_office",
+    rank: "box_office_total",
+  });
+  assert.deepEqual(menu[1].platform, { key: "manbo", label: "漫播" });
+  assert.deepEqual(menu[1].children[0].children[2], {
+    key: "box_office_paid",
+    label: "付费榜",
+    routePatch: {
+      view: "ranks",
+      platform: "manbo",
+      category: "box_office",
+      rank: "box_office_paid",
+    },
+  });
+});
+
+test("mobile rank navigation items flatten platform categories into direct rank links", () => {
+  const menu = buildRanksNavigationMenu({
+    data: {
+      platforms: {
+        missevan: {
+          key: "missevan",
+          label: "猫耳",
+          categories: [
+            {
+              key: "new",
+              label: "新品榜",
+              ranks: [
+                { key: "new_daily", label: "日榜" },
+                { key: "new_weekly", label: "周榜" },
+              ],
+            },
+            {
+              key: "popular",
+              label: "人气榜",
+              ranks: [
+                { key: "popular_weekly", label: "周榜" },
+                { key: "popular_monthly", label: "月榜" },
+              ],
+            },
+            {
+              key: "best_seller",
+              label: "畅销榜",
+              ranks: [
+                { key: "best_seller_weekly", label: "周榜" },
+                { key: "best_seller_monthly", label: "月榜" },
+              ],
+            },
+            {
+              key: "peak",
+              label: "巅峰榜",
+              ranks: [{ key: "peak", label: "巅峰榜" }],
+            },
+            {
+              key: "cv",
+              label: "CV榜",
+              ranks: [{ key: "cv", label: "CV榜" }],
+            },
+          ],
+        },
+        manbo: {
+          key: "manbo",
+          label: "漫播",
+          categories: [
+            {
+              key: "hot",
+              label: "热播榜",
+              ranks: [{ key: "hot", label: "热播榜" }],
+            },
+            {
+              key: "box_office",
+              label: "票房榜",
+              ranks: [
+                { key: "box_office_total", label: "总榜" },
+                { key: "box_office_member", label: "会员剧" },
+                { key: "box_office_paid", label: "付费剧" },
+              ],
+            },
+            {
+              key: "diamond",
+              label: "钻石榜",
+              ranks: [{ key: "diamond_monthly", label: "月榜" }],
+            },
+            {
+              key: "peak",
+              label: "巅峰榜",
+              ranks: [{ key: "peak", label: "巅峰榜" }],
+            },
+            {
+              key: "cv",
+              label: "CV榜",
+              ranks: [{ key: "cv", label: "CV榜" }],
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  const missevanItems = buildMobileRankNavigationItems(menu[0]);
+  const manboItems = buildMobileRankNavigationItems(menu[1]);
+
+  assert.deepEqual(
+    missevanItems.map((item) => item.label),
+    ["新品日榜", "新品周榜", "人气周榜", "人气月榜", "畅销周榜", "畅销月榜", "巅峰榜", "CV榜"]
+  );
+  assert.deepEqual(
+    manboItems.map((item) => item.label),
+    ["热播榜", "票房总榜", "票房会员剧榜", "票房付费剧榜", "钻石月榜", "巅峰榜", "CV榜"]
+  );
+  assert.deepEqual(missevanItems[1].routePatch, {
+    view: "ranks",
+    platform: "missevan",
+    category: "new",
+    rank: "new_weekly",
+  });
+  assert.deepEqual(manboItems[2].routePatch, {
+    view: "ranks",
+    platform: "manbo",
+    category: "box_office",
+    rank: "box_office_member",
+  });
+});
+
+test("rank platform switch carries only peak and CV categories", () => {
+  const missevanPlatform = {
+    key: "missevan",
+    categories: [
+      {
+        key: "new",
+        label: "新品榜",
+        ranks: [
+          { key: "new_daily", label: "日榜" },
+          { key: "new_weekly", label: "周榜" },
+        ],
+      },
+      {
+        key: "peak",
+        label: "巅峰榜",
+        ranks: [{ key: "peak", label: "巅峰榜" }],
+      },
+      {
+        key: "cv",
+        label: "CV榜",
+        ranks: [{ key: "cv", label: "CV榜" }],
+      },
+    ],
+  };
+  const manboPlatform = {
+    key: "manbo",
+    categories: [
+      {
+        key: "hot",
+        label: "热播榜",
+        ranks: [{ key: "hot", label: "热播榜" }],
+      },
+      {
+        key: "box_office",
+        label: "票房榜",
+        ranks: [
+          { key: "box_office_total", label: "总榜" },
+          { key: "box_office_member", label: "会员剧" },
+          { key: "box_office_paid", label: "付费剧" },
+        ],
+      },
+      {
+        key: "peak",
+        label: "巅峰榜",
+        ranks: [{ key: "peak", label: "巅峰榜" }],
+      },
+      {
+        key: "cv",
+        label: "CV榜",
+        ranks: [{ key: "cv", label: "CV榜" }],
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    buildRankPlatformSwitchRoutePatch("manbo", manboPlatform, {
+      category: "peak",
+      rank: "peak",
+    }),
+    { view: "ranks", platform: "manbo", category: "peak", rank: "peak" }
+  );
+  assert.deepEqual(
+    buildRankPlatformSwitchRoutePatch("manbo", manboPlatform, {
+      category: "cv",
+      rank: "cv",
+    }),
+    { view: "ranks", platform: "manbo", category: "cv", rank: "cv" }
+  );
+  assert.deepEqual(
+    buildRankPlatformSwitchRoutePatch("manbo", manboPlatform, {
+      category: "new",
+      rank: "new_weekly",
+    }),
+    { view: "ranks", platform: "manbo", category: "hot", rank: "hot" }
+  );
+  assert.deepEqual(
+    buildRankPlatformSwitchRoutePatch("missevan", missevanPlatform, {
+      category: "box_office",
+      rank: "box_office_member",
+    }),
+    { view: "ranks", platform: "missevan", category: "new", rank: "new_daily" }
+  );
+  assert.deepEqual(
+    buildRankPlatformSwitchRoutePatch(
+      "manbo",
+      {
+        key: "manbo",
+        categories: [{ key: "hot", label: "热播榜", ranks: [{ key: "hot", label: "热播榜" }] }],
+      },
+      { category: "cv", rank: "cv" }
+    ),
+    { view: "ranks", platform: "manbo", category: "hot", rank: "hot" }
+  );
+});
 
 test("resolveRevenueSummaryForHistory rebuilds underpopulated summaries from results", () => {
   const revenueResults = [createRevenueDrama()];

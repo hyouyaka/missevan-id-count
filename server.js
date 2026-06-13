@@ -68,6 +68,7 @@ const runtimeDir = path.join(appDataDir, "runtime");
 const usageLogPath = path.join(logsDir, "usage.log");
 const APP_VERSION = String(packageJson.version || "0.0.0").trim() || "0.0.0";
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || "1mb").trim() || "1mb";
+const ADMIN_CACHE_REFRESH_TOKEN = String(process.env.ADMIN_CACHE_REFRESH_TOKEN || "").trim();
 const MISSEVAN_ENABLED = process.env.ENABLE_MISSEVAN !== "false";
 const DESKTOP_APP = process.env.DESKTOP_APP === "true";
 const DESKTOP_EXE_DIR = String(process.env.DESKTOP_EXE_DIR || "").trim();
@@ -178,9 +179,21 @@ const newDramaIdsStore = {
   writePromise: Promise.resolve(),
 };
 const ranksCache = {
+  normalSnapshot: null,
+  peakTrendSnapshot: null,
+  cvSnapshot: null,
+  normalUpdatedAt: "",
+  cvUpdatedAt: "",
   response: null,
   loadedAt: 0,
   loadPromise: null,
+  meta: null,
+  metaLoadedAt: 0,
+  metaLoadPromise: null,
+  metaPostRefreshBackoff: {
+    normal: null,
+    cv: null,
+  },
 };
 const rankTrendAggregateCache = new Map();
 const rankTrendsCache = new Map();
@@ -238,6 +251,10 @@ const RANKS_UPDATE_WINDOW_TTL_MS = Math.max(
   60 * 1000,
   getFiniteNumberEnv("RANKS_UPDATE_WINDOW_TTL_MS", 10 * 60 * 1000)
 );
+const RANKS_META_KEY = "ranks:meta";
+const RANKS_META_PROBE_EXPECTED_TTL_MS = 2 * 60 * 1000;
+const RANKS_META_PROBE_FALLBACK_TTL_MS = 10 * 60 * 1000;
+const RANKS_META_POST_REFRESH_TTL_MS = 30 * 60 * 1000;
 const MANBO_DANMAKU_PAGE_CONCURRENCY = Math.max(
   1,
   Number(process.env.MANBO_DANMAKU_PAGE_CONCURRENCY ?? 12) || 12
@@ -1117,6 +1134,156 @@ function getHourInRanksCacheTimeZone(now = Date.now(), timeZone = "Asia/Shanghai
     }
   }
   return date.getHours();
+}
+
+function getFixedUtcMinusFourParts(now = Date.now()) {
+  const date = now instanceof Date ? now : new Date(now);
+  const shifted = new Date(date.getTime() - 4 * 60 * 60 * 1000);
+  const year = shifted.getUTCFullYear();
+  const month = shifted.getUTCMonth() + 1;
+  const dayOfMonth = shifted.getUTCDate();
+  return {
+    year,
+    month,
+    dayOfMonth,
+    dateId: formatFixedUtcMinusFourDateId(year, month, dayOfMonth),
+    day: shifted.getUTCDay(),
+    minutes: shifted.getUTCHours() * 60 + shifted.getUTCMinutes(),
+  };
+}
+
+function formatFixedUtcMinusFourDateId(year, month, dayOfMonth) {
+  return [
+    String(year).padStart(4, "0"),
+    String(month).padStart(2, "0"),
+    String(dayOfMonth).padStart(2, "0"),
+  ].join("-");
+}
+
+function getPreviousFixedUtcMinusFourDateId(parts) {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.dayOfMonth - 1));
+  return formatFixedUtcMinusFourDateId(
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate()
+  );
+}
+
+function buildRanksProbePhase(active, phase = "idle", ttlMs = Infinity) {
+  return { active, phase, ttlMs };
+}
+
+function getDailyCrossMidnightProbePhase(minutes, config) {
+  const { start, expectedStart, expectedEnd, stop, prefix } = config;
+  if (minutes >= start) {
+    if (minutes < expectedStart) {
+      return buildRanksProbePhase(true, `${prefix}-warmup`, RANKS_META_PROBE_FALLBACK_TTL_MS);
+    }
+    if (minutes < expectedEnd) {
+      return buildRanksProbePhase(true, `${prefix}-expected`, RANKS_META_PROBE_EXPECTED_TTL_MS);
+    }
+    return buildRanksProbePhase(true, `${prefix}-fallback`, RANKS_META_PROBE_FALLBACK_TTL_MS);
+  }
+  if (minutes < stop) {
+    return buildRanksProbePhase(true, `${prefix}-fallback`, RANKS_META_PROBE_FALLBACK_TTL_MS);
+  }
+  return buildRanksProbePhase(false);
+}
+
+function getWeeklyThursdayCrossMidnightProbePhase(day, minutes, config) {
+  const { start, expectedStart, expectedEnd, stop, prefix } = config;
+  if (day === 4 && minutes >= start) {
+    return buildRanksProbePhase(true, `${prefix}-warmup`, RANKS_META_PROBE_FALLBACK_TTL_MS);
+  }
+  if (day === 5 && minutes < stop) {
+    if (minutes < expectedStart) {
+      return buildRanksProbePhase(true, `${prefix}-warmup`, RANKS_META_PROBE_FALLBACK_TTL_MS);
+    }
+    if (minutes < expectedEnd) {
+      return buildRanksProbePhase(true, `${prefix}-expected`, RANKS_META_PROBE_EXPECTED_TTL_MS);
+    }
+    return buildRanksProbePhase(true, `${prefix}-fallback`, RANKS_META_PROBE_FALLBACK_TTL_MS);
+  }
+  return buildRanksProbePhase(false);
+}
+
+export function getRanksMetaProbePlan(now = Date.now()) {
+  const { day, minutes } = getFixedUtcMinusFourParts(now);
+  return {
+    normal: getDailyCrossMidnightProbePhase(minutes, {
+      start: 19 * 60 + 6,
+      expectedStart: 20 * 60 + 36,
+      expectedEnd: 21 * 60 + 36,
+      stop: 0,
+      prefix: "normal",
+    }),
+    cv: getWeeklyThursdayCrossMidnightProbePhase(day, minutes, {
+      start: 23 * 60 + 6,
+      expectedStart: 16,
+      expectedEnd: 66,
+      stop: 4 * 60,
+      prefix: "cv",
+    }),
+  };
+}
+
+export function getRanksMetaProbeCycleIds(now = Date.now()) {
+  const parts = getFixedUtcMinusFourParts(now);
+  const cvCycleDateId =
+    parts.day === 5 && parts.minutes < 4 * 60
+      ? getPreviousFixedUtcMinusFourDateId(parts)
+      : parts.dateId;
+  return {
+    normal: `normal:${parts.dateId}`,
+    cv: `cv:${cvCycleDateId}`,
+  };
+}
+
+export function getRanksMetaProbeTtlForState(probePlan, cycleIds = {}, postRefreshBackoff = {}) {
+  const activeTtls = ["normal", "cv"]
+    .map((source) => {
+      const plan = probePlan?.[source];
+      if (!plan?.active) {
+        return null;
+      }
+      const cycleId = normalizeTextValue(cycleIds?.[source]);
+      const backedOffCycleId = normalizeTextValue(postRefreshBackoff?.[source]?.cycleId);
+      if (cycleId && cycleId === backedOffCycleId) {
+        return RANKS_META_POST_REFRESH_TTL_MS;
+      }
+      return Number(plan.ttlMs);
+    })
+    .filter((ttlMs) => Number.isFinite(ttlMs));
+  return activeTtls.length ? Math.min(...activeTtls) : Infinity;
+}
+
+function normalizeRanksMetaUpdatedAt(value) {
+  return normalizeTextValue(value?.updatedAt ?? value?.updated_at);
+}
+
+function normalizeRanksMeta(meta) {
+  return {
+    normal: {
+      updatedAt: normalizeRanksMetaUpdatedAt(meta?.normal),
+      publishedAt: normalizeTextValue(meta?.normal?.publishedAt ?? meta?.normal?.published_at),
+    },
+    cv: {
+      updatedAt: normalizeRanksMetaUpdatedAt(meta?.cv),
+      publishedAt: normalizeTextValue(meta?.cv?.publishedAt ?? meta?.cv?.published_at),
+    },
+  };
+}
+
+export function buildRanksMetaRefreshDecision(currentVersions = {}, meta = {}) {
+  const normalizedMeta = normalizeRanksMeta(meta);
+  const normalUpdatedAt = normalizedMeta.normal.updatedAt || normalizeTextValue(currentVersions.normalUpdatedAt);
+  const cvUpdatedAt = normalizedMeta.cv.updatedAt || normalizeTextValue(currentVersions.cvUpdatedAt);
+  return {
+    normalUpdatedAt,
+    cvUpdatedAt,
+    refreshNormal: Boolean(normalizedMeta.normal.updatedAt && normalizedMeta.normal.updatedAt !== normalizeTextValue(currentVersions.normalUpdatedAt)),
+    refreshCv: Boolean(normalizedMeta.cv.updatedAt && normalizedMeta.cv.updatedAt !== normalizeTextValue(currentVersions.cvUpdatedAt)),
+  };
 }
 
 export function getRanksCachePolicyForConfig(now = Date.now(), config = {}) {
@@ -2088,6 +2255,14 @@ export function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null,
   };
 }
 
+export function getRanksResponseCacheValidator(response = {}) {
+  return [
+    response?.schemaVersion || RANKS_RESPONSE_SCHEMA_VERSION,
+    normalizeTextValue(response?.updatedAt),
+    normalizeTextValue(response?.cvSummary?.updatedAt),
+  ].join(":");
+}
+
 async function readRanksSnapshot() {
   if (!upstashClient.enabled) {
     throw new Error("Upstash Redis is not configured");
@@ -2112,6 +2287,118 @@ async function readRanksJsonKey(key) {
   return typeof raw === "string" ? JSON.parse(raw) : raw;
 }
 
+function getRanksSnapshotUpdatedAt(snapshot) {
+  return normalizeTextValue(snapshot?._meta?.updated_at ?? snapshot?._meta?.updatedAt);
+}
+
+function getCvSnapshotUpdatedAt(snapshot) {
+  return normalizeTextValue(snapshot?.generated_at ?? snapshot?.generatedAt);
+}
+
+async function readNormalRanksBundle() {
+  const [snapshot, peakTrendSnapshot] = await Promise.all([
+    readRanksSnapshot(),
+    readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY).catch(() => null),
+  ]);
+  return {
+    snapshot,
+    peakTrendSnapshot,
+    updatedAt: getRanksSnapshotUpdatedAt(snapshot),
+  };
+}
+
+async function readCvRanksBundle(options = {}) {
+  const tolerateError = options?.tolerateError === true;
+  let cvSnapshot = null;
+  try {
+    cvSnapshot = await readRanksJsonKey(CV_RANKS_KEY);
+  } catch (error) {
+    if (!tolerateError) {
+      throw error;
+    }
+    console.warn("Failed to read CV ranks snapshot", error);
+  }
+  return {
+    cvSnapshot,
+    updatedAt: getCvSnapshotUpdatedAt(cvSnapshot),
+  };
+}
+
+function updateCombinedRanksResponseCache() {
+  const response = buildNormalizedRanksResponse(
+    ranksCache.normalSnapshot,
+    ranksCache.peakTrendSnapshot,
+    ranksCache.cvSnapshot
+  );
+  ranksCache.response = response;
+  ranksCache.loadedAt = Date.now();
+  ranksCache.normalUpdatedAt = response.updatedAt || ranksCache.normalUpdatedAt;
+  ranksCache.cvUpdatedAt = response.cvSummary?.updatedAt || ranksCache.cvUpdatedAt;
+  return response;
+}
+
+function hasNormalRanksSnapshot(snapshot) {
+  return Boolean(snapshot && typeof snapshot === "object" && !Array.isArray(snapshot));
+}
+
+function getActiveRanksMetaProbeTtl(
+  probePlan,
+  cycleIds = getRanksMetaProbeCycleIds(),
+  postRefreshBackoff = ranksCache.metaPostRefreshBackoff
+) {
+  return getRanksMetaProbeTtlForState(probePlan, cycleIds, postRefreshBackoff);
+}
+
+async function readCachedRanksMeta(probePlan, now = Date.now(), cycleIds = getRanksMetaProbeCycleIds(now)) {
+  const ttlMs = getActiveRanksMetaProbeTtl(probePlan, cycleIds);
+  if (!Number.isFinite(ttlMs)) {
+    return { meta: ranksCache.meta, status: "hit" };
+  }
+  if (ranksCache.meta && now - ranksCache.metaLoadedAt < ttlMs) {
+    return { meta: ranksCache.meta, status: "meta-hit" };
+  }
+  if (ranksCache.metaLoadPromise) {
+    return ranksCache.metaLoadPromise;
+  }
+
+  ranksCache.metaLoadPromise = (async () => {
+    try {
+      const meta = normalizeRanksMeta(await readRanksJsonKey(RANKS_META_KEY));
+      ranksCache.meta = meta;
+      ranksCache.metaLoadedAt = Date.now();
+      return { meta, status: "meta-refresh" };
+    } finally {
+      ranksCache.metaLoadPromise = null;
+    }
+  })();
+  return ranksCache.metaLoadPromise;
+}
+
+function recordRanksMetaPostRefreshBackoff(source, cycleIds, now = Date.now()) {
+  const normalizedSource = source === "cv" ? "cv" : source === "normal" ? "normal" : "";
+  const cycleId = normalizeTextValue(cycleIds?.[normalizedSource]);
+  if (!normalizedSource || !cycleId) {
+    return;
+  }
+  ranksCache.metaPostRefreshBackoff[normalizedSource] = {
+    cycleId,
+    recordedAt: now,
+  };
+}
+
+async function loadInitialRanksResponse() {
+  const [normalBundle, cvBundle] = await Promise.all([
+    readNormalRanksBundle(),
+    readCvRanksBundle({ tolerateError: true }),
+  ]);
+  ranksCache.normalSnapshot = normalBundle.snapshot;
+  ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
+  ranksCache.normalUpdatedAt = normalBundle.updatedAt;
+  ranksCache.cvSnapshot = cvBundle.cvSnapshot;
+  ranksCache.cvUpdatedAt = cvBundle.updatedAt;
+  return updateCombinedRanksResponseCache();
+}
+
 async function readOngoingIds(platform) {
   if (!upstashClient.enabled) {
     throw new Error("Upstash Redis is not configured");
@@ -2133,38 +2420,353 @@ async function readOngoingIds(platform) {
 
 async function getCachedRanksResponse() {
   const now = Date.now();
-  if (
-    ranksCache.response &&
-    ranksCache.response.schemaVersion === RANKS_RESPONSE_SCHEMA_VERSION &&
-    isRanksCacheEntryFresh(ranksCache.loadedAt, now)
-  ) {
-    return ranksCache.response;
-  }
-
   if (ranksCache.loadPromise) {
     return ranksCache.loadPromise;
   }
 
   ranksCache.loadPromise = (async () => {
     try {
-      const [snapshot, peakTrendSnapshot, cvSnapshot] = await Promise.all([
-        readRanksSnapshot(),
-        readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY).catch(() => null),
-        readRanksJsonKey(CV_RANKS_KEY).catch((error) => {
-          console.warn("Failed to read CV ranks snapshot", error);
-          return null;
-        }),
-      ]);
-      const response = buildNormalizedRanksResponse(snapshot, peakTrendSnapshot, cvSnapshot);
-      ranksCache.response = response;
-      ranksCache.loadedAt = Date.now();
-      return response;
+      if (!ranksCache.response || ranksCache.response.schemaVersion !== RANKS_RESPONSE_SCHEMA_VERSION) {
+        const response = await loadInitialRanksResponse();
+        return { response, cacheStatus: "cold-refresh" };
+      }
+
+      const probePlan = getRanksMetaProbePlan(now);
+      const probeCycleIds = getRanksMetaProbeCycleIds(now);
+      const shouldProbeMeta = Boolean(probePlan.normal.active || probePlan.cv.active);
+      if (!shouldProbeMeta) {
+        return { response: ranksCache.response, cacheStatus: "hit" };
+      }
+
+      let metaResult;
+      try {
+        metaResult = await readCachedRanksMeta(probePlan, now, probeCycleIds);
+      } catch (error) {
+        console.warn("Failed to read ranks meta", error);
+        return { response: ranksCache.response, cacheStatus: "stale" };
+      }
+
+      const decision = buildRanksMetaRefreshDecision(
+        {
+          normalUpdatedAt: ranksCache.normalUpdatedAt,
+          cvUpdatedAt: ranksCache.cvUpdatedAt,
+        },
+        metaResult.meta
+      );
+      if (!decision.refreshNormal && !decision.refreshCv) {
+        return { response: ranksCache.response, cacheStatus: metaResult.status || "meta-hit" };
+      }
+
+      const refreshStatuses = [];
+      if (decision.refreshNormal) {
+        try {
+          const normalBundle = await readNormalRanksBundle();
+          ranksCache.normalSnapshot = normalBundle.snapshot;
+          ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
+          ranksCache.normalUpdatedAt = normalBundle.updatedAt || decision.normalUpdatedAt;
+          recordRanksMetaPostRefreshBackoff("normal", probeCycleIds, now);
+          refreshStatuses.push("normal-refresh");
+        } catch (error) {
+          console.warn("Failed to refresh normal ranks snapshot", error);
+          refreshStatuses.push("stale");
+        }
+      }
+
+      if (decision.refreshCv) {
+        try {
+          const cvBundle = await readCvRanksBundle();
+          ranksCache.cvSnapshot = cvBundle.cvSnapshot;
+          ranksCache.cvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
+          recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
+          refreshStatuses.push("cv-refresh");
+        } catch (error) {
+          console.warn("Failed to refresh CV ranks snapshot", error);
+          refreshStatuses.push("stale");
+        }
+      }
+
+      const response = updateCombinedRanksResponseCache();
+      return {
+        response,
+        cacheStatus: refreshStatuses.includes("stale") ? "stale" : refreshStatuses.join("+"),
+      };
     } finally {
       ranksCache.loadPromise = null;
     }
   })();
 
   return ranksCache.loadPromise;
+}
+
+function normalizeAdminCacheRefreshTarget(value) {
+  const target = normalizeTextValue(value).toLowerCase();
+  return [
+    "ranks:normal",
+    "ranks:cv",
+    "ranks",
+    "ongoing:missevan",
+    "ongoing:manbo",
+    "ongoing",
+    "all",
+  ].includes(target)
+    ? target
+    : "";
+}
+
+function getAdminRefreshErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error || "Unknown error");
+}
+
+function getAuthorizationValue(request = {}) {
+  const headers = request.headers && typeof request.headers === "object" ? request.headers : {};
+  return String(
+    request.authorization ??
+      headers.authorization ??
+      headers.Authorization ??
+      ""
+  ).trim();
+}
+
+function getAdminCacheRefreshReason(value) {
+  return normalizeTextValue(value).slice(0, 200);
+}
+
+export async function refreshAdminRanksCacheTarget(options = {}) {
+  const target = normalizeAdminCacheRefreshTarget(options.target || "ranks");
+  const force = options.force === true;
+  const readNormalBundle = options.readNormalRanksBundle || readNormalRanksBundle;
+  const readCvBundle = options.readCvRanksBundle || readCvRanksBundle;
+  const readMeta = options.readRanksMeta || (() => readRanksJsonKey(RANKS_META_KEY));
+  const refreshNormal = target === "ranks" || target === "ranks:normal";
+  const refreshCv = target === "ranks" || target === "ranks:cv";
+  const statuses = [];
+  let nextNormalSnapshot = ranksCache.normalSnapshot;
+  let nextPeakTrendSnapshot = ranksCache.peakTrendSnapshot;
+  let nextCvSnapshot = ranksCache.cvSnapshot;
+  let nextNormalUpdatedAt = ranksCache.normalUpdatedAt;
+  let nextCvUpdatedAt = ranksCache.cvUpdatedAt;
+  const cacheIsCold =
+    !ranksCache.response ||
+    ranksCache.response.schemaVersion !== RANKS_RESPONSE_SCHEMA_VERSION;
+
+  if (cacheIsCold) {
+    statuses.push("cold-refresh");
+  }
+
+  if (force) {
+    if (refreshNormal) {
+      const normalBundle = await readNormalBundle();
+      nextNormalSnapshot = normalBundle.snapshot;
+      nextPeakTrendSnapshot = normalBundle.peakTrendSnapshot;
+      nextNormalUpdatedAt = normalBundle.updatedAt || nextNormalUpdatedAt;
+      statuses.push("normal-refresh");
+    }
+    if (refreshCv) {
+      const cvBundle = await readCvBundle();
+      nextCvSnapshot = cvBundle.cvSnapshot;
+      nextCvUpdatedAt = cvBundle.updatedAt || nextCvUpdatedAt;
+      statuses.push("cv-refresh");
+    }
+  } else {
+    const meta = normalizeRanksMeta(await readMeta());
+    const decision = buildRanksMetaRefreshDecision(
+      {
+        normalUpdatedAt: ranksCache.normalUpdatedAt,
+        cvUpdatedAt: ranksCache.cvUpdatedAt,
+      },
+      meta
+    );
+    if (refreshNormal && decision.refreshNormal) {
+      const normalBundle = await readNormalBundle();
+      nextNormalSnapshot = normalBundle.snapshot;
+      nextPeakTrendSnapshot = normalBundle.peakTrendSnapshot;
+      nextNormalUpdatedAt = normalBundle.updatedAt || decision.normalUpdatedAt;
+      statuses.push("normal-refresh");
+    }
+    if (refreshCv && decision.refreshCv) {
+      const cvBundle = await readCvBundle();
+      nextCvSnapshot = cvBundle.cvSnapshot;
+      nextCvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
+      statuses.push("cv-refresh");
+    }
+    if (!statuses.length) {
+      statuses.push("meta-hit");
+    }
+  }
+
+  ranksCache.normalSnapshot = nextNormalSnapshot;
+  ranksCache.peakTrendSnapshot = nextPeakTrendSnapshot;
+  ranksCache.cvSnapshot = nextCvSnapshot;
+  ranksCache.normalUpdatedAt = nextNormalUpdatedAt;
+  ranksCache.cvUpdatedAt = nextCvUpdatedAt;
+
+  const response = hasNormalRanksSnapshot(nextNormalSnapshot)
+    ? updateCombinedRanksResponseCache()
+    : ranksCache.response;
+  return {
+    target,
+    success: true,
+    cacheStatus: statuses.join("+"),
+    normalUpdatedAt: response?.updatedAt || ranksCache.normalUpdatedAt || "",
+    cvUpdatedAt: response?.cvSummary?.updatedAt || ranksCache.cvUpdatedAt || "",
+  };
+}
+
+export function __getRanksCacheForTest() {
+  return {
+    normalSnapshot: ranksCache.normalSnapshot,
+    peakTrendSnapshot: ranksCache.peakTrendSnapshot,
+    cvSnapshot: ranksCache.cvSnapshot,
+    normalUpdatedAt: ranksCache.normalUpdatedAt,
+    cvUpdatedAt: ranksCache.cvUpdatedAt,
+    response: ranksCache.response,
+    loadedAt: ranksCache.loadedAt,
+  };
+}
+
+export function __setRanksCacheForTest(patch = {}) {
+  Object.assign(ranksCache, patch);
+}
+
+async function refreshAdminOngoingCachePlatform(platform) {
+  const normalizedPlatform = platform === "manbo" ? "manbo" : platform === "missevan" ? "missevan" : "";
+  if (!normalizedPlatform) {
+    throw new Error("Invalid ongoing platform");
+  }
+  const response = await getCachedOngoingResponse(normalizedPlatform, { force: true });
+  return {
+    target: `ongoing:${normalizedPlatform}`,
+    success: true,
+    updatedAt: normalizeTextValue(response?.updatedAt ?? response?.latestUpdatedAt),
+  };
+}
+
+function getAdminCacheRefreshTasks(target) {
+  if (target === "all") {
+    return [
+      { kind: "ranks", target: "ranks" },
+      { kind: "ongoing", platform: "missevan" },
+      { kind: "ongoing", platform: "manbo" },
+    ];
+  }
+  if (target === "ranks" || target === "ranks:normal" || target === "ranks:cv") {
+    return [{ kind: "ranks", target }];
+  }
+  if (target === "ongoing") {
+    return [
+      { kind: "ongoing", platform: "missevan" },
+      { kind: "ongoing", platform: "manbo" },
+    ];
+  }
+  if (target === "ongoing:missevan") {
+    return [{ kind: "ongoing", platform: "missevan" }];
+  }
+  if (target === "ongoing:manbo") {
+    return [{ kind: "ongoing", platform: "manbo" }];
+  }
+  return [];
+}
+
+function summarizeAdminCacheRefreshResults(results = []) {
+  const errors = results
+    .filter((result) => !result.success)
+    .map((result) => `${result.target}: ${result.error}`);
+  const ranksResult = [...results].reverse().find((result) => result.success && result.kind === "ranks");
+  return {
+    success: errors.length === 0,
+    cacheStatus: ranksResult?.cacheStatus || "",
+    normalUpdatedAt: ranksResult?.normalUpdatedAt || ranksCache.normalUpdatedAt || "",
+    cvUpdatedAt: ranksResult?.cvUpdatedAt || ranksCache.cvUpdatedAt || "",
+    errors,
+  };
+}
+
+export async function executeAdminCacheRefresh(request = {}, dependencies = {}) {
+  const adminToken =
+    typeof dependencies.adminToken === "string"
+      ? dependencies.adminToken.trim()
+      : ADMIN_CACHE_REFRESH_TOKEN;
+  if (!adminToken) {
+    return {
+      status: 404,
+      payload: { success: false, message: "Admin cache refresh is unavailable" },
+    };
+  }
+
+  const expectedAuthorization =
+    typeof dependencies.adminToken === "string"
+      ? `Bearer ${adminToken}`
+      : `Bearer ${ADMIN_CACHE_REFRESH_TOKEN}`;
+  if (getAuthorizationValue(request) !== expectedAuthorization) {
+    return {
+      status: 403,
+      payload: { success: false, message: "Forbidden admin cache refresh request" },
+    };
+  }
+
+  const body = request.body && typeof request.body === "object" ? request.body : {};
+  const target = normalizeAdminCacheRefreshTarget(body.target || "ranks");
+  if (!target) {
+    return {
+      status: 400,
+      payload: { success: false, message: "Invalid cache refresh target" },
+    };
+  }
+
+  const force = body.force === true;
+  const reason = getAdminCacheRefreshReason(body.reason);
+  const refreshRanks = dependencies.refreshRanks || refreshAdminRanksCacheTarget;
+  const refreshOngoing = dependencies.refreshOngoing || refreshAdminOngoingCachePlatform;
+  const results = [];
+
+  for (const task of getAdminCacheRefreshTasks(target)) {
+    try {
+      if (task.kind === "ranks") {
+        const result = await refreshRanks({ target: task.target, force });
+        results.push({ kind: "ranks", target: task.target, ...result, success: true });
+      } else {
+        const result = await refreshOngoing(task.platform);
+        results.push({ kind: "ongoing", target: `ongoing:${task.platform}`, ...result, success: true });
+      }
+    } catch (error) {
+      results.push({
+        kind: task.kind,
+        target: task.kind === "ranks" ? task.target : `ongoing:${task.platform}`,
+        success: false,
+        error: getAdminRefreshErrorMessage(error),
+      });
+    }
+  }
+
+  const summary = summarizeAdminCacheRefreshResults(results);
+  const logEntry = {
+    action: "cache_refresh",
+    target,
+    force,
+    ...(reason ? { reason } : {}),
+    success: summary.success,
+    ...(summary.cacheStatus ? { cacheStatus: summary.cacheStatus } : {}),
+    normalUpdatedAt: summary.normalUpdatedAt,
+    cvUpdatedAt: summary.cvUpdatedAt,
+    errors: summary.errors,
+  };
+  if (dependencies.writeLog) {
+    await dependencies.writeLog(logEntry);
+  } else {
+    await writeUsageLog(logEntry);
+  }
+
+  return {
+    status: summary.success ? 200 : 207,
+    payload: {
+      success: summary.success,
+      target,
+      force,
+      ...(reason ? { reason } : {}),
+      results,
+      ...summary,
+    },
+  };
 }
 
 function getRankTrendCacheKey(platform, dramaId, latestIndexDate = "", sourceVersion = "") {
@@ -2196,15 +2798,16 @@ async function readRankTrendAggregateSnapshot(platform) {
   return readRanksJsonKey(key);
 }
 
-async function getCachedRankTrendAggregateSnapshot(platform) {
+async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
+  const forceRefresh = options?.force === true;
   const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform);
   const now = Date.now();
   const cached = rankTrendAggregateCache.get(cacheKey);
-  if (cached && "snapshot" in cached && isRanksCacheEntryFresh(cached.loadedAt, now)) {
+  if (!forceRefresh && cached && "snapshot" in cached && isRanksCacheEntryFresh(cached.loadedAt, now)) {
     return cached.snapshot;
   }
-  if (cached?.loadPromise) {
+  if (!forceRefresh && cached?.loadPromise) {
     return cached.loadPromise;
   }
 
@@ -2255,22 +2858,23 @@ async function getLegacyOngoingMetricSnapshots(platform) {
   };
 }
 
-async function getCachedOngoingResponse(platform) {
+async function getCachedOngoingResponse(platform, options = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
+  const forceRefresh = options?.force === true;
   const cacheKey = getOngoingCacheKey(normalizedPlatform);
   const now = Date.now();
   const cached = ongoingCache.get(cacheKey);
-  if (cached?.response && isRanksCacheEntryFresh(cached.loadedAt, now)) {
+  if (!forceRefresh && cached?.response && isRanksCacheEntryFresh(cached.loadedAt, now)) {
     return cached.response;
   }
-  if (cached?.loadPromise) {
+  if (!forceRefresh && cached?.loadPromise) {
     return cached.loadPromise;
   }
 
   const loadPromise = (async () => {
     const [ongoingIds, aggregateSnapshot] = await Promise.all([
       readOngoingIds(normalizedPlatform),
-      getCachedRankTrendAggregateSnapshot(normalizedPlatform).catch((error) => {
+      getCachedRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh }).catch((error) => {
         console.warn("Failed to read ongoing rank trend aggregate; falling back to legacy metrics", error);
         return null;
       }),
@@ -2307,7 +2911,15 @@ async function getCachedOngoingResponse(platform) {
   try {
     return await loadPromise;
   } catch (error) {
-    ongoingCache.delete(cacheKey);
+    if (cached?.response) {
+      ongoingCache.set(cacheKey, {
+        response: cached.response,
+        loadedAt: cached.loadedAt,
+        loadPromise: null,
+      });
+    } else {
+      ongoingCache.delete(cacheKey);
+    }
     throw error;
   }
 }
@@ -7582,17 +8194,25 @@ app.get("/ongoing", async (req, res) => {
 
 app.get("/ranks", async (req, res) => {
   try {
-    const response = await getCachedRanksResponse();
-    const cachePolicy = getRanksCachePolicy();
+    const { response, cacheStatus } = await getCachedRanksResponse();
+    const now = Date.now();
+    const probeTtlMs = getActiveRanksMetaProbeTtl(
+      getRanksMetaProbePlan(now),
+      getRanksMetaProbeCycleIds(now)
+    );
     res.setHeader(
       "Cache-Control",
-      cachePolicy.inUpdateWindow
-        ? `public, max-age=${Math.floor(cachePolicy.ttlMs / 1000)}`
+      Number.isFinite(probeTtlMs)
+        ? `public, max-age=${Math.floor(probeTtlMs / 1000)}`
         : "no-cache"
     );
+    res.setHeader("X-Ranks-Cache-Status", cacheStatus || "hit");
+    res.setHeader("X-Ranks-Normal-Updated-At", response.updatedAt || "");
+    res.setHeader("X-Ranks-CV-Updated-At", response.cvSummary?.updatedAt || "");
+    const ranksResponseValidator = getRanksResponseCacheValidator(response);
     if (response.updatedAt) {
       res.setHeader("X-Ranks-Updated-At", response.updatedAt);
-      res.setHeader("ETag", `"ranks-${Buffer.from(response.updatedAt).toString("base64url")}"`);
+      res.setHeader("ETag", `"ranks-${Buffer.from(ranksResponseValidator).toString("base64url")}"`);
     }
     return res.json(response);
   } catch (error) {
@@ -7608,6 +8228,14 @@ app.get("/ranks", async (req, res) => {
       message: "Ranks are unavailable",
     });
   }
+});
+
+app.post("/admin/cache/refresh", async (req, res) => {
+  const result = await executeAdminCacheRefresh({
+    authorization: req.get("Authorization"),
+    body: req.body,
+  });
+  return res.status(result.status).json(result.payload);
 });
 
 app.get("/health", (req, res) => {
@@ -8131,6 +8759,7 @@ app.post("/getdramacards", async (req, res) => {
     items: req.body?.items || [],
   });
   const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
+  const usageTitles = normalizeStringArray(req.body?.titles, inputItems.length);
   const results = [];
   const failedIds = [];
   const failedItems = [];
@@ -8146,6 +8775,7 @@ app.post("/getdramacards", async (req, res) => {
       soundIds: inputItems
         .filter((item) => item.type === "sound")
         .map((item) => Number(item.id)),
+      ...(usageTitles.length ? { titles: usageTitles } : {}),
       count: inputItems.length,
     });
   }
@@ -8544,6 +9174,7 @@ app.get("/manbo/search", async (req, res) => {
 app.post("/manbo/getdramacards", async (req, res) => {
   const items = normalizeRawInputItems(req.body.items || []);
   const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
+  const usageTitles = normalizeStringArray(req.body?.titles, items.length);
   const results = [];
   const failedItems = [];
   let accessDenied = false;
@@ -8553,6 +9184,7 @@ app.post("/manbo/getdramacards", async (req, res) => {
       platform: "manbo",
       action: usageAction,
       items: items.map((item) => item.raw),
+      ...(usageTitles.length ? { titles: usageTitles } : {}),
       count: items.length,
     });
   }

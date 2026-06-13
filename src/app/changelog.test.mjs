@@ -49,6 +49,20 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
+test("changelog contains 1.6.3 CV rank and navigation entries", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.6.3");
+
+  assert.deepEqual(entry, {
+    version: "1.6.3",
+    changes: [
+      "请保存本工具新地址：https://mmtoolkit.app/，旧地址将于7月底失效",
+      "新增猫耳/漫播的CV榜单，统计在库的作品中主役播放量前30的CV和相应作品名单，每周刷新",
+      "优化浏览器后退/前进体验，可恢复到具体平台、榜单分类和榜单项，不再回到空白页",
+      "优化顶部菜单栏结构，添加分级菜单",
+    ],
+  });
+});
+
 test("changelog contains 1.6.2 compare trend and background task entry", () => {
   const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.6.2");
 

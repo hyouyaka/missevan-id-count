@@ -37,6 +37,7 @@ import {
 
 const ongoingClientCache = new Map();
 const ONGOING_CLIENT_SCHEMA_VERSION = 3;
+const ONGOING_CLIENT_CACHE_TTL_MS = 30 * 60 * 1000;
 
 const platformLabels = {
   missevan: "猫耳",
@@ -143,10 +144,13 @@ function getMetricDelta(item, windowKey, metricKey) {
   return item?.windows?.[windowKey]?.metrics?.[metricKey]?.delta ?? null;
 }
 
-async function fetchOngoingData({ platform, frontendVersion }) {
+async function fetchOngoingData({ platform, frontendVersion, revalidate = false }) {
   const normalizedVersion = String(frontendVersion ?? "").trim();
   const cacheKey = `${ONGOING_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${platform}`;
   const cached = ongoingClientCache.get(cacheKey);
+  if (!revalidate && cached?.data && Date.now() - cached.loadedAt < ONGOING_CLIENT_CACHE_TTL_MS) {
+    return cached.data;
+  }
   if (cached?.promise) {
     return cached.promise;
   }
@@ -162,17 +166,34 @@ async function fetchOngoingData({ platform, frontendVersion }) {
         cache: "no-store",
       });
       const data = await response.json();
-      return { response, data };
+      const payload = { response, data };
+      if (response.ok && data?.success) {
+        ongoingClientCache.set(cacheKey, {
+          data: payload,
+          loadedAt: Date.now(),
+          promise: null,
+        });
+      }
+      return payload;
     } finally {
       const current = ongoingClientCache.get(cacheKey);
       if (current?.promise === promise) {
-        ongoingClientCache.delete(cacheKey);
+        ongoingClientCache.set(cacheKey, {
+          ...current,
+          promise: null,
+        });
       }
     }
   })();
 
-  ongoingClientCache.set(cacheKey, { promise });
+  ongoingClientCache.set(cacheKey, { ...(cached || {}), promise });
   return promise;
+}
+
+function getCachedOngoingData({ platform, frontendVersion }) {
+  const normalizedVersion = String(frontendVersion ?? "").trim();
+  const cacheKey = `${ONGOING_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${platform}`;
+  return ongoingClientCache.get(cacheKey)?.data || null;
 }
 
 function MetricIcon({ label }) {
@@ -301,6 +322,7 @@ function OngoingCard({
     onOpenSearchResult?.({
       platform,
       id: item.id,
+      titles: [item.name],
       name: item.name,
       paymentLabel: item.payment_label,
       contentTypeLabel: item.content_type_label,
@@ -449,29 +471,51 @@ function OngoingCard({
 export function OngoingPanel({
   frontendVersion = "0.0.0",
   handleVersionResponse,
+  routeState = null,
+  onRouteStateChange,
   onOpenSearchResult,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
 }) {
-  const [selectedPlatform, setSelectedPlatform] = useState("missevan");
-  const [selectedWindow, setSelectedWindow] = useState("3d");
+  const [selectedPlatform, setSelectedPlatform] = useState(() =>
+    routeState?.platform === "manbo" ? "manbo" : "missevan"
+  );
+  const [selectedWindow, setSelectedWindow] = useState(() =>
+    ["3d", "7d", "30d"].includes(routeState?.window) ? routeState.window : "3d"
+  );
   const [ongoingData, setOngoingData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const loggedOngoingRef = useRef(new Set());
 
   useEffect(() => {
+    if (routeState?.view !== "ongoing") {
+      return;
+    }
+    setSelectedPlatform(routeState.platform === "manbo" ? "manbo" : "missevan");
+    setSelectedWindow(["3d", "7d", "30d"].includes(routeState.window) ? routeState.window : "3d");
+  }, [routeState?.view, routeState?.platform, routeState?.window]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadOngoing() {
-      setIsLoading(true);
+      const cachedPayload = getCachedOngoingData({
+        platform: selectedPlatform,
+        frontendVersion,
+      });
+      if (cachedPayload?.data?.success) {
+        setOngoingData(cachedPayload.data);
+      }
+      setIsLoading(!cachedPayload);
       setErrorMessage("");
       try {
         const { response, data } = await fetchOngoingData({
           platform: selectedPlatform,
           frontendVersion,
+          revalidate: true,
         });
         handleVersionResponse?.({
           ...data,
@@ -482,16 +526,20 @@ export function OngoingPanel({
           return;
         }
         if (!response.ok || !data?.success) {
-          setOngoingData(null);
-          setErrorMessage("连载中数据暂不可用，请稍后重试。");
+          if (!cachedPayload?.data?.success) {
+            setOngoingData(null);
+            setErrorMessage("连载中数据暂不可用，请稍后重试。");
+          }
           return;
         }
         setOngoingData(data);
       } catch (error) {
         if (!cancelled) {
           console.error("Failed to load ongoing dramas", error);
-          setOngoingData(null);
-          setErrorMessage("连载中数据暂不可用，请稍后重试。");
+          if (!cachedPayload?.data?.success) {
+            setOngoingData(null);
+            setErrorMessage("连载中数据暂不可用，请稍后重试。");
+          }
         }
       } finally {
         if (!cancelled) {
@@ -537,11 +585,45 @@ export function OngoingPanel({
   const activeWindow = availableWindows.includes(selectedWindow)
     ? selectedWindow
     : availableWindows[0] || "7d";
+  useEffect(() => {
+    if (routeState?.view !== "ongoing" || !availableWindows.length || selectedWindow === activeWindow) {
+      return;
+    }
+    setSelectedWindow(activeWindow);
+    onRouteStateChange?.(
+      {
+        view: "ongoing",
+        platform: selectedPlatform,
+        window: activeWindow,
+      },
+      { replace: true }
+    );
+  }, [activeWindow, availableWindows.length, onRouteStateChange, routeState?.view, selectedPlatform, selectedWindow]);
   const sortedItems = useMemo(
     () => sortOngoingItemsByWindowDelta(ongoingData?.items || [], activeWindow),
     [activeWindow, ongoingData?.items]
   );
   const platformLabel = platformLabels[selectedPlatform] || selectedPlatform;
+
+  function updatePlatform(platform) {
+    const nextPlatform = platform === "manbo" ? "manbo" : "missevan";
+    setSelectedPlatform(nextPlatform);
+    onRouteStateChange?.({
+      view: "ongoing",
+      platform: nextPlatform,
+      window: activeWindow,
+    });
+  }
+
+  function updateWindow(windowKey) {
+    const nextWindow = ["3d", "7d", "30d"].includes(windowKey) ? windowKey : "3d";
+    setSelectedWindow(nextWindow);
+    onRouteStateChange?.({
+      view: "ongoing",
+      platform: selectedPlatform,
+      window: nextWindow,
+    });
+  }
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -557,7 +639,7 @@ export function OngoingPanel({
           </div>
           <div className="grid gap-0 overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-sm sm:hidden">
             <div className="flex h-[2.375rem] items-center gap-1.5 px-1.5">
-              <Tabs value={selectedPlatform} onValueChange={setSelectedPlatform} className="min-w-0 flex-[1.35] gap-0">
+              <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="min-w-0 flex-[1.35] gap-0">
                 <TabsList aria-label="选择平台" className={`${mobileMenuTabsListClassName} grid-cols-2`}>
                   {["missevan", "manbo"].map((platform) => (
                     <TabsTrigger key={platform} className={mobileOngoingPlatformTabClassName} value={platform}>
@@ -567,7 +649,7 @@ export function OngoingPanel({
                 </TabsList>
               </Tabs>
               <div className="h-6 w-px shrink-0 bg-border/80" />
-              <Tabs value={activeWindow} onValueChange={setSelectedWindow} className="min-w-0 flex-[0.85] gap-0">
+              <Tabs value={activeWindow} onValueChange={updateWindow} className="min-w-0 flex-[0.85] gap-0">
                 <TabsList aria-label="选择增量周期" className={`${mobileMenuTabsListClassName} grid-cols-3`}>
                   {["3d", "7d", "30d"].map((key) => (
                     <TabsTrigger key={key} className={mobileOngoingWindowTabClassName} value={key}>
@@ -579,7 +661,7 @@ export function OngoingPanel({
             </div>
           </div>
           <div className="hidden flex-col gap-1 sm:flex sm:flex-row sm:items-center sm:justify-end lg:flex-row">
-            <Tabs value={selectedPlatform} onValueChange={setSelectedPlatform}>
+            <Tabs value={selectedPlatform} onValueChange={updatePlatform}>
               <TabsList aria-label="选择平台" className="grid w-full grid-cols-2 sm:w-fit">
                 {["missevan", "manbo"].map((platform) => (
                   <TabsTrigger key={platform} className="px-4" value={platform}>
@@ -588,7 +670,7 @@ export function OngoingPanel({
                 ))}
               </TabsList>
             </Tabs>
-            <Tabs value={activeWindow} onValueChange={setSelectedWindow}>
+            <Tabs value={activeWindow} onValueChange={updateWindow}>
               <TabsList aria-label="选择增量周期" className="grid w-full grid-cols-3 sm:w-fit">
                 {["3d", "7d", "30d"].map((key) => (
                   <TabsTrigger key={key} className="px-3" value={key}>

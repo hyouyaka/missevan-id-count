@@ -8,24 +8,37 @@ import { loadLocalEnv } from "./envConfig.js";
 
 test("loadLocalEnv reads local server env keys from project .env", async () => {
   const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "missevan-env-"));
+  const previousAdminCacheRefreshToken = process.env.ADMIN_CACHE_REFRESH_TOKEN;
   const previousEnableMissevan = process.env.ENABLE_MISSEVAN;
   const previousPort = process.env.PORT;
 
+  delete process.env.ADMIN_CACHE_REFRESH_TOKEN;
   delete process.env.ENABLE_MISSEVAN;
   delete process.env.PORT;
 
   try {
     await fs.writeFile(
       path.join(projectRoot, ".env"),
-      ["ENABLE_MISSEVAN=false", "PORT=3901", "UNSUPPORTED_KEY=ignored"].join("\n")
+      [
+        "ADMIN_CACHE_REFRESH_TOKEN=secret",
+        "ENABLE_MISSEVAN=false",
+        "PORT=3901",
+        "UNSUPPORTED_KEY=ignored",
+      ].join("\n")
     );
 
     await loadLocalEnv({ projectRoot });
 
+    assert.equal(process.env.ADMIN_CACHE_REFRESH_TOKEN, "secret");
     assert.equal(process.env.ENABLE_MISSEVAN, "false");
     assert.equal(process.env.PORT, "3901");
     assert.equal(process.env.UNSUPPORTED_KEY, undefined);
   } finally {
+    if (previousAdminCacheRefreshToken == null) {
+      delete process.env.ADMIN_CACHE_REFRESH_TOKEN;
+    } else {
+      process.env.ADMIN_CACHE_REFRESH_TOKEN = previousAdminCacheRefreshToken;
+    }
     if (previousEnableMissevan == null) {
       delete process.env.ENABLE_MISSEVAN;
     } else {

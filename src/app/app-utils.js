@@ -110,6 +110,294 @@ export function buildVersionedUrl(url, frontendVersion) {
   return `${url}${separator}frontendVersion=${encodeURIComponent(normalizeVersion(frontendVersion))}`;
 }
 
+export const TOOL_VIEW_QUERY_PARAM = "view";
+export const TOOL_ROUTE_QUERY_PARAMS = {
+  view: "view",
+  platform: "platform",
+  window: "window",
+  category: "category",
+  rank: "rank",
+};
+
+export function getAllowedToolViews({ desktopApp = false } = {}) {
+  return desktopApp
+    ? ["search", "favorites", "report"]
+    : ["search", "ongoing", "ranks", "favorites"];
+}
+
+export function normalizeToolView(value, options = {}) {
+  const allowedViews = getAllowedToolViews(options);
+  const normalized = String(value || "").trim();
+  return allowedViews.includes(normalized) ? normalized : "search";
+}
+
+export function normalizeToolPlatform(value) {
+  return value === "manbo" ? "manbo" : "missevan";
+}
+
+export function normalizeOngoingWindow(value) {
+  return ["3d", "7d", "30d"].includes(value) ? value : "3d";
+}
+
+export function normalizeToolRouteState(routeState = {}, options = {}) {
+  return {
+    view: normalizeToolView(routeState.view, options),
+    platform: normalizeToolPlatform(routeState.platform),
+    window: normalizeOngoingWindow(routeState.window),
+    category: String(routeState.category || "").trim(),
+    rank: String(routeState.rank || "").trim(),
+  };
+}
+
+export function readToolViewFromLocation(locationLike, options = {}) {
+  const search = String(locationLike?.search || "");
+  const params = new URLSearchParams(search);
+  return normalizeToolView(params.get(TOOL_VIEW_QUERY_PARAM), options);
+}
+
+export function readToolRouteStateFromLocation(locationLike, options = {}) {
+  const search = String(locationLike?.search || "");
+  const params = new URLSearchParams(search);
+  return normalizeToolRouteState(
+    {
+      view: params.get(TOOL_ROUTE_QUERY_PARAMS.view),
+      platform: params.get(TOOL_ROUTE_QUERY_PARAMS.platform),
+      window: params.get(TOOL_ROUTE_QUERY_PARAMS.window),
+      category: params.get(TOOL_ROUTE_QUERY_PARAMS.category),
+      rank: params.get(TOOL_ROUTE_QUERY_PARAMS.rank),
+    },
+    options
+  );
+}
+
+function deleteToolRouteDetailParams(params) {
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.platform);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.window);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.category);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.rank);
+}
+
+export function buildToolRouteUrl(locationLike, routeState = {}, options = {}) {
+  const pathname = String(locationLike?.pathname || "/tool") || "/tool";
+  const search = String(locationLike?.search || "");
+  const hash = String(locationLike?.hash || "");
+  const params = new URLSearchParams(search);
+  const nextState = normalizeToolRouteState(routeState, options);
+
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.view);
+  deleteToolRouteDetailParams(params);
+
+  if (nextState.view === "search") {
+    params.delete(TOOL_ROUTE_QUERY_PARAMS.view);
+  } else {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.view, nextState.view);
+  }
+
+  if (nextState.view === "ongoing") {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
+    params.set(TOOL_ROUTE_QUERY_PARAMS.window, nextState.window);
+  } else if (nextState.view === "ranks") {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
+    if (nextState.category) {
+      params.set(TOOL_ROUTE_QUERY_PARAMS.category, nextState.category);
+    }
+    if (nextState.rank) {
+      params.set(TOOL_ROUTE_QUERY_PARAMS.rank, nextState.rank);
+    }
+  }
+
+  const query = params.toString();
+  return `${pathname}${query ? `?${query}` : ""}${hash}`;
+}
+
+export function buildToolViewUrl(locationLike, view, options = {}) {
+  const pathname = String(locationLike?.pathname || "/tool") || "/tool";
+  const search = String(locationLike?.search || "");
+  const hash = String(locationLike?.hash || "");
+  const params = new URLSearchParams(search);
+  const nextView = normalizeToolView(view, options);
+
+  if (nextView === "search") {
+    params.delete(TOOL_VIEW_QUERY_PARAM);
+  } else {
+    params.set(TOOL_VIEW_QUERY_PARAM, nextView);
+  }
+
+  const query = params.toString();
+  return `${pathname}${query ? `?${query}` : ""}${hash}`;
+}
+
+export function buildOngoingNavigationMenu() {
+  return [
+    { key: "missevan", label: "猫耳" },
+    { key: "manbo", label: "漫播" },
+  ].map((platform) => ({
+    ...platform,
+    platform: {
+      key: platform.key,
+      label: platform.label,
+    },
+    routePatch: {
+      view: "ongoing",
+      platform: platform.key,
+      window: "7d",
+    },
+  }));
+}
+
+function normalizeNavigationLabel(value, fallback) {
+  const normalized = String(value ?? "").trim();
+  return normalized || fallback;
+}
+
+function stripTrailingRankSuffix(value) {
+  return String(value ?? "").trim().replace(/榜$/, "");
+}
+
+function formatMobileRankNavigationLabel(categoryLabel, rankLabel, singleRank = false) {
+  const normalizedCategoryLabel = normalizeNavigationLabel(categoryLabel, "");
+  const normalizedRankLabel = normalizeNavigationLabel(rankLabel, "");
+  if (singleRank) {
+    if (!normalizedRankLabel || normalizedRankLabel === normalizedCategoryLabel) {
+      return normalizedCategoryLabel;
+    }
+    const prefix = stripTrailingRankSuffix(normalizedCategoryLabel);
+    return `${prefix}${normalizedRankLabel}`;
+  }
+
+  const prefix = stripTrailingRankSuffix(normalizedCategoryLabel);
+  const suffix = normalizedRankLabel.endsWith("剧") ? `${normalizedRankLabel}榜` : normalizedRankLabel;
+  return `${prefix}${suffix}` || normalizedRankLabel || normalizedCategoryLabel;
+}
+
+export const RANK_PLATFORM_CARRY_CATEGORY_KEYS = ["peak", "cv"];
+
+function getFirstRankCategory(platformData) {
+  return Array.isArray(platformData?.categories) ? platformData.categories.find((category) => category?.key) || null : null;
+}
+
+function getRankCategoryByKey(platformData, categoryKey) {
+  const normalizedKey = String(categoryKey || "").trim();
+  return Array.isArray(platformData?.categories)
+    ? platformData.categories.find((category) => String(category?.key || "").trim() === normalizedKey) || null
+    : null;
+}
+
+function getFirstRankItem(category) {
+  return Array.isArray(category?.ranks) ? category.ranks.find((rank) => rank?.key) || null : null;
+}
+
+function getRankItemByKey(category, rankKey) {
+  const normalizedKey = String(rankKey || "").trim();
+  return Array.isArray(category?.ranks)
+    ? category.ranks.find((rank) => String(rank?.key || "").trim() === normalizedKey) || null
+    : null;
+}
+
+export function buildRankPlatformSwitchRoutePatch(platform, platformData, currentSelection = {}) {
+  const nextPlatform = String(platform || platformData?.key || "").trim();
+  const currentCategoryKey = String(currentSelection?.category || "").trim();
+  const canCarryCategory = RANK_PLATFORM_CARRY_CATEGORY_KEYS.includes(currentCategoryKey);
+  const carriedCategory = canCarryCategory ? getRankCategoryByKey(platformData, currentCategoryKey) : null;
+  const nextCategory = carriedCategory || getFirstRankCategory(platformData);
+  const carriedRank = carriedCategory ? getRankItemByKey(carriedCategory, currentSelection?.rank) : null;
+  const nextRank = carriedRank || getFirstRankItem(nextCategory);
+
+  return {
+    view: "ranks",
+    platform: nextPlatform,
+    category: String(nextCategory?.key || "").trim(),
+    rank: String(nextRank?.key || "").trim(),
+  };
+}
+
+export function buildRanksNavigationMenu(ranksPayload) {
+  const platforms = ranksPayload?.data?.platforms || ranksPayload?.platforms || {};
+  return ["missevan", "manbo"]
+    .map((platformKey) => {
+      const platform = platforms?.[platformKey];
+      const categories = (Array.isArray(platform?.categories) ? platform.categories : [])
+        .map((category) => {
+          const ranks = (Array.isArray(category?.ranks) ? category.ranks : [])
+            .map((rank) => {
+              const rankKey = String(rank?.key || "").trim();
+              if (!rankKey) {
+                return null;
+              }
+              return {
+                key: rankKey,
+                label: normalizeNavigationLabel(rank?.label, rankKey),
+                routePatch: {
+                  view: "ranks",
+                  platform: platformKey,
+                  category: String(category?.key || "").trim(),
+                  rank: rankKey,
+                },
+              };
+            })
+            .filter(Boolean);
+          const categoryKey = String(category?.key || "").trim();
+          if (!categoryKey || !ranks.length) {
+            return null;
+          }
+          return {
+            key: categoryKey,
+            label: normalizeNavigationLabel(category?.label, categoryKey),
+            routePatch: {
+              view: "ranks",
+              platform: platformKey,
+              category: categoryKey,
+              rank: ranks[0].key,
+            },
+            rankItems: ranks,
+            ...(ranks.length > 1 ? { children: ranks } : {}),
+          };
+        })
+        .filter(Boolean);
+      if (!categories.length) {
+        return null;
+      }
+      return {
+        key: platformKey,
+        label: normalizeNavigationLabel(platform?.label, platformKey === "manbo" ? "漫播" : "猫耳"),
+        platform: {
+          key: platformKey,
+          label: normalizeNavigationLabel(platform?.label, platformKey === "manbo" ? "漫播" : "猫耳"),
+        },
+        routePatch: {
+          view: "ranks",
+          platform: platformKey,
+          category: categories[0].key,
+          rank: categories[0].routePatch?.rank || "",
+        },
+        children: categories,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function buildMobileRankNavigationItems(platformItem) {
+  const categories = Array.isArray(platformItem?.children) ? platformItem.children : [];
+  return categories.flatMap((category) => {
+    const rankItems = Array.isArray(category?.rankItems) && category.rankItems.length
+      ? category.rankItems
+      : Array.isArray(category?.children) && category.children.length
+        ? category.children
+        : [category];
+    const singleRank = rankItems.length === 1;
+    return rankItems
+      .map((rankItem) => {
+        const routePatch = rankItem?.routePatch || category?.routePatch;
+        return {
+          key: `${category?.key || ""}:${rankItem?.key || category?.key || ""}`,
+          label: formatMobileRankNavigationLabel(category?.label, rankItem?.label, singleRank),
+          routePatch,
+        };
+      })
+      .filter((item) => item.routePatch?.rank);
+  });
+}
+
 export function hasSearchKeywordInResultTitles(results, keyword) {
   const normalizedKeyword = normalizeSearchText(keyword);
   if (!normalizedKeyword) {
