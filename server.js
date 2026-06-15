@@ -240,6 +240,7 @@ const RANKS_CACHE_TTL_MS = Math.max(
   60 * 1000,
   Number(process.env.RANKS_CACHE_TTL_MS ?? 30 * 60 * 1000) || 30 * 60 * 1000
 );
+const RANKS_EXPECTED_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const ONGOING_CACHE_TTL_MS = Math.max(
   10 * 1000,
   Number(process.env.ONGOING_CACHE_TTL_MS ?? 60 * 1000) || 60 * 1000
@@ -2349,8 +2350,19 @@ function getActiveRanksMetaProbeTtl(
   return getRanksMetaProbeTtlForState(probePlan, cycleIds, postRefreshBackoff);
 }
 
-async function readCachedRanksMeta(probePlan, now = Date.now(), cycleIds = getRanksMetaProbeCycleIds(now)) {
-  const ttlMs = getActiveRanksMetaProbeTtl(probePlan, cycleIds);
+async function readCachedRanksMeta(
+  probePlan,
+  now = Date.now(),
+  cycleIds = getRanksMetaProbeCycleIds(now),
+  options = {}
+) {
+  const readMeta = typeof options?.readRanksMeta === "function"
+    ? options.readRanksMeta
+    : () => readRanksJsonKey(RANKS_META_KEY);
+  const ttlOverrideMs = Number(options?.ttlMsOverride);
+  const ttlMs = Number.isFinite(ttlOverrideMs)
+    ? Math.max(60 * 1000, ttlOverrideMs)
+    : getActiveRanksMetaProbeTtl(probePlan, cycleIds);
   if (!Number.isFinite(ttlMs)) {
     return { meta: ranksCache.meta, status: "hit" };
   }
@@ -2363,9 +2375,9 @@ async function readCachedRanksMeta(probePlan, now = Date.now(), cycleIds = getRa
 
   ranksCache.metaLoadPromise = (async () => {
     try {
-      const meta = normalizeRanksMeta(await readRanksJsonKey(RANKS_META_KEY));
+      const meta = normalizeRanksMeta(await readMeta());
       ranksCache.meta = meta;
-      ranksCache.metaLoadedAt = Date.now();
+      ranksCache.metaLoadedAt = now;
       return { meta, status: "meta-refresh" };
     } finally {
       ranksCache.metaLoadPromise = null;
@@ -2418,8 +2430,23 @@ async function readOngoingIds(platform) {
   }
 }
 
-async function getCachedRanksResponse() {
-  const now = Date.now();
+function isRanksResponseVersionTooOld(response, now = Date.now()) {
+  const updatedAtMs = Date.parse(response?.updatedAt || "");
+  return Number.isFinite(updatedAtMs) && now >= updatedAtMs + RANKS_EXPECTED_REFRESH_INTERVAL_MS;
+}
+
+function getRanksProbePhaseHeaderValue(probePlan = {}) {
+  return ["normal", "cv"]
+    .map((source) => normalizeTextValue(probePlan?.[source]?.phase))
+    .filter(Boolean)
+    .join(",");
+}
+
+export async function getCachedRanksResponse(options = {}) {
+  const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+  const readNormalBundle = options.readNormalRanksBundle || readNormalRanksBundle;
+  const readCvBundle = options.readCvRanksBundle || readCvRanksBundle;
+  const readMeta = options.readRanksMeta || (() => readRanksJsonKey(RANKS_META_KEY));
   if (ranksCache.loadPromise) {
     return ranksCache.loadPromise;
   }
@@ -2427,23 +2454,37 @@ async function getCachedRanksResponse() {
   ranksCache.loadPromise = (async () => {
     try {
       if (!ranksCache.response || ranksCache.response.schemaVersion !== RANKS_RESPONSE_SCHEMA_VERSION) {
-        const response = await loadInitialRanksResponse();
-        return { response, cacheStatus: "cold-refresh" };
+        const [normalBundle, cvBundle] = await Promise.all([
+          readNormalBundle(),
+          readCvBundle({ tolerateError: true }),
+        ]);
+        ranksCache.normalSnapshot = normalBundle.snapshot;
+        ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
+        ranksCache.normalUpdatedAt = normalBundle.updatedAt;
+        ranksCache.cvSnapshot = cvBundle.cvSnapshot;
+        ranksCache.cvUpdatedAt = cvBundle.updatedAt;
+        const response = updateCombinedRanksResponseCache();
+        return { response, cacheStatus: "cold-refresh", probePhase: "" };
       }
 
       const probePlan = getRanksMetaProbePlan(now);
       const probeCycleIds = getRanksMetaProbeCycleIds(now);
-      const shouldProbeMeta = Boolean(probePlan.normal.active || probePlan.cv.active);
+      const responseVersionTooOld = isRanksResponseVersionTooOld(ranksCache.response, now);
+      const shouldProbeMeta = Boolean(probePlan.normal.active || probePlan.cv.active || responseVersionTooOld);
+      const probePhase = getRanksProbePhaseHeaderValue(probePlan);
       if (!shouldProbeMeta) {
-        return { response: ranksCache.response, cacheStatus: "hit" };
+        return { response: ranksCache.response, cacheStatus: "hit", probePhase };
       }
 
       let metaResult;
       try {
-        metaResult = await readCachedRanksMeta(probePlan, now, probeCycleIds);
+        metaResult = await readCachedRanksMeta(probePlan, now, probeCycleIds, {
+          ttlMsOverride: responseVersionTooOld ? RANKS_META_PROBE_FALLBACK_TTL_MS : undefined,
+          readRanksMeta: readMeta,
+        });
       } catch (error) {
         console.warn("Failed to read ranks meta", error);
-        return { response: ranksCache.response, cacheStatus: "stale" };
+        return { response: ranksCache.response, cacheStatus: "stale", probePhase };
       }
 
       const decision = buildRanksMetaRefreshDecision(
@@ -2454,13 +2495,17 @@ async function getCachedRanksResponse() {
         metaResult.meta
       );
       if (!decision.refreshNormal && !decision.refreshCv) {
-        return { response: ranksCache.response, cacheStatus: metaResult.status || "meta-hit" };
+        return {
+          response: ranksCache.response,
+          cacheStatus: metaResult.status || "meta-hit",
+          probePhase,
+        };
       }
 
       const refreshStatuses = [];
       if (decision.refreshNormal) {
         try {
-          const normalBundle = await readNormalRanksBundle();
+          const normalBundle = await readNormalBundle();
           ranksCache.normalSnapshot = normalBundle.snapshot;
           ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
           ranksCache.normalUpdatedAt = normalBundle.updatedAt || decision.normalUpdatedAt;
@@ -2474,7 +2519,7 @@ async function getCachedRanksResponse() {
 
       if (decision.refreshCv) {
         try {
-          const cvBundle = await readCvRanksBundle();
+          const cvBundle = await readCvBundle();
           ranksCache.cvSnapshot = cvBundle.cvSnapshot;
           ranksCache.cvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
           recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
@@ -2486,9 +2531,16 @@ async function getCachedRanksResponse() {
       }
 
       const response = updateCombinedRanksResponseCache();
+      if (refreshStatuses.includes("normal-refresh")) {
+        ranksCache.normalUpdatedAt = decision.normalUpdatedAt || ranksCache.normalUpdatedAt;
+      }
+      if (refreshStatuses.includes("cv-refresh")) {
+        ranksCache.cvUpdatedAt = decision.cvUpdatedAt || ranksCache.cvUpdatedAt;
+      }
       return {
         response,
         cacheStatus: refreshStatuses.includes("stale") ? "stale" : refreshStatuses.join("+"),
+        probePhase,
       };
     } finally {
       ranksCache.loadPromise = null;
@@ -8194,21 +8246,14 @@ app.get("/ongoing", async (req, res) => {
 
 app.get("/ranks", async (req, res) => {
   try {
-    const { response, cacheStatus } = await getCachedRanksResponse();
-    const now = Date.now();
-    const probeTtlMs = getActiveRanksMetaProbeTtl(
-      getRanksMetaProbePlan(now),
-      getRanksMetaProbeCycleIds(now)
-    );
-    res.setHeader(
-      "Cache-Control",
-      Number.isFinite(probeTtlMs)
-        ? `public, max-age=${Math.floor(probeTtlMs / 1000)}`
-        : "no-cache"
-    );
+    const { response, cacheStatus, probePhase } = await getCachedRanksResponse();
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
     res.setHeader("X-Ranks-Cache-Status", cacheStatus || "hit");
     res.setHeader("X-Ranks-Normal-Updated-At", response.updatedAt || "");
     res.setHeader("X-Ranks-CV-Updated-At", response.cvSummary?.updatedAt || "");
+    if (probePhase) {
+      res.setHeader("X-Ranks-Probe-Phase", probePhase);
+    }
     const ranksResponseValidator = getRanksResponseCacheValidator(response);
     if (response.updatedAt) {
       res.setHeader("X-Ranks-Updated-At", response.updatedAt);

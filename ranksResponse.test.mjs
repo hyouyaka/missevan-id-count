@@ -276,6 +276,241 @@ test("rank meta CV cycle id keeps the Thursday date after midnight", async () =>
   );
 });
 
+test("cached ranks response refreshes normal snapshot when meta normal version advances", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  let normalCalls = 0;
+  let cvCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "2026-06-12T20:46:43-04:00" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "same-cv", rankings: {} },
+    normalUpdatedAt: "2026-06-12T20:46:43-04:00",
+    cvUpdatedAt: "same-cv",
+    response: {
+      success: true,
+      schemaVersion: 4,
+      updatedAt: "2026-06-12T20:46:43-04:00",
+      cvSummary: { updatedAt: "same-cv" },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T02:34:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const result = await getCachedRanksResponse({
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "2026-06-14T20:37:24-04:00" },
+      cv: { updatedAt: "same-cv" },
+    }),
+    readNormalRanksBundle: async () => {
+      normalCalls += 1;
+      return {
+        snapshot: {
+          _meta: { updated_at: "2026-06-14T20:37:24-04:00" },
+          missevan: { ranks: {}, dramas: {} },
+          manbo: { ranks: {}, dramas: {} },
+        },
+        peakTrendSnapshot: null,
+        updatedAt: "2026-06-14T20:37:24-04:00",
+      };
+    },
+    readCvRanksBundle: async () => {
+      cvCalls += 1;
+      throw new Error("CV bundle should not be read");
+    },
+  });
+
+  assert.equal(result.cacheStatus, "normal-refresh");
+  assert.equal(result.response.updatedAt, "2026-06-14T20:37:24-04:00");
+  assert.equal(normalCalls, 1);
+  assert.equal(cvCalls, 0);
+});
+
+test("cached ranks response throttles stale fallback meta probes outside active window", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  let metaCalls = 0;
+  let normalCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "2026-06-12T20:46:43-04:00" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "same-cv", rankings: {} },
+    normalUpdatedAt: "2026-06-12T20:46:43-04:00",
+    cvUpdatedAt: "same-cv",
+    response: {
+      success: true,
+      schemaVersion: 4,
+      updatedAt: "2026-06-12T20:46:43-04:00",
+      cvSummary: { updatedAt: "same-cv" },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T09:59:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const options = {
+    now: Date.parse("2026-06-15T10:00:00.000Z"),
+    readRanksMeta: async () => {
+      metaCalls += 1;
+      return {
+        normal: { updatedAt: "2026-06-12T20:46:43-04:00" },
+        cv: { updatedAt: "same-cv" },
+      };
+    },
+    readNormalRanksBundle: async () => {
+      normalCalls += 1;
+      throw new Error("normal bundle should not be read when meta is unchanged");
+    },
+  };
+
+  const first = await getCachedRanksResponse(options);
+  const second = await getCachedRanksResponse(options);
+
+  assert.equal(first.cacheStatus, "meta-refresh");
+  assert.equal(second.cacheStatus, "meta-hit");
+  assert.equal(metaCalls, 1);
+  assert.equal(normalCalls, 0);
+});
+
+test("cached ranks response reports meta-refresh when active probe reads unchanged meta", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "2026-06-14T20:37:24-04:00" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "same-cv", rankings: {} },
+    normalUpdatedAt: "2026-06-14T20:37:24-04:00",
+    cvUpdatedAt: "same-cv",
+    response: {
+      success: true,
+      schemaVersion: 4,
+      updatedAt: "2026-06-14T20:37:24-04:00",
+      cvSummary: { updatedAt: "same-cv" },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T02:34:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const result = await getCachedRanksResponse({
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "2026-06-14T20:37:24-04:00" },
+      cv: { updatedAt: "same-cv" },
+    }),
+  });
+
+  assert.equal(result.cacheStatus, "meta-refresh");
+});
+
+test("cached ranks response records meta versions after refresh to avoid repeated bundle reads", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  let normalCalls = 0;
+  let cvCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "old-normal" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "old-cv", rankings: {} },
+    normalUpdatedAt: "old-normal",
+    cvUpdatedAt: "old-cv",
+    response: {
+      success: true,
+      schemaVersion: 4,
+      updatedAt: "old-normal",
+      cvSummary: { updatedAt: "old-cv" },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T02:34:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const options = {
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "meta-normal" },
+      cv: { updatedAt: "meta-cv" },
+    }),
+    readNormalRanksBundle: async () => {
+      normalCalls += 1;
+      return {
+        snapshot: {
+          _meta: { updated_at: "snapshot-normal" },
+          missevan: { ranks: {}, dramas: {} },
+          manbo: { ranks: {}, dramas: {} },
+        },
+        peakTrendSnapshot: null,
+        updatedAt: "snapshot-normal",
+      };
+    },
+    readCvRanksBundle: async () => {
+      cvCalls += 1;
+      return {
+        cvSnapshot: { generated_at: "snapshot-cv", rankings: {} },
+        updatedAt: "snapshot-cv",
+      };
+    },
+  };
+
+  const first = await getCachedRanksResponse(options);
+  const second = await getCachedRanksResponse(options);
+
+  assert.equal(first.cacheStatus, "normal-refresh+cv-refresh");
+  assert.equal(second.cacheStatus, "meta-hit");
+  assert.equal(normalCalls, 1);
+  assert.equal(cvCalls, 1);
+});
+
 test("admin cache refresh executor requires a configured token", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { executeAdminCacheRefresh } = await import("./server.js");

@@ -2150,7 +2150,13 @@ test("rank route uses fixed UTC-04 meta probing before reading large Upstash key
   assert.match(serverSource, /const RANKS_META_POST_REFRESH_TTL_MS = 30 \* 60 \* 1000/);
   assert.match(serverSource, /export function getRanksMetaProbeCycleIds\(now = Date\.now\(\)\)/);
   assert.match(serverSource, /export function getRanksMetaProbeTtlForState\(probePlan, cycleIds = \{\}, postRefreshBackoff = \{\}\)/);
-  assert.match(serverSource, /async function readCachedRanksMeta\(probePlan, now = Date\.now\(\), cycleIds = getRanksMetaProbeCycleIds\(now\)\)/);
+  assert.match(serverSource, /async function readCachedRanksMeta\(/);
+  assert.match(serverSource, /ttlMsOverride: responseVersionTooOld \? RANKS_META_PROBE_FALLBACK_TTL_MS : undefined/);
+  assert.doesNotMatch(serverSource, /force: responseVersionTooOld/);
+  assert.match(serverSource, /cacheStatus: metaResult\.status \|\| "meta-hit"/);
+  assert.match(serverSource, /const RANKS_EXPECTED_REFRESH_INTERVAL_MS = 12 \* 60 \* 60 \* 1000/);
+  assert.match(serverSource, /ranksCache\.normalUpdatedAt = decision\.normalUpdatedAt \|\| ranksCache\.normalUpdatedAt/);
+  assert.match(serverSource, /ranksCache\.cvUpdatedAt = decision\.cvUpdatedAt \|\| ranksCache\.cvUpdatedAt/);
   assert.match(serverSource, /buildRanksMetaRefreshDecision/);
 });
 
@@ -2181,14 +2187,13 @@ test("rank, ongoing, and trend caches keep dynamic policy outside the meta-drive
   assert.notEqual(ranksRouteEnd, -1, "ranks route should end before health route");
   const ranksRouteSource = serverSource.slice(ranksRouteStart, ranksRouteEnd);
 
-  assert.match(ranksRouteSource, /const \{ response, cacheStatus \} = await getCachedRanksResponse\(\)/);
-  assert.match(ranksRouteSource, /const now = Date\.now\(\)/);
-  assert.match(ranksRouteSource, /getRanksMetaProbePlan\(now\)/);
-  assert.match(ranksRouteSource, /getRanksMetaProbeCycleIds\(now\)/);
+  assert.match(ranksRouteSource, /const \{ response, cacheStatus, probePhase \} = await getCachedRanksResponse\(\)/);
   assert.match(ranksRouteSource, /"X-Ranks-Cache-Status"/);
   assert.match(ranksRouteSource, /"X-Ranks-Normal-Updated-At"/);
   assert.match(ranksRouteSource, /"X-Ranks-CV-Updated-At"/);
-  assert.match(ranksRouteSource, /"no-cache"/);
+  assert.match(ranksRouteSource, /"X-Ranks-Probe-Phase"/);
+  assert.match(ranksRouteSource, /"no-cache, must-revalidate"/);
+  assert.doesNotMatch(ranksRouteSource, /public, max-age/);
 });
 
 test("rank frontend fetch can revalidate even when local cache is fresh", () => {
