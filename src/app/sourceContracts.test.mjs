@@ -46,6 +46,13 @@ test("Manbo API search results are the only Manbo search results registered as n
   assert.match(toolViewSource, /platform: normalizedPlatform/);
 });
 
+test("Missevan play count writes regular watch_count usage logs", () => {
+  assert.match(serverSource, /action:\s*"watch_count"/);
+  assert.match(serverSource, /soundid:/);
+  assert.match(serverSource, /title:/);
+  assert.match(serverSource, /calculationMode:/);
+});
+
 test("Manbo search supports local-only fallback mode", () => {
   const routeStart = serverSource.indexOf('app.get("/manbo/search"');
   assert.notEqual(routeStart, -1, "Manbo search route should exist");

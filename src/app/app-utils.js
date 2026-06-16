@@ -700,6 +700,45 @@ export function collectSelectedEpisodesFromDramas(dramas = []) {
   return selectedEpisodes;
 }
 
+export function buildPlayCountDramasFromDramas(dramas = []) {
+  return (Array.isArray(dramas) ? dramas : [])
+    .map((drama) => {
+      const dramaId = String(drama?.drama?.id ?? "").trim();
+      const dramaTitle = drama?.drama?.name || "";
+      const rawTotalViewCount = drama?.drama?.view_count;
+      const totalViewCount = rawTotalViewCount == null || String(rawTotalViewCount).trim() === ""
+        ? null
+        : Number(rawTotalViewCount);
+      const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
+      const normalizedEpisodes = episodes
+        .map((episode) => ({
+          drama_id: dramaId,
+          sound_id: episode.sound_id,
+          drama_title: dramaTitle,
+          episode_title: episode.name,
+          duration: Number(episode.duration ?? 0),
+          selected: Boolean(episode.selected),
+        }))
+        .filter((episode) => String(episode.sound_id ?? "").trim());
+
+      if (!normalizedEpisodes.length) {
+        return null;
+      }
+      if (!normalizedEpisodes.some((episode) => episode.selected)) {
+        return null;
+      }
+
+      return {
+        drama_id: dramaId,
+        drama_title: dramaTitle,
+        total_view_count: Number.isFinite(totalViewCount) && totalViewCount >= 0 ? totalViewCount : null,
+        total_episode_count: normalizedEpisodes.length,
+        episodes: normalizedEpisodes,
+      };
+    })
+    .filter(Boolean);
+}
+
 export function selectDramaEpisodesByMode(dramas = [], dramaIds = [], options = {}) {
   const dramaIdSet = new Set((Array.isArray(dramaIds) ? dramaIds : []).map((id) => String(id)));
   const mode = options.mode === "paid" ? "paid" : "all";

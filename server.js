@@ -278,6 +278,13 @@ const MISSEVAN_LOCAL_REQUEST_MAX_INTERVAL_MS = 500;
 const IMAGE_PROXY_TIMEOUT_MS = 8000;
 const IMAGE_PROXY_RETRIES = 2;
 const IMAGE_PROXY_RETRY_DELAY_MS = 250;
+const MISSEVAN_BROWSER_HEADERS = Object.freeze({
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "Accept": "application/json,text/plain,*/*",
+  "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+  "Referer": "https://www.missevan.com/",
+  "Origin": "https://www.missevan.com",
+});
 const manboHttpsAgent = new https.Agent({
   keepAlive: true,
   maxSockets: Math.max(
@@ -774,30 +781,42 @@ function isFalsyEnvValue(value) {
   return ["0", "false", "no", "off"].includes(String(value ?? "").trim().toLowerCase());
 }
 
-function isHostedDeployment() {
+function isHostedDeploymentEnv(env = process.env) {
   return (
-    isTruthyEnvValue(process.env.RENDER)
-    || Boolean(process.env.RENDER_SERVICE_ID)
-    || Boolean(process.env.RAILWAY_ENVIRONMENT)
-    || Boolean(process.env.RAILWAY_PROJECT_ID)
-    || Boolean(process.env.RAILWAY_SERVICE_ID)
+    isTruthyEnvValue(env.RENDER)
+    || Boolean(env.RENDER_SERVICE_ID)
+    || Boolean(env.RAILWAY_ENVIRONMENT)
+    || Boolean(env.RAILWAY_PROJECT_ID)
+    || Boolean(env.RAILWAY_SERVICE_ID)
   );
 }
 
-function shouldPersistAccessDeniedCooldown() {
-  if (!MISSEVAN_ENABLED || DESKTOP_APP) {
+function isHostedDeployment() {
+  return isHostedDeploymentEnv();
+}
+
+export function shouldPersistAccessDeniedCooldownForEnv(env = process.env, options = {}) {
+  const missevanEnabled = options.missevanEnabled ?? env.ENABLE_MISSEVAN !== "false";
+  const desktopApp = options.desktopApp ?? env.DESKTOP_APP === "true";
+  const hostedDeployment = options.hostedDeployment ?? isHostedDeploymentEnv(env);
+
+  if (!missevanEnabled || desktopApp || !hostedDeployment) {
     return false;
   }
 
-  const explicitValue = process.env.MISSEVAN_PERSISTENT_COOLDOWN;
-  if (isTruthyEnvValue(explicitValue)) {
-    return true;
-  }
+  const explicitValue = env.MISSEVAN_PERSISTENT_COOLDOWN;
   if (isFalsyEnvValue(explicitValue)) {
     return false;
   }
 
-  return isHostedDeployment();
+  return true;
+}
+
+function shouldPersistAccessDeniedCooldown() {
+  return shouldPersistAccessDeniedCooldownForEnv(process.env, {
+    missevanEnabled: MISSEVAN_ENABLED,
+    desktopApp: DESKTOP_APP,
+  });
 }
 
 function logCooldownPersistenceUnavailable(message, error = null) {
@@ -5116,10 +5135,22 @@ function createTimeoutSignal(timeoutMs) {
   };
 }
 
-function buildFetchOptions(url, options = {}) {
+function buildMissevanFetchHeaders(headers = {}) {
+  const mergedHeaders = {
+    ...MISSEVAN_BROWSER_HEADERS,
+    ...(headers || {}),
+  };
+  delete mergedHeaders.Cookie;
+  delete mergedHeaders.cookie;
+  return mergedHeaders;
+}
+
+export function buildFetchOptions(url, options = {}) {
   const targetUrl = typeof url === "string" ? new URL(url) : url;
   const fetchOptions = {
-    headers: options.headers,
+    headers: options.missevan
+      ? buildMissevanFetchHeaders(options.headers)
+      : options.headers,
     signal: options.signal,
     agent: options.agent,
   };
@@ -5505,7 +5536,10 @@ async function fetchSoundSummary(soundId) {
     SOUND_SUMMARY_CACHE_TTL_MS
   );
   if (cached) {
-    return cached;
+    return {
+      ...cached,
+      cached: true,
+    };
   }
 
   const data = await fetchJsonWithRetry(
@@ -5527,10 +5561,37 @@ async function fetchSoundSummary(soundId) {
     playCountFailed: false,
     accessDenied: false,
     error: "",
+    cached: false,
   };
 
   setCachedValue(soundSummaryCache, soundId, summary);
   return summary;
+}
+
+function writeWatchCountUsageLog({
+  episode = {},
+  summary = null,
+  calculationMode = "selected_sum",
+  success = false,
+  error = null,
+} = {}) {
+  const soundid = String(episode?.sound_id ?? summary?.sound_id ?? "").trim();
+  const title = String(episode?.episode_title ?? episode?.name ?? "").trim();
+  void writeUsageLog({
+    platform: "missevan",
+    action: "watch_count",
+    soundid: soundid,
+    title: title,
+    dramaId: String(episode?.drama_id ?? "").trim(),
+    dramaTitle: String(episode?.drama_title ?? "").trim(),
+    episodeTitle: title,
+    viewCount: Number(summary?.view_count ?? 0),
+    calculationMode,
+    success: Boolean(success),
+    accessDenied: Boolean(summary?.accessDenied || isMissevanAccessDenied(error)),
+    cached: Boolean(summary?.cached),
+    errorMessage: success ? "" : String(error?.message ?? summary?.error ?? "").slice(0, 200),
+  });
 }
 
 async function fetchDramaInfo(dramaId, soundId = null) {
@@ -6835,6 +6896,172 @@ function buildPlayCountDramaMap(episodes) {
   return dramaMap;
 }
 
+function normalizePlayCountEpisode(episode = {}, fallback = {}) {
+  const dramaId = String(episode?.drama_id ?? fallback.drama_id ?? "").trim();
+  const soundId = String(episode?.sound_id ?? "").trim();
+  const dramaTitle = String(episode?.drama_title ?? fallback.drama_title ?? "").trim();
+  const episodeTitle = String(episode?.episode_title ?? episode?.name ?? "").trim();
+  return {
+    drama_id: dramaId,
+    sound_id: soundId,
+    drama_title: dramaTitle,
+    episode_title: episodeTitle,
+    duration: Number(episode?.duration ?? 0),
+    selected: Boolean(episode?.selected),
+  };
+}
+
+function getPlayCountEpisodeDramaKey(episode = {}) {
+  const dramaId = String(episode?.drama_id ?? "").trim();
+  if (dramaId) {
+    return `id:${dramaId}`;
+  }
+  return `title:${String(episode?.drama_title ?? "Unknown").trim() || "Unknown"}`;
+}
+
+function normalizePlayCountTotal(value) {
+  if (value == null || String(value).trim() === "") {
+    return null;
+  }
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized >= 0 ? normalized : null;
+}
+
+export function normalizePlayCountDramas(rawDramas = []) {
+  return (Array.isArray(rawDramas) ? rawDramas : [])
+    .map((drama) => {
+      const dramaId = String(drama?.drama_id ?? drama?.dramaId ?? "").trim();
+      const dramaTitle = String(drama?.drama_title ?? drama?.title ?? "").trim() || "Unknown";
+      const episodes = (Array.isArray(drama?.episodes) ? drama.episodes : [])
+        .map((episode) => normalizePlayCountEpisode(episode, {
+          drama_id: dramaId,
+          drama_title: dramaTitle,
+        }))
+        .filter((episode) => episode.sound_id);
+
+      if (!episodes.length) {
+        return null;
+      }
+
+      const rawTotalEpisodeCount = Number(drama?.total_episode_count ?? drama?.totalEpisodeCount);
+      const totalEpisodeCount = Number.isFinite(rawTotalEpisodeCount) && rawTotalEpisodeCount > 0
+        ? Math.max(episodes.length, Math.trunc(rawTotalEpisodeCount))
+        : episodes.length;
+
+      return {
+        drama_id: dramaId,
+        drama_title: dramaTitle,
+        total_view_count: normalizePlayCountTotal(drama?.total_view_count ?? drama?.totalViewCount),
+        total_episode_count: totalEpisodeCount,
+        episodes,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildFallbackPlayCountWorkPlan(selectedEpisodes = []) {
+  const dramaMap = new Map();
+  selectedEpisodes.forEach((episode) => {
+    const normalizedEpisode = normalizePlayCountEpisode(episode);
+    if (!normalizedEpisode.sound_id) {
+      return;
+    }
+    const key = getPlayCountEpisodeDramaKey(normalizedEpisode);
+    if (!dramaMap.has(key)) {
+      dramaMap.set(key, {
+        dramaId: normalizedEpisode.drama_id,
+        title: normalizedEpisode.drama_title || "Unknown",
+        totalEpisodeCount: 0,
+        selectedEpisodeCount: 0,
+        requestEpisodeCount: 0,
+        calculationMode: "selected_sum",
+        totalViewCount: null,
+        requestEpisodes: [],
+        playCountTotal: 0,
+        playCountFailed: false,
+      });
+    }
+    const drama = dramaMap.get(key);
+    drama.selectedEpisodeCount += 1;
+    drama.totalEpisodeCount = Math.max(drama.totalEpisodeCount, drama.selectedEpisodeCount);
+    drama.requestEpisodes.push(normalizedEpisode);
+    drama.requestEpisodeCount = drama.requestEpisodes.length;
+  });
+
+  const dramas = Array.from(dramaMap.values());
+  return {
+    dramas,
+    totalRequestCount: dramas.reduce((sum, drama) => sum + drama.requestEpisodeCount, 0),
+  };
+}
+
+export function buildMissevanPlayCountWorkPlan({ selectedEpisodes = [], playCountDramas = [] } = {}) {
+  const normalizedSelectedEpisodes = normalizeTaskEpisodes(selectedEpisodes);
+  const normalizedPlayCountDramas = normalizePlayCountDramas(playCountDramas);
+  if (!normalizedPlayCountDramas.length) {
+    return buildFallbackPlayCountWorkPlan(normalizedSelectedEpisodes);
+  }
+
+  const selectedSoundIds = new Set(normalizedSelectedEpisodes.map((episode) => episode.sound_id));
+  const coveredSoundIds = new Set();
+  const dramas = [];
+
+  normalizedPlayCountDramas.forEach((drama) => {
+    const selected = drama.episodes.filter((episode) => selectedSoundIds.has(episode.sound_id));
+    if (!selected.length) {
+      return;
+    }
+    const unselected = drama.episodes.filter((episode) => !selectedSoundIds.has(episode.sound_id));
+    selected.forEach((episode) => coveredSoundIds.add(episode.sound_id));
+
+    const canSubtractUnselected = drama.total_view_count != null && unselected.length < selected.length;
+    const requestEpisodes = canSubtractUnselected ? unselected : selected;
+    dramas.push({
+      dramaId: drama.drama_id,
+      title: drama.drama_title || "Unknown",
+      totalEpisodeCount: drama.total_episode_count,
+      selectedEpisodeCount: selected.length,
+      requestEpisodeCount: requestEpisodes.length,
+      calculationMode: canSubtractUnselected ? "total_minus_unselected" : "selected_sum",
+      totalViewCount: drama.total_view_count,
+      requestEpisodes,
+      playCountTotal: 0,
+      playCountFailed: false,
+    });
+  });
+
+  const uncoveredSelectedEpisodes = normalizedSelectedEpisodes
+    .filter((episode) => !coveredSoundIds.has(episode.sound_id));
+  const fallbackPlan = buildFallbackPlayCountWorkPlan(uncoveredSelectedEpisodes);
+  const allDramas = [...dramas, ...fallbackPlan.dramas];
+
+  return {
+    dramas: allDramas,
+    totalRequestCount: allDramas.reduce((sum, drama) => sum + drama.requestEpisodeCount, 0),
+  };
+}
+
+export function resolveMissevanPlayCountDramaTotal(drama = {}, requestedPlayCountTotal = 0, failed = false) {
+  if (failed || drama?.playCountFailed) {
+    return {
+      ...drama,
+      playCountFailed: true,
+      playCountTotal: Number(drama?.playCountTotal ?? 0) || 0,
+    };
+  }
+
+  const requestedTotal = Number(requestedPlayCountTotal ?? 0) || 0;
+  const playCountTotal = drama?.calculationMode === "total_minus_unselected"
+    ? Math.max(0, Number(drama?.totalViewCount ?? 0) - requestedTotal)
+    : requestedTotal;
+
+  return {
+    ...drama,
+    playCountFailed: false,
+    playCountTotal,
+  };
+}
+
 function createRevenueSummary(results) {
   const safeResults = Array.isArray(results) ? results : [];
   const totalPaidUserSet = new Set();
@@ -7328,7 +7555,10 @@ async function executeManboIdTask(task) {
 
 async function executeMissevanPlayCountTask(task) {
   const episodes = Array.isArray(task.episodes) ? task.episodes : [];
-  const dramaMap = buildPlayCountDramaMap(episodes);
+  const workPlan = buildMissevanPlayCountWorkPlan({
+    selectedEpisodes: episodes,
+    playCountDramas: task.playCountDramas,
+  });
 
   updateStatsTask(task, {
     status: "running",
@@ -7344,9 +7574,13 @@ async function executeMissevanPlayCountTask(task) {
       progress: 100,
       currentAction: "访问受限",
       result: {
-        playCountResults: Array.from(dramaMap.values()).map((drama) => ({
+        playCountResults: workPlan.dramas.map((drama) => ({
+          dramaId: drama.dramaId,
           title: drama.title,
           selectedEpisodeCount: drama.selectedEpisodeCount,
+          totalEpisodeCount: drama.totalEpisodeCount,
+          requestEpisodeCount: drama.requestEpisodeCount,
+          calculationMode: drama.calculationMode,
           playCountTotal: drama.playCountTotal,
           playCountFailed: true,
         })),
@@ -7357,16 +7591,26 @@ async function executeMissevanPlayCountTask(task) {
     });
   }
 
-  for (const episode of episodes) {
+  const requestTotal = Math.max(1, Number(workPlan.totalRequestCount ?? 0) || 0);
+  for (const drama of workPlan.dramas) {
     if (task.cancelled || task.accessDenied) {
       break;
     }
-    const soundId = Number(episode?.sound_id ?? 0);
-    const dramaTitle = String(episode?.drama_title ?? "").trim() || "Unknown";
-    try {
-      const summary = await fetchSoundSummary(soundId);
-      const drama = dramaMap.get(dramaTitle);
-      if (drama) {
+    let requestedPlayCountTotal = 0;
+
+    for (const episode of drama.requestEpisodes) {
+      if (task.cancelled || task.accessDenied) {
+        break;
+      }
+      const soundId = Number(episode?.sound_id ?? 0);
+      try {
+        const summary = await fetchSoundSummary(soundId);
+        writeWatchCountUsageLog({
+          episode,
+          summary,
+          calculationMode: drama.calculationMode,
+          success: Boolean(summary && !summary.playCountFailed),
+        });
         if (!summary || summary.playCountFailed) {
           drama.playCountFailed = true;
           if (summary?.accessDenied) {
@@ -7374,36 +7618,46 @@ async function executeMissevanPlayCountTask(task) {
             break;
           }
         } else {
-          drama.playCountTotal += Number(summary.view_count ?? 0);
+          requestedPlayCountTotal += Number(summary.view_count ?? 0);
         }
-      }
-    } catch (error) {
-      const drama = dramaMap.get(dramaTitle);
-      if (drama) {
+      } catch (error) {
         drama.playCountFailed = true;
+        writeWatchCountUsageLog({
+          episode,
+          calculationMode: drama.calculationMode,
+          success: false,
+          error,
+        });
+        if (isMissevanAccessDenied(error)) {
+          task.accessDenied = true;
+          break;
+        }
+        task.failedCount += 1;
       }
-      if (isMissevanAccessDenied(error)) {
-        task.accessDenied = true;
-        break;
-      }
-      task.failedCount += 1;
+      task.completedCount += 1;
+      updateStatsTask(task, {
+        progress: Math.floor((task.completedCount / requestTotal) * 100),
+        currentAction: `统计播放量 ${task.completedCount}/${requestTotal}`,
+      });
     }
-    task.completedCount += 1;
-    updateStatsTask(task, {
-      progress: task.totalCount > 0
-        ? Math.floor((task.completedCount / task.totalCount) * 100)
-        : 100,
-      currentAction: `统计播放量 ${task.completedCount}/${task.totalCount}`,
-    });
+
+    Object.assign(
+      drama,
+      resolveMissevanPlayCountDramaTotal(drama, requestedPlayCountTotal, drama.playCountFailed)
+    );
   }
 
   if (task.cancelled) {
     return finalizeCancelledTask(task);
   }
 
-  const playCountResults = Array.from(dramaMap.values()).map((drama) => ({
+  const playCountResults = workPlan.dramas.map((drama) => ({
+    dramaId: drama.dramaId,
     title: drama.title,
     selectedEpisodeCount: drama.selectedEpisodeCount,
+    totalEpisodeCount: drama.totalEpisodeCount,
+    requestEpisodeCount: drama.requestEpisodeCount,
+    calculationMode: drama.calculationMode,
     playCountTotal: drama.playCountTotal,
     playCountFailed: drama.playCountFailed,
   }));
@@ -9409,7 +9663,7 @@ function normalizeTaskDramaIds(rawDramaIds = [], platform = "missevan") {
   );
 }
 
-function createStatsTask({ platform, taskType, episodes = [], dramaIds = [], source = "" }) {
+function createStatsTask({ platform, taskType, episodes = [], dramaIds = [], playCountDramas = [], source = "" }) {
   const taskId = createTaskId();
   const task = {
     taskId,
@@ -9427,6 +9681,7 @@ function createStatsTask({ platform, taskType, episodes = [], dramaIds = [], sou
     source: normalizeStatsTaskSource(source),
     episodes,
     dramaIds,
+    playCountDramas,
     result: null,
     error: "",
     cancelled: false,
@@ -9458,6 +9713,9 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
   const normalizedTaskType = taskType || defaultTaskType || "";
   const episodes = normalizeTaskEpisodes(req.body?.episodes);
   const dramaIds = normalizeTaskDramaIds(req.body?.dramaIds, platform);
+  const playCountDramas = platform === "missevan" && normalizedTaskType === "play_count"
+    ? normalizePlayCountDramas(req.body?.playCountDramas)
+    : [];
   const source = normalizeStatsTaskSource(req.body?.source);
 
   if (!["play_count", "id", "revenue"].includes(normalizedTaskType)) {
@@ -9480,6 +9738,7 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
     taskType: normalizedTaskType,
     episodes,
     dramaIds,
+    playCountDramas,
     source,
   });
 }

@@ -12,6 +12,7 @@ import {
   buildToolViewUrl,
   classifyMergedSearchInput,
   classifyUnifiedSearchInput,
+  buildPlayCountDramasFromDramas,
   createStatsHistoryEntry,
   getAllowedToolViews,
   getHistoryMetricIconKey,
@@ -156,6 +157,116 @@ test("tool route URL builder clears detail params for root views", () => {
     ),
     "/tool?foo=bar"
   );
+});
+
+test("play count context keeps all imported episodes with drama totals and selection state", () => {
+  const context = buildPlayCountDramasFromDramas([
+    {
+      drama: {
+        id: 101,
+        name: "测试剧",
+        view_count: 1000,
+      },
+      episodes: {
+        episode: [
+          { sound_id: 11, name: "第一集", selected: true, duration: 120 },
+          { sound_id: 12, name: "第二集", selected: false, duration: 130 },
+        ],
+      },
+    },
+    {
+      drama: {
+        id: 202,
+        name: "空剧",
+        view_count: 0,
+      },
+      episodes: {
+        episode: [],
+      },
+    },
+  ]);
+
+  assert.deepEqual(context, [
+    {
+      drama_id: "101",
+      drama_title: "测试剧",
+      total_view_count: 1000,
+      total_episode_count: 2,
+      episodes: [
+        {
+          drama_id: "101",
+          sound_id: 11,
+          drama_title: "测试剧",
+          episode_title: "第一集",
+          duration: 120,
+          selected: true,
+        },
+        {
+          drama_id: "101",
+          sound_id: 12,
+          drama_title: "测试剧",
+          episode_title: "第二集",
+          duration: 130,
+          selected: false,
+        },
+      ],
+    },
+  ]);
+});
+
+test("play count context preserves missing drama total instead of coercing it to zero", () => {
+  const context = buildPlayCountDramasFromDramas([
+    {
+      drama: {
+        id: 101,
+        name: "缺播放量剧",
+      },
+      episodes: {
+        episode: [
+          { sound_id: 11, name: "第一集", selected: true },
+          { sound_id: 12, name: "第二集", selected: true },
+          { sound_id: 13, name: "第三集", selected: true },
+          { sound_id: 14, name: "第四集", selected: false },
+        ],
+      },
+    },
+  ]);
+
+  assert.equal(context[0].total_view_count, null);
+});
+
+test("play count context skips dramas without selected episodes", () => {
+  const context = buildPlayCountDramasFromDramas([
+    {
+      drama: {
+        id: 101,
+        name: "已选剧",
+        view_count: 1000,
+      },
+      episodes: {
+        episode: [
+          { sound_id: 11, name: "第一集", selected: true },
+          { sound_id: 12, name: "第二集", selected: false },
+        ],
+      },
+    },
+    {
+      drama: {
+        id: 202,
+        name: "未选剧",
+        view_count: 2000,
+      },
+      episodes: {
+        episode: [
+          { sound_id: 21, name: "第一集", selected: false },
+          { sound_id: 22, name: "第二集", selected: false },
+        ],
+      },
+    },
+  ]);
+
+  assert.equal(context.length, 1);
+  assert.equal(context[0].drama_id, "101");
 });
 
 test("ongoing navigation menu exposes platform route patches that default to 7 days", () => {

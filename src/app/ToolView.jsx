@@ -54,6 +54,7 @@ import {
   buildRevenueSummary,
   buildToolRouteUrl,
   buildVersionedUrl,
+  buildPlayCountDramasFromDramas,
   collectSelectedEpisodesFromDramas,
   createPlatformState,
   createRuntimeMeta,
@@ -3279,7 +3280,14 @@ export function ToolView({ initialAppConfig }) {
     scrollToPanel(outputPanelRef);
     let finalStatus = "completed";
     try {
-      await startStatsTask(platform, "play_count", { episodes: selectedEpisodes }, runId, signal);
+      const payload = { episodes: selectedEpisodes };
+      if (platform === "missevan") {
+        const playCountDramas = buildPlayCountDramasFromDramas(platformStatesRef.current[platform].dramas);
+        if (playCountDramas.length) {
+          payload.playCountDramas = playCountDramas;
+        }
+      }
+      await startStatsTask(platform, "play_count", payload, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
