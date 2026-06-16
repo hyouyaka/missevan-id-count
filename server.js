@@ -189,6 +189,7 @@ const ranksCache = {
   loadPromise: null,
   meta: null,
   metaLoadedAt: 0,
+  metaLoadFailedAt: 0,
   metaLoadPromise: null,
   metaPostRefreshBackoff: {
     normal: null,
@@ -2369,6 +2370,9 @@ async function readCachedRanksMeta(
   if (ranksCache.meta && now - ranksCache.metaLoadedAt < ttlMs) {
     return { meta: ranksCache.meta, status: "meta-hit" };
   }
+  if (ranksCache.metaLoadFailedAt > 0 && now - ranksCache.metaLoadFailedAt < ttlMs) {
+    throw new Error("Ranks meta probe is in failure backoff");
+  }
   if (ranksCache.metaLoadPromise) {
     return ranksCache.metaLoadPromise;
   }
@@ -2378,7 +2382,11 @@ async function readCachedRanksMeta(
       const meta = normalizeRanksMeta(await readMeta());
       ranksCache.meta = meta;
       ranksCache.metaLoadedAt = now;
+      ranksCache.metaLoadFailedAt = 0;
       return { meta, status: "meta-refresh" };
+    } catch (error) {
+      ranksCache.metaLoadFailedAt = now;
+      throw error;
     } finally {
       ranksCache.metaLoadPromise = null;
     }
@@ -2469,17 +2477,15 @@ export async function getCachedRanksResponse(options = {}) {
 
       const probePlan = getRanksMetaProbePlan(now);
       const probeCycleIds = getRanksMetaProbeCycleIds(now);
+      const activeMetaProbeTtlMs = getActiveRanksMetaProbeTtl(probePlan, probeCycleIds);
       const responseVersionTooOld = isRanksResponseVersionTooOld(ranksCache.response, now);
-      const shouldProbeMeta = Boolean(probePlan.normal.active || probePlan.cv.active || responseVersionTooOld);
+      const shouldUseFallbackMetaProbe = responseVersionTooOld || !Number.isFinite(activeMetaProbeTtlMs);
       const probePhase = getRanksProbePhaseHeaderValue(probePlan);
-      if (!shouldProbeMeta) {
-        return { response: ranksCache.response, cacheStatus: "hit", probePhase };
-      }
 
       let metaResult;
       try {
         metaResult = await readCachedRanksMeta(probePlan, now, probeCycleIds, {
-          ttlMsOverride: responseVersionTooOld ? RANKS_META_PROBE_FALLBACK_TTL_MS : undefined,
+          ttlMsOverride: shouldUseFallbackMetaProbe ? RANKS_META_PROBE_FALLBACK_TTL_MS : undefined,
           readRanksMeta: readMeta,
         });
       } catch (error) {
@@ -2677,7 +2683,7 @@ export function __getRanksCacheForTest() {
 }
 
 export function __setRanksCacheForTest(patch = {}) {
-  Object.assign(ranksCache, patch);
+  Object.assign(ranksCache, { metaLoadFailedAt: 0 }, patch);
 }
 
 async function refreshAdminOngoingCachePlatform(platform) {

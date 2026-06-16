@@ -398,6 +398,128 @@ test("cached ranks response throttles stale fallback meta probes outside active 
   assert.equal(normalCalls, 0);
 });
 
+test("cached ranks response periodically probes meta even when idle response is not old", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  let metaCalls = 0;
+  let normalCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "2026-06-15T00:37:24+00:00" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "same-cv", rankings: {} },
+    normalUpdatedAt: "2026-06-15T00:37:24+00:00",
+    cvUpdatedAt: "same-cv",
+    response: {
+      success: true,
+      schemaVersion: 4,
+      updatedAt: "2026-06-15T00:37:24+00:00",
+      cvSummary: { updatedAt: "same-cv" },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T08:59:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const result = await getCachedRanksResponse({
+    now: Date.parse("2026-06-15T09:00:00.000Z"),
+    readRanksMeta: async () => {
+      metaCalls += 1;
+      return {
+        normal: { updatedAt: "2026-06-15T04:37:24+00:00" },
+        cv: { updatedAt: "same-cv" },
+      };
+    },
+    readNormalRanksBundle: async () => {
+      normalCalls += 1;
+      return {
+        snapshot: {
+          _meta: { updated_at: "2026-06-15T04:37:24+00:00" },
+          missevan: { ranks: {}, dramas: {} },
+          manbo: { ranks: {}, dramas: {} },
+        },
+        peakTrendSnapshot: null,
+        updatedAt: "2026-06-15T04:37:24+00:00",
+      };
+    },
+  });
+
+  assert.equal(result.cacheStatus, "normal-refresh");
+  assert.equal(result.response.updatedAt, "2026-06-15T04:37:24+00:00");
+  assert.equal(metaCalls, 1);
+  assert.equal(normalCalls, 1);
+});
+
+test("cached ranks response backs off fallback meta probe failures", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  let metaCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "2026-06-15T00:37:24+00:00" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "same-cv", rankings: {} },
+    normalUpdatedAt: "2026-06-15T00:37:24+00:00",
+    cvUpdatedAt: "same-cv",
+    response: {
+      success: true,
+      schemaVersion: 4,
+      updatedAt: "2026-06-15T00:37:24+00:00",
+      cvSummary: { updatedAt: "same-cv" },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T08:59:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadFailedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const options = {
+    now: Date.parse("2026-06-15T09:00:00.000Z"),
+    readRanksMeta: async () => {
+      metaCalls += 1;
+      throw new Error("Upstash timeout");
+    },
+  };
+
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    const first = await getCachedRanksResponse(options);
+    const second = await getCachedRanksResponse({
+      ...options,
+      now: Date.parse("2026-06-15T09:05:00.000Z"),
+    });
+
+    assert.equal(first.cacheStatus, "stale");
+    assert.equal(second.cacheStatus, "stale");
+    assert.equal(metaCalls, 1);
+  } finally {
+    console.warn = warn;
+  }
+});
+
 test("cached ranks response reports meta-refresh when active probe reads unchanged meta", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");

@@ -2151,8 +2151,17 @@ test("rank route uses fixed UTC-04 meta probing before reading large Upstash key
   assert.match(serverSource, /export function getRanksMetaProbeCycleIds\(now = Date\.now\(\)\)/);
   assert.match(serverSource, /export function getRanksMetaProbeTtlForState\(probePlan, cycleIds = \{\}, postRefreshBackoff = \{\}\)/);
   assert.match(serverSource, /async function readCachedRanksMeta\(/);
-  assert.match(serverSource, /ttlMsOverride: responseVersionTooOld \? RANKS_META_PROBE_FALLBACK_TTL_MS : undefined/);
+  assert.match(serverSource, /metaLoadFailedAt: 0/);
+  assert.match(serverSource, /ranksCache\.metaLoadFailedAt > 0 && now - ranksCache\.metaLoadFailedAt < ttlMs/);
+  assert.match(serverSource, /throw new Error\("Ranks meta probe is in failure backoff"\)/);
+  assert.match(serverSource, /ranksCache\.metaLoadFailedAt = 0/);
+  assert.match(serverSource, /ranksCache\.metaLoadFailedAt = now/);
+  assert.match(serverSource, /const activeMetaProbeTtlMs = getActiveRanksMetaProbeTtl\(probePlan, probeCycleIds\)/);
+  assert.match(serverSource, /const shouldUseFallbackMetaProbe = responseVersionTooOld \|\| !Number\.isFinite\(activeMetaProbeTtlMs\)/);
+  assert.match(serverSource, /ttlMsOverride: shouldUseFallbackMetaProbe \? RANKS_META_PROBE_FALLBACK_TTL_MS : undefined/);
+  assert.match(serverSource, /Object\.assign\(ranksCache, \{ metaLoadFailedAt: 0 \}, patch\)/);
   assert.doesNotMatch(serverSource, /force: responseVersionTooOld/);
+  assert.doesNotMatch(serverSource, /if \(!shouldProbeMeta\)/);
   assert.match(serverSource, /cacheStatus: metaResult\.status \|\| "meta-hit"/);
   assert.match(serverSource, /const RANKS_EXPECTED_REFRESH_INTERVAL_MS = 12 \* 60 \* 60 \* 1000/);
   assert.match(serverSource, /ranksCache\.normalUpdatedAt = decision\.normalUpdatedAt \|\| ranksCache\.normalUpdatedAt/);
