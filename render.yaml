@@ -8,6 +8,18 @@ services:
     envVars:
       - key: ENABLE_MISSEVAN
         value: "false"
+      - key: MISSEVAN_FALLBACK_BASE_URL
+        value: "https://msbackup.onrender.com/missevan"
+      - key: MISSEVAN_FALLBACK_PROXY_TOKEN
+        sync: false
+      - key: MISSEVAN_FALLBACK_TIMEOUT_MS
+        value: "90000"
+      - key: MISSEVAN_SECONDARY_FALLBACK_BASE_URL
+        value: "https://msbackup.mmtoolkit.deno.net/missevan"
+      - key: MISSEVAN_SECONDARY_FALLBACK_PROXY_TOKEN
+        sync: false
+      - key: MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS
+        value: "15000"
       - key: MANBO_DANMAKU_PAGE_CONCURRENCY
         value: "12"
       - key: MANBO_STATS_EPISODE_CONCURRENCY

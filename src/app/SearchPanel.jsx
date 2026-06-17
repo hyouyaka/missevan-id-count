@@ -78,11 +78,7 @@ export function SearchPanel({
     const plainMessage = getMissevanAccessDeniedMessage(config, cooldownHours);
     return (
       <span aria-label={plainMessage}>
-        猫耳访问受限中，请{getRemainingCooldownMinutes(config, cooldownHours)}分钟后重试，或使用
-        <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
-          其他节点
-        </a>
-        和
+        当前所有备份节点都在冷却中，请{getRemainingCooldownMinutes(config, cooldownHours)}分钟之后再来，或使用
         {desktopAppUrl ? (
           <a className="font-medium text-primary underline underline-offset-4" href={desktopAppUrl} rel="noreferrer" target="_blank">
             桌面版

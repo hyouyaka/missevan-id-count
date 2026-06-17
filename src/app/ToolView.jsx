@@ -1749,11 +1749,8 @@ export function ToolView({ initialAppConfig }) {
     const plainMessage = getMissevanAccessDeniedMessage(config, appConfig.cooldownHours);
     return (
       <span aria-label={plainMessage}>
-        猫耳访问受限中，请{getRemainingCooldownMinutes(config, appConfig.cooldownHours)}分钟后重试，或使用
-        <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
-          其他节点
-        </a>
-        和{renderMissevanDesktopLink(config)}。
+        当前所有备份节点都在冷却中，请{getRemainingCooldownMinutes(config, appConfig.cooldownHours)}分钟之后再来，或使用
+        {renderMissevanDesktopLink(config)}。
       </span>
     );
   }
@@ -1781,10 +1778,6 @@ export function ToolView({ initialAppConfig }) {
 
     return (
       <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
-        <a className="font-medium text-primary underline underline-offset-4" href="/nodes">
-          其他节点
-        </a>{" "}
-        <span className="text-muted-foreground/70">/</span>{" "}
         {appConfig.desktopAppUrl ? (
           <a className="font-medium text-primary underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
             桌面版

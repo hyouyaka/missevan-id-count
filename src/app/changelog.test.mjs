@@ -49,6 +49,18 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
+test("changelog contains 1.6.5 fallback node and weekly update fixes", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.6.5");
+
+  assert.deepEqual(entry, {
+    version: "1.6.5",
+    changes: [
+      "集成了备用节点，会在猫耳受限时自动启用，无需再手动点开",
+      "修复了猫耳一周内更新统计的遗漏问题",
+    ],
+  });
+});
+
 test("changelog contains 1.6.3 CV rank and navigation entries", () => {
   const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.6.3");
 

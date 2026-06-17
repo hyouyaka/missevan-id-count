@@ -443,7 +443,7 @@ export function getRemainingCooldownMinutes(config = null, fallbackHours = 4) {
 }
 
 export function getMissevanAccessDeniedMessage(config = null, fallbackHours = 4) {
-  return `猫耳访问受限中，请${getRemainingCooldownMinutes(config, fallbackHours)}分钟后重试，或使用其他节点和桌面版。`;
+  return `当前所有备份节点都在冷却中，请${getRemainingCooldownMinutes(config, fallbackHours)}分钟之后再来，或使用桌面版。`;
 }
 
 export const MISSEVAN_DESKTOP_ACCESS_HINT = "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。";

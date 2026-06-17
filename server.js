@@ -275,6 +275,47 @@ const MISSEVAN_HOSTED_REQUEST_MIN_INTERVAL_MS = 800;
 const MISSEVAN_HOSTED_REQUEST_MAX_INTERVAL_MS = 1400;
 const MISSEVAN_LOCAL_REQUEST_MIN_INTERVAL_MS = 250;
 const MISSEVAN_LOCAL_REQUEST_MAX_INTERVAL_MS = 500;
+const MISSEVAN_FALLBACK_DEFAULT_BASE_URL = "https://msbackup.onrender.com/missevan";
+const MISSEVAN_FALLBACK_BASE_URL = normalizeMissevanFallbackBaseUrl(
+  process.env.MISSEVAN_FALLBACK_BASE_URL || MISSEVAN_FALLBACK_DEFAULT_BASE_URL,
+  MISSEVAN_FALLBACK_DEFAULT_BASE_URL
+);
+const MISSEVAN_FALLBACK_PROXY_TOKEN = String(
+  process.env.MISSEVAN_FALLBACK_PROXY_TOKEN || ""
+).trim();
+const MISSEVAN_FALLBACK_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.MISSEVAN_FALLBACK_TIMEOUT_MS ?? 90000) || 90000
+);
+const MISSEVAN_SECONDARY_FALLBACK_DEFAULT_BASE_URL = "https://msbackup.mmtoolkit.deno.net/missevan";
+const MISSEVAN_SECONDARY_FALLBACK_BASE_URL = normalizeMissevanFallbackBaseUrl(
+  process.env.MISSEVAN_SECONDARY_FALLBACK_BASE_URL || MISSEVAN_SECONDARY_FALLBACK_DEFAULT_BASE_URL,
+  MISSEVAN_SECONDARY_FALLBACK_DEFAULT_BASE_URL
+);
+const MISSEVAN_SECONDARY_FALLBACK_PROXY_TOKEN = String(
+  process.env.MISSEVAN_SECONDARY_FALLBACK_PROXY_TOKEN || ""
+).trim();
+const MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS ?? 15000) || 15000
+);
+const MISSEVAN_FORCE_FALLBACK = String(process.env.MISSEVAN_FORCE_FALLBACK ?? "0").trim();
+const MISSEVAN_FALLBACK_ROUTES = Object.freeze([
+  Object.freeze({
+    key: "primary",
+    fallbackRoute: "render",
+    baseUrl: MISSEVAN_FALLBACK_BASE_URL,
+    proxyToken: MISSEVAN_FALLBACK_PROXY_TOKEN,
+    timeoutMs: MISSEVAN_FALLBACK_TIMEOUT_MS,
+  }),
+  Object.freeze({
+    key: "secondary",
+    fallbackRoute: "deno",
+    baseUrl: MISSEVAN_SECONDARY_FALLBACK_BASE_URL,
+    proxyToken: MISSEVAN_SECONDARY_FALLBACK_PROXY_TOKEN,
+    timeoutMs: MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS,
+  }),
+]);
 const IMAGE_PROXY_TIMEOUT_MS = 8000;
 const IMAGE_PROXY_RETRIES = 2;
 const IMAGE_PROXY_RETRY_DELAY_MS = 250;
@@ -296,6 +337,18 @@ const manboHttpsAgent = new https.Agent({
 let accessDeniedUntil = 0;
 let accessDeniedUseShortCooldown = false;
 let accessDeniedCooldownMode = "none";
+const fallbackAccessDeniedCooldowns = {
+  primary: {
+    accessUntil: 0,
+    useShortCooldown: false,
+    cooldownMode: "none",
+  },
+  secondary: {
+    accessUntil: 0,
+    useShortCooldown: false,
+    cooldownMode: "none",
+  },
+};
 let cooldownStateLoaded = false;
 let cooldownPersistenceWarningLogged = false;
 let cooldownRefreshPromise = null;
@@ -540,7 +593,7 @@ app.get("/app-config", (req, res) => {
       ? "支持 Missevan 与 Manbo 的作品导入、分集筛选、弹幕统计和数据汇总。"
       : "支持 Manbo 平台的作品导入、分集筛选、弹幕统计和去重 ID 汇总。",
     cooldownHours: MISSEVAN_COOLDOWN_HOURS,
-    cooldownUntil: isInAccessDeniedCooldown() ? accessDeniedUntil : 0,
+    cooldownUntil: getMissevanAccessDeniedCooldownUntil(),
     desktopAppUrl: MISSEVAN_DESKTOP_APP_URL,
     featureSuggestionUrl: FEATURE_SUGGESTION_URL,
     frontendVersion,
@@ -832,37 +885,126 @@ function logCooldownPersistenceUnavailable(message, error = null) {
   console.error(message);
 }
 
+function normalizeMissevanCooldownMode(value) {
+  return value === "base" || value === "repeat" || value === "repeat_ready"
+    ? value
+    : "none";
+}
+
+function normalizeMissevanRouteCooldownState(state = {}) {
+  const accessUntil = Number(state?.accessUntil ?? state?.accessDeniedUntil ?? 0);
+  return {
+    accessUntil: Number.isFinite(accessUntil) ? accessUntil : 0,
+    cooldownMode: normalizeMissevanCooldownMode(state?.cooldownMode ?? state?.accessDeniedCooldownMode),
+    useShortCooldown: state?.useShortCooldown === true || state?.accessDeniedUseShortCooldown === true,
+  };
+}
+
+export function buildMissevanRouteCooldownStateAfterAccessDenied(state = {}, options = {}) {
+  const normalizedState = normalizeMissevanRouteCooldownState(state);
+  const now = Number(options.now ?? Date.now());
+  const baseCooldownMs = Number(options.baseCooldownMs ?? MISSEVAN_COOLDOWN_MS);
+  const repeatCooldownMs = Number(options.repeatCooldownMs ?? MISSEVAN_REPEAT_COOLDOWN_MS);
+  const useShortCooldown = normalizedState.useShortCooldown;
+
+  return {
+    accessUntil: now + (useShortCooldown ? repeatCooldownMs : baseCooldownMs),
+    cooldownMode: useShortCooldown ? "repeat" : "base",
+    useShortCooldown,
+  };
+}
+
+function buildMissevanRouteRepeatReadyState(state = {}) {
+  const normalizedState = normalizeMissevanRouteCooldownState(state);
+  const shouldUseRepeatCooldown =
+    normalizedState.useShortCooldown
+    || ["base", "repeat", "repeat_ready"].includes(normalizedState.cooldownMode);
+
+  return {
+    accessUntil: 0,
+    useShortCooldown: shouldUseRepeatCooldown,
+    cooldownMode: shouldUseRepeatCooldown ? "repeat_ready" : "none",
+  };
+}
+
+export function getNearestMissevanAccessUntil(states = [], now = Date.now()) {
+  const futureAccessTimes = states
+    .map((state) => Number(state?.accessUntil ?? state?.accessDeniedUntil ?? 0))
+    .filter((value) => Number.isFinite(value) && value > now);
+  return futureAccessTimes.length ? Math.min(...futureAccessTimes) : 0;
+}
+
+function getDirectCooldownState() {
+  return {
+    accessUntil: accessDeniedUntil,
+    cooldownMode: accessDeniedCooldownMode,
+    useShortCooldown: accessDeniedUseShortCooldown,
+  };
+}
+
+function applyDirectCooldownState(state = {}) {
+  const normalizedState = normalizeMissevanRouteCooldownState(state);
+  accessDeniedUntil = normalizedState.accessUntil;
+  accessDeniedCooldownMode = normalizedState.cooldownMode;
+  accessDeniedUseShortCooldown = normalizedState.useShortCooldown;
+}
+
+function getFallbackCooldownState(routeKey) {
+  return normalizeMissevanRouteCooldownState(fallbackAccessDeniedCooldowns[routeKey]);
+}
+
+function applyFallbackCooldownState(routeKey, state = {}) {
+  if (!fallbackAccessDeniedCooldowns[routeKey]) {
+    return;
+  }
+  fallbackAccessDeniedCooldowns[routeKey] = normalizeMissevanRouteCooldownState(state);
+}
+
+function getAllMissevanCooldownStates() {
+  return [
+    getDirectCooldownState(),
+    getFallbackCooldownState("primary"),
+    getFallbackCooldownState("secondary"),
+  ];
+}
+
+function getNearestMissevanCooldownUntil() {
+  return getNearestMissevanAccessUntil(getAllMissevanCooldownStates());
+}
+
 function getCooldownStatePayload() {
+  const primaryCooldown = getFallbackCooldownState("primary");
+  const secondaryCooldown = getFallbackCooldownState("secondary");
   return {
     appVersion: APP_VERSION,
     accessDeniedUntil,
     accessDeniedCooldownMode,
     accessDeniedUseShortCooldown,
+    primaryAccessDeniedUntil: primaryCooldown.accessUntil,
+    primaryAccessDeniedCooldownMode: primaryCooldown.cooldownMode,
+    primaryAccessDeniedUseShortCooldown: primaryCooldown.useShortCooldown,
+    secondaryAccessDeniedUntil: secondaryCooldown.accessUntil,
+    secondaryAccessDeniedCooldownMode: secondaryCooldown.cooldownMode,
+    secondaryAccessDeniedUseShortCooldown: secondaryCooldown.useShortCooldown,
   };
 }
 
 function applyLoadedCooldownState(payload) {
-  const until = Number(payload?.accessDeniedUntil ?? 0);
-  accessDeniedUntil = Number.isFinite(until) ? until : 0;
-  accessDeniedCooldownMode =
-    payload?.accessDeniedCooldownMode === "base"
-      ? "base"
-      : payload?.accessDeniedCooldownMode === "repeat"
-        ? "repeat"
-        : payload?.accessDeniedCooldownMode === "repeat_ready"
-          ? "repeat_ready"
-          : "none";
-  accessDeniedUseShortCooldown = payload?.accessDeniedUseShortCooldown === true;
+  applyDirectCooldownState(payload);
+  applyFallbackCooldownState("primary", {
+    accessUntil: payload?.primaryAccessDeniedUntil,
+    cooldownMode: payload?.primaryAccessDeniedCooldownMode,
+    useShortCooldown: payload?.primaryAccessDeniedUseShortCooldown,
+  });
+  applyFallbackCooldownState("secondary", {
+    accessUntil: payload?.secondaryAccessDeniedUntil,
+    cooldownMode: payload?.secondaryAccessDeniedCooldownMode,
+    useShortCooldown: payload?.secondaryAccessDeniedUseShortCooldown,
+  });
 }
 
 function armRepeatCooldownIfNeeded() {
-  const shouldUseRepeatCooldown =
-    accessDeniedUseShortCooldown
-    || ["base", "repeat", "repeat_ready"].includes(accessDeniedCooldownMode);
-
-  accessDeniedUntil = 0;
-  accessDeniedUseShortCooldown = shouldUseRepeatCooldown;
-  accessDeniedCooldownMode = shouldUseRepeatCooldown ? "repeat_ready" : "none";
+  applyDirectCooldownState(buildMissevanRouteRepeatReadyState(getDirectCooldownState()));
 }
 
 function buildLandingRegionSnapshot(region, raw, fallbackVersion, options = {}) {
@@ -880,7 +1022,11 @@ function buildLandingRegionSnapshot(region, raw, fallbackVersion, options = {}) 
 
   const resolvedFallbackVersion = normalizeVersion(fallbackVersion);
   const appVersion = normalizeVersion(payload?.appVersion ?? resolvedFallbackVersion);
-  const cooldownUntil = Number(payload?.accessDeniedUntil ?? 0);
+  const cooldownUntil = getNearestMissevanAccessUntil([
+    { accessUntil: payload?.accessDeniedUntil },
+    { accessUntil: payload?.primaryAccessDeniedUntil },
+    { accessUntil: payload?.secondaryAccessDeniedUntil },
+  ]);
 
   return {
     key: region.key,
@@ -910,6 +1056,11 @@ async function writeCooldownStateToUpstash(payload = null) {
   try {
     const serializedState = JSON.stringify(payload ?? getCooldownStatePayload());
     await upstashClient.command(["SET", MISSEVAN_COOLDOWN_KEY, serializedState]);
+    await upstashClient.command([
+      "SET",
+      LANDING_REGION_COOLDOWN_KEYS[0].cooldownKey,
+      serializedState,
+    ]);
   } catch (error) {
     console.error("Failed to persist Missevan cooldown state to Upstash", error);
   }
@@ -968,9 +1119,9 @@ async function loadAccessDeniedCooldown() {
     cooldownStateLoaded = true;
     lastCooldownRefreshSucceeded = true;
     if (!raw) {
-      accessDeniedUntil = 0;
-      accessDeniedCooldownMode = "none";
-      accessDeniedUseShortCooldown = false;
+      applyDirectCooldownState();
+      applyFallbackCooldownState("primary");
+      applyFallbackCooldownState("secondary");
       await persistAccessDeniedCooldown();
       return;
     }
@@ -1028,6 +1179,7 @@ function buildMissevanAccessDeniedResponse(error, fallbackMessage = "Missevan re
     accessDenied: isMissevanAccessDenied(error),
     message: fallbackMessage,
     error: message,
+    cooldownUntil: getNearestMissevanCooldownUntil(),
   };
 }
 
@@ -1041,15 +1193,29 @@ function isInAccessDeniedCooldown() {
   return Date.now() < accessDeniedUntil;
 }
 
+function isMissevanFallbackRouteInCooldown(route) {
+  const routeState = getFallbackCooldownState(route?.key);
+  if (routeState.accessUntil > 0 && routeState.accessUntil <= Date.now()) {
+    applyFallbackCooldownState(route?.key, buildMissevanRouteRepeatReadyState(routeState));
+    void persistAccessDeniedCooldown();
+    return false;
+  }
+
+  return Date.now() < routeState.accessUntil;
+}
+
 function markAccessDeniedCooldown() {
-  const useShortCooldown = accessDeniedUseShortCooldown;
-  accessDeniedUntil = Date.now() + (
-    useShortCooldown
-      ? MISSEVAN_REPEAT_COOLDOWN_MS
-      : MISSEVAN_COOLDOWN_MS
+  applyDirectCooldownState(buildMissevanRouteCooldownStateAfterAccessDenied(getDirectCooldownState()));
+  cooldownStateLoaded = true;
+  lastCooldownRefreshSucceeded = true;
+  void persistAccessDeniedCooldown();
+}
+
+function markMissevanFallbackRouteCooldown(route) {
+  applyFallbackCooldownState(
+    route?.key,
+    buildMissevanRouteCooldownStateAfterAccessDenied(getFallbackCooldownState(route?.key))
   );
-  accessDeniedCooldownMode = useShortCooldown ? "repeat" : "base";
-  accessDeniedUseShortCooldown = useShortCooldown;
   cooldownStateLoaded = true;
   lastCooldownRefreshSucceeded = true;
   void persistAccessDeniedCooldown();
@@ -1080,8 +1246,8 @@ function getCooldownRemainingMs() {
   return Math.max(0, accessDeniedUntil - Date.now());
 }
 
-function createCooldownError() {
-  const seconds = Math.ceil(getCooldownRemainingMs() / 1000);
+function createCooldownError(remainingMs = getCooldownRemainingMs()) {
+  const seconds = Math.ceil(Math.max(0, remainingMs) / 1000);
   return new Error(`ACCESS_DENIED_COOLDOWN:${seconds}`);
 }
 
@@ -5145,6 +5311,260 @@ function buildMissevanFetchHeaders(headers = {}) {
   return mergedHeaders;
 }
 
+function normalizeMissevanFallbackBaseUrl(
+  value = MISSEVAN_FALLBACK_DEFAULT_BASE_URL,
+  defaultBaseUrl = MISSEVAN_FALLBACK_DEFAULT_BASE_URL
+) {
+  const rawValue = String(value || defaultBaseUrl).trim();
+
+  try {
+    const parsed = new URL(rawValue);
+    parsed.hash = "";
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    return parsed.toString().replace(/\/+$/, "");
+  } catch (_error) {
+    return defaultBaseUrl;
+  }
+}
+
+export function isMissevanFallbackEnabled({
+  baseUrl = MISSEVAN_FALLBACK_BASE_URL,
+  proxyToken = MISSEVAN_FALLBACK_PROXY_TOKEN,
+} = {}) {
+  return Boolean(String(baseUrl || "").trim() && String(proxyToken || "").trim());
+}
+
+function shouldForceMissevanFallback() {
+  return Boolean(getForcedMissevanFallbackRoute());
+}
+
+function isMissevanFallbackRouteEnabled(route) {
+  return isMissevanFallbackEnabled({
+    baseUrl: route?.baseUrl,
+    proxyToken: route?.proxyToken,
+  });
+}
+
+function getEnabledMissevanFallbackRoutes(routes = MISSEVAN_FALLBACK_ROUTES) {
+  return routes.filter((route) => isMissevanFallbackRouteEnabled(route));
+}
+
+function hasEnabledMissevanFallbackRoutes() {
+  return getEnabledMissevanFallbackRoutes().length > 0;
+}
+
+function getMissevanAccessDeniedCooldownUntil() {
+  const directInCooldown = isInAccessDeniedCooldown();
+  if (!directInCooldown) {
+    return 0;
+  }
+
+  const routes = getEnabledMissevanFallbackRoutes();
+  if (!routes.length) {
+    return accessDeniedUntil;
+  }
+
+  const allFallbackRoutesInCooldown = routes.every((route) => isMissevanFallbackRouteInCooldown(route));
+  if (!allFallbackRoutesInCooldown) {
+    return 0;
+  }
+
+  return getNearestMissevanAccessUntil([
+    getDirectCooldownState(),
+    ...routes.map((route) => getFallbackCooldownState(route.key)),
+  ]);
+}
+
+function shouldBlockMissevanAccessForCooldown() {
+  return getMissevanAccessDeniedCooldownUntil() > Date.now();
+}
+
+function getForcedMissevanFallbackRoute() {
+  const forceMode = MISSEVAN_FORCE_FALLBACK;
+  const route = forceMode === "1"
+    ? MISSEVAN_FALLBACK_ROUTES.find((candidate) => candidate.key === "primary")
+    : forceMode === "2"
+      ? MISSEVAN_FALLBACK_ROUTES.find((candidate) => candidate.key === "secondary")
+      : null;
+
+  return route && isMissevanFallbackRouteEnabled(route) ? route : null;
+}
+
+export function buildMissevanFallbackUrl(url, fallbackBaseUrl = MISSEVAN_FALLBACK_BASE_URL) {
+  const targetUrl = typeof url === "string" ? new URL(url) : url;
+  const normalizedBaseUrl = normalizeMissevanFallbackBaseUrl(fallbackBaseUrl);
+  const fallbackUrl = new URL(normalizedBaseUrl);
+  const basePath = fallbackUrl.pathname.replace(/\/+$/, "");
+  const targetPath = String(targetUrl.pathname || "").replace(/^\/+/, "");
+
+  fallbackUrl.pathname = `${basePath}/${targetPath}`.replace(/\/{2,}/g, "/");
+  fallbackUrl.search = targetUrl.search;
+  return fallbackUrl.toString();
+}
+
+function buildMissevanFallbackFetchOptions(route, options = {}, signal = undefined) {
+  return {
+    headers: {
+      ...buildMissevanFetchHeaders(options.headers),
+      "x-proxy-token": route.proxyToken,
+    },
+    signal,
+  };
+}
+
+function createMissevanFallbackError(message, status = "") {
+  const error = new Error(message);
+  error.missevanFallback = true;
+  error.status = status;
+  return error;
+}
+
+function isMissevanFallbackError(error) {
+  return error?.missevanFallback === true;
+}
+
+async function fetchMissevanViaFallbackRoute(url, route, options = {}, details = {}) {
+  if (!isMissevanFallbackRouteEnabled(route)) {
+    throw createMissevanFallbackError("Missevan fallback is not configured");
+  }
+
+  if (isMissevanFallbackRouteInCooldown(route)) {
+    writeMissevanRequestUsageLog(url, {
+      attempt: details.attempt,
+      status: "cooldown",
+      success: false,
+      accessDenied: true,
+      cooldownBlocked: true,
+      fallbackUsed: true,
+      fallbackRoute: route.fallbackRoute,
+      fallbackReason: details.reason,
+    });
+    throw createCooldownError(getNearestMissevanCooldownUntil() - Date.now());
+  }
+
+  const timeout = createTimeoutSignal(
+    options.fallbackTimeoutMs ?? route.timeoutMs
+  );
+  const requestStartedAt = Date.now();
+  let responseStatus = "";
+
+  try {
+    const response = await fetch(
+      buildMissevanFallbackUrl(url, route.baseUrl),
+      buildMissevanFallbackFetchOptions(route, options, timeout.signal)
+    );
+    responseStatus = response.status;
+
+    if (!response.ok) {
+      if (response.status === 418) {
+        markMissevanFallbackRouteCooldown(route);
+      }
+      writeMissevanRequestUsageLog(url, {
+        attempt: details.attempt,
+        status: response.status,
+        durationMs: Date.now() - requestStartedAt,
+        success: false,
+        accessDenied: response.status === 418,
+        fallbackUsed: true,
+        fallbackRoute: route.fallbackRoute,
+        fallbackReason: details.reason,
+      });
+      throw createMissevanFallbackError(`HTTP ${response.status}`, response.status);
+    }
+
+    const payload = details.responseType === "text"
+      ? await response.text()
+      : await response.json();
+
+    writeMissevanRequestUsageLog(url, {
+      attempt: details.attempt,
+      status: response.status,
+      durationMs: Date.now() - requestStartedAt,
+      success: true,
+      accessDenied: false,
+      fallbackUsed: true,
+      fallbackRoute: route.fallbackRoute,
+      fallbackReason: details.reason,
+    });
+
+    return payload;
+  } catch (error) {
+    const failureStatus = responseStatus || (error?.name === "AbortError" ? "timeout" : "error");
+    if (!isMissevanFallbackError(error)) {
+      writeMissevanRequestUsageLog(url, {
+        attempt: details.attempt,
+        status: failureStatus,
+        durationMs: Date.now() - requestStartedAt,
+        success: false,
+        accessDenied: false,
+        fallbackUsed: true,
+        fallbackRoute: route.fallbackRoute,
+        fallbackReason: details.reason,
+      });
+    }
+    throw isMissevanFallbackError(error)
+      ? error
+      : createMissevanFallbackError(error?.message || "Missevan fallback failed", failureStatus);
+  } finally {
+    timeout.cleanup();
+  }
+}
+
+function fetchMissevanJsonViaFallbackRoute(url, route, options = {}, details = {}) {
+  return fetchMissevanViaFallbackRoute(url, route, options, {
+    ...details,
+    responseType: "json",
+  });
+}
+
+function fetchMissevanTextViaFallbackRoute(url, route, options = {}, details = {}) {
+  return fetchMissevanViaFallbackRoute(url, route, options, {
+    ...details,
+    responseType: "text",
+  });
+}
+
+async function fetchMissevanWithFallbackChain(url, options = {}, details = {}) {
+  const routes = getEnabledMissevanFallbackRoutes();
+  if (!routes.length) {
+    throw createMissevanFallbackError("Missevan fallback is not configured");
+  }
+
+  let lastError;
+  for (let index = 0; index < routes.length; index += 1) {
+    const route = routes[index];
+    try {
+      return await fetchMissevanViaFallbackRoute(url, route, options, {
+        ...details,
+        reason: index === 0 ? details.reason : "primary_failed",
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const accessDeniedCooldownUntil = getMissevanAccessDeniedCooldownUntil();
+  if (accessDeniedCooldownUntil > Date.now()) {
+    throw createCooldownError(accessDeniedCooldownUntil - Date.now());
+  }
+
+  throw lastError;
+}
+
+function fetchMissevanJsonWithFallbackChain(url, options = {}, details = {}) {
+  return fetchMissevanWithFallbackChain(url, options, {
+    ...details,
+    responseType: "json",
+  });
+}
+
+function fetchMissevanTextWithFallbackChain(url, options = {}, details = {}) {
+  return fetchMissevanWithFallbackChain(url, options, {
+    ...details,
+    responseType: "text",
+  });
+}
+
 export function buildFetchOptions(url, options = {}) {
   const targetUrl = typeof url === "string" ? new URL(url) : url;
   const fetchOptions = {
@@ -5184,6 +5604,9 @@ function writeMissevanRequestUsageLog(url, details = {}) {
     success: Boolean(details.success),
     accessDenied: Boolean(details.accessDenied),
     cooldownBlocked: Boolean(details.cooldownBlocked),
+    fallbackUsed: Boolean(details.fallbackUsed),
+    fallbackRoute: String(details.fallbackRoute || ""),
+    fallbackReason: String(details.fallbackReason || ""),
   });
 }
 
@@ -5199,7 +5622,22 @@ function ensureMissevanFetchOptions(options = {}) {
 
 async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {}) {
   options = ensureMissevanFetchOptions(options);
+  const forcedFallbackRoute = options.missevan ? getForcedMissevanFallbackRoute() : null;
+  if (forcedFallbackRoute) {
+    return fetchMissevanJsonViaFallbackRoute(url, forcedFallbackRoute, options, {
+      attempt: 0,
+      reason: "forced",
+    });
+  }
+
   if (options.missevan && isInAccessDeniedCooldown()) {
+    if (hasEnabledMissevanFallbackRoutes()) {
+      return fetchMissevanJsonWithFallbackChain(url, options, {
+        attempt: 0,
+        reason: "cooldown",
+      });
+    }
+
     writeMissevanRequestUsageLog(url, {
       attempt: 0,
       status: "cooldown",
@@ -5221,6 +5659,13 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
     try {
       await options.beforeAttempt?.();
       if (options.missevan && isInAccessDeniedCooldown()) {
+        if (hasEnabledMissevanFallbackRoutes()) {
+          return fetchMissevanJsonWithFallbackChain(url, options, {
+            attempt: attempt + 1,
+            reason: "cooldown",
+          });
+        }
+
         writeMissevanRequestUsageLog(url, {
           attempt: attempt + 1,
           status: "cooldown",
@@ -5255,6 +5700,13 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
           });
           requestLogged = true;
         }
+        if (options.missevan && response.status === 418 && hasEnabledMissevanFallbackRoutes()) {
+          markAccessDeniedCooldown();
+          return fetchMissevanJsonWithFallbackChain(url, options, {
+            attempt: attempt + 1,
+            reason: "direct_418",
+          });
+        }
         throw new Error(`HTTP ${response.status}`);
       }
 
@@ -5273,6 +5725,10 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
       return data;
     } catch (error) {
       if (isCooldownError(error)) {
+        throw error;
+      }
+
+      if (isMissevanFallbackError(error)) {
         throw error;
       }
 
@@ -5314,7 +5770,22 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
 
 async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {}) {
   options = ensureMissevanFetchOptions(options);
+  const forcedFallbackRoute = options.missevan ? getForcedMissevanFallbackRoute() : null;
+  if (forcedFallbackRoute) {
+    return fetchMissevanTextViaFallbackRoute(url, forcedFallbackRoute, options, {
+      attempt: 0,
+      reason: "forced",
+    });
+  }
+
   if (options.missevan && isInAccessDeniedCooldown()) {
+    if (hasEnabledMissevanFallbackRoutes()) {
+      return fetchMissevanTextWithFallbackChain(url, options, {
+        attempt: 0,
+        reason: "cooldown",
+      });
+    }
+
     writeMissevanRequestUsageLog(url, {
       attempt: 0,
       status: "cooldown",
@@ -5336,6 +5807,13 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
     try {
       await options.beforeAttempt?.();
       if (options.missevan && isInAccessDeniedCooldown()) {
+        if (hasEnabledMissevanFallbackRoutes()) {
+          return fetchMissevanTextWithFallbackChain(url, options, {
+            attempt: attempt + 1,
+            reason: "cooldown",
+          });
+        }
+
         writeMissevanRequestUsageLog(url, {
           attempt: attempt + 1,
           status: "cooldown",
@@ -5371,6 +5849,13 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
           });
           requestLogged = true;
         }
+        if (options.missevan && response.status === 418 && hasEnabledMissevanFallbackRoutes()) {
+          markAccessDeniedCooldown();
+          return fetchMissevanTextWithFallbackChain(url, options, {
+            attempt: attempt + 1,
+            reason: "direct_418",
+          });
+        }
         throw new Error(`HTTP ${response.status}`);
       }
 
@@ -5389,6 +5874,10 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       return text;
     } catch (error) {
       if (isCooldownError(error)) {
+        throw error;
+      }
+
+      if (isMissevanFallbackError(error)) {
         throw error;
       }
 
@@ -7350,7 +7839,7 @@ async function executeMissevanIdTask(task) {
   });
 
   await refreshMissevanCooldownState();
-  if (isInAccessDeniedCooldown()) {
+  if (shouldBlockMissevanAccessForCooldown()) {
     task.accessDenied = true;
     return updateStatsTask(task, {
       status: "completed",
@@ -7567,7 +8056,7 @@ async function executeMissevanPlayCountTask(task) {
   });
 
   await refreshMissevanCooldownState();
-  if (isInAccessDeniedCooldown()) {
+  if (shouldBlockMissevanAccessForCooldown()) {
     task.accessDenied = true;
     return updateStatsTask(task, {
       status: "completed",
@@ -7766,7 +8255,7 @@ async function executeMissevanRevenueTask(task) {
   });
 
   await refreshMissevanCooldownState();
-  if (isInAccessDeniedCooldown()) {
+  if (shouldBlockMissevanAccessForCooldown()) {
     task.accessDenied = true;
     return updateStatsTask(task, {
       status: "completed",

@@ -4,6 +4,13 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.6.5",
+    changes: [
+      "集成了备用节点，会在猫耳受限时自动启用，无需再手动点开",
+      "修复了猫耳一周内更新统计的遗漏问题",
+    ],
+  },
+  {
     version: "1.6.3",
     changes: [
       "请保存本工具新地址：https://mmtoolkit.app/，旧地址将于7月底失效",

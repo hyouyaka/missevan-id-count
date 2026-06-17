@@ -854,15 +854,15 @@ test("history timestamps include platform label", () => {
   assert.match(outputPanelSource, /aria-label=\{`删除 \$\{entry\.createdAtLabel\} \$\{getHistoryPlatformLabel\(entry\)\} 这条历史`\}/);
 });
 
-test("header description is replaced by Missevan access hint with existing links", () => {
+test("header description is replaced by Missevan desktop-only access hint", () => {
   assert.doesNotMatch(toolViewSource, /\{appConfig\.description\}/);
   assert.match(toolViewSource, /renderHeaderAccessHint/);
   assert.match(appUtilsSource, /export function getRemainingCooldownMinutes/);
   assert.match(appUtilsSource, /export function getMissevanAccessDeniedMessage/);
-  assert.match(appUtilsSource, /猫耳访问受限中，请\$\{getRemainingCooldownMinutes\(config, fallbackHours\)\}分钟后重试，或使用其他节点和桌面版。/);
+  assert.match(appUtilsSource, /当前所有备份节点都在冷却中，请\$\{getRemainingCooldownMinutes\(config, fallbackHours\)\}分钟之后再来，或使用桌面版。/);
   assert.match(toolViewSource, /renderMissevanAccessDeniedMessage/);
-  assert.match(toolViewSource, /猫耳访问受限中，请\{getRemainingCooldownMinutes\(config, appConfig\.cooldownHours\)\}分钟后重试，或使用/);
-  assert.match(toolViewSource, /href="\/nodes"[\s\S]*其他节点/);
+  assert.match(toolViewSource, /当前所有备份节点都在冷却中，请\{getRemainingCooldownMinutes\(config, appConfig\.cooldownHours\)\}分钟之后再来，或使用/);
+  assert.doesNotMatch(toolViewSource, /href="\/nodes"[\s\S]*其他节点/);
   assert.match(toolViewSource, /href=\{appConfig\.desktopAppUrl\}[\s\S]*桌面版/);
   assert.doesNotMatch(toolViewSource, /如果猫耳接口暂时受限，请/);
   assert.doesNotMatch(toolViewSource, /节点页/);
@@ -872,9 +872,12 @@ test("SearchPanel uses linked web access-denied notice while desktop keeps brows
   assert.match(searchPanelSource, /desktopAppUrl/);
   assert.match(searchPanelSource, /getMissevanAccessDeniedMessage/);
   assert.match(searchPanelSource, /renderMissevanAccessDeniedMessage/);
-  assert.match(searchPanelSource, /猫耳访问受限中，请\{getRemainingCooldownMinutes\(config, cooldownHours\)\}分钟后重试，或使用/);
-  assert.match(searchPanelSource, /href="\/nodes"[\s\S]*其他节点/);
+  assert.match(searchPanelSource, /当前所有备份节点都在冷却中，请\{getRemainingCooldownMinutes\(config, cooldownHours\)\}分钟之后再来，或使用/);
+  assert.doesNotMatch(searchPanelSource, /href="\/nodes"[\s\S]*其他节点/);
   assert.match(searchPanelSource, /href=\{desktopAppUrl\}[\s\S]*桌面版/);
+  assert.match(favoritesPanelSource, /当前所有备份节点都在冷却中，请\{getRemainingCooldownMinutes\(\{ cooldownHours, cooldownUntil \}, cooldownHours\)\}分钟之后再来，或使用/);
+  assert.doesNotMatch(favoritesPanelSource, /href="\/nodes"[\s\S]*其他节点/);
+  assert.match(favoritesPanelSource, /href=\{desktopAppUrl\}[\s\S]*桌面版/);
   assert.match(searchPanelSource, /MISSEVAN_DESKTOP_ACCESS_HINT/);
   assert.match(appUtilsSource, /MISSEVAN_DESKTOP_ACCESS_HINT = "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"/);
   assert.doesNotMatch(searchPanelSource, /Missevan目前受限中/);
@@ -1442,6 +1445,73 @@ test("Missevan external request logs are endpoint-scoped and query-free", () => 
     /searchParams/,
     "Missevan request endpoint normalization should not include query params"
   );
+});
+
+test("Missevan JSON and text requests can use Render fallback with usage log markers", () => {
+  const logHelperSource = serverSource.slice(
+    serverSource.indexOf("function writeMissevanRequestUsageLog"),
+    serverSource.indexOf("\nfunction ensureMissevanFetchOptions")
+  );
+  const fetchJsonSource = serverSource.slice(
+    serverSource.indexOf("async function fetchJsonWithRetry"),
+    serverSource.indexOf("\nasync function fetchTextWithRetry")
+  );
+  const fetchTextSource = serverSource.slice(
+    serverSource.indexOf("async function fetchTextWithRetry"),
+    serverSource.indexOf("\nfunction formatImageProxyError")
+  );
+
+  assert.match(serverSource, /function isMissevanFallbackEnabled/);
+  assert.match(serverSource, /MISSEVAN_FALLBACK_TIMEOUT_MS[\s\S]*90000/);
+  assert.match(serverSource, /MISSEVAN_SECONDARY_FALLBACK_DEFAULT_BASE_URL[\s\S]*msbackup\.mmtoolkit\.deno\.net\/missevan/);
+  assert.match(serverSource, /MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS[\s\S]*15000/);
+  assert.match(serverSource, /MISSEVAN_FALLBACK_ROUTES/);
+  assert.match(serverSource, /fallbackRoute:\s*"deno"/);
+  assert.match(serverSource, /primaryAccessDeniedUntil/);
+  assert.match(serverSource, /secondaryAccessDeniedUntil/);
+  assert.match(serverSource, /function isMissevanFallbackRouteInCooldown/);
+  assert.match(serverSource, /function markMissevanFallbackRouteCooldown/);
+  assert.match(serverSource, /function getMissevanAccessDeniedCooldownUntil/);
+  assert.match(serverSource, /MISSEVAN_FORCE_FALLBACK/);
+  assert.match(serverSource, /function getForcedMissevanFallbackRoute/);
+  assert.match(serverSource, /forceMode === "1"/);
+  assert.match(serverSource, /forceMode === "2"/);
+  assert.match(serverSource, /function getEnabledMissevanFallbackRoutes/);
+  assert.match(serverSource, /function buildMissevanFallbackUrl/);
+  assert.match(serverSource, /isMissevanFallbackRouteInCooldown\(route\)[\s\S]*status:\s*"cooldown"[\s\S]*fallbackRoute:\s*route\.fallbackRoute/);
+  assert.match(serverSource, /response\.status === 418[\s\S]*markMissevanFallbackRouteCooldown\(route\)/);
+  assert.match(serverSource, /failureStatus[\s\S]*"timeout"/);
+  assert.match(serverSource, /createMissevanFallbackError[\s\S]*failureStatus/);
+  assert.match(fetchJsonSource, /fetchMissevanJsonWithFallbackChain/);
+  assert.match(fetchJsonSource, /getForcedMissevanFallbackRoute/);
+  assert.match(fetchJsonSource, /reason:\s*"forced"/);
+  assert.match(fetchTextSource, /fetchMissevanTextWithFallbackChain/);
+  assert.match(fetchTextSource, /getForcedMissevanFallbackRoute/);
+  assert.match(fetchTextSource, /reason:\s*"forced"/);
+  assert.match(serverSource, /"primary_failed"/);
+  assert.match(logHelperSource, /fallbackUsed/);
+  assert.match(logHelperSource, /fallbackRoute/);
+  assert.match(logHelperSource, /fallbackReason/);
+});
+
+test("Missevan stats tasks do not bypass fallback routes during direct cooldown", () => {
+  const idTaskSource = serverSource.slice(
+    serverSource.indexOf("async function executeMissevanIdTask"),
+    serverSource.indexOf("\nasync function executeManboIdTask")
+  );
+  const playCountTaskSource = serverSource.slice(
+    serverSource.indexOf("async function executeMissevanPlayCountTask"),
+    serverSource.indexOf("\nasync function executeMissevanRevenueTask")
+  );
+  const revenueTaskSource = serverSource.slice(
+    serverSource.indexOf("async function executeMissevanRevenueTask"),
+    serverSource.indexOf("\nasync function executeManboRevenueTask")
+  );
+
+  [idTaskSource, playCountTaskSource, revenueTaskSource].forEach((taskSource) => {
+    assert.doesNotMatch(taskSource, /if \(isInAccessDeniedCooldown\(\)\)/);
+    assert.match(taskSource, /if \(shouldBlockMissevanAccessForCooldown\(\)\)/);
+  });
 });
 
 test("Missevan favorite refresh avoids running duplicate danmaku tasks", () => {

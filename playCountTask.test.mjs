@@ -12,6 +12,9 @@ const {
   resolveMissevanPlayCountDramaTotal,
   normalizePlayCountDramas,
   buildFetchOptions,
+  buildMissevanFallbackUrl,
+  buildMissevanRouteCooldownStateAfterAccessDenied,
+  getNearestMissevanAccessUntil,
   shouldPersistAccessDeniedCooldownForEnv,
 } = await import("./server.js");
 
@@ -162,6 +165,76 @@ test("Missevan fetch options attach browser-like headers without Cookie", () => 
   assert.equal(options.headers["Referer"], "https://www.missevan.com/");
   assert.match(options.headers["User-Agent"], /Mozilla\/5\.0/);
   assert.equal(options.headers.Cookie, undefined);
+});
+
+test("Missevan fallback URL maps upstream URLs to Render proxy", () => {
+  assert.equal(
+    buildMissevanFallbackUrl(
+      "https://www.missevan.com/sound/getsound?soundid=11",
+      "https://msbackup.onrender.com/missevan"
+    ),
+    "https://msbackup.onrender.com/missevan/sound/getsound?soundid=11"
+  );
+  assert.equal(
+    buildMissevanFallbackUrl(
+      "https://www.missevan.com/dramaapi/getdrama?drama_id=22",
+      "https://msbackup.onrender.com/missevan/"
+    ),
+    "https://msbackup.onrender.com/missevan/dramaapi/getdrama?drama_id=22"
+  );
+  assert.equal(
+    buildMissevanFallbackUrl(
+      "https://www.missevan.com/dramaapi/getdramabysound?sound_id=33",
+      "https://msbackup.mmtoolkit.deno.net/missevan"
+    ),
+    "https://msbackup.mmtoolkit.deno.net/missevan/dramaapi/getdramabysound?sound_id=33"
+  );
+});
+
+test("Missevan route cooldown uses base duration first and repeat duration after expiry", () => {
+  const now = 1_000_000;
+  const baseState = buildMissevanRouteCooldownStateAfterAccessDenied(
+    { accessUntil: 0, useShortCooldown: false, cooldownMode: "none" },
+    { now, baseCooldownMs: 4 * 60 * 60 * 1000, repeatCooldownMs: 60 * 60 * 1000 }
+  );
+
+  assert.equal(baseState.accessUntil, now + 4 * 60 * 60 * 1000);
+  assert.equal(baseState.cooldownMode, "base");
+  assert.equal(baseState.useShortCooldown, false);
+
+  const repeatReadyState = buildMissevanRouteCooldownStateAfterAccessDenied(
+    { accessUntil: 0, useShortCooldown: true, cooldownMode: "repeat_ready" },
+    { now, baseCooldownMs: 4 * 60 * 60 * 1000, repeatCooldownMs: 60 * 60 * 1000 }
+  );
+
+  assert.equal(repeatReadyState.accessUntil, now + 60 * 60 * 1000);
+  assert.equal(repeatReadyState.cooldownMode, "repeat");
+  assert.equal(repeatReadyState.useShortCooldown, true);
+});
+
+test("Missevan all-node retry time uses the nearest active route cooldown", () => {
+  const now = 1_000_000;
+  assert.equal(
+    getNearestMissevanAccessUntil(
+      [
+        { accessUntil: now + 4 * 60 * 1000 },
+        { accessUntil: now + 2 * 60 * 1000 },
+        { accessUntil: now + 9 * 60 * 1000 },
+      ],
+      now
+    ),
+    now + 2 * 60 * 1000
+  );
+  assert.equal(
+    getNearestMissevanAccessUntil(
+      [
+        { accessUntil: now - 1 },
+        { accessUntil: 0 },
+      ],
+      now
+    ),
+    0
+  );
 });
 
 test("local runs ignore persistent Missevan cooldown even when local env opts in", () => {

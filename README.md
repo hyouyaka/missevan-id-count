@@ -50,6 +50,7 @@ npm run desktop
 ## 猫耳访问受限说明
 
 云端部署的节点遇到猫耳访问受限时，需要等待冷却时间自动恢复，无法手动解锁。
+如果配置了 Render 备用代理，主站命中猫耳 418 后会在 cooldown 期间改走备用代理，cooldown 结束后恢复主站本体直连。
 
 桌面版或本地运行版可以自行解锁：
 
@@ -71,6 +72,62 @@ Windows 桌面版会直接在界面中提示这一步。
 | `MISSEVAN_COOLDOWN_KEY` | 当前部署的 cooldown key | `missevan:cooldown:v1` |
 | `MISSEVAN_DESKTOP_APP_URL` | 网页版提示下载桌面版的地址 | — |
 | `FEATURE_SUGGESTION_URL` | 功能建议收集链接 | — |
+
+### 猫耳备用代理
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `MISSEVAN_FALLBACK_BASE_URL` | 一级 Render 备用代理地址 | `https://msbackup.onrender.com/missevan` |
+| `MISSEVAN_FALLBACK_PROXY_TOKEN` | 一级备用代理鉴权 token，必须与 `missevan-backup-call` 的 `PROXY_TOKEN` 一致；为空则禁用一级备用 | — |
+| `MISSEVAN_FALLBACK_TIMEOUT_MS` | 一级备用代理请求超时毫秒数，需覆盖 Render 免费实例冷启动 | `90000` |
+| `MISSEVAN_SECONDARY_FALLBACK_BASE_URL` | 二级 Deno 备用代理地址 | `https://msbackup.mmtoolkit.deno.net/missevan` |
+| `MISSEVAN_SECONDARY_FALLBACK_PROXY_TOKEN` | 二级备用代理鉴权 token；为空则禁用二级备用 | — |
+| `MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS` | 二级备用代理请求超时毫秒数 | `15000` |
+| `MISSEVAN_FORCE_FALLBACK` | 本地/灰度强制猫耳 JSON/XML 请求出口：`0` 直连优先，`1` 一级 Render，`2` 二级 Deno | `0` |
+
+备用代理只用于猫耳 JSON/XML 请求，不用于图片、音频、视频或漫播请求。触发备用代理时，`logs/usage.log` 会写入 `fallbackUsed=true`、`fallbackRoute=render/deno` 和 `fallbackReason`。Render 免费实例冷启动可能需要几十秒；Render 失败后会再尝试 Deno 二级备用。
+
+本地强制测试链路：
+
+```text
+MISSEVAN_FORCE_FALLBACK=0:
+猫耳请求 → 主站直连猫耳
+✅        ✅
+
+MISSEVAN_FORCE_FALLBACK=1 且一级 token 已配置:
+猫耳请求 → Render 一级备用 → 猫耳 API
+✅        ✅              ✅
+
+MISSEVAN_FORCE_FALLBACK=2 且二级 token 已配置:
+猫耳请求 → Deno 二级备用 → 猫耳 API
+✅        ✅            ✅
+```
+
+本地 `.env` 示例：
+
+```env
+MISSEVAN_FALLBACK_BASE_URL=https://msbackup.onrender.com/missevan
+MISSEVAN_FALLBACK_PROXY_TOKEN=replace-with-backup-proxy-token
+MISSEVAN_FALLBACK_TIMEOUT_MS=90000
+MISSEVAN_SECONDARY_FALLBACK_BASE_URL=https://msbackup.mmtoolkit.deno.net/missevan
+MISSEVAN_SECONDARY_FALLBACK_PROXY_TOKEN=replace-with-secondary-backup-proxy-token
+MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS=15000
+MISSEVAN_FORCE_FALLBACK=2
+```
+
+启动主站后访问任意猫耳 JSON/XML 功能，检查 `logs/usage.log` 是否出现：
+
+```text
+fallbackUsed=true
+fallbackRoute=render 或 deno
+fallbackReason=forced
+```
+
+测试结束后删除该变量，或改回：
+
+```env
+MISSEVAN_FORCE_FALLBACK=0
+```
 
 ### Upstash Redis
 
