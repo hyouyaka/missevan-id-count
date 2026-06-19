@@ -923,3 +923,71 @@ test("rank response cache validator changes when only CV ranks update", async ()
   assert.match(secondValidator, /2026-06-12T23:10:00\+00:00/);
   assert.match(secondValidator, /2026-06-13T04:04:24\+00:00/);
 });
+
+test("rank-derived caches expire by daily update cycle", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const {
+    getRankDerivedCacheCycleIdForConfig,
+    isRankDerivedCacheEntryFreshForConfig,
+  } = await import("./server.js");
+  const config = {
+    timeZone: "Asia/Shanghai",
+    startHour: 7,
+    endHour: 10,
+    ttlMs: 10 * 60 * 1000,
+  };
+
+  assert.equal(
+    getRankDerivedCacheCycleIdForConfig(Date.parse("2026-06-18T22:50:00.000Z"), config),
+    "2026-06-18"
+  );
+  assert.equal(
+    getRankDerivedCacheCycleIdForConfig(Date.parse("2026-06-19T00:40:00.000Z"), config),
+    "2026-06-19"
+  );
+
+  assert.equal(
+    isRankDerivedCacheEntryFreshForConfig(
+      Date.parse("2026-06-18T22:50:00.000Z"),
+      Date.parse("2026-06-19T02:10:00.000Z"),
+      config
+    ),
+    false
+  );
+
+  assert.equal(
+    isRankDerivedCacheEntryFreshForConfig(
+      Date.parse("2026-06-19T00:40:00.000Z"),
+      Date.parse("2026-06-19T02:10:00.000Z"),
+      config
+    ),
+    true
+  );
+
+  assert.equal(
+    isRankDerivedCacheEntryFreshForConfig(
+      Date.parse("2026-06-19T00:40:00.000Z"),
+      Date.parse("2026-06-19T00:55:00.000Z"),
+      config
+    ),
+    false
+  );
+
+  assert.equal(
+    isRankDerivedCacheEntryFreshForConfig(
+      Date.parse("2026-06-19T00:40:00.000Z"),
+      Date.parse("2026-06-19T22:00:00.000Z"),
+      config
+    ),
+    true
+  );
+
+  assert.equal(
+    isRankDerivedCacheEntryFreshForConfig(
+      Date.parse("2026-06-19T00:40:00.000Z"),
+      Date.parse("2026-06-19T23:01:00.000Z"),
+      config
+    ),
+    false
+  );
+});

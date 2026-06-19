@@ -2263,8 +2263,10 @@ test("rank route refreshes normal and CV caches independently from meta changes"
   assert.doesNotMatch(serverSource, /isRanksCacheEntryFresh\(ranksCache\.loadedAt, now\)/);
 });
 
-test("rank, ongoing, and trend caches keep dynamic policy outside the meta-driven rank route", () => {
-  assert.match(serverSource, /isRanksCacheEntryFresh\(cached\.loadedAt, now\)/);
+test("rank-derived caches use daily cycle freshness outside the meta-driven rank route", () => {
+  assert.match(serverSource, /getRankDerivedCacheCycleIdForConfig/);
+  assert.match(serverSource, /isRankDerivedCacheEntryFresh\(cached\.loadedAt, now\)/);
+  assert.doesNotMatch(serverSource, /isRanksCacheEntryFresh\(cached\.loadedAt, now\)/);
   assert.doesNotMatch(serverSource, /now - cached\.loadedAt < ONGOING_CACHE_TTL_MS/);
 
   const ranksRouteStart = serverSource.indexOf('app.get("/ranks"');

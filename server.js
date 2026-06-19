@@ -1304,23 +1304,46 @@ function setCachedValue(cache, key, value, maxEntries = null) {
 }
 
 function getHourInRanksCacheTimeZone(now = Date.now(), timeZone = "Asia/Shanghai") {
+  const parts = getDateTimePartsInRanksCacheTimeZone(now, timeZone);
+  return Number.isInteger(parts.hour) ? parts.hour : new Date(now).getHours();
+}
+
+function getDateTimePartsInRanksCacheTimeZone(now = Date.now(), timeZone = "Asia/Shanghai") {
   const date = now instanceof Date ? now : new Date(now);
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
       hour: "2-digit",
       hourCycle: "h23",
     }).formatToParts(date);
+    const year = Number(parts.find((part) => part.type === "year")?.value);
+    const month = Number(parts.find((part) => part.type === "month")?.value);
+    const dayOfMonth = Number(parts.find((part) => part.type === "day")?.value);
     const hour = Number(parts.find((part) => part.type === "hour")?.value);
-    if (Number.isInteger(hour) && hour >= 0 && hour <= 23) {
-      return hour;
+    if (
+      Number.isInteger(year) &&
+      Number.isInteger(month) &&
+      Number.isInteger(dayOfMonth) &&
+      Number.isInteger(hour) &&
+      hour >= 0 &&
+      hour <= 23
+    ) {
+      return { year, month, dayOfMonth, hour };
     }
   } catch (_) {
     if (timeZone !== "Asia/Shanghai") {
-      return getHourInRanksCacheTimeZone(now, "Asia/Shanghai");
+      return getDateTimePartsInRanksCacheTimeZone(now, "Asia/Shanghai");
     }
   }
-  return date.getHours();
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    dayOfMonth: date.getDate(),
+    hour: date.getHours(),
+  };
 }
 
 function getFixedUtcMinusFourParts(now = Date.now()) {
@@ -1500,6 +1523,36 @@ export function isRanksCacheEntryFreshForConfig(loadedAt, now = Date.now(), conf
   return now - normalizedLoadedAt < cachePolicy.ttlMs;
 }
 
+export function getRankDerivedCacheCycleIdForConfig(now = Date.now(), config = {}) {
+  const timeZone = String(config.timeZone ?? "Asia/Shanghai").trim() || "Asia/Shanghai";
+  const startHour = Number.isInteger(Number(config.startHour))
+    ? Math.min(23, Math.max(0, Number(config.startHour)))
+    : 7;
+  const parts = getDateTimePartsInRanksCacheTimeZone(now, timeZone);
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.dayOfMonth));
+  if (parts.hour < startHour) {
+    date.setUTCDate(date.getUTCDate() - 1);
+  }
+  return [
+    String(date.getUTCFullYear()).padStart(4, "0"),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+export function isRankDerivedCacheEntryFreshForConfig(
+  loadedAt,
+  now = Date.now(),
+  config = {}
+) {
+  if (!isRanksCacheEntryFreshForConfig(loadedAt, now, config)) {
+    return false;
+  }
+
+  return getRankDerivedCacheCycleIdForConfig(loadedAt, config) ===
+    getRankDerivedCacheCycleIdForConfig(now, config);
+}
+
 export function getRanksCachePolicy(now = Date.now()) {
   return getRanksCachePolicyForConfig(now, {
     timeZone: RANKS_CACHE_TIME_ZONE,
@@ -1511,6 +1564,15 @@ export function getRanksCachePolicy(now = Date.now()) {
 
 export function isRanksCacheEntryFresh(loadedAt, now = Date.now()) {
   return isRanksCacheEntryFreshForConfig(loadedAt, now, {
+    timeZone: RANKS_CACHE_TIME_ZONE,
+    startHour: RANKS_UPDATE_WINDOW_START_HOUR,
+    endHour: RANKS_UPDATE_WINDOW_END_HOUR,
+    ttlMs: RANKS_UPDATE_WINDOW_TTL_MS,
+  });
+}
+
+function isRankDerivedCacheEntryFresh(loadedAt, now = Date.now()) {
+  return isRankDerivedCacheEntryFreshForConfig(loadedAt, now, {
     timeZone: RANKS_CACHE_TIME_ZONE,
     startHour: RANKS_UPDATE_WINDOW_START_HOUR,
     endHour: RANKS_UPDATE_WINDOW_END_HOUR,
@@ -3047,7 +3109,12 @@ async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
   const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform);
   const now = Date.now();
   const cached = rankTrendAggregateCache.get(cacheKey);
-  if (!forceRefresh && cached && "snapshot" in cached && isRanksCacheEntryFresh(cached.loadedAt, now)) {
+  if (
+    !forceRefresh &&
+    cached &&
+    "snapshot" in cached &&
+    isRankDerivedCacheEntryFresh(cached.loadedAt, now)
+  ) {
     return cached.snapshot;
   }
   if (!forceRefresh && cached?.loadPromise) {
@@ -3107,7 +3174,11 @@ async function getCachedOngoingResponse(platform, options = {}) {
   const cacheKey = getOngoingCacheKey(normalizedPlatform);
   const now = Date.now();
   const cached = ongoingCache.get(cacheKey);
-  if (!forceRefresh && cached?.response && isRanksCacheEntryFresh(cached.loadedAt, now)) {
+  if (
+    !forceRefresh &&
+    cached?.response &&
+    isRankDerivedCacheEntryFresh(cached.loadedAt, now)
+  ) {
     return cached.response;
   }
   if (!forceRefresh && cached?.loadPromise) {
@@ -3234,7 +3305,7 @@ async function getCachedRankTrendResponse(platform, dramaId) {
     );
     const now = Date.now();
     const cached = rankTrendsCache.get(cacheKey);
-    if (cached?.response && isRanksCacheEntryFresh(cached.loadedAt, now)) {
+    if (cached?.response && isRankDerivedCacheEntryFresh(cached.loadedAt, now)) {
       return cached.response;
     }
     if (cached?.loadPromise) {
@@ -3296,7 +3367,7 @@ async function getCachedRankTrendResponse(platform, dramaId) {
   );
   const now = Date.now();
   const cached = rankTrendsCache.get(cacheKey);
-  if (cached?.response && isRanksCacheEntryFresh(cached.loadedAt, now)) {
+  if (cached?.response && isRankDerivedCacheEntryFresh(cached.loadedAt, now)) {
     return cached.response;
   }
   if (cached?.loadPromise) {
