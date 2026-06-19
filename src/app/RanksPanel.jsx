@@ -32,6 +32,7 @@ import {
   canShowRankTrend,
   CompareActionButton,
   fetchRankTrendData as fetchSharedRankTrendData,
+  formatRankTrendCompactDelta,
   formatRankTrendDelta,
   logRankTrendOpen,
   rankTrendTagVariants,
@@ -682,17 +683,82 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
   );
 }
 
-function CvRankItemCard({ item, platform, onOpenSearchResult }) {
+function CvRankItemCard({
+  item,
+  platform,
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isTrendOpen, setIsTrendOpen] = useState(false);
+  const [trendState, setTrendState] = useState({
+    isLoading: false,
+    error: "",
+    data: null,
+  });
   const avatarUrl = buildProxyImageUrl(item.avatar);
   const topWorksText = getCvWorksPreviewText(item.topWorks || item.works);
+  const canShowTrend = Boolean(item.cvName);
+
+  async function openTrendDialog() {
+    if (!canShowTrend) {
+      return;
+    }
+    setIsTrendOpen(true);
+    logRankTrendOpen({
+      platform: "cv",
+      id: item.cvName,
+      name: item.cvName,
+      source: "ranks",
+      rankKey: item.trendScope === "paid" ? "cv-paid" : "cv",
+      frontendVersion,
+    });
+    setTrendState((current) => ({
+      ...current,
+      isLoading: !current.data,
+      error: "",
+    }));
+    try {
+      const { response, data } = await fetchSharedRankTrendData({
+        kind: "cv",
+        id: item.cvName,
+        frontendVersion,
+      });
+      handleVersionResponse?.({
+        ...data,
+        backendVersion: getBackendVersionFromResponse(response, data),
+        frontendVersion,
+      });
+      if (!response.ok || !data?.success) {
+        setTrendState({
+          isLoading: false,
+          error: data?.message || "趋势数据暂不可用。",
+          data: null,
+        });
+        return;
+      }
+      setTrendState({
+        isLoading: false,
+        error: "",
+        data,
+      });
+    } catch (error) {
+      console.error("Failed to load CV rank trend", error);
+      setTrendState({
+        isLoading: false,
+        error: "趋势数据暂不可用。",
+        data: null,
+      });
+    }
+  }
 
   return (
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
       <CardContent className="px-3.5">
-        <div className="grid grid-cols-[auto_3.75rem_minmax(0,1fr)] items-center gap-3 sm:grid-cols-[auto_4.25rem_minmax(0,1fr)_minmax(10rem,auto)_auto]">
+        <div className="grid grid-cols-[auto_3.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[auto_4.25rem_minmax(0,1fr)]">
           <RankBadge rank={item.rank} />
-          <div className="size-[3.75rem] overflow-hidden rounded-full border border-border/70 bg-muted/45 sm:size-[4.25rem]">
+          <div className="row-span-2 size-[3.75rem] overflow-hidden rounded-full border border-border/70 bg-muted/45 sm:row-span-3 sm:size-[4.25rem]">
             {avatarUrl ? (
               <img alt={item.cvName} className="size-full object-cover" src={avatarUrl} />
             ) : (
@@ -701,36 +767,12 @@ function CvRankItemCard({ item, platform, onOpenSearchResult }) {
               </div>
             )}
           </div>
-          <div className="min-w-0">
+          <div
+            data-cv-card-title-row="true"
+            className="col-start-3 flex min-w-0 items-center justify-between gap-2"
+          >
             <div className="min-w-0 break-words text-base font-semibold leading-6 text-foreground sm:text-lg">
               {item.cvName}
-            </div>
-            <div className="mt-0.5 min-w-0 break-words text-xs leading-5 text-muted-foreground sm:text-sm">
-              {topWorksText}
-            </div>
-          </div>
-          <div data-cv-mobile-summary-row="true" className="col-start-3 flex min-w-0 items-center justify-between gap-2 text-sm sm:hidden">
-            <div className="flex min-w-0 items-center gap-3">
-              <div
-                aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
-                title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
-                className="flex min-w-0 items-center gap-1.5"
-              >
-                <PlayCircleIcon aria-hidden="true" className={metaIconClassName} />
-                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                  {formatRankCompactCount(item.totalViewCount)}
-                </span>
-              </div>
-              <div
-                aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
-                title={`作品数: ${formatPlainNumber(item.workCount)}`}
-                className="flex min-w-0 items-center gap-1.5"
-              >
-                <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
-                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                  {formatPlainNumber(item.workCount)}
-                </span>
-              </div>
             </div>
             <Button
               type="button"
@@ -744,7 +786,16 @@ function CvRankItemCard({ item, platform, onOpenSearchResult }) {
               {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
             </Button>
           </div>
-          <div className="hidden min-w-0 gap-1 text-sm sm:col-start-auto sm:flex sm:items-center sm:gap-4">
+          <div
+            data-cv-card-topworks-row="true"
+            className="col-start-3 min-w-0 break-words text-xs leading-5 text-muted-foreground sm:text-sm"
+          >
+            {topWorksText}
+          </div>
+          <div
+            data-cv-card-actions-row="true"
+            className="col-start-3 hidden min-w-0 flex-wrap items-center gap-3 text-sm sm:flex"
+          >
             <div
               aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
               title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
@@ -755,6 +806,12 @@ function CvRankItemCard({ item, platform, onOpenSearchResult }) {
                 {formatRankCompactCount(item.totalViewCount)}
               </span>
             </div>
+            <RankTrendDeltaBadge
+              metric={item.playbackDelta}
+              className="h-[1.35rem] px-1.5 text-[0.68rem]"
+            >
+              周增：{formatRankTrendCompactDelta(item.playbackDelta)}
+            </RankTrendDeltaBadge>
             <div
               aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
               title={`作品数: ${formatPlainNumber(item.workCount)}`}
@@ -765,28 +822,89 @@ function CvRankItemCard({ item, platform, onOpenSearchResult }) {
                 {formatPlainNumber(item.workCount)}
               </span>
             </div>
+            {canShowTrend ? (
+              <RankTrendButton
+                onClick={openTrendDialog}
+                aria-label={`查看${item.cvName}趋势`}
+                title="查看趋势"
+              />
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className="hidden bg-background/84 sm:inline-flex"
+              onClick={() => setIsExpanded((current) => !current)}
+              aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
+              title={isExpanded ? "收起作品列表" : "展开作品列表"}
+            >
+              {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+            </Button>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            className="hidden bg-background/84 sm:inline-flex"
-            onClick={() => setIsExpanded((current) => !current)}
-            aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
-            title={isExpanded ? "收起作品列表" : "展开作品列表"}
+          <div
+            data-cv-mobile-summary-row="true"
+            data-cv-card-mobile-actions-row="true"
+            className="col-start-2 col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm sm:hidden"
           >
-            {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-          </Button>
+            <div
+              aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+              title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+              className="flex min-w-0 items-center gap-1.5"
+            >
+              <PlayCircleIcon aria-hidden="true" className={metaIconClassName} />
+              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                {formatRankCompactCount(item.totalViewCount)}
+              </span>
+            </div>
+            <RankTrendDeltaBadge
+              metric={item.playbackDelta}
+              className="h-[1.35rem] px-1.5 text-[0.68rem]"
+            >
+              周增：{formatRankTrendCompactDelta(item.playbackDelta)}
+            </RankTrendDeltaBadge>
+            <div
+              aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
+              title={`作品数: ${formatPlainNumber(item.workCount)}`}
+              className="flex min-w-0 items-center gap-1.5"
+            >
+              <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
+              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                {formatPlainNumber(item.workCount)}
+              </span>
+            </div>
+            {canShowTrend ? (
+              <RankTrendButton
+                onClick={openTrendDialog}
+                aria-label={`查看${item.cvName}趋势`}
+                title="查看趋势"
+              />
+            ) : null}
+          </div>
         </div>
         {isExpanded ? (
           <CvWorksList works={item.works || []} platform={platform} onOpenSearchResult={onOpenSearchResult} />
+        ) : null}
+        {canShowTrend ? (
+          <SharedRankTrendDialog
+            open={isTrendOpen}
+            onOpenChange={setIsTrendOpen}
+            item={{ id: item.cvName, name: item.cvName }}
+            platform="cv"
+            trendState={trendState}
+          />
         ) : null}
       </CardContent>
     </Card>
   );
 }
 
-function CvRankColumn({ rank, platform, onOpenSearchResult }) {
+function CvRankColumn({
+  rank,
+  platform,
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+}) {
   return (
     <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -806,6 +924,8 @@ function CvRankColumn({ rank, platform, onOpenSearchResult }) {
               key={`${rank.key}-${item.rank}-${item.cvName}`}
               item={item}
               platform={platform}
+              frontendVersion={frontendVersion}
+              handleVersionResponse={handleVersionResponse}
               onOpenSearchResult={onOpenSearchResult}
             />
           ))}
@@ -1221,12 +1341,17 @@ export function RanksPanel({
           </div>
 
           <div className="hidden gap-3 lg:grid lg:grid-cols-[repeat(auto-fit,minmax(21rem,1fr))]">
-            {isCvCategory && activeRank ? (
-              <CvRankColumn
-                platform={selectedPlatform}
-                rank={activeRank}
-                onOpenSearchResult={onOpenSearchResult}
-              />
+            {isCvCategory ? (
+              (category?.ranks || []).map((rank) => (
+                <CvRankColumn
+                  key={rank.key}
+                  platform={selectedPlatform}
+                  rank={rank}
+                  frontendVersion={frontendVersion}
+                  handleVersionResponse={handleVersionResponse}
+                  onOpenSearchResult={onOpenSearchResult}
+                />
+              ))
             ) : (
               (category?.ranks || []).map((rank) => (
                 <RankColumn
@@ -1250,6 +1375,8 @@ export function RanksPanel({
               <CvRankColumn
                 platform={selectedPlatform}
                 rank={activeRank}
+                frontendVersion={frontendVersion}
+                handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}
               />
             ) : activeRank ? (

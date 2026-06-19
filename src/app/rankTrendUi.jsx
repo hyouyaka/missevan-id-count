@@ -17,7 +17,7 @@ import {
   XIcon,
 } from "lucide-react";
 
-import { buildVersionedUrl, formatDeviceDateTime, formatPlainNumber } from "@/app/app-utils";
+import { buildVersionedUrl, formatDeviceDateTime, formatPlainNumber, formatRankCompactCount } from "@/app/app-utils";
 import {
   buildTrendChartLines as buildSingleAxisTrendChartLines,
   getTrendAxisLabelMarkers,
@@ -46,6 +46,11 @@ export const compareActionButtonClassName =
 const rankTrendClientCache = new Map();
 const rankTrendAvailabilityCache = new Map();
 const RANK_TREND_AVAILABILITY_TTL_MS = 5 * 60 * 1000;
+const cvTrendWindowFallbackLabels = {
+  "3w": "3周",
+  "7w": "7周",
+  "30w": "30周",
+};
 
 export const rankTrendTagVariants = {
   猫耳: "missevanPlatform",
@@ -163,6 +168,21 @@ function formatTrendDelta(metric) {
   return `${prefix}${formatPlainNumber(delta)}`;
 }
 
+export function formatRankTrendCompactDelta(metric) {
+  if (metric?.emptyPaidEpisodes) {
+    return "暂无付费集";
+  }
+  if (!metric?.available || metric.delta == null) {
+    return "暂无数据";
+  }
+  const delta = Number(metric.delta);
+  if (!Number.isFinite(delta)) {
+    return "暂无数据";
+  }
+  const prefix = delta > 0 ? "+" : delta < 0 ? "-" : "";
+  return `${prefix}${formatRankCompactCount(Math.abs(delta))}`;
+}
+
 function formatTrendPercent(value) {
   const percent = Number(value);
   if (!Number.isFinite(percent)) {
@@ -199,21 +219,27 @@ export function canShowRankTrend({ platform, rankKey, item, isMissevanPeak, deta
   return platform === "manbo" && rankKey !== "peak" && item?.type !== "peak";
 }
 
-export async function fetchRankTrendData({ platform, id, frontendVersion }) {
+export async function fetchRankTrendData({ platform, id, kind = "", frontendVersion }) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedId = String(id ?? "").trim();
+  const normalizedKind = String(kind ?? "").trim();
   const normalizedVersion = String(frontendVersion ?? "").trim();
-  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedPlatform}:${normalizedId}`;
+  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedKind}:${normalizedPlatform}:${normalizedId}`;
   const cached = rankTrendClientCache.get(cacheKey);
   if (cached?.promise) {
     return cached.promise;
   }
 
   const params = new URLSearchParams({
-    platform: normalizedPlatform,
     id: normalizedId,
     schema: String(RANK_TREND_CLIENT_SCHEMA_VERSION),
   });
+  if (normalizedKind) {
+    params.set("kind", normalizedKind);
+  }
+  if (normalizedPlatform) {
+    params.set("platform", normalizedPlatform);
+  }
   const promise = (async () => {
     try {
       const response = await fetch(buildVersionedUrl(`/ranks/trends?${params.toString()}`, frontendVersion), {
@@ -355,6 +381,9 @@ function getGenericTitleTags(item) {
 }
 
 function getTrendMetaTags(item, platform) {
+  if (platform === "cv") {
+    return [];
+  }
   const platformLabel = platform === "missevan" ? "猫耳" : "漫播";
   return [...new Set([platformLabel, getGenericPaymentTag(item, platform), ...getGenericTitleTags(item)]
     .map((label) => String(label ?? "").trim())
@@ -377,6 +406,22 @@ const trendMetricStyles = {
   pay_count: {
     color: "var(--chart-2)",
     background: "rgba(230, 107, 79, 0.11)",
+  },
+  missevan_total_view_count: {
+    color: "var(--chart-1)",
+    background: "rgba(36, 74, 134, 0.1)",
+  },
+  missevan_paid_view_count: {
+    color: "var(--chart-3)",
+    background: "rgba(31, 157, 138, 0.1)",
+  },
+  manbo_total_view_count: {
+    color: "var(--chart-2)",
+    background: "rgba(230, 107, 79, 0.11)",
+  },
+  manbo_paid_view_count: {
+    color: "var(--chart-4)",
+    background: "rgba(126, 87, 194, 0.11)",
   },
 };
 
@@ -681,6 +726,20 @@ function RankTrendLineChart({ metrics, legendMetrics = metrics, selectedMetricKe
 function getSnapshotColumns(metrics, platform) {
   const metricMap = new Map((Array.isArray(metrics) ? metrics : []).map((metric) => [metric.key, metric]));
   const viewMetric = metricMap.get("view_count") || null;
+  const isCvTrend =
+    metricMap.has("missevan_total_view_count") ||
+    metricMap.has("missevan_paid_view_count") ||
+    metricMap.has("manbo_total_view_count") ||
+    metricMap.has("manbo_paid_view_count");
+  if (isCvTrend) {
+    return [
+      { key: "date", label: "日期", metric: null },
+      { key: "missevan_total_view_count", label: "猫耳汇总", metric: metricMap.get("missevan_total_view_count") || null },
+      { key: "missevan_paid_view_count", label: "猫耳付费", metric: metricMap.get("missevan_paid_view_count") || null },
+      { key: "manbo_total_view_count", label: "漫播汇总", metric: metricMap.get("manbo_total_view_count") || null },
+      { key: "manbo_paid_view_count", label: "漫播付费", metric: metricMap.get("manbo_paid_view_count") || null },
+    ];
+  }
   const isPeakSeriesTrend =
     metricMap.size === 1 &&
     viewMetric?.label === "系列总播放量";
@@ -733,9 +792,12 @@ function buildSnapshotRows(columns, chartMode = "absolute") {
       dateSet.add(date);
       if (chartMode === "increment") {
         const previousValue = getTrendNumber(previousPoint?.value);
+        const explicitDelta = getTrendNumber(point?.deltaValue);
         metricValues.set(
           date,
-          value != null && previousValue != null && areAdjacentTrendDates(previousPoint?.date, date)
+          explicitDelta != null
+            ? explicitDelta
+            : value != null && previousValue != null && areAdjacentTrendDates(previousPoint?.date, date)
             ? value - previousValue
             : null
         );
@@ -944,6 +1006,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
   const [selectedMetricKey, setSelectedMetricKey] = useState("view_count");
   const data = trendState.data;
   const windows = data?.windows || {};
+  const isCvTrend = data?.kind === "cv";
   const metaTags = getTrendMetaTags(item, platform);
   const latestRankHistory = Array.isArray(data?.rankHistory) ? data.rankHistory.at(-1) : null;
   const latestRankHistoryDate = String(latestRankHistory?.date ?? "").trim();
@@ -953,10 +1016,14 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
       rankHistoryLatestDate &&
       latestRankHistoryDate !== rankHistoryLatestDate
   );
-  const availableWindows = ["3d", "7d", "30d"].filter((key) => windows[key]);
+  const defaultWindowKey = isCvTrend ? "7w" : "7d";
+  const availableWindowOrder = isCvTrend ? ["3w", "7w", "30w"] : ["3d", "7d", "30d"];
+  const availableWindows = availableWindowOrder.filter((key) => windows[key]);
   const activeWindowKey = availableWindows.includes(selectedWindow)
     ? selectedWindow
-    : availableWindows[0] || "3d";
+    : availableWindows.includes(defaultWindowKey)
+      ? defaultWindowKey
+      : availableWindows[0] || defaultWindowKey;
   const activeWindow = windows[activeWindowKey];
   const activeMetrics = getDisplayTrendMetrics(activeWindow?.metrics, platform);
   const activeWindowGeneratedAt = getTrendWindowGeneratedAt(activeWindow, activeMetrics);
@@ -966,15 +1033,17 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
   const visibleChartMetrics = selectedChartMetric ? [selectedChartMetric] : [];
   const detailIdText = Array.isArray(data?.dramaIds) && data.dramaIds.length
     ? data.dramaIds.join("，")
-    : item?.id ?? data?.id;
+    : isCvTrend
+      ? "CV趋势"
+      : item?.id ?? data?.id;
 
   useEffect(() => {
     if (open) {
-      setSelectedWindow("7d");
+      setSelectedWindow(defaultWindowKey);
       setSelectedChartMode("absolute");
       setSelectedMetricKey("view_count");
     }
-  }, [open, item?.id]);
+  }, [open, item?.id, defaultWindowKey]);
 
   useEffect(() => {
     if (!open) {
@@ -1031,7 +1100,11 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
             className="flex w-full max-w-none justify-self-stretch items-start gap-1 text-left text-xs"
             style={{ textWrap: "wrap" }}
           >
-            <PlatformIdIcon platform={platform} aria-label="作品ID" className="size-3.5 shrink-0" />
+            {isCvTrend ? (
+              <TrendingUpIcon aria-label="趋势类型" className="size-3.5 shrink-0" />
+            ) : (
+              <PlatformIdIcon platform={platform} aria-label="作品ID" className="size-3.5 shrink-0" />
+            )}
             <span className="min-w-0 flex-1 break-words" style={{ textWrap: "wrap" }}>{detailIdText}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -1058,7 +1131,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                 <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
                   {availableWindows.map((key) => (
                     <TabsTrigger key={key} className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
-                      {windows[key].label}
+                      {windows[key].label || cvTrendWindowFallbackLabels[key]}
                     </TabsTrigger>
                   ))}
                 </TabsList>

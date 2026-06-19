@@ -257,6 +257,14 @@ function stripTrailingRankSuffix(value) {
 function formatMobileRankNavigationLabel(categoryLabel, rankLabel, singleRank = false) {
   const normalizedCategoryLabel = normalizeNavigationLabel(categoryLabel, "");
   const normalizedRankLabel = normalizeNavigationLabel(rankLabel, "");
+  if (normalizedCategoryLabel === "CV榜") {
+    if (normalizedRankLabel === "总榜") {
+      return "CV总榜";
+    }
+    if (normalizedRankLabel === "付费榜") {
+      return "CV付费榜";
+    }
+  }
   if (singleRank) {
     if (!normalizedRankLabel || normalizedRankLabel === normalizedCategoryLabel) {
       return normalizedCategoryLabel;

@@ -305,7 +305,10 @@ test("ranks navigation menu derives platform category and rank route patches fro
             {
               key: "cv",
               label: "CV榜",
-              ranks: [{ key: "cv", label: "CV榜" }],
+              ranks: [
+                { key: "cv", label: "总榜" },
+                { key: "cv-paid", label: "付费榜" },
+              ],
             },
           ],
         },
@@ -351,7 +354,28 @@ test("ranks navigation menu derives platform category and rank route patches fro
       rank: "new_weekly",
     },
   });
-  assert.equal(menu[0].children[1].children, undefined);
+  assert.deepEqual(menu[0].children[1].children, [
+    {
+      key: "cv",
+      label: "总榜",
+      routePatch: {
+        view: "ranks",
+        platform: "missevan",
+        category: "cv",
+        rank: "cv",
+      },
+    },
+    {
+      key: "cv-paid",
+      label: "付费榜",
+      routePatch: {
+        view: "ranks",
+        platform: "missevan",
+        category: "cv",
+        rank: "cv-paid",
+      },
+    },
+  ]);
   assert.deepEqual(menu[1].children[0].routePatch, {
     view: "ranks",
     platform: "manbo",
@@ -411,7 +435,10 @@ test("mobile rank navigation items flatten platform categories into direct rank 
             {
               key: "cv",
               label: "CV榜",
-              ranks: [{ key: "cv", label: "CV榜" }],
+              ranks: [
+                { key: "cv", label: "总榜" },
+                { key: "cv-paid", label: "付费榜" },
+              ],
             },
           ],
         },
@@ -446,7 +473,10 @@ test("mobile rank navigation items flatten platform categories into direct rank 
             {
               key: "cv",
               label: "CV榜",
-              ranks: [{ key: "cv", label: "CV榜" }],
+              ranks: [
+                { key: "cv", label: "总榜" },
+                { key: "cv-paid", label: "付费榜" },
+              ],
             },
           ],
         },
@@ -459,11 +489,11 @@ test("mobile rank navigation items flatten platform categories into direct rank 
 
   assert.deepEqual(
     missevanItems.map((item) => item.label),
-    ["新品日榜", "新品周榜", "人气周榜", "人气月榜", "畅销周榜", "畅销月榜", "巅峰榜", "CV榜"]
+    ["新品日榜", "新品周榜", "人气周榜", "人气月榜", "畅销周榜", "畅销月榜", "巅峰榜", "CV总榜", "CV付费榜"]
   );
   assert.deepEqual(
     manboItems.map((item) => item.label),
-    ["热播榜", "票房总榜", "票房会员剧榜", "票房付费剧榜", "钻石月榜", "巅峰榜", "CV榜"]
+    ["热播榜", "票房总榜", "票房会员剧榜", "票房付费剧榜", "钻石月榜", "巅峰榜", "CV总榜", "CV付费榜"]
   );
   assert.deepEqual(missevanItems[1].routePatch, {
     view: "ranks",

@@ -78,6 +78,99 @@ test("rank response appends normalized CV ranks per platform", async () => {
   assert.equal(manboCvCategory.ranks[0].items[0].works[0].platform, "manbo");
 });
 
+test("rank response exposes CV total and paid ranks with playback deltas", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+
+  const snapshot = {
+    _meta: { updated_at: "2026-06-19T08:00:00+00:00" },
+    missevan: { ranks: {}, dramas: {} },
+    manbo: { ranks: {}, dramas: {} },
+  };
+  const cvSnapshot = {
+    generated_at: "2026-06-19T04:04:53+00:00",
+    rankings: {
+      missevan: [
+        {
+          cvName: "路知行",
+          totalViewCount: 1190603800,
+          rank: 1,
+          works: [{ dramaId: "22602", title: "魔道祖师 第三季", viewCount: 295982382 }],
+        },
+      ],
+    },
+    paidRankings: {
+      missevan: [
+        {
+          cvName: "路知行",
+          totalViewCount: 1183878183,
+          rank: 1,
+          works: [{ dramaId: "22602", title: "魔道祖师 第三季", viewCount: 295982382, isPaid: true }],
+        },
+      ],
+    },
+  };
+  const cvBaselineSnapshot = {
+    generated_at: "2026-06-13T02:38:36+00:00",
+    rankings: {
+      missevan: [
+        {
+          cvName: "路知行",
+          totalViewCount: 1189097577,
+          rank: 1,
+          works: [{ dramaId: "22602", title: "魔道祖师 第三季", viewCount: 295837591 }],
+        },
+      ],
+    },
+  };
+  const cvTrendSnapshots = {
+    missevan: {
+      platform: "missevan",
+      dates: ["2026-06-19"],
+      cvs: {
+        "路知行": {
+          cvName: "路知行",
+          samples: {
+            "2026-06-19": {
+              generated_at: "2026-06-19T04:04:53+00:00",
+              metrics: {
+                totalViewCount: 1190603800,
+                paidViewCount: 1183878183,
+              },
+              ranks: {
+                total: 1,
+                paid: 1,
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const response = buildNormalizedRanksResponse(snapshot, null, cvSnapshot, {
+    cvTrendSnapshots,
+    cvBaselineSnapshot,
+  });
+  const cvCategory = response.platforms.missevan.categories.find((category) => category.key === "cv");
+
+  assert.deepEqual(
+    cvCategory.ranks.map((rank) => [rank.key, rank.label, rank.name]),
+    [
+      ["cv", "总榜", "CV总榜"],
+      ["cv-paid", "付费榜", "CV付费榜"],
+    ]
+  );
+  assert.equal(cvCategory.ranks[0].items[0].trendKind, "cv");
+  assert.equal(cvCategory.ranks[0].items[0].trendScope, "total");
+  assert.equal(cvCategory.ranks[0].items[0].playbackDelta.available, true);
+  assert.equal(cvCategory.ranks[0].items[0].playbackDelta.delta, 1506223);
+  assert.equal(cvCategory.ranks[1].items[0].trendKind, "cv");
+  assert.equal(cvCategory.ranks[1].items[0].trendScope, "paid");
+  assert.equal(cvCategory.ranks[1].items[0].playbackDelta.available, false);
+  assert.equal(cvCategory.ranks[1].items[0].playbackDelta.delta, null);
+});
+
 test("rank response keeps ordinary ranks when CV snapshot is unavailable", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildNormalizedRanksResponse } = await import("./server.js");

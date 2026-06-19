@@ -36,6 +36,7 @@ import {
 } from "./shared/missevanRevenueUtils.js";
 import {
   buildAggregatedRankTrendResponse,
+  buildCvTrendResponse,
   buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
   buildRankTrendAvailabilityResponse,
@@ -117,11 +118,16 @@ const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
 const CV_RANKS_KEY = "ranks:cv:latest";
+const CV_RANK_BASELINE_KEY = "ranks:cv:2026-06-13";
 const RANKS_INDEX_KEY = "ranks:index";
 const MISSEVAN_PEAK_SERIES_TREND_KEY = "ranks:trend:peak:missevan";
 const RANK_TREND_AGGREGATE_KEYS = Object.freeze({
   missevan: "ranks:trend:missevan",
   manbo: "ranks:trend:manbo",
+});
+const CV_RANK_TREND_AGGREGATE_KEYS = Object.freeze({
+  missevan: "ranks:trend:cv:missevan",
+  manbo: "ranks:trend:cv:manbo",
 });
 const ONGOING_KEY_PREFIX = "ongoing";
 const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
@@ -182,6 +188,8 @@ const ranksCache = {
   normalSnapshot: null,
   peakTrendSnapshot: null,
   cvSnapshot: null,
+  cvTrendSnapshots: null,
+  cvBaselineSnapshot: null,
   normalUpdatedAt: "",
   cvUpdatedAt: "",
   response: null,
@@ -2371,10 +2379,108 @@ function normalizeCvRankWork(work, platform) {
     cover: normalizeTextValue(work.cover),
     mainCvs: normalizeStringArray(work.mainCvs ?? work.main_cvs, 20),
     viewCount: normalizeRankNumber(work.viewCount ?? work.view_count) ?? 0,
+    isPaid: work.isPaid === true || work.is_paid === true,
   };
 }
 
-function normalizeCvRankItem(item, index, platform) {
+function getCvTrendRecord(snapshot, cvName) {
+  const normalizedCvName = normalizeTextValue(cvName);
+  const cvs = snapshot?.cvs && typeof snapshot.cvs === "object" ? snapshot.cvs : {};
+  if (!normalizedCvName) {
+    return null;
+  }
+  if (cvs[normalizedCvName] && typeof cvs[normalizedCvName] === "object") {
+    return cvs[normalizedCvName];
+  }
+  return Object.values(cvs).find((record) =>
+    normalizeTextValue(record?.cvName ?? record?.name) === normalizedCvName
+  ) || null;
+}
+
+function getCvBaselineDate(snapshot) {
+  const explicitDate = normalizeTextValue(snapshot?.date);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) {
+    return explicitDate;
+  }
+  const generatedAt = normalizeTextValue(snapshot?.generated_at ?? snapshot?.generatedAt);
+  return /^\d{4}-\d{2}-\d{2}/.test(generatedAt) ? generatedAt.slice(0, 10) : "";
+}
+
+function findCvSnapshotRankItem(snapshot, platform, scope, cvName) {
+  const sourceKey = scope === "paid" ? "paidRankings" : "rankings";
+  const rankings = Array.isArray(snapshot?.[sourceKey]?.[platform])
+    ? snapshot[sourceKey][platform]
+    : [];
+  const normalizedCvName = normalizeTextValue(cvName);
+  return rankings.find((rankItem) =>
+    normalizeTextValue(rankItem?.cvName ?? rankItem?.name) === normalizedCvName
+  ) || null;
+}
+
+function buildCvPlaybackDelta({ item, platform, scope, cvTrendSnapshots, cvBaselineSnapshot }) {
+  const cvName = normalizeTextValue(item?.cvName ?? item?.name);
+  const metricKey = scope === "paid" ? "paidViewCount" : "totalViewCount";
+  const points = [];
+  const baselineDate = getCvBaselineDate(cvBaselineSnapshot);
+  const baselineItem = findCvSnapshotRankItem(cvBaselineSnapshot, platform, scope, cvName);
+  const baselineValue = normalizeRankNumber(baselineItem?.totalViewCount ?? baselineItem?.total_view_count);
+  if (baselineDate && baselineValue != null) {
+    points.push({
+      date: baselineDate,
+      generatedAt: normalizeTextValue(cvBaselineSnapshot?.generated_at ?? cvBaselineSnapshot?.generatedAt),
+      value: baselineValue,
+    });
+  }
+
+  const trendSnapshot = cvTrendSnapshots?.[platform];
+  const trendRecord = getCvTrendRecord(trendSnapshot, cvName);
+  const samples = trendRecord?.samples && typeof trendRecord.samples === "object" ? trendRecord.samples : {};
+  Object.entries(samples).forEach(([date, sample]) => {
+    const normalizedDate = normalizeTextValue(date);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+      return;
+    }
+    const metrics = sample?.metrics && typeof sample.metrics === "object" ? sample.metrics : {};
+    const value = normalizeRankNumber(metrics?.[metricKey]);
+    if (value == null) {
+      return;
+    }
+    points.push({
+      date: normalizedDate,
+      generatedAt: normalizeTextValue(sample?.generated_at ?? sample?.generatedAt),
+      value,
+    });
+  });
+
+  const currentValue = normalizeRankNumber(item?.totalViewCount ?? item?.total_view_count);
+  const currentDate = normalizeTextValue(item?.date) || normalizeTextValue(item?.generated_at ?? item?.generatedAt).slice(0, 10);
+  if (currentValue != null && currentDate && !points.some((point) => point.date === currentDate)) {
+    points.push({
+      date: currentDate,
+      generatedAt: normalizeTextValue(item?.generated_at ?? item?.generatedAt),
+      value: currentValue,
+    });
+  }
+
+  const sortedPoints = points
+    .filter((point) => point.date && point.value != null)
+    .sort((left, right) => left.date.localeCompare(right.date));
+  const fromPoint = sortedPoints.at(-2) || null;
+  const toPoint = sortedPoints.at(-1) || null;
+  const available = Boolean(fromPoint && toPoint && fromPoint !== toPoint);
+  return {
+    key: "view_count",
+    label: scope === "paid" ? "付费播放量" : "总播放量",
+    available,
+    fromDate: fromPoint?.date || "",
+    toDate: toPoint?.date || "",
+    fromValue: fromPoint?.value ?? null,
+    toValue: toPoint?.value ?? currentValue ?? null,
+    delta: available ? toPoint.value - fromPoint.value : null,
+  };
+}
+
+function normalizeCvRankItem(item, index, platform, options = {}) {
   if (!item || typeof item !== "object") {
     return null;
   }
@@ -2397,15 +2503,26 @@ function normalizeCvRankItem(item, index, platform) {
     workCount: explicitWorkCount ?? works.length,
     topWorks: works.slice(0, 3),
     works,
+    trendKind: "cv",
+    trendScope: options.scope === "paid" ? "paid" : "total",
+    playbackDelta: buildCvPlaybackDelta({
+      item,
+      platform,
+      scope: options.scope === "paid" ? "paid" : "total",
+      cvTrendSnapshots: options.cvTrendSnapshots,
+      cvBaselineSnapshot: options.cvBaselineSnapshot,
+    }),
   };
 }
 
-function buildNormalizedCvRankCategory(cvSnapshot, platform) {
-  const rankings = Array.isArray(cvSnapshot?.rankings?.[platform])
-    ? cvSnapshot.rankings[platform]
+function buildNormalizedCvRank(cvSnapshot, platform, options = {}) {
+  const scope = options.scope === "paid" ? "paid" : "total";
+  const sourceKey = scope === "paid" ? "paidRankings" : "rankings";
+  const rankings = Array.isArray(cvSnapshot?.[sourceKey]?.[platform])
+    ? cvSnapshot[sourceKey][platform]
     : [];
   const items = rankings
-    .map((item, index) => normalizeCvRankItem(item, index, platform))
+    .map((item, index) => normalizeCvRankItem(item, index, platform, options))
     .filter(Boolean);
 
   if (!items.length) {
@@ -2414,18 +2531,35 @@ function buildNormalizedCvRankCategory(cvSnapshot, platform) {
 
   const fetchedAt = normalizeTextValue(cvSnapshot?.generated_at ?? cvSnapshot?.generatedAt);
   return {
+    key: scope === "paid" ? "cv-paid" : "cv",
+    label: scope === "paid" ? "付费榜" : "总榜",
+    name: scope === "paid" ? "CV付费榜" : "CV总榜",
+    fetchedAt,
+    unitName: scope === "paid" ? "付费剧播放量" : "总播放量",
+    items,
+  };
+}
+
+function buildNormalizedCvRankCategory(cvSnapshot, platform, cvTrendOptions = {}) {
+  const ranks = [
+    buildNormalizedCvRank(cvSnapshot, platform, {
+      ...cvTrendOptions,
+      scope: "total",
+    }),
+    buildNormalizedCvRank(cvSnapshot, platform, {
+      ...cvTrendOptions,
+      scope: "paid",
+    }),
+  ].filter(Boolean);
+
+  if (!ranks.length) {
+    return null;
+  }
+
+  return {
     key: "cv",
     label: "CV榜",
-    ranks: [
-      {
-        key: "cv",
-        label: "CV榜",
-        name: "CV榜",
-        fetchedAt,
-        unitName: "总播放量",
-        items,
-      },
-    ],
+    ranks,
   };
 }
 
@@ -2437,7 +2571,7 @@ function buildCvRanksSummary(cvSnapshot) {
   };
 }
 
-function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = null, cvSnapshot = null) {
+function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = null, cvSnapshot = null, cvTrendOptions = {}) {
   const platformPayload =
     snapshot?.[platform] && typeof snapshot[platform] === "object"
       ? snapshot[platform]
@@ -2473,7 +2607,7 @@ function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = nul
       };
     })
     .filter(Boolean);
-  const cvCategory = buildNormalizedCvRankCategory(cvSnapshot, platform);
+  const cvCategory = buildNormalizedCvRankCategory(cvSnapshot, platform, cvTrendOptions);
   if (cvCategory) {
     categories.push(cvCategory);
   }
@@ -2485,7 +2619,7 @@ function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = nul
   };
 }
 
-export function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null, cvSnapshot = null) {
+export function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null, cvSnapshot = null, cvTrendOptions = {}) {
   const safeSnapshot =
     snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
       ? snapshot
@@ -2498,8 +2632,8 @@ export function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null,
     updatedAt: normalizeTextValue(safeSnapshot?._meta?.updated_at),
     cvSummary,
     platforms: {
-      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan", peakTrendSnapshot, cvSnapshot),
-      manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo", null, cvSnapshot),
+      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan", peakTrendSnapshot, cvSnapshot, cvTrendOptions),
+      manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo", null, cvSnapshot, cvTrendOptions),
     },
   };
 }
@@ -2559,8 +2693,21 @@ async function readNormalRanksBundle() {
 async function readCvRanksBundle(options = {}) {
   const tolerateError = options?.tolerateError === true;
   let cvSnapshot = null;
+  let cvTrendSnapshots = null;
+  let cvBaselineSnapshot = null;
   try {
-    cvSnapshot = await readRanksJsonKey(CV_RANKS_KEY);
+    const [latestSnapshot, missevanTrendSnapshot, manboTrendSnapshot, baselineSnapshot] = await Promise.all([
+      readRanksJsonKey(CV_RANKS_KEY),
+      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
+      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
+      readRanksJsonKey(CV_RANK_BASELINE_KEY).catch(() => null),
+    ]);
+    cvSnapshot = latestSnapshot;
+    cvTrendSnapshots = {
+      missevan: missevanTrendSnapshot,
+      manbo: manboTrendSnapshot,
+    };
+    cvBaselineSnapshot = baselineSnapshot;
   } catch (error) {
     if (!tolerateError) {
       throw error;
@@ -2569,6 +2716,8 @@ async function readCvRanksBundle(options = {}) {
   }
   return {
     cvSnapshot,
+    cvTrendSnapshots,
+    cvBaselineSnapshot,
     updatedAt: getCvSnapshotUpdatedAt(cvSnapshot),
   };
 }
@@ -2577,7 +2726,11 @@ function updateCombinedRanksResponseCache() {
   const response = buildNormalizedRanksResponse(
     ranksCache.normalSnapshot,
     ranksCache.peakTrendSnapshot,
-    ranksCache.cvSnapshot
+    ranksCache.cvSnapshot,
+    {
+      cvTrendSnapshots: ranksCache.cvTrendSnapshots,
+      cvBaselineSnapshot: ranksCache.cvBaselineSnapshot,
+    }
   );
   ranksCache.response = response;
   ranksCache.loadedAt = Date.now();
@@ -2662,6 +2815,8 @@ async function loadInitialRanksResponse() {
   ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
   ranksCache.normalUpdatedAt = normalBundle.updatedAt;
   ranksCache.cvSnapshot = cvBundle.cvSnapshot;
+  ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
+  ranksCache.cvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
   ranksCache.cvUpdatedAt = cvBundle.updatedAt;
   return updateCombinedRanksResponseCache();
 }
@@ -2717,6 +2872,8 @@ export async function getCachedRanksResponse(options = {}) {
         ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
         ranksCache.normalUpdatedAt = normalBundle.updatedAt;
         ranksCache.cvSnapshot = cvBundle.cvSnapshot;
+        ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
+        ranksCache.cvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
         ranksCache.cvUpdatedAt = cvBundle.updatedAt;
         const response = updateCombinedRanksResponseCache();
         return { response, cacheStatus: "cold-refresh", probePhase: "" };
@@ -2774,6 +2931,8 @@ export async function getCachedRanksResponse(options = {}) {
         try {
           const cvBundle = await readCvBundle();
           ranksCache.cvSnapshot = cvBundle.cvSnapshot;
+          ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
+          ranksCache.cvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
           ranksCache.cvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
           recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
           refreshStatuses.push("cv-refresh");
@@ -2848,6 +3007,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   let nextNormalSnapshot = ranksCache.normalSnapshot;
   let nextPeakTrendSnapshot = ranksCache.peakTrendSnapshot;
   let nextCvSnapshot = ranksCache.cvSnapshot;
+  let nextCvTrendSnapshots = ranksCache.cvTrendSnapshots;
+  let nextCvBaselineSnapshot = ranksCache.cvBaselineSnapshot;
   let nextNormalUpdatedAt = ranksCache.normalUpdatedAt;
   let nextCvUpdatedAt = ranksCache.cvUpdatedAt;
   const cacheIsCold =
@@ -2869,6 +3030,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
     if (refreshCv) {
       const cvBundle = await readCvBundle();
       nextCvSnapshot = cvBundle.cvSnapshot;
+      nextCvTrendSnapshots = cvBundle.cvTrendSnapshots;
+      nextCvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
       nextCvUpdatedAt = cvBundle.updatedAt || nextCvUpdatedAt;
       statuses.push("cv-refresh");
     }
@@ -2891,6 +3054,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
     if (refreshCv && decision.refreshCv) {
       const cvBundle = await readCvBundle();
       nextCvSnapshot = cvBundle.cvSnapshot;
+      nextCvTrendSnapshots = cvBundle.cvTrendSnapshots;
+      nextCvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
       nextCvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
       statuses.push("cv-refresh");
     }
@@ -2902,6 +3067,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   ranksCache.normalSnapshot = nextNormalSnapshot;
   ranksCache.peakTrendSnapshot = nextPeakTrendSnapshot;
   ranksCache.cvSnapshot = nextCvSnapshot;
+  ranksCache.cvTrendSnapshots = nextCvTrendSnapshots;
+  ranksCache.cvBaselineSnapshot = nextCvBaselineSnapshot;
   ranksCache.normalUpdatedAt = nextNormalUpdatedAt;
   ranksCache.cvUpdatedAt = nextCvUpdatedAt;
 
@@ -3290,6 +3457,60 @@ async function getLegacyRankTrendAvailabilityResponse(platform, ids) {
     indexSnapshot,
     metricSnapshotsByDate,
   });
+}
+
+async function getCachedCvRankTrendResponse(cvName) {
+  const normalizedCvName = normalizeTextValue(cvName);
+  const cacheKey = getRankTrendCacheKey("cv", normalizedCvName, "", CV_RANK_TREND_AGGREGATE_KEYS.missevan);
+  const now = Date.now();
+  const cached = rankTrendsCache.get(cacheKey);
+  if (cached?.response && isRankDerivedCacheEntryFresh(cached.loadedAt, now)) {
+    return cached.response;
+  }
+  if (cached?.loadPromise) {
+    return cached.loadPromise;
+  }
+
+  const loadPromise = (async () => {
+    const [missevanTrendSnapshot, manboTrendSnapshot, baselineSnapshot] = await Promise.all([
+      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
+      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
+      readRanksJsonKey(CV_RANK_BASELINE_KEY).catch(() => null),
+    ]);
+    const response = buildCvTrendResponse({
+      id: normalizedCvName,
+      trendSnapshots: {
+        missevan: missevanTrendSnapshot,
+        manbo: manboTrendSnapshot,
+      },
+      baselineSnapshot,
+    });
+    if (response && typeof response === "object") {
+      response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
+    }
+    if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
+      rankTrendsCache.set(cacheKey, {
+        response,
+        loadedAt: Date.now(),
+        loadPromise: null,
+      });
+    }
+    return response;
+  })();
+
+  pruneRankTrendCacheEntries("cv", normalizedCvName, cacheKey);
+  rankTrendsCache.set(cacheKey, {
+    response: null,
+    loadedAt: 0,
+    loadPromise,
+  });
+
+  try {
+    return await loadPromise;
+  } catch (error) {
+    rankTrendsCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 async function getCachedRankTrendResponse(platform, dramaId) {
@@ -8987,6 +9208,37 @@ app.get("/ranks/trends/availability", async (req, res) => {
 app.get("/ranks/trends", async (req, res) => {
   const platform = String(req.query.platform ?? "").trim();
   const dramaId = String(req.query.id ?? "").trim();
+  const kind = String(req.query.kind ?? "").trim();
+  if (kind === "cv") {
+    if (!dramaId) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid rank trend request",
+      });
+    }
+    try {
+      const response = await getCachedCvRankTrendResponse(dramaId);
+      if (!response.success) {
+        return res.status(response.status || 404).json(response);
+      }
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      if (response.latestDate) {
+        res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
+        res.setHeader(
+          "ETag",
+          `"ranks-trend-cv-${Buffer.from(`${dramaId}:${response.latestDate}`).toString("base64url")}"`
+        );
+      }
+      return res.json(response);
+    } catch (error) {
+      console.error("Failed to read CV ranks trend", error);
+      return res.status(503).json({
+        success: false,
+        message: "Rank trends are unavailable",
+      });
+    }
+  }
+
   const isValidDramaId =
     (platform === "missevan" && dramaId) ||
     (platform === "manbo" && isNumericId(dramaId));

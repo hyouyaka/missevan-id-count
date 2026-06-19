@@ -1676,6 +1676,8 @@ test("CV ranks use a dedicated expandable works layout", () => {
   assert.match(ranksPanelSource, /ScrollTextIcon/);
   assert.match(ranksPanelSource, /ChevronDownIcon/);
   assert.match(ranksPanelSource, /ChevronUpIcon/);
+  assert.match(ranksPanelSource, /category\.ranks\.map\(\(rank\) => \(/);
+  assert.match(ranksPanelSource, /activeRank \?/);
 });
 
 test("CV rank mobile cards use compact TOP3 copy without a CV badge", () => {
@@ -1691,6 +1693,56 @@ test("CV rank mobile cards use compact TOP3 copy without a CV badge", () => {
   assert.match(cvItemSource, /data-cv-mobile-summary-row="true"/);
   assert.match(cvItemSource, /sm:hidden/);
   assert.match(cvItemSource, /<Button[\s\S]*sm:hidden/);
+  assert.match(cvItemSource, /RankTrendDeltaBadge/);
+  assert.match(cvItemSource, /RankTrendButton/);
+});
+
+test("CV rank cards use stacked title, TOP3, and action rows", () => {
+  const cvItemStart = ranksPanelSource.indexOf("function CvRankItemCard");
+  assert.notEqual(cvItemStart, -1, "CV item card should exist");
+  const cvItemEnd = ranksPanelSource.indexOf("function CvRankColumn", cvItemStart);
+  assert.notEqual(cvItemEnd, -1, "CV item card should end before CV column");
+  const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
+
+  assert.match(cvItemSource, /data-cv-card-title-row="true"/);
+  assert.match(cvItemSource, /data-cv-card-title-row="true"[\s\S]*items-center[\s\S]*justify-between/);
+  assert.match(cvItemSource, /data-cv-card-topworks-row="true"/);
+  assert.match(cvItemSource, /data-cv-card-actions-row="true"/);
+  assert.match(cvItemSource, /周增：\{formatRankTrendCompactDelta\(item\.playbackDelta\)\}/);
+  assert.doesNotMatch(cvItemSource, /周增：\{formatRankTrendDelta\(item\.playbackDelta\)\}/);
+  assert.doesNotMatch(cvItemSource, /增量：\{formatRankTrendDelta\(item\.playbackDelta\)\}/);
+  assert.match(cvItemSource, /data-cv-card-mobile-actions-row="true"[\s\S]*col-start-2[\s\S]*col-span-2/);
+
+  const actionsStart = cvItemSource.indexOf('data-cv-card-actions-row="true"');
+  assert.notEqual(actionsStart, -1, "desktop actions row should exist");
+  const actionsEnd = cvItemSource.indexOf('data-cv-card-mobile-actions-row="true"', actionsStart);
+  assert.notEqual(actionsEnd, -1, "desktop actions row should end before mobile actions row");
+  const actionsSource = cvItemSource.slice(actionsStart, actionsEnd);
+  assert.match(
+    actionsSource,
+    /PlayCircleIcon[\s\S]*RankTrendDeltaBadge[\s\S]*ScrollTextIcon[\s\S]*RankTrendButton/,
+    "desktop CV actions should order playback, weekly delta, work count, trend"
+  );
+});
+
+test("CV rank trend dialog uses weekly windows and cross-platform radio metrics", () => {
+  assert.match(rankTrendUiSource, /data\?\.kind === "cv"/);
+  assert.match(rankTrendUiSource, /platform === "cv"[\s\S]*return \[\]/);
+  assert.match(rankTrendUiSource, /formatRankTrendCompactDelta/);
+  assert.match(rankTrendUiSource, /formatRankCompactCount\(Math\.abs\(delta\)\)/);
+  assert.match(rankTrendUiSource, /3周/);
+  assert.match(rankTrendUiSource, /7周/);
+  assert.match(rankTrendUiSource, /30周/);
+  assert.match(rankTrendUiSource, /const defaultWindowKey = isCvTrend \? "7w" : "7d"/);
+  assert.match(rankTrendUiSource, /availableWindows\.includes\(defaultWindowKey\)/);
+  assert.match(ranksTrendUtilsSource, /label: "猫耳总播放量"/);
+  assert.match(ranksTrendUtilsSource, /label: "猫耳付费播放量"/);
+  assert.match(ranksTrendUtilsSource, /label: "漫播总播放量"/);
+  assert.match(ranksTrendUtilsSource, /label: "漫播付费播放量"/);
+  assert.match(rankTrendUiSource, /label: "猫耳汇总"/);
+  assert.match(rankTrendUiSource, /label: "猫耳付费"/);
+  assert.match(rankTrendUiSource, /label: "漫播汇总"/);
+  assert.match(rankTrendUiSource, /label: "漫播付费"/);
 });
 
 test("CV rank works expose platform ids and search result jumps", () => {
@@ -1930,7 +1982,8 @@ test("trend and compare dialogs default to 7-day absolute playback", () => {
   assert.match(trendDialogSource, /const \[selectedWindow, setSelectedWindow\] = useState\("7d"\)/);
   assert.match(trendDialogSource, /const \[selectedChartMode, setSelectedChartMode\] = useState\("absolute"\)/);
   assert.match(trendDialogSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\("view_count"\)/);
-  assert.match(trendDialogSource, /setSelectedWindow\("7d"\)/);
+  assert.match(trendDialogSource, /const defaultWindowKey = isCvTrend \? "7w" : "7d"/);
+  assert.match(trendDialogSource, /setSelectedWindow\(defaultWindowKey\)/);
   assert.match(trendDialogSource, /setSelectedChartMode\("absolute"\)/);
   assert.match(trendDialogSource, /setSelectedMetricKey\("view_count"\)/);
 

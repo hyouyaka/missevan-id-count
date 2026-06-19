@@ -122,11 +122,13 @@ export function buildTrendDeltaPoints(metric) {
   history.forEach((point) => {
     const value = getTrendNumber(point.value);
     const previousValue = getTrendNumber(previousPoint?.value);
+    const explicitDelta = getTrendNumber(point.deltaValue);
     const canCompare =
-      value != null &&
-      previousValue != null &&
-      areAdjacentDates(previousPoint?.date, point?.date);
-    const axisValue = canCompare ? value - previousValue : null;
+      explicitDelta != null ||
+      (value != null &&
+        previousValue != null &&
+        areAdjacentDates(previousPoint?.date, point?.date));
+    const axisValue = explicitDelta != null ? explicitDelta : canCompare ? value - previousValue : null;
     previousPoint = point;
     if (!point?.isPreWindow) {
       points.push({

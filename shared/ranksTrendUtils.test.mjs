@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildAggregatedRankTrendResponse,
+  buildCvTrendResponse,
   buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
   buildRankTrendAvailabilityResponse,
@@ -270,6 +271,116 @@ test("buildRankTrendResponse preserves explicit null and zero metric values", ()
   assert.equal(danmakuMetric.available, true);
   assert.equal(danmakuMetric.delta, 10);
   assert.equal(danmakuMetric.deltaPercent, null);
+});
+
+test("buildCvTrendResponse combines cross-platform weekly playback metrics", () => {
+  const response = buildCvTrendResponse({
+    id: "路知行",
+    trendSnapshots: {
+      missevan: {
+        platform: "missevan",
+        updated_at: "2026-06-19T04:04:53+00:00",
+        dates: ["2026-06-19"],
+        cvs: {
+          "路知行": {
+            cvName: "路知行",
+            samples: {
+              "2026-06-19": {
+                generated_at: "2026-06-19T04:04:53+00:00",
+                metrics: {
+                  totalViewCount: 1190603800,
+                  paidViewCount: 1183878183,
+                },
+                ranks: {
+                  total: 1,
+                  paid: 1,
+                },
+              },
+            },
+          },
+        },
+      },
+      manbo: {
+        platform: "manbo",
+        updated_at: "2026-06-19T04:04:53+00:00",
+        dates: ["2026-06-19"],
+        cvs: {
+          "路知行": {
+            cvName: "路知行",
+            samples: {
+              "2026-06-19": {
+                generated_at: "2026-06-19T04:04:53+00:00",
+                metrics: {
+                  totalViewCount: 2000,
+                  paidViewCount: 1500,
+                },
+                ranks: {
+                  total: 3,
+                  paid: 4,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    baselineSnapshot: {
+      generated_at: "2026-06-13T02:38:36+00:00",
+      rankings: {
+        missevan: [
+          {
+            cvName: "路知行",
+            totalViewCount: 1189097577,
+            rank: 1,
+          },
+        ],
+        manbo: [
+          {
+            cvName: "路知行",
+            totalViewCount: 1000,
+            rank: 5,
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.kind, "cv");
+  assert.equal(response.id, "路知行");
+  assert.equal(response.name, "路知行");
+  assert.equal(response.latestDate, "2026-06-19");
+  assert.deepEqual(
+    Object.values(response.windows).map((window) => window.label),
+    ["3周", "7周", "30周"]
+  );
+  assert.deepEqual(
+    response.windows["3w"].metrics.map((metric) => [metric.key, metric.label, metric.delta, metric.available]),
+    [
+      ["missevan_total_view_count", "猫耳总播放量", 1506223, true],
+      ["missevan_paid_view_count", "猫耳付费播放量", null, false],
+      ["manbo_total_view_count", "漫播总播放量", 1000, true],
+      ["manbo_paid_view_count", "漫播付费播放量", null, false],
+    ]
+  );
+  assert.deepEqual(response.rankHistory, [
+    {
+      date: "2026-06-13",
+      ranks: [
+        { key: "missevan-cv", name: "猫耳CV总榜", position: 1 },
+        { key: "manbo-cv", name: "漫播CV总榜", position: 5 },
+      ],
+    },
+    {
+      date: "2026-06-19",
+      ranks: [
+        { key: "missevan-cv", name: "猫耳CV总榜", position: 1 },
+        { key: "missevan-cv-paid", name: "猫耳CV付费榜", position: 1 },
+        { key: "manbo-cv", name: "漫播CV总榜", position: 3 },
+        { key: "manbo-cv-paid", name: "漫播CV付费榜", position: 4 },
+      ],
+    },
+  ]);
 });
 
 test("buildRankTrendResponse keeps one pre-window history point for increment charts without changing window deltas", () => {

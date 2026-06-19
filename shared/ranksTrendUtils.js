@@ -23,6 +23,43 @@ const PEAK_SERIES_TREND_METRICS = Object.freeze([
   { key: "view_count", label: "系列总播放量" },
 ]);
 
+const CV_TREND_WINDOWS = Object.freeze([
+  { key: "3w", label: "3周", days: 21 },
+  { key: "7w", label: "7周", days: 49 },
+  { key: "30w", label: "30周", days: 210 },
+]);
+
+const CV_TREND_METRICS = Object.freeze([
+  {
+    key: "missevan_total_view_count",
+    label: "猫耳总播放量",
+    platform: "missevan",
+    scope: "total",
+    metricKey: "totalViewCount",
+  },
+  {
+    key: "missevan_paid_view_count",
+    label: "猫耳付费播放量",
+    platform: "missevan",
+    scope: "paid",
+    metricKey: "paidViewCount",
+  },
+  {
+    key: "manbo_total_view_count",
+    label: "漫播总播放量",
+    platform: "manbo",
+    scope: "total",
+    metricKey: "totalViewCount",
+  },
+  {
+    key: "manbo_paid_view_count",
+    label: "漫播付费播放量",
+    platform: "manbo",
+    scope: "paid",
+    metricKey: "paidViewCount",
+  },
+]);
+
 function normalizeDateKey(value) {
   const normalized = String(value ?? "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
@@ -79,6 +116,10 @@ export function getRankTrendMetricConfigs(platform) {
 function getDramaMetrics(snapshot, id) {
   const dramas = snapshot?.dramas && typeof snapshot.dramas === "object" ? snapshot.dramas : {};
   return dramas[String(id)] || null;
+}
+
+function normalizeCvName(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 export function isRankTrendAggregateSnapshot(snapshot, platform) {
@@ -383,6 +424,262 @@ function buildRankHistory(dates, listSnapshotsByDate, id) {
         : null;
     })
     .filter(Boolean);
+}
+
+function getCvBaselineDate(baselineSnapshot) {
+  const explicitDate = normalizeDateKey(baselineSnapshot?.date);
+  if (explicitDate) {
+    return explicitDate;
+  }
+  return normalizeDateKey(normalizeGeneratedAt(baselineSnapshot).slice(0, 10));
+}
+
+function findCvRankingItem(snapshot, platform, scope, cvName) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedScope = scope === "paid" ? "paid" : "total";
+  const normalizedCvName = normalizeCvName(cvName);
+  const sourceKey = normalizedScope === "paid" ? "paidRankings" : "rankings";
+  const rankings = Array.isArray(snapshot?.[sourceKey]?.[normalizedPlatform])
+    ? snapshot[sourceKey][normalizedPlatform]
+    : [];
+  return rankings.find((item) => normalizeCvName(item?.cvName ?? item?.name) === normalizedCvName) || null;
+}
+
+function findCvTrendRecord(snapshot, cvName) {
+  const normalizedCvName = normalizeCvName(cvName);
+  const cvs = snapshot?.cvs && typeof snapshot.cvs === "object" ? snapshot.cvs : {};
+  if (!normalizedCvName) {
+    return null;
+  }
+  if (cvs[normalizedCvName] && typeof cvs[normalizedCvName] === "object") {
+    return cvs[normalizedCvName];
+  }
+  return Object.values(cvs).find((record) =>
+    normalizeCvName(record?.cvName ?? record?.name) === normalizedCvName
+  ) || null;
+}
+
+function getCvTrendSample(snapshot, cvName, date) {
+  const samples = findCvTrendRecord(snapshot, cvName)?.samples;
+  return samples && typeof samples === "object" ? samples[date] || null : null;
+}
+
+function getCvTrendDates(trendSnapshots, baselineSnapshot, cvName) {
+  const dates = new Set();
+  const baselineDate = getCvBaselineDate(baselineSnapshot);
+  if (baselineDate) {
+    dates.add(baselineDate);
+  }
+  ["missevan", "manbo"].forEach((platform) => {
+    const snapshot = trendSnapshots?.[platform];
+    const record = findCvTrendRecord(snapshot, cvName);
+    const sampleDates = record?.samples && typeof record.samples === "object"
+      ? Object.keys(record.samples)
+      : [];
+    sampleDates.forEach((date) => {
+      const normalizedDate = normalizeDateKey(date);
+      if (normalizedDate) {
+        dates.add(normalizedDate);
+      }
+    });
+  });
+  return Array.from(dates).sort();
+}
+
+function getCvMetricPoint({ date, config, trendSnapshots, baselineSnapshot, cvName }) {
+  const baselineDate = getCvBaselineDate(baselineSnapshot);
+  if (date === baselineDate) {
+    const baselineItem = findCvRankingItem(baselineSnapshot, config.platform, config.scope, cvName);
+    if (!baselineItem) {
+      return {
+        date,
+        value: null,
+        position: null,
+        generatedAt: normalizeGeneratedAt(baselineSnapshot),
+      };
+    }
+    return {
+      date,
+      value: normalizeFiniteNumber(baselineItem.totalViewCount ?? baselineItem.total_view_count),
+      position: normalizeFiniteNumber(baselineItem.rank),
+      generatedAt: normalizeGeneratedAt(baselineSnapshot),
+    };
+  }
+
+  const sample = getCvTrendSample(trendSnapshots?.[config.platform], cvName, date);
+  const metrics = sample?.metrics && typeof sample.metrics === "object" ? sample.metrics : {};
+  const ranks = sample?.ranks && typeof sample.ranks === "object" ? sample.ranks : {};
+  return {
+    date,
+    value: normalizeFiniteNumber(metrics?.[config.metricKey]),
+    position: normalizeFiniteNumber(ranks?.[config.scope]),
+    generatedAt: normalizeGeneratedAt(sample) || normalizeGeneratedAt(trendSnapshots?.[config.platform]),
+  };
+}
+
+function buildCvMetric(config, history, rangeHistory = history) {
+  const range = getMetricHistoryRange(rangeHistory, (point) => normalizeFiniteNumber(point?.value));
+  const fromValue = range.fromValue;
+  const toValue = range.toValue;
+  const available = range.hasComparableRange;
+  const delta = available ? toValue - fromValue : null;
+  const deltaPercent = available && fromValue !== 0 ? delta / fromValue : null;
+  let previousValue = null;
+
+  return {
+    key: config.key,
+    label: config.label,
+    fromValue,
+    toValue,
+    delta,
+    deltaPercent,
+    available,
+    history: history.map((point) => {
+      const value = normalizeFiniteNumber(point?.value);
+      const deltaValue = value != null && previousValue != null ? value - previousValue : null;
+      if (!point?.isPreWindow && value != null) {
+        previousValue = value;
+      } else if (point?.isPreWindow && value != null) {
+        previousValue = value;
+      }
+      return withGeneratedAt(
+        {
+          date: point.date,
+          value,
+          ...(deltaValue != null ? { deltaValue } : {}),
+          ...(point?.isPreWindow ? { isPreWindow: true } : {}),
+        },
+        { generated_at: point.generatedAt }
+      );
+    }),
+  };
+}
+
+function buildCvWindowTrend({ windowConfig, dates, latestDate, metricPointsByKey }) {
+  const latestTime = parseDateKey(latestDate);
+  const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
+  const preWindowDate = [...dates].reverse().find((date) => {
+    const time = parseDateKey(date);
+    return Number.isFinite(time) && time < earliestAllowedTime;
+  }) || "";
+  const windowDates = dates.filter((date) => {
+    const time = parseDateKey(date);
+    return Number.isFinite(time) && time >= earliestAllowedTime && time <= latestTime;
+  });
+  const historyDates = preWindowDate ? [preWindowDate, ...windowDates] : windowDates;
+  const metrics = CV_TREND_METRICS.map((config) => {
+    const pointsByDate = metricPointsByKey[config.key] || {};
+    const history = historyDates.map((date) => ({
+      ...(pointsByDate[date] || { date, value: null }),
+      date,
+      ...(date === preWindowDate ? { isPreWindow: true } : {}),
+    }));
+    return buildCvMetric(config, history, history.filter((point) => !point.isPreWindow));
+  });
+  const availableDates = windowDates.filter((date) =>
+    CV_TREND_METRICS.some((config) => normalizeFiniteNumber(metricPointsByKey[config.key]?.[date]?.value) != null)
+  );
+
+  return withGeneratedAt({
+    key: windowConfig.key,
+    label: windowConfig.label,
+    days: windowConfig.days,
+    fromDate: availableDates[0] || "",
+    toDate: availableDates.at(-1) || "",
+    insufficientData: metrics.every((metric) => !metric.available),
+    metrics,
+  }, { generated_at: historyDates.map((date) =>
+    CV_TREND_METRICS.map((config) => metricPointsByKey[config.key]?.[date]?.generatedAt).find(Boolean)
+  ).find(Boolean) });
+}
+
+function buildCvRankHistory(dates, metricPointsByKey) {
+  const rankConfigs = [
+    { metricKey: "missevan_total_view_count", key: "missevan-cv", name: "猫耳CV总榜" },
+    { metricKey: "missevan_paid_view_count", key: "missevan-cv-paid", name: "猫耳CV付费榜" },
+    { metricKey: "manbo_total_view_count", key: "manbo-cv", name: "漫播CV总榜" },
+    { metricKey: "manbo_paid_view_count", key: "manbo-cv-paid", name: "漫播CV付费榜" },
+  ];
+  return dates
+    .map((date) => {
+      const ranks = rankConfigs
+        .map((config) => {
+          const position = normalizeFiniteNumber(metricPointsByKey[config.metricKey]?.[date]?.position);
+          return position == null
+            ? null
+            : {
+                key: config.key,
+                name: config.name,
+                position,
+              };
+        })
+        .filter(Boolean);
+      return ranks.length ? { date, ranks } : null;
+    })
+    .filter(Boolean);
+}
+
+export function buildCvTrendResponse({
+  id,
+  trendSnapshots,
+  baselineSnapshot,
+} = {}) {
+  const cvName = normalizeCvName(id);
+  if (!cvName) {
+    return {
+      success: false,
+      status: 400,
+      message: "Invalid rank trend request",
+    };
+  }
+
+  const dates = getCvTrendDates(trendSnapshots, baselineSnapshot, cvName);
+  const metricPointsByKey = Object.fromEntries(
+    CV_TREND_METRICS.map((config) => [
+      config.key,
+      Object.fromEntries(
+        dates.map((date) => [
+          date,
+          getCvMetricPoint({ date, config, trendSnapshots, baselineSnapshot, cvName }),
+        ])
+      ),
+    ])
+  );
+  const availableDates = dates.filter((date) =>
+    CV_TREND_METRICS.some((config) => normalizeFiniteNumber(metricPointsByKey[config.key]?.[date]?.value) != null)
+  );
+  if (!availableDates.length) {
+    return {
+      success: false,
+      status: 404,
+      kind: "cv",
+      id: cvName,
+      message: "Rank trend drama not found",
+    };
+  }
+
+  const latestDate = availableDates.at(-1);
+  return {
+    success: true,
+    kind: "cv",
+    platform: "cv",
+    id: cvName,
+    name: cvName,
+    latestDate,
+    rankHistoryLatestDate: dates.at(-1) || "",
+    rankHistory: buildCvRankHistory(dates, metricPointsByKey),
+    windows: Object.fromEntries(
+      CV_TREND_WINDOWS.map((windowConfig) => [
+        windowConfig.key,
+        buildCvWindowTrend({
+          windowConfig,
+          dates,
+          latestDate,
+          metricPointsByKey,
+        }),
+      ])
+    ),
+  };
 }
 
 function buildAggregateMetricSnapshotsByDate(aggregateSnapshot, platform, id) {
