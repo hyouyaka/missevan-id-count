@@ -769,22 +769,20 @@ function CvRankItemCard({
           </div>
           <div
             data-cv-card-title-row="true"
-            className="col-start-3 flex min-w-0 items-center justify-between gap-2"
+            className="col-start-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
           >
             <div className="min-w-0 break-words text-base font-semibold leading-6 text-foreground sm:text-lg">
               {item.cvName}
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              className="shrink-0 bg-background/84 sm:hidden"
-              onClick={() => setIsExpanded((current) => !current)}
-              aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
-              title={isExpanded ? "收起作品列表" : "展开作品列表"}
+            <div
+              data-cv-card-playback-total="true"
+              aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+              title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+              className="flex shrink-0 items-center gap-1 text-sm font-semibold leading-5 text-foreground"
             >
-              {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-            </Button>
+              <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-foreground" />
+              <span className="tabular-nums">{formatRankCompactCount(item.totalViewCount)}</span>
+            </div>
           </div>
           <div
             data-cv-card-topworks-row="true"
@@ -794,46 +792,38 @@ function CvRankItemCard({
           </div>
           <div
             data-cv-card-actions-row="true"
-            className="col-start-3 hidden min-w-0 flex-wrap items-center gap-3 text-sm sm:flex"
+            className="col-start-3 hidden min-w-0 items-center justify-between gap-2 text-sm sm:flex"
           >
-            <div
-              aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
-              title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
-              className="flex min-w-0 items-center gap-1.5"
-            >
-              <PlayCircleIcon aria-hidden="true" className={metaIconClassName} />
-              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                {formatRankCompactCount(item.totalViewCount)}
-              </span>
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <div
+                aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
+                title={`作品数: ${formatPlainNumber(item.workCount)}`}
+                className="flex min-w-0 items-center gap-1.5"
+              >
+                <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
+                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                  {formatPlainNumber(item.workCount)}
+                </span>
+              </div>
+              <RankTrendDeltaBadge
+                metric={item.playbackDelta}
+                className="h-[1.35rem] px-1.5 text-[0.68rem]"
+              >
+                周增：{formatRankTrendCompactDelta(item.playbackDelta)}
+              </RankTrendDeltaBadge>
+              {canShowTrend ? (
+                <RankTrendButton
+                  onClick={openTrendDialog}
+                  aria-label={`查看${item.cvName}趋势`}
+                  title="查看趋势"
+                />
+              ) : null}
             </div>
-            <RankTrendDeltaBadge
-              metric={item.playbackDelta}
-              className="h-[1.35rem] px-1.5 text-[0.68rem]"
-            >
-              周增：{formatRankTrendCompactDelta(item.playbackDelta)}
-            </RankTrendDeltaBadge>
-            <div
-              aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
-              title={`作品数: ${formatPlainNumber(item.workCount)}`}
-              className="flex min-w-0 items-center gap-1.5"
-            >
-              <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
-              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                {formatPlainNumber(item.workCount)}
-              </span>
-            </div>
-            {canShowTrend ? (
-              <RankTrendButton
-                onClick={openTrendDialog}
-                aria-label={`查看${item.cvName}趋势`}
-                title="查看趋势"
-              />
-            ) : null}
             <Button
               type="button"
               variant="outline"
               size="icon-sm"
-              className="hidden bg-background/84 sm:inline-flex"
+              className="shrink-0 bg-background/84"
               onClick={() => setIsExpanded((current) => !current)}
               aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
               title={isExpanded ? "收起作品列表" : "展开作品列表"}
@@ -844,41 +834,44 @@ function CvRankItemCard({
           <div
             data-cv-mobile-summary-row="true"
             data-cv-card-mobile-actions-row="true"
-            className="col-start-2 col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm sm:hidden"
+            className="col-start-2 col-span-2 flex min-w-0 items-center justify-between gap-2 text-sm sm:hidden"
           >
-            <div
-              aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
-              title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
-              className="flex min-w-0 items-center gap-1.5"
-            >
-              <PlayCircleIcon aria-hidden="true" className={metaIconClassName} />
-              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                {formatRankCompactCount(item.totalViewCount)}
-              </span>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <div
+                aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
+                title={`作品数: ${formatPlainNumber(item.workCount)}`}
+                className="flex min-w-0 items-center gap-1.5"
+              >
+                <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
+                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                  {formatPlainNumber(item.workCount)}
+                </span>
+              </div>
+              <RankTrendDeltaBadge
+                metric={item.playbackDelta}
+                className="h-[1.35rem] px-1.5 text-[0.68rem]"
+              >
+                周增：{formatRankTrendCompactDelta(item.playbackDelta)}
+              </RankTrendDeltaBadge>
+              {canShowTrend ? (
+                <RankTrendButton
+                  onClick={openTrendDialog}
+                  aria-label={`查看${item.cvName}趋势`}
+                  title="查看趋势"
+                />
+              ) : null}
             </div>
-            <RankTrendDeltaBadge
-              metric={item.playbackDelta}
-              className="h-[1.35rem] px-1.5 text-[0.68rem]"
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className="shrink-0 bg-background/84"
+              onClick={() => setIsExpanded((current) => !current)}
+              aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
+              title={isExpanded ? "收起作品列表" : "展开作品列表"}
             >
-              周增：{formatRankTrendCompactDelta(item.playbackDelta)}
-            </RankTrendDeltaBadge>
-            <div
-              aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
-              title={`作品数: ${formatPlainNumber(item.workCount)}`}
-              className="flex min-w-0 items-center gap-1.5"
-            >
-              <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
-              <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                {formatPlainNumber(item.workCount)}
-              </span>
-            </div>
-            {canShowTrend ? (
-              <RankTrendButton
-                onClick={openTrendDialog}
-                aria-label={`查看${item.cvName}趋势`}
-                title="查看趋势"
-              />
-            ) : null}
+              {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+            </Button>
           </div>
         </div>
         {isExpanded ? (

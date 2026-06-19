@@ -1692,7 +1692,6 @@ test("CV rank mobile cards use compact TOP3 copy without a CV badge", () => {
   assert.doesNotMatch(cvItemSource, /<Badge[\s\S]*CV[\s\S]*<\/Badge>/);
   assert.match(cvItemSource, /data-cv-mobile-summary-row="true"/);
   assert.match(cvItemSource, /sm:hidden/);
-  assert.match(cvItemSource, /<Button[\s\S]*sm:hidden/);
   assert.match(cvItemSource, /RankTrendDeltaBadge/);
   assert.match(cvItemSource, /RankTrendButton/);
 });
@@ -1705,7 +1704,19 @@ test("CV rank cards use stacked title, TOP3, and action rows", () => {
   const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
 
   assert.match(cvItemSource, /data-cv-card-title-row="true"/);
-  assert.match(cvItemSource, /data-cv-card-title-row="true"[\s\S]*items-center[\s\S]*justify-between/);
+  const titleStart = cvItemSource.indexOf('data-cv-card-title-row="true"');
+  assert.notEqual(titleStart, -1, "CV title row should exist");
+  const titleEnd = cvItemSource.indexOf('data-cv-card-topworks-row="true"', titleStart);
+  assert.notEqual(titleEnd, -1, "CV title row should end before TOP3 row");
+  const titleSource = cvItemSource.slice(titleStart, titleEnd);
+  assert.match(titleSource, /flex-wrap/);
+  assert.match(titleSource, /className="[^"]*items-center[^"]*"/);
+  assert.doesNotMatch(titleSource, /className="[^"]*items-end[^"]*"/);
+  assert.doesNotMatch(titleSource, /justify-between/);
+  assert.match(titleSource, /data-cv-card-playback-total="true"/);
+  assert.match(titleSource, /PlayCircleIcon[\s\S]*formatRankCompactCount\(item\.totalViewCount\)/);
+  assert.match(titleSource, /text-sm font-semibold leading-5 text-foreground/);
+  assert.doesNotMatch(titleSource, /<Button/);
   assert.match(cvItemSource, /data-cv-card-topworks-row="true"/);
   assert.match(cvItemSource, /data-cv-card-actions-row="true"/);
   assert.match(cvItemSource, /周增：\{formatRankTrendCompactDelta\(item\.playbackDelta\)\}/);
@@ -1720,9 +1731,18 @@ test("CV rank cards use stacked title, TOP3, and action rows", () => {
   const actionsSource = cvItemSource.slice(actionsStart, actionsEnd);
   assert.match(
     actionsSource,
-    /PlayCircleIcon[\s\S]*RankTrendDeltaBadge[\s\S]*ScrollTextIcon[\s\S]*RankTrendButton/,
-    "desktop CV actions should order playback, weekly delta, work count, trend"
+    /ScrollTextIcon[\s\S]*RankTrendDeltaBadge[\s\S]*RankTrendButton[\s\S]*<Button/,
+    "desktop CV actions should order work count, weekly delta, trend, expand"
   );
+  assert.doesNotMatch(actionsSource, /总播放量: \$\{formatRankCompactCount\(item\.totalViewCount\)\}/);
+  assert.match(actionsSource, /justify-between/);
+
+  const mobileActionsStart = cvItemSource.indexOf('data-cv-card-mobile-actions-row="true"');
+  assert.notEqual(mobileActionsStart, -1, "mobile actions row should exist");
+  const mobileActionsSource = cvItemSource.slice(mobileActionsStart);
+  assert.match(mobileActionsSource, /ScrollTextIcon[\s\S]*RankTrendDeltaBadge[\s\S]*RankTrendButton[\s\S]*<Button/);
+  assert.doesNotMatch(mobileActionsSource, /总播放量: \$\{formatRankCompactCount\(item\.totalViewCount\)\}/);
+  assert.match(mobileActionsSource, /justify-between/);
 });
 
 test("CV rank trend dialog uses weekly windows and cross-platform radio metrics", () => {
