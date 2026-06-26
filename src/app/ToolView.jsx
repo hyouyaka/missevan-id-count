@@ -10,6 +10,7 @@ import {
   Clock3Icon,
   PlayCircleIcon,
   HeartIcon,
+  HouseIcon,
   MicIcon,
   MonitorIcon,
   ShoppingCartIcon,
@@ -26,6 +27,7 @@ import { toast } from "sonner";
 import { AppIcon } from "@/app/AppIcon";
 import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { FavoritesPanel } from "@/app/FavoritesPanel";
+import { HomeView } from "@/app/HomeView";
 import { MessageDialog } from "@/app/MessageDialog";
 import { OngoingPanel } from "@/app/OngoingPanel";
 import { OutputPanel } from "@/app/OutputPanel";
@@ -99,6 +101,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 const mainNavigationIconMap = {
+  home: HouseIcon,
   search: CalculatorIcon,
   ongoing: Clock3Icon,
   ranks: ChartNoAxesColumnIncreasingIcon,
@@ -1666,6 +1669,7 @@ export function ToolView({ initialAppConfig }) {
     { key: "manbo", label: "漫播" },
   ];
   const webPlatforms = [
+    { key: "home", label: "首页" },
     { key: "search", label: "统计" },
     { key: "missevan", label: "猫耳" },
     { key: "manbo", label: "漫播" },
@@ -1793,11 +1797,19 @@ export function ToolView({ initialAppConfig }) {
     setMainDrawerOpen(false);
   }
 
-  function openSearchHomeFromHeader() {
-    navigateCurrentPlatform("search");
+  function navigateHomeRoute(routePatch) {
+    navigateToolRoute(routePatch);
+    scrollToPageTop();
+  }
+
+  function openHomeFromHeader() {
+    navigateCurrentPlatform(appConfigRef.current.desktopApp ? "search" : "home");
     scrollToPageTop();
     setMainDrawerOpen(false);
   }
+
+  const mainMenuButtonLabel = mainDrawerOpen ? "关闭菜单" : "打开菜单";
+  const headerHomeLabel = appConfig.desktopApp ? "返回统计页" : "返回首页";
 
   function commitGlobalSearchNavigation() {
     navigateToolRoute({ view: "search" });
@@ -3592,14 +3604,27 @@ export function ToolView({ initialAppConfig }) {
           desktopAppUrl={appConfig.desktopAppUrl}
         />
       ) : null}
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-lg"
+        className="sm:hidden fixed right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-50 shrink-0 bg-background/92 backdrop-blur-xl"
+        aria-expanded={mainDrawerOpen}
+        aria-controls="main-navigation-drawer"
+        aria-label={mainMenuButtonLabel}
+        title={mainMenuButtonLabel}
+        onClick={() => setMainDrawerOpen((open) => !open)}
+      >
+        <MenuIcon aria-hidden="true" className="size-4" />
+      </Button>
       <header className="-mx-3 border-b border-border/75 bg-background/92 px-3 py-3 backdrop-blur-xl sm:fixed sm:inset-x-0 sm:top-0 sm:z-30 sm:mx-0 sm:px-5 lg:px-6">
         <div className="relative mx-auto grid max-w-7xl gap-3 sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:gap-5">
           <div className="flex min-w-0 items-start gap-3 pr-14 sm:col-start-1 sm:row-start-1 sm:pr-0">
             <button
               type="button"
-              aria-label="返回统计页"
+              aria-label={headerHomeLabel}
               className="inline-flex min-w-0 shrink-0 items-center text-left text-inherit leading-none"
-              onClick={openSearchHomeFromHeader}
+              onClick={openHomeFromHeader}
             >
               <AppIcon className="size-14 self-center rounded-xl sm:size-12" />
             </button>
@@ -3613,9 +3638,9 @@ export function ToolView({ initialAppConfig }) {
               <h1 className="mt-1 min-w-0 text-[22px] font-semibold leading-tight tracking-tight sm:text-xl lg:text-2xl">
                 <button
                   type="button"
-                  aria-label="返回搜索主页"
+                  aria-label={headerHomeLabel}
                   className="inline-flex min-w-0 text-left text-inherit leading-tight [font:inherit] [letter-spacing:inherit]"
-                  onClick={openSearchHomeFromHeader}
+                  onClick={openHomeFromHeader}
                 >
                   <span className="min-w-0">{appConfig.titleZh}</span>
                 </button>
@@ -3651,11 +3676,11 @@ export function ToolView({ initialAppConfig }) {
             type="button"
             variant="outline"
             size="icon-lg"
-            className="absolute right-0 top-0 shrink-0 sm:static sm:col-start-3 sm:row-start-1"
+            className="hidden shrink-0 sm:inline-flex sm:col-start-3 sm:row-start-1"
             aria-expanded={mainDrawerOpen}
             aria-controls="main-navigation-drawer"
-            aria-label={mainDrawerOpen ? "关闭菜单" : "打开菜单"}
-            title={mainDrawerOpen ? "关闭菜单" : "打开菜单"}
+            aria-label={mainMenuButtonLabel}
+            title={mainMenuButtonLabel}
             onClick={() => setMainDrawerOpen((open) => !open)}
           >
             <MenuIcon aria-hidden="true" className="size-4" />
@@ -3673,7 +3698,14 @@ export function ToolView({ initialAppConfig }) {
         </div>
       </header>
 
-      {currentPlatform === "ranks" ? (
+      {currentPlatform === "home" ? (
+        <HomeView
+          frontendVersion={appConfig.frontendVersion}
+          handleVersionResponse={updateVersionStatusFromResponse}
+          onNavigateRoute={navigateHomeRoute}
+          onOpenSearchResult={openDramaInSearch}
+        />
+      ) : currentPlatform === "ranks" ? (
         <RanksPanel
           favoriteKeys={favoriteKeySet}
           favoriteActionsDisabled={favoriteActionsDisabled}

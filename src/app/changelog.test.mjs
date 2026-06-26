@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   CHANGELOG_ENTRIES,
@@ -7,6 +8,10 @@ import {
   getShouldAutoOpenChangelog,
   markChangelogVersionSeen,
 } from "./changelog.js";
+
+const packageJson = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8")
+);
 
 function createStorageMock(initialEntries = []) {
   const store = new Map(initialEntries);
@@ -47,6 +52,23 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
 
   assert.equal(getShouldAutoOpenChangelog("1.5.5", blockedStorage), false);
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
+});
+
+test("package version is 1.7.0", () => {
+  assert.equal(packageJson.version, "1.7.0");
+});
+
+test("changelog contains 1.7 homepage and search updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.0");
+
+  assert.deepEqual(entry, {
+    version: "1.7.0",
+    changes: [
+      "请保存本工具新地址https://mmtoolkit.app，旧地址将于7月底失效",
+      "优化搜索逻辑",
+      "重构首页设计",
+    ],
+  });
 });
 
 test("changelog contains 1.6.5 fallback node and weekly update fixes", () => {

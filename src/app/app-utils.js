@@ -133,13 +133,13 @@ export const TOOL_ROUTE_QUERY_PARAMS = {
 export function getAllowedToolViews({ desktopApp = false } = {}) {
   return desktopApp
     ? ["search", "favorites"]
-    : ["search", "ongoing", "ranks", "favorites"];
+    : ["home", "search", "ongoing", "ranks", "favorites"];
 }
 
 export function normalizeToolView(value, options = {}) {
   const allowedViews = getAllowedToolViews(options);
   const normalized = String(value || "").trim();
-  const defaultView = options?.desktopApp ? "search" : "ongoing";
+  const defaultView = options?.desktopApp ? "search" : "home";
   return allowedViews.includes(normalized) ? normalized : defaultView;
 }
 
@@ -199,10 +199,12 @@ export function buildToolRouteUrl(locationLike, routeState = {}, options = {}) {
   params.delete(TOOL_ROUTE_QUERY_PARAMS.view);
   deleteToolRouteDetailParams(params);
 
-  if (nextState.view === "search") {
-    params.set(TOOL_ROUTE_QUERY_PARAMS.view, "search");
-  } else if (nextState.view === "ongoing" && nextState.platform === "missevan" && nextState.window === "7d") {
+  if (nextState.view === "home") {
     params.delete(TOOL_ROUTE_QUERY_PARAMS.view);
+  } else if (nextState.view === "search") {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.view, "search");
+  } else if (nextState.view === "ongoing") {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.view, "ongoing");
   } else {
     params.set(TOOL_ROUTE_QUERY_PARAMS.view, nextState.view);
   }
@@ -235,7 +237,7 @@ export function buildToolViewUrl(locationLike, view, options = {}) {
   const params = new URLSearchParams(search);
   const nextView = normalizeToolView(view, options);
 
-  if (nextView === "ongoing") {
+  if (nextView === "home") {
     params.delete(TOOL_VIEW_QUERY_PARAM);
   } else {
     params.set(TOOL_VIEW_QUERY_PARAM, nextView);

@@ -66,8 +66,9 @@ function createStorageMock() {
   };
 }
 
-test("tool view URL helper defaults to ongoing without query", () => {
-  assert.equal(readToolViewFromLocation({ search: "" }), "ongoing");
+test("tool view URL helper defaults to home without query", () => {
+  assert.equal(readToolViewFromLocation({ search: "" }), "home");
+  assert.equal(readToolViewFromLocation({ search: "" }, { desktopApp: true }), "search");
 });
 
 test("tool view URL helper reads valid view query", () => {
@@ -76,16 +77,18 @@ test("tool view URL helper reads valid view query", () => {
 
 test("tool view URL helper rejects unavailable desktop views", () => {
   assert.equal(readToolViewFromLocation({ search: "?view=ranks" }, { desktopApp: true }), "search");
+  assert.equal(readToolViewFromLocation({ search: "?view=home" }, { desktopApp: true }), "search");
 });
 
 test("tool view URL helper exposes platform-specific allowed views", () => {
-  assert.deepEqual(getAllowedToolViews(), ["search", "ongoing", "ranks", "favorites"]);
+  assert.deepEqual(getAllowedToolViews(), ["home", "search", "ongoing", "ranks", "favorites"]);
   assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "favorites"]);
 });
 
-test("tool view URL builder keeps explicit search view and omits default ongoing view", () => {
+test("tool view URL builder keeps explicit views and omits default home view", () => {
   assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "search"), "/tool?view=search");
-  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "ongoing"), "/tool");
+  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "ongoing"), "/tool?view=ongoing");
+  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "home"), "/tool");
 });
 
 test("tool view URL builder preserves unrelated query params", () => {
@@ -98,7 +101,7 @@ test("tool view URL builder preserves unrelated query params", () => {
 test("tool view URL builder preserves hash while replacing existing view", () => {
   assert.equal(
     buildToolViewUrl({ pathname: "/tool", search: "?view=ranks&foo=bar", hash: "#section" }, "ongoing"),
-    "/tool?foo=bar#section"
+    "/tool?view=ongoing&foo=bar#section"
   );
 });
 
@@ -116,14 +119,14 @@ test("tool route state reader includes detail params with normalized fallbacks",
     }
   );
   assert.deepEqual(readToolRouteStateFromLocation({ search: "?view=bad&platform=bad&window=bad" }), {
-    view: "ongoing",
+    view: "home",
     platform: "missevan",
     window: "7d",
     category: "",
     rank: "",
   });
   assert.deepEqual(readToolRouteStateFromLocation({ search: "" }), {
-    view: "ongoing",
+    view: "home",
     platform: "missevan",
     window: "7d",
     category: "",
@@ -145,7 +148,7 @@ test("tool route URL builder keeps only ongoing route params", () => {
       { pathname: "/", search: "?view=search&platform=manbo&window=30d", hash: "" },
       { view: "ongoing", platform: "missevan", window: "7d" }
     ),
-    "/"
+    "/?view=ongoing"
   );
 });
 

@@ -136,6 +136,13 @@ export function SearchPanel({
     });
   }
 
+  function openSearchHelp() {
+    if (isDesktopApp) {
+      return;
+    }
+    setSearchHelpOpen(true);
+  }
+
   function showKeywordTooShortNotice() {
     showBlockingNotice("关键词太短", "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。");
   }
@@ -322,7 +329,7 @@ export function SearchPanel({
               className="h-12 w-full rounded-lg border border-border/80 bg-white pl-11 pr-11 text-sm! text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-background"
               placeholder={placeholder}
               value={keywordValue}
-              onFocus={() => setSearchHelpOpen(true)}
+              onFocus={openSearchHelp}
               onBlur={() => setSearchHelpOpen(false)}
               onChange={(event) => setKeyword(event.target.value)}
             />

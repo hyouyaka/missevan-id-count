@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+
+function readSourceIfExists(relativeUrl) {
+  const url = new URL(relativeUrl, import.meta.url);
+  return existsSync(url) ? readFileSync(url, "utf8") : "";
+}
 
 const messageDialogSource = readFileSync(new URL("./MessageDialog.jsx", import.meta.url), "utf8");
 const changelogDialogSource = readFileSync(new URL("./ChangelogDialog.jsx", import.meta.url), "utf8");
@@ -8,7 +13,9 @@ const appUtilsSource = readFileSync(new URL("./app-utils.js", import.meta.url), 
 const appIconSource = readFileSync(new URL("./AppIcon.jsx", import.meta.url), "utf8");
 const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import.meta.url), "utf8");
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
+const homeViewSource = readSourceIfExists("./HomeView.jsx");
 const landingViewSource = readFileSync(new URL("./LandingView.jsx", import.meta.url), "utf8");
+const ongoingDataSource = readSourceIfExists("./ongoingData.js");
 const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.meta.url), "utf8");
 const outputPanelSource = readFileSync(new URL("./OutputPanel.jsx", import.meta.url), "utf8");
 const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", import.meta.url), "utf8");
@@ -232,6 +239,141 @@ test("web navigation keeps platform drawer roots and favorites with statistics l
   assert.match(platformSource, /\{ key: "favorites", label: "收藏" \}/);
 });
 
+test("tool routes default to the new home view", () => {
+  assert.match(appUtilsSource, /return desktopApp\s*\?\s*\["search", "favorites"\]\s*:\s*\["home", "search", "ongoing", "ranks", "favorites"\]/);
+  assert.match(appUtilsSource, /const defaultView = options\?\.desktopApp \? "search" : "home"/);
+  assert.match(appUtilsSource, /if \(nextState\.view === "home"\) \{\s*params\.delete\(TOOL_ROUTE_QUERY_PARAMS\.view\);/);
+  assert.match(appUtilsSource, /else if \(nextState\.view === "ongoing"\) \{\s*params\.set\(TOOL_ROUTE_QUERY_PARAMS\.view, "ongoing"\);/);
+});
+
+test("home navigation appears before statistics on web only and uses the House icon", () => {
+  const webStart = toolViewSource.indexOf("const webPlatforms = [");
+  const webEnd = toolViewSource.indexOf("];", webStart);
+  const desktopStart = toolViewSource.indexOf("const desktopPlatforms = [");
+  const desktopEnd = toolViewSource.indexOf("];", desktopStart);
+  assert.notEqual(webStart, -1, "web platform list should exist");
+  assert.notEqual(desktopStart, -1, "desktop platform list should exist");
+
+  const webSource = toolViewSource.slice(webStart, webEnd);
+  const desktopSource = toolViewSource.slice(desktopStart, desktopEnd);
+
+  assert.match(toolViewSource, /HouseIcon/);
+  assert.match(toolViewSource, /home: HouseIcon/);
+  assert.ok(webSource.indexOf('{ key: "home", label: "首页" }') < webSource.indexOf('{ key: "search", label: "统计" }'));
+  assert.doesNotMatch(desktopSource, /\{ key: "home", label: "首页" \}/);
+  assert.match(toolViewSource, /<HomeView[\s\S]*onNavigateRoute=\{navigateHomeRoute\}/);
+  assert.match(toolViewSource, /function openHomeFromHeader\(\)/);
+  assert.doesNotMatch(toolViewSource, /function openSearchHomeFromHeader\(\)/);
+});
+
+test("home view reuses ranks and ongoing data clients", () => {
+  assert.match(ongoingDataSource, /export async function fetchOngoingData/);
+  assert.match(ongoingDataSource, /export function getCachedOngoingData/);
+  assert.match(ongoingPanelSource, /from "@\/app\/ongoingData"/);
+  assert.match(homeViewSource, /from "@\/app\/ongoingData"/);
+  assert.match(homeViewSource, /from "@\/app\/ranksData"/);
+  assert.doesNotMatch(homeViewSource, /fetch\(buildVersionedUrl\(`?\/ongoing/);
+  assert.doesNotMatch(homeViewSource, /fetch\(buildVersionedUrl\(`?\/ranks/);
+});
+
+test("home view maps requested sections and see-more routes", () => {
+  assert.match(homeViewSource, /HOME_RANK_CONFIG/);
+  assert.match(homeViewSource, /categoryKey: "new"[\s\S]*rankKey: "new_daily"/);
+  assert.match(homeViewSource, /categoryKey: "popular"[\s\S]*rankKey: "popular_weekly"/);
+  assert.match(homeViewSource, /categoryKey: "bestseller"[\s\S]*rankKey: "bestseller_weekly"/);
+  assert.match(homeViewSource, /categoryKey: "box_office"[\s\S]*rankKey: "box_office_total"/);
+  assert.match(homeViewSource, /categoryKey: "diamond"[\s\S]*rankKey: "diamond_monthly"/);
+  assert.match(homeViewSource, /categoryKey: "cv"[\s\S]*rankKey: "cv"/);
+  assert.match(homeViewSource, /window: "7d"/);
+  assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ongoing",\s*platform,\s*window: "7d"/);
+  assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ranks",\s*platform,\s*category: rankConfig\.categoryKey,\s*rank: rankConfig\.rankKey/);
+});
+
+test("home drama titles open the shared statistics result flow", () => {
+  assert.match(toolViewSource, /<HomeView[\s\S]*onOpenSearchResult=\{openDramaInSearch\}/);
+  assert.match(homeViewSource, /export function HomeView\(\{[\s\S]*onOpenSearchResult[\s\S]*\}\)/);
+  assert.match(homeViewSource, /function OngoingMiniItem\(\{ item, platform, onOpenSearchResult \}\)/);
+  assert.match(homeViewSource, /usageAction: "ongoing_open_search_result"/);
+  assert.match(homeViewSource, /function RankDramaItem\(\{ item, platform, onOpenSearchResult \}\)/);
+  assert.match(homeViewSource, /const searchDramaIds = isMissevanPeak[\s\S]*item\.drama_ids[\s\S]*\[item\.id\]/);
+  assert.match(homeViewSource, /usageAction: "ranks_open_search_result"/);
+  assert.match(homeViewSource, /onOpenSearchResult=\{onOpenSearchResult\}/);
+  assert.match(homeViewSource, /underline underline-offset-4 hover:text-primary/);
+  assert.match(homeViewSource, /className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary/);
+});
+
+test("home view keeps see-more links below lists instead of top-right actions", () => {
+  assert.match(homeViewSource, /title="一周内更新"/);
+  assert.match(homeViewSource, /title="榜单"/);
+  assert.match(homeViewSource, /ariaLabel=\{`查看更多\$\{platformMeta\[platform\]\.label\}一周内更新`\}/);
+  assert.match(homeViewSource, /ariaLabel=\{`查看更多\$\{rankConfig\.title\}`\}/);
+  assert.match(homeViewSource, /text-sm!/);
+  assert.doesNotMatch(homeViewSource, /查看全部/);
+  assert.doesNotMatch(homeViewSource, /absolute right-.*查看更多/);
+});
+
+test("home view follows annotated compact headers and text platform tabs", () => {
+  assert.match(homeViewSource, /CalendarClockIcon/);
+  assert.doesNotMatch(homeViewSource, /CalendarSyncIcon/);
+  assert.match(homeViewSource, /SignalHighIcon/);
+  assert.match(homeViewSource, /sectionIcon=\{CalendarClockIcon\}/);
+  assert.match(homeViewSource, /sectionIcon=\{SignalHighIcon\}/);
+  assert.match(homeViewSource, /text-xl leading-7/);
+  assert.match(homeViewSource, /className="size-5 shrink-0 text-primary"/);
+  assert.doesNotMatch(homeViewSource, /titleSize="compact"/);
+  assert.doesNotMatch(homeViewSource, /titleSize="dense"/);
+  assert.match(homeViewSource, /homeTextTabsListClassName/);
+  assert.match(homeViewSource, /rounded-none border-0! bg-transparent! p-0 shadow-none!/);
+  assert.match(homeViewSource, /text-sm!/);
+  assert.match(homeViewSource, /data-\[state=active\]:font-bold/);
+  assert.match(homeViewSource, /text-shadow:0_1px_6px_color-mix/);
+  assert.doesNotMatch(homeViewSource, /rounded-lg bg-muted\/70 p-0\.5/);
+});
+
+test("home update and rank cards use annotated metrics and horizontal sizing", () => {
+  assert.match(homeViewSource, /RefreshCwIcon/);
+  assert.match(homeViewSource, /getViewCountValue/);
+  assert.match(homeViewSource, /getSevenDayViewDelta/);
+  assert.match(homeViewSource, /text-\[rgb\(20,137,111\)\]/);
+  assert.match(homeViewSource, /ongoingCounts/);
+  assert.match(homeViewSource, /ongoingCounts\.missevan/);
+  assert.match(homeViewSource, /ongoingCounts\.manbo/);
+  assert.match(homeViewSource, /function OngoingPlatformList\(\{ platform, items, totalCount, onNavigateRoute, onOpenSearchResult \}\)/);
+  assert.match(homeViewSource, /<PlatformTabLabel platform=\{platform\} \/>[\s\S]*\{totalCount\}/);
+  assert.doesNotMatch(homeViewSource, /selectedOngoingPlatform/);
+  assert.doesNotMatch(homeViewSource, /ariaLabel="选择更新平台"/);
+  assert.match(homeViewSource, /auto-cols-\[minmax\(min\(370px,100%\),1fr\)\]/);
+  assert.match(homeViewSource, /sm:grid-cols-\[repeat\(2,minmax\(370px,1fr\)\)\]/);
+  assert.match(homeViewSource, /sm:auto-cols-auto/);
+  assert.match(homeViewSource, /min-w-\[min\(370px,100%\)\]/);
+  assert.match(homeViewSource, /w-\[320px\]/);
+  assert.match(homeViewSource, /auto-cols-\[320px\]/);
+  assert.match(homeViewSource, /w-max min-w-full/);
+  assert.match(homeViewSource, /min-w-0 max-w-full overflow-hidden/);
+  assert.match(homeViewSource, /min-w-0 max-w-full overflow-x-auto overflow-y-hidden overscroll-x-contain/);
+  assert.match(homeViewSource, /displayTitle: "CV总榜"/);
+  assert.match(homeViewSource, /formatCompactCount\(item\?\.totalViewCount\)/);
+  assert.doesNotMatch(homeViewSource, /getCvWorksPreviewText\(item\?\.topWorks \|\| item\?\.works\)/);
+});
+
+test("home view keeps cached data when background refresh partially fails", () => {
+  assert.match(homeViewSource, /Promise\.allSettled\(\[/);
+  assert.doesNotMatch(homeViewSource, /await Promise\.all\(\[/);
+  assert.match(homeViewSource, /getSettledPayload\(missevanOngoingResult\)/);
+  assert.match(homeViewSource, /getSettledPayload\(manboOngoingResult\)/);
+  assert.match(homeViewSource, /getSettledPayload\(ranksResult\)/);
+  assert.match(homeViewSource, /const nextOngoingByPlatform = \{/);
+  assert.match(homeViewSource, /missevan: missevanOngoing\?\.response\?\.ok && missevanOngoing\?\.data\?\.success\s*\?\s*missevanOngoing\.data\s*:\s*cachedMissevan\?\.data\?\.success\s*\?\s*cachedMissevan\.data\s*:\s*null/);
+  assert.match(homeViewSource, /manbo: manboOngoing\?\.response\?\.ok && manboOngoing\?\.data\?\.success\s*\?\s*manboOngoing\.data\s*:\s*cachedManbo\?\.data\?\.success\s*\?\s*cachedManbo\.data\s*:\s*null/);
+  assert.match(homeViewSource, /const nextRankData = ranks\?\.response\?\.ok && ranks\?\.data\?\.success \? ranks\.data : cachedRanks\?\.data\?\.success \? cachedRanks\.data : null/);
+  assert.match(homeViewSource, /if \(!nextOngoingByPlatform\.missevan && !nextOngoingByPlatform\.manbo && !nextRankData\)/);
+});
+
+test("ongoing page keeps usage logging route helper after data extraction", () => {
+  assert.match(ongoingPanelSource, /import \{[\s\S]*buildVersionedUrl[\s\S]*\} from "@\/app\/app-utils"/);
+  assert.match(ongoingPanelSource, /fetch\(buildVersionedUrl\("\/usage-log", frontendVersion\)/);
+});
+
 test("desktop navigation keeps statistics and favorites", () => {
   const platformStart = toolViewSource.indexOf("const desktopPlatforms = [");
   assert.notEqual(platformStart, -1, "desktop platform list should exist");
@@ -241,6 +383,7 @@ test("desktop navigation keeps statistics and favorites", () => {
 
   assert.match(toolViewSource, /appConfig\.desktopApp \? desktopPlatforms : webPlatforms/);
   assert.match(platformSource, /\{ key: "search", label: "统计" \}/);
+  assert.doesNotMatch(platformSource, /\{ key: "home", label: "首页" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "search", label: "搜索" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "manbo", label: "漫播" \}/);
@@ -262,7 +405,12 @@ test("header navigation uses one right-side translucent drawer", () => {
   assert.match(toolViewSource, /setMainDrawerOpen\(false\)/);
   assert.match(toolViewSource, /aria-expanded=\{mainDrawerOpen\}/);
   assert.match(toolViewSource, /aria-controls="main-navigation-drawer"/);
-  assert.match(toolViewSource, /aria-label=\{mainDrawerOpen \? "关闭菜单" : "打开菜单"\}/);
+  assert.match(toolViewSource, /const mainMenuButtonLabel = mainDrawerOpen \? "关闭菜单" : "打开菜单";/);
+  assert.match(toolViewSource, /aria-label=\{mainMenuButtonLabel\}/);
+  assert.match(toolViewSource, /className="sm:hidden fixed/);
+  assert.match(toolViewSource, /right-\[max\(0\.75rem,env\(safe-area-inset-right\)\)\]/);
+  assert.match(toolViewSource, /top-\[max\(0\.75rem,env\(safe-area-inset-top\)\)\]/);
+  assert.match(toolViewSource, /className="hidden shrink-0 sm:inline-flex/);
   assert.match(toolViewSource, /<MenuIcon aria-hidden="true"/);
   assert.match(toolViewSource, /id="main-navigation-drawer"/);
   assert.match(toolViewSource, /<MainNavigationDrawer/);
@@ -316,7 +464,8 @@ test("header uses plain version text, full-width desktop search, and no desktop 
   assert.match(headerSource, /className="[^"]*sm:col-start-2[^"]*sm:w-full/);
   assert.doesNotMatch(headerSource, /sm:min-w-\[16rem\]/);
   assert.doesNotMatch(headerSource, /sm:w-\[26rem\]/);
-  assert.match(headerSource, /absolute right-0 top-0[\s\S]*sm:static/);
+  assert.match(headerSource, /className="hidden shrink-0 sm:inline-flex/);
+  assert.doesNotMatch(headerSource, /fixed right-3 top-3 z-40/);
   assert.match(toolViewSource, /className="app-shell[\s\S]*sm:pt-\[6\.5rem\]/);
   assert.doesNotMatch(toolViewSource, /sm:pt-\[8\.75rem\]/);
   assert.match(headerSource, /<h1 className="mt-1 min-w-0 text-\[22px\] font-semibold leading-tight tracking-tight sm:text-xl lg:text-2xl">/);
@@ -336,7 +485,9 @@ test("app icon appears in page titles and browser chrome", () => {
   assert.match(appIconSource, /alt=""/);
   assert.match(toolViewSource, /document\.title = appConfig\.titleZh \|\| appConfig\.brandName/);
   assert.match(toolViewSource, /<h1 className="mt-1 min-w-0 text-\[22px\] font-semibold leading-tight tracking-tight sm:text-xl lg:text-2xl">/);
-  assert.match(toolViewSource, /aria-label="返回搜索主页"/);
+  assert.match(toolViewSource, /const headerHomeLabel = appConfig\.desktopApp \? "返回统计页" : "返回首页";/);
+  assert.match(toolViewSource, /aria-label=\{headerHomeLabel\}/);
+  assert.match(toolViewSource, /onClick=\{openHomeFromHeader\}/);
   assert.match(toolViewSource, /className="inline-flex min-w-0 text-left text-inherit leading-tight/);
   assert.match(toolViewSource, /<AppIcon className="size-14 self-center rounded-xl sm:size-12" \/>/);
   assert.match(toolViewSource, /<span className="min-w-0">\{appConfig\.titleZh\}<\/span>/);
@@ -612,7 +763,10 @@ test("global search input area supports header layout and compact controls", () 
   assert.match(searchPanelSource, /searchHelpText/);
   assert.match(searchPanelSource, /空格表示 AND ，逗号表示 OR ，例如：/);
   assert.match(searchPanelSource, /function blurSearchControl\(formElement\)/);
-  assert.match(searchPanelSource, /onFocus=\{\(\) => setSearchHelpOpen\(true\)\}/);
+  assert.match(searchPanelSource, /function openSearchHelp\(\)/);
+  assert.match(searchPanelSource, /if \(isDesktopApp\) \{\s*return;\s*\}/);
+  assert.match(searchPanelSource, /onFocus=\{openSearchHelp\}/);
+  assert.doesNotMatch(searchPanelSource, /onFocus=\{\(\) => setSearchHelpOpen\(true\)\}/);
   assert.match(searchPanelSource, /onBlur=\{\(\) => setSearchHelpOpen\(false\)\}/);
   assert.match(searchPanelSource, /className = ""/);
   assert.doesNotMatch(searchPanelSource, /descriptionClassName = ""/);
@@ -816,9 +970,11 @@ test("rank and ongoing panels render cached data before background refresh", () 
   assert.match(ranksPanelSource, /setIsLoading\(!cachedPayload\)/);
   assert.match(toolViewSource, /getCachedRanksData\(appConfigRef\.current\.frontendVersion\)/);
 
-  assert.match(ongoingPanelSource, /function getCachedOngoingData\(\{ platform, frontendVersion \}\)/);
-  assert.match(ongoingPanelSource, /ongoingClientCache\.set\(cacheKey, \{[\s\S]*data: payload/);
+  assert.match(ongoingDataSource, /export function getCachedOngoingData\(\{ platform, frontendVersion \}\)/);
+  assert.match(ongoingDataSource, /ongoingClientCache\.set\(cacheKey, \{[\s\S]*data: payload/);
   assert.doesNotMatch(ongoingPanelSource, /ongoingClientCache\.delete\(cacheKey\)/);
+  assert.doesNotMatch(ongoingPanelSource, /const ongoingClientCache = new Map\(\)/);
+  assert.match(ongoingPanelSource, /from "@\/app\/ongoingData"/);
   assert.match(ongoingPanelSource, /const cachedPayload = getCachedOngoingData\(\{/);
   assert.match(ongoingPanelSource, /setIsLoading\(!cachedPayload\)/);
 });
