@@ -24,6 +24,7 @@ import {
   getInlineTaggedTitleDisplayText,
   getRevenuePaidCountLabel,
   loadPersistedHistoryEntries,
+  normalizeOngoingWindow,
   parseRawItems,
   readToolRouteStateFromLocation,
   readToolViewFromLocation,
@@ -65,8 +66,8 @@ function createStorageMock() {
   };
 }
 
-test("tool view URL helper defaults to search without query", () => {
-  assert.equal(readToolViewFromLocation({ search: "" }), "search");
+test("tool view URL helper defaults to ongoing without query", () => {
+  assert.equal(readToolViewFromLocation({ search: "" }), "ongoing");
 });
 
 test("tool view URL helper reads valid view query", () => {
@@ -79,11 +80,12 @@ test("tool view URL helper rejects unavailable desktop views", () => {
 
 test("tool view URL helper exposes platform-specific allowed views", () => {
   assert.deepEqual(getAllowedToolViews(), ["search", "ongoing", "ranks", "favorites"]);
-  assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "favorites", "report"]);
+  assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "favorites"]);
 });
 
-test("tool view URL builder omits default search view", () => {
-  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "search"), "/tool");
+test("tool view URL builder keeps explicit search view and omits default ongoing view", () => {
+  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "search"), "/tool?view=search");
+  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "ongoing"), "/tool");
 });
 
 test("tool view URL builder preserves unrelated query params", () => {
@@ -96,7 +98,7 @@ test("tool view URL builder preserves unrelated query params", () => {
 test("tool view URL builder preserves hash while replacing existing view", () => {
   assert.equal(
     buildToolViewUrl({ pathname: "/tool", search: "?view=ranks&foo=bar", hash: "#section" }, "ongoing"),
-    "/tool?view=ongoing&foo=bar#section"
+    "/tool?foo=bar#section"
   );
 });
 
@@ -114,12 +116,20 @@ test("tool route state reader includes detail params with normalized fallbacks",
     }
   );
   assert.deepEqual(readToolRouteStateFromLocation({ search: "?view=bad&platform=bad&window=bad" }), {
-    view: "search",
+    view: "ongoing",
     platform: "missevan",
-    window: "3d",
+    window: "7d",
     category: "",
     rank: "",
   });
+  assert.deepEqual(readToolRouteStateFromLocation({ search: "" }), {
+    view: "ongoing",
+    platform: "missevan",
+    window: "7d",
+    category: "",
+    rank: "",
+  });
+  assert.equal(normalizeOngoingWindow(undefined), "7d");
 });
 
 test("tool route URL builder keeps only ongoing route params", () => {
@@ -129,6 +139,13 @@ test("tool route URL builder keeps only ongoing route params", () => {
       { view: "ongoing", platform: "manbo", window: "7d" }
     ),
     "/?foo=bar&view=ongoing&platform=manbo&window=7d#top"
+  );
+  assert.equal(
+    buildToolRouteUrl(
+      { pathname: "/", search: "?view=search&platform=manbo&window=30d", hash: "" },
+      { view: "ongoing", platform: "missevan", window: "7d" }
+    ),
+    "/"
   );
 });
 
@@ -155,7 +172,7 @@ test("tool route URL builder clears detail params for root views", () => {
       { pathname: "/tool", search: "?view=ongoing&platform=manbo&window=7d&foo=bar", hash: "" },
       { view: "search" }
     ),
-    "/tool?foo=bar"
+    "/tool?foo=bar&view=search"
   );
 });
 
@@ -507,6 +524,41 @@ test("mobile rank navigation items flatten platform categories into direct rank 
     category: "box_office",
     rank: "box_office_member",
   });
+});
+
+test("mobile rank navigation category defaults land on requested ranks", () => {
+  const menu = buildRanksNavigationMenu({
+    data: {
+      platforms: {
+        missevan: {
+          key: "missevan",
+          label: "猫耳",
+          categories: [
+            { key: "new", label: "新品榜", ranks: [{ key: "new_weekly", label: "周榜" }, { key: "new_daily", label: "日榜" }] },
+            { key: "popular", label: "人气榜", ranks: [{ key: "popular_daily", label: "日榜" }, { key: "popular_weekly", label: "周榜" }] },
+            { key: "best_seller", label: "畅销榜", ranks: [{ key: "best_seller_daily", label: "日榜" }, { key: "best_seller_weekly", label: "周榜" }] },
+            { key: "cv", label: "CV榜", ranks: [{ key: "cv-paid", label: "付费榜" }, { key: "cv", label: "总榜" }] },
+          ],
+        },
+        manbo: {
+          key: "manbo",
+          label: "漫播",
+          categories: [
+            { key: "box_office", label: "票房榜", ranks: [{ key: "box_office_member", label: "会员剧" }, { key: "box_office_total", label: "总榜" }] },
+          ],
+        },
+      },
+    },
+  });
+
+  const missevanCategories = menu[0].children;
+  const manboCategories = menu[1].children;
+
+  assert.equal(missevanCategories.find((item) => item.key === "new").routePatch.rank, "new_daily");
+  assert.equal(missevanCategories.find((item) => item.key === "popular").routePatch.rank, "popular_weekly");
+  assert.equal(missevanCategories.find((item) => item.key === "best_seller").routePatch.rank, "best_seller_weekly");
+  assert.equal(missevanCategories.find((item) => item.key === "cv").routePatch.rank, "cv");
+  assert.equal(manboCategories.find((item) => item.key === "box_office").routePatch.rank, "box_office_total");
 });
 
 test("rank platform switch carries only peak and CV categories", () => {
@@ -903,6 +955,8 @@ test("classifyUnifiedSearchInput routes platform IDs and keywords", () => {
     rawItems: [],
   });
   assert.equal(classifyUnifiedSearchInput("2087206604062588962 93420").action, "mixed_import");
+  assert.equal(classifyUnifiedSearchInput("魔道祖师 https://www.missevan.com/mdrama/93420").action, "mixed_import");
+  assert.equal(classifyUnifiedSearchInput("魔道祖师,2087206604062588962").action, "mixed_import");
 });
 
 test("hasSearchKeywordInResultTitles uses normalized title matching", () => {

@@ -20,7 +20,7 @@ export function PlatformTabLabel({ platform, label, iconClassName = "size-4" }) 
           src={meta.icon}
         />
       ) : null}
-      <span className="min-w-0 truncate">{displayLabel}</span>
+      <span className="platform-tab-label-text min-w-0 truncate">{displayLabel}</span>
     </span>
   );
 }

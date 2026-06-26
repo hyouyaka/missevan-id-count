@@ -595,7 +595,7 @@ app.get("/app-config", (req, res) => {
     missevanEnabled: MISSEVAN_ENABLED,
     desktopApp: DESKTOP_APP,
     hostedDeployment: isHostedDeployment(),
-    brandName: MISSEVAN_ENABLED ? "M&M Toolkit" : "Manbo Toolkit",
+    brandName: MISSEVAN_ENABLED ? "MMTOOLKIT.APP" : "Manbo Toolkit",
     titleZh: MISSEVAN_ENABLED ? "小猫小狐数据分析" : "小狐分析",
     description: MISSEVAN_ENABLED
       ? "支持 Missevan 与 Manbo 的作品导入、分集筛选、弹幕统计和数据汇总。"
@@ -4239,6 +4239,130 @@ function buildSearchBranches(keyword) {
   return branches;
 }
 
+const QUERY_COMMA_SEPARATOR_PATTERN = /[,，]+/u;
+const QUERY_SPACE_SEPARATOR_PATTERN = /\s+/u;
+const QUERY_SEASON_PART_PATTERN = /^[上中下前后]$/u;
+const CHINESE_NUMBER_PATTERN = "[0-9零〇一二两三四五六七八九十百千万]+";
+const QUERY_SEASON_TERM_PATTERN = new RegExp(
+  `^(?:第\\s*${CHINESE_NUMBER_PATTERN}\\s*[季部册卷期集话章节]?|${CHINESE_NUMBER_PATTERN}\\s*[季部]|[上下]季|全一季)` +
+    `(?:\\s*[（(【\\[]?[上中下前后]\\s*[）)】\\]]?)?$`,
+  "u"
+);
+
+function isPureSeasonQueryTerm(value) {
+  const text = normalizeTextValue(value);
+  return Boolean(text && (QUERY_SEASON_PART_PATTERN.test(text) || QUERY_SEASON_TERM_PATTERN.test(text)));
+}
+
+function tokenizeSearchAndTerms(value) {
+  const chunks = normalizeTextValue(value)
+    .split(QUERY_SPACE_SEPARATOR_PATTERN)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const terms = [];
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (
+      QUERY_SEASON_TERM_PATTERN.test(chunk) &&
+      QUERY_SEASON_PART_PATTERN.test(chunks[index + 1] || "")
+    ) {
+      terms.push(`${chunk} ${chunks[index + 1]}`);
+      index += 1;
+      continue;
+    }
+    terms.push(chunk);
+  }
+
+  return terms;
+}
+
+function parseLibrarySearchExpression(keyword) {
+  const rawKeyword = normalizeTextValue(keyword);
+  if (!rawKeyword) {
+    return {
+      groups: [],
+      isCompound: false,
+    };
+  }
+
+  const hasOrSeparator = QUERY_COMMA_SEPARATOR_PATTERN.test(rawKeyword);
+  const groups = rawKeyword
+    .split(QUERY_COMMA_SEPARATOR_PATTERN)
+    .map((group) => tokenizeSearchAndTerms(group))
+    .filter((terms) => terms.length > 0)
+    .filter((terms) => !(hasOrSeparator && terms.every(isPureSeasonQueryTerm)))
+    .map((terms) => ({ terms }));
+
+  return {
+    groups,
+    isCompound: hasOrSeparator || groups.some((group) => group.terms.length > 1),
+  };
+}
+
+function pickBestScoredItems(items) {
+  const map = new Map();
+  items.forEach((item) => {
+    const key = String(item?.record?.dramaId ?? "");
+    if (!key) {
+      return;
+    }
+    const current = map.get(key);
+    if (!current || Number(item?.score ?? 0) > Number(current?.score ?? 0)) {
+      map.set(key, item);
+    }
+  });
+  return map;
+}
+
+function mergeBestScoredItem(map, item) {
+  const key = String(item?.record?.dramaId ?? "");
+  if (!key) {
+    return;
+  }
+  const current = map.get(key);
+  if (!current || Number(item?.score ?? 0) > Number(current?.score ?? 0)) {
+    map.set(key, item);
+  }
+}
+
+function buildAndScoredMatches(records, terms, keyword, buildTermMatches) {
+  const termMaps = terms.map((term) => pickBestScoredItems(buildTermMatches(records, term)));
+  if (!termMaps.length || termMaps.some((map) => map.size === 0)) {
+    return [];
+  }
+
+  const [firstMap, ...remainingMaps] = termMaps;
+  const matches = [];
+  firstMap.forEach((firstItem, key) => {
+    if (!remainingMaps.every((map) => map.has(key))) {
+      return;
+    }
+    const items = [firstItem, ...remainingMaps.map((map) => map.get(key))];
+    matches.push({
+      record: firstItem.record,
+      score: items.reduce((total, item) => total + Number(item?.score ?? 0), 0),
+    });
+  });
+
+  return sortScoredDramaRecords(matches, keyword);
+}
+
+function buildCompoundScoredMatches(records, keyword, buildTermMatches) {
+  const expression = parseLibrarySearchExpression(keyword);
+  if (!expression.isCompound) {
+    return null;
+  }
+
+  const merged = new Map();
+  expression.groups.forEach((group) => {
+    buildAndScoredMatches(records, group.terms, group.terms.join(" "), buildTermMatches)
+      .forEach((item) => mergeBestScoredItem(merged, item));
+  });
+
+  return sortScoredDramaRecords(Array.from(merged.values()), keyword);
+}
+
 function recordTextIncludesAny(values, terms) {
   const normalizedTerms = (Array.isArray(terms) ? terms : [])
     .map((term) => normalizeSearchText(term))
@@ -4324,7 +4448,8 @@ function getExactSeasonTitleSearchScore(value, rawKeyword, boost = 0) {
   return normalizeSearchText(value) === normalizedKeyword ? 1080 + boost : 0;
 }
 
-function scoreManboLibraryRecord(record, keyword) {
+function scoreManboLibraryRecord(record, keyword, options = {}) {
+  const allowSeasonTerm = Boolean(options?.allowSeasonTerm);
   const rawKeyword = normalizeTextValue(keyword);
   const normalizedKeywords = buildSearchKeywordVariants(rawKeyword);
   if (!rawKeyword) {
@@ -4354,10 +4479,21 @@ function scoreManboLibraryRecord(record, keyword) {
     getExactSeasonTitleSearchScore(record.name, rawKeyword, 20),
     getExactSeasonTitleSearchScore(record.seriesTitle, rawKeyword)
   );
-  return Math.max(exactSeasonTitleScore, textScore, pinyinScore);
+  const seasonTermScore = allowSeasonTerm && isPureSeasonQueryTerm(rawKeyword)
+    ? getWeightedSearchScore(
+        [
+          { value: record.name, boost: 40 },
+          { value: record.seriesTitle, boost: 20 },
+        ],
+        rawKeyword,
+        normalizeSearchText(rawKeyword)
+      )
+    : 0;
+  return Math.max(exactSeasonTitleScore, seasonTermScore, textScore, pinyinScore);
 }
 
-function scoreMissevanLibraryRecord(record, keyword) {
+function scoreMissevanLibraryRecord(record, keyword, options = {}) {
+  const allowSeasonTerm = Boolean(options?.allowSeasonTerm);
   const rawKeyword = normalizeTextValue(keyword);
   const normalizedKeywords = buildSearchKeywordVariants(rawKeyword);
   if (!rawKeyword) {
@@ -4388,27 +4524,57 @@ function scoreMissevanLibraryRecord(record, keyword) {
     getExactSeasonTitleSearchScore(record.title, rawKeyword, 20),
     getExactSeasonTitleSearchScore(record.seriesTitle, rawKeyword)
   );
-  return Math.max(exactSeasonTitleScore, textScore, pinyinScore);
+  const seasonTermScore = allowSeasonTerm && isPureSeasonQueryTerm(rawKeyword)
+    ? getWeightedSearchScore(
+        [
+          { value: record.title, boost: 40 },
+          { value: record.seriesTitle, boost: 20 },
+        ],
+        rawKeyword,
+        normalizeSearchText(rawKeyword)
+      )
+    : 0;
+  return Math.max(exactSeasonTitleScore, seasonTermScore, textScore, pinyinScore);
 }
 
-function buildScoredManboLibraryMatches(records, keyword, category = null) {
+function buildScoredManboLibraryMatches(records, keyword, category = null, options = {}) {
   return sortScoredDramaRecords(records
     .filter((record) => matchesManboSearchCategory(record, category))
     .map((record) => ({
       record,
-      score: scoreManboLibraryRecord(record, keyword),
+      score: scoreManboLibraryRecord(record, keyword, options),
     }))
     .filter((item) => item.score > 0), keyword);
 }
 
-function buildScoredMissevanLibraryMatches(records, keyword, category = null) {
+function buildScoredMissevanLibraryMatches(records, keyword, category = null, options = {}) {
   return sortScoredDramaRecords(records
     .filter((record) => matchesMissevanSearchCategory(record, category))
     .map((record) => ({
       record,
-      score: scoreMissevanLibraryRecord(record, keyword),
+      score: scoreMissevanLibraryRecord(record, keyword, options),
     }))
     .filter((item) => item.score > 0), keyword);
+}
+
+function buildScoredManboLibraryTermMatches(records, keyword) {
+  return buildSearchBranches(keyword)
+    .flatMap((branch) => buildScoredManboLibraryMatches(
+      records,
+      branch.keyword,
+      branch.category,
+      { allowSeasonTerm: true }
+    ));
+}
+
+function buildScoredMissevanLibraryTermMatches(records, keyword) {
+  return buildSearchBranches(keyword)
+    .flatMap((branch) => buildScoredMissevanLibraryMatches(
+      records,
+      branch.keyword,
+      branch.category,
+      { allowSeasonTerm: true }
+    ));
 }
 
 function applyOptionalSearchLimit(records, limit) {
@@ -4540,6 +4706,15 @@ function sortScoredDramaRecords(items, keyword) {
 }
 
 export function searchManboLibraryRecords(records, keyword, limit = null) {
+  const compoundMatches = buildCompoundScoredMatches(
+    records,
+    keyword,
+    buildScoredManboLibraryTermMatches
+  );
+  if (compoundMatches) {
+    return applyOptionalSearchLimit(compoundMatches.map((item) => item.record), limit);
+  }
+
   const branches = buildSearchBranches(keyword);
   const matchedRecords = Array.from(
     branches
@@ -4562,6 +4737,15 @@ export function searchManboLibraryRecords(records, keyword, limit = null) {
 }
 
 export function searchMissevanLibraryRecords(records, keyword, limit = null) {
+  const compoundMatches = buildCompoundScoredMatches(
+    records,
+    keyword,
+    buildScoredMissevanLibraryTermMatches
+  );
+  if (compoundMatches) {
+    return applyOptionalSearchLimit(compoundMatches.map((item) => item.record), limit);
+  }
+
   const branches = buildSearchBranches(keyword);
   const matchedRecords = Array.from(
     branches

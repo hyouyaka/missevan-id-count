@@ -1,8 +1,6 @@
 import { useRef, useState } from "react";
-import { SearchIcon, Trash2Icon } from "lucide-react";
+import { SearchIcon, XIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   buildVersionedUrl,
   classifyUnifiedSearchInput,
@@ -12,8 +10,27 @@ import {
   MISSEVAN_DESKTOP_ACCESS_HINT,
   normalizeVersion,
 } from "@/app/app-utils";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+
+const searchHelpText = [
+  "空格表示 AND ，逗号表示 OR ，例如：",
+  "“魔道，天官” = 包含 “魔道” 或 “天官”",
+  "“路知行 魏超 墨香” = “路知行” “魏超” “墨香” 全都包含",
+  "“priest 阿杰， 将进酒” = “priest” “阿杰” 都包含 或 包含 “将进酒”",
+];
+
+function blurSearchControl(formElement) {
+  const activeElement = typeof document !== "undefined" ? document.activeElement : null;
+  if (activeElement && formElement?.contains?.(activeElement) && typeof activeElement.blur === "function") {
+    activeElement.blur();
+    return;
+  }
+  const inputElement = formElement?.querySelector?.("input");
+  inputElement?.blur?.();
+}
 
 export function SearchPanel({
+  className = "",
   formState,
   isDesktopApp,
   cooldownHours,
@@ -28,14 +45,20 @@ export function SearchPanel({
   onSelectPlatform,
   onCrossPlatformImport,
   onNotice,
+  onSearchCommit,
+  onSearchPendingChange,
+  placeholder = "请输入关键词、ID、分享链接。",
 }) {
   const [isSearchPending, setIsSearchPending] = useState(false);
+  const [searchHelpOpen, setSearchHelpOpen] = useState(false);
   const searchPendingRef = useRef(false);
-  const mergedPlaceholder = "输入剧名、CV、角色名、原作名，或粘贴作品ID、分集 ID、网页链接 / 分享链接";
+  const keywordValue = formState?.keyword ?? "";
+  const hasKeyword = String(keywordValue).trim().length > 0;
 
   function setSearchPending(value) {
     searchPendingRef.current = Boolean(value);
     setIsSearchPending(Boolean(value));
+    onSearchPendingChange?.(Boolean(value));
   }
 
   function setKeyword(value) {
@@ -238,6 +261,7 @@ export function SearchPanel({
     const classified = classifyUnifiedSearchInput(formState?.keyword);
     async function runClassifiedAction(nextClassified) {
       if (nextClassified.action === "import") {
+        onSearchCommit?.({ action: "import", targetPlatform: nextClassified.targetPlatform });
         setSearchPending(true);
         try {
           await onCrossPlatformImport?.({
@@ -252,7 +276,7 @@ export function SearchPanel({
       }
 
       if (nextClassified.action === "mixed_import") {
-        showBlockingNotice("导入内容混合", "请一次只粘贴同一平台的作品ID或链接。");
+        showBlockingNotice("无法混用", "关键词搜索和导入功能无法混用，请分开操作。");
         return;
       }
 
@@ -261,6 +285,7 @@ export function SearchPanel({
         return;
       }
 
+      onSearchCommit?.({ action: "search", keyword: nextClassified.keyword });
       await queryUnifiedKeywordSearch(nextClassified.keyword);
     }
 
@@ -273,34 +298,60 @@ export function SearchPanel({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-base font-semibold text-foreground">搜索 / 导入</div>
-      <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] gap-3 sm:grid-cols-[minmax(0,1fr)_5rem]">
-        <Textarea
-          className="h-[4.375rem] min-h-[4.375rem] max-h-[4.375rem] min-w-0 resize-none overflow-y-auto border-border/80 bg-white dark:bg-background text-sm! focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
-          placeholder={mergedPlaceholder}
-          rows={2}
-          value={formState?.keyword ?? ""}
-          onChange={(event) => setKeyword(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              runMergedSearch();
-            }
-          }}
-        />
-
-        <div className="grid grid-cols-1 gap-1.5">
-          <Button className="h-8 gap-1 px-2 text-sm! [&_svg:not([class*='size-'])]:size-3.5" disabled={isSearchPending} onClick={runMergedSearch}>
-            <SearchIcon data-icon="inline-start" />
-            {isSearchPending ? "搜索中" : "搜索"}
-          </Button>
-          <Button variant="secondary" className="h-8 gap-1 px-2 text-sm! [&_svg:not([class*='size-'])]:size-3.5" onClick={clearManualInput}>
-            <Trash2Icon data-icon="inline-start" />
-            清空
-          </Button>
-        </div>
-      </div>
-    </div>
+    <form
+      className={`flex w-full flex-col gap-1.5 ${className}`.trim()}
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSearchHelpOpen(false);
+        blurSearchControl(event.currentTarget);
+        runMergedSearch();
+      }}
+    >
+      <Popover open={searchHelpOpen}>
+        <PopoverAnchor asChild>
+          <div className="relative">
+            <button
+              type="submit"
+              aria-label="搜索"
+              className="absolute left-2 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-primary disabled:pointer-events-none disabled:opacity-45"
+              disabled={isSearchPending}
+            >
+              <SearchIcon className="size-5" />
+            </button>
+            <input
+              className="h-12 w-full rounded-lg border border-border/80 bg-white pl-11 pr-11 text-sm! text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-background"
+              placeholder={placeholder}
+              value={keywordValue}
+              onFocus={() => setSearchHelpOpen(true)}
+              onBlur={() => setSearchHelpOpen(false)}
+              onChange={(event) => setKeyword(event.target.value)}
+            />
+            {hasKeyword ? (
+              <button
+                type="button"
+                aria-label="清空输入"
+                className="absolute right-2 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-primary"
+                onClick={clearManualInput}
+              >
+                <XIcon className="size-5" />
+              </button>
+            ) : null}
+          </div>
+        </PopoverAnchor>
+        <PopoverContent
+          align="start"
+          side="bottom"
+          sideOffset={6}
+          className="w-[var(--radix-popper-anchor-width)] max-w-[calc(100vw-2rem)] gap-1.5 rounded-md bg-popover/96 p-3 text-xs leading-5 shadow-[0_18px_42px_-28px_rgba(15,23,42,0.42)] backdrop-blur-xl"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          {searchHelpText.map((line) => (
+            <p key={line} className="text-muted-foreground">
+              {line}
+            </p>
+          ))}
+        </PopoverContent>
+      </Popover>
+    </form>
   );
 }

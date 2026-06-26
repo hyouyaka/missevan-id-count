@@ -3,19 +3,19 @@ import {
   RefreshCwIcon,
   AlertTriangleIcon,
   ArrowLeftRightIcon,
+  CalculatorIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ChartNoAxesColumnIncreasingIcon,
   Clock3Icon,
-  FileSpreadsheetIcon,
   PlayCircleIcon,
   HeartIcon,
   MicIcon,
+  MonitorIcon,
   ShoppingCartIcon,
   MenuIcon,
   MessageSquarePlusIcon,
   ScrollTextIcon,
-  SearchIcon,
   StarIcon,
   Trash2Icon,
   UsersRoundIcon,
@@ -23,8 +23,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { ChangelogButton, ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
-import { DesktopReportPanel } from "@/app/DesktopReportPanel";
+import { AppIcon } from "@/app/AppIcon";
+import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { FavoritesPanel } from "@/app/FavoritesPanel";
 import { MessageDialog } from "@/app/MessageDialog";
 import { OngoingPanel } from "@/app/OngoingPanel";
@@ -48,7 +48,6 @@ import {
   saveFavorite,
 } from "@/app/favoritesStorage";
 import {
-  buildMobileRankNavigationItems,
   buildOngoingNavigationMenu,
   buildRanksNavigationMenu,
   buildRevenueSummary,
@@ -66,6 +65,7 @@ import {
   getDefaultAppConfig,
   getMissevanAccessDeniedMessage,
   getRemainingCooldownMinutes,
+  getScrollBehavior,
   isAbortError,
   loadPersistedHistoryEntries,
   mergeAppConfig,
@@ -93,18 +93,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LazyImage } from "@/components/ui/lazy-image";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 const mainNavigationIconMap = {
-  search: SearchIcon,
+  search: CalculatorIcon,
   ongoing: Clock3Icon,
   ranks: ChartNoAxesColumnIncreasingIcon,
   favorites: StarIcon,
-  report: FileSpreadsheetIcon,
 };
-const headerActionButtonStyle = { fontSize: 14 };
 
 function MainNavigationTabLabel({ platform }) {
   const Icon = mainNavigationIconMap[platform.key];
@@ -138,6 +137,16 @@ function getNavigationItem(items, key) {
 
 function getDefaultRoutePatchForMenu(menu) {
   return getFirstNavigationItem(menu)?.routePatch || null;
+}
+
+function getInitialDrawerExpandedRootKeys(currentRoute, isDesktopBrowser) {
+  if (isDesktopBrowser) {
+    return ["missevan", "manbo"];
+  }
+  if ((currentRoute?.view === "ongoing" || currentRoute?.view === "ranks") && (currentRoute?.platform === "missevan" || currentRoute?.platform === "manbo")) {
+    return [currentRoute.platform];
+  }
+  return [];
 }
 
 function MainNavigationMenuItem({
@@ -420,7 +429,7 @@ function DesktopMainNavigationMenu({
 
       {openMenu ? (
         <>
-          <div data-menu-hover-bridge="true" className="absolute top-full z-30 h-3 w-36" style={menuAnchorStyle} />
+          <div className="absolute top-full z-30 h-3 w-36" style={menuAnchorStyle} />
           <div className="absolute top-full z-40 mt-2 flex items-start gap-1 rounded-lg border border-border/80 bg-background/98 p-1.5 shadow-[0_22px_54px_-30px_rgba(15,23,42,0.48)] ring-1 ring-white/55" style={menuAnchorStyle}>
           {openKey === "ranks" && ranksMenuStatus === "loading" ? (
             <div className="px-3 py-2 text-sm text-muted-foreground">加载中</div>
@@ -470,57 +479,98 @@ function DesktopMainNavigationMenu({
   );
 }
 
-function MobileMainNavigationMenu({
+function MainNavigationDrawer({
   platforms,
   currentRoute,
   ongoingMenu,
   ranksMenu,
   ranksMenuStatus,
-  mobileMenuItemClassName,
+  defaultExpandedRootKeys = [],
+  drawerRootItemClassName,
+  drawerChildItemClassName,
+  drawerUtilityItemClassName,
   mobileMenuActiveItemClassName,
   onRequestRanksMenu,
   onCommitRoute,
   onOpenChangelog,
   onOpenFeatureSuggestion,
   featureSuggestionUrl,
+  desktopAppUrl,
 }) {
-  const [expandedMobileRootKey, setExpandedMobileRootKey] = useState("");
-  const [expandedMobilePlatformKey, setExpandedMobilePlatformKey] = useState("");
-  const routeRootKeys = new Set(["ongoing", "ranks"]);
-  const rootMenu = expandedMobileRootKey === "ongoing" ? ongoingMenu : expandedMobileRootKey === "ranks" ? ranksMenu : [];
+  const [expandedRootKeys, setExpandedRootKeys] = useState(() => new Set(defaultExpandedRootKeys));
+  const didRequestInitialDrawerRanksRef = useRef(false);
   const rootItems = platforms.map((platform) => {
-    const hasSubmenu = routeRootKeys.has(platform.key);
-    const sourceMenu = platform.key === "ongoing" ? ongoingMenu : platform.key === "ranks" ? ranksMenu : [];
+    if (platform.key === "missevan" || platform.key === "manbo") {
+      return buildDrawerPlatformItem(platform);
+    }
     return {
       key: platform.key,
       label: platform.label,
       platform,
-      leafPatch: hasSubmenu ? getDefaultRoutePatchForMenu(sourceMenu) || { view: platform.key } : { view: platform.key },
-      hasSubmenu,
+      routePatch: { view: platform.key },
     };
   });
 
-  function toggleMobileRoot(key) {
-    if (key === "ranks") {
-      onRequestRanksMenu?.();
-    }
-    setExpandedMobilePlatformKey("");
-    setExpandedMobileRootKey((current) => (current === key ? "" : key));
+  function getPlatformOngoingItem(platform) {
+    const platformOngoingItem = getNavigationItem(ongoingMenu, platform.key);
+    return {
+      key: `${platform.key}-ongoing`,
+      label: "更新",
+      routePatch: platformOngoingItem?.routePatch || { view: "ongoing", platform: platform.key, window: "7d" },
+    };
   }
 
-  function toggleMobilePlatform(key) {
-    setExpandedMobilePlatformKey((current) => (current === key ? "" : key));
+  function getPlatformRankItems(platform) {
+    const platformRankMenu = (Array.isArray(ranksMenu) ? ranksMenu : []).find((item) => item.key === platform.key);
+    return (Array.isArray(platformRankMenu?.children) ? platformRankMenu.children : []).map((category) => ({
+      key: `${platform.key}-${category.key}`,
+      label: category.label,
+      routePatch: category.routePatch,
+    }));
+  }
+
+  function buildDrawerPlatformItem(platform) {
+    const children = [getPlatformOngoingItem(platform), ...getPlatformRankItems(platform)];
+    return {
+      key: platform.key,
+      label: platform.label,
+      platform,
+      leafPatch: getFirstNavigationItem(children)?.routePatch || { view: "ongoing", platform: platform.key, window: "7d" },
+      hasSubmenu: true,
+      children,
+    };
+  }
+
+  useEffect(() => {
+    if (!didRequestInitialDrawerRanksRef.current && defaultExpandedRootKeys.some((key) => key === "missevan" || key === "manbo")) {
+      didRequestInitialDrawerRanksRef.current = true;
+      onRequestRanksMenu?.();
+    }
+  }, []);
+
+  function toggleRoot(key) {
+    if (key === "missevan" || key === "manbo") {
+      onRequestRanksMenu?.();
+    }
+    setExpandedRootKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   }
 
   function navigate(routePatch) {
     onCommitRoute(routePatch);
-    setExpandedMobileRootKey("");
-    setExpandedMobilePlatformKey("");
+    setExpandedRootKeys(new Set());
   }
 
   function isMobileItemActive(item) {
-    if (item?.platform) {
-      return currentRoute?.view === item.key;
+    if (item?.key === "missevan" || item?.key === "manbo") {
+      return (currentRoute?.view === "ongoing" || currentRoute?.view === "ranks") && currentRoute?.platform === item.key;
     }
     const routePatch = item?.leafPatch || item?.routePatch;
     return routePatch ? isRoutePatchActive(routePatch, currentRoute) : false;
@@ -539,13 +589,15 @@ function MobileMainNavigationMenu({
 
   function renderMobileItem(item, { expanded = false, onToggle, indent = false } = {}) {
     const hasChildren = item?.hasSubmenu === true || (Array.isArray(item.children) && item.children.length > 0);
+    const itemClassName = indent ? drawerChildItemClassName : drawerRootItemClassName;
     if (!hasChildren) {
+      const routePatch = item?.routePatch || item?.leafPatch || null;
       return (
         <MainNavigationMenuItem
           key={item.key}
-          item={item}
+          item={{ ...item, routePatch }}
           currentRoute={currentRoute}
-          className={`${mobileMenuItemClassName} ${indent ? "pl-5" : ""}`}
+          className={`${itemClassName} ${indent ? "pl-5" : ""}`}
           activeClassName={mobileMenuActiveItemClassName}
           activateOnHover={false}
           onNavigate={navigate}
@@ -560,7 +612,7 @@ function MobileMainNavigationMenu({
         type="button"
         variant="ghost"
         size="sm"
-        className={`${mobileMenuItemClassName} ${indent ? "pl-5" : ""} pr-8 ${isActive ? mobileMenuActiveItemClassName : ""}`}
+        className={`${itemClassName} ${indent ? "pl-5" : ""} pr-8 ${isActive ? mobileMenuActiveItemClassName : ""}`}
         aria-expanded={expanded}
         aria-current={isMobileItemActive(item) ? "page" : undefined}
         onClick={() => handleMobileItemClick(item, hasChildren, onToggle)}
@@ -579,61 +631,60 @@ function MobileMainNavigationMenu({
 
   return (
     <div
-      id="mobile-main-menu"
-      data-mobile-menu-scroll-region="true"
-      className="absolute right-0 mt-2 max-h-[calc(100dvh-5.75rem)] w-[min(210px,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-lg border border-border/80 bg-background/98 p-1.5 shadow-[0_18px_42px_-24px_rgba(15,23,42,0.36)] ring-1 ring-white/55"
+      id="main-navigation-drawer"
+      className="fixed right-0 top-0 z-50 h-dvh w-[230px] max-w-[calc(100vw-0.75rem)] overflow-y-auto overscroll-contain border-l border-border/70 bg-background/72 p-3 shadow-[0_24px_70px_-34px_rgba(15,23,42,0.48)] backdrop-blur-2xl ring-1 ring-white/45 sm:w-[260px]"
     >
-      <div className="grid gap-1">
+      <div className="grid min-h-full content-start gap-1">
         {rootItems.map((item) => (
           <div key={item.key} className="grid gap-1">
             {renderMobileItem(item, {
-              expanded: expandedMobileRootKey === item.key,
-              onToggle: () => toggleMobileRoot(item.key),
+              expanded: expandedRootKeys.has(item.key),
+              onToggle: () => toggleRoot(item.key),
             })}
-            {expandedMobileRootKey === item.key ? (
+            {expandedRootKeys.has(item.key) ? (
               <div className="ml-2 grid gap-1 border-l border-border/70 pl-2">
-                {expandedMobileRootKey === "ranks" && ranksMenuStatus === "loading" ? (
+                {item.children.map((menuItem) => renderMobileItem(menuItem, { indent: true }))}
+                {(item.key === "missevan" || item.key === "manbo") && ranksMenuStatus === "loading" ? (
                   <div className="px-2.5 py-2 text-sm text-muted-foreground">加载中</div>
-                ) : expandedMobileRootKey === "ranks" && ranksMenuStatus === "error" ? (
+                ) : (item.key === "missevan" || item.key === "manbo") && ranksMenuStatus === "error" ? (
                   <div className="px-2.5 py-2 text-sm text-muted-foreground">榜单暂不可用</div>
-                ) : (
-                  rootMenu.map((menuItem) => {
-                    const mobileRankItems = expandedMobileRootKey === "ranks" ? buildMobileRankNavigationItems(menuItem) : [];
-                    return (
-                      <div key={menuItem.key} className="grid gap-1">
-                        {renderMobileItem(menuItem, {
-                          expanded: expandedMobilePlatformKey === menuItem.key,
-                          onToggle: () => toggleMobilePlatform(menuItem.key),
-                          indent: true,
-                        })}
-                        {expandedMobileRootKey === "ranks" && expandedMobilePlatformKey === menuItem.key && mobileRankItems.length ? (
-                          <div className="ml-4 grid gap-1 border-l border-border/60 pl-2">
-                            {mobileRankItems.map((rankItem) => renderMobileItem(rankItem, { indent: true }))}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                )}
+                ) : null}
               </div>
             ) : null}
           </div>
         ))}
-        <div className="my-1 border-t border-border/70" />
-        <Button type="button" variant="ghost" size="sm" className={mobileMenuItemClassName} onClick={onOpenChangelog}>
-          <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
-            <ScrollTextIcon aria-hidden="true" className="size-3.5 shrink-0" />
-            <span className="min-w-0 truncate">更新日志</span>
-          </span>
-        </Button>
+        <div className="my-2 border-t border-dashed border-border/80" />
         {featureSuggestionUrl ? (
-          <Button type="button" variant="ghost" size="sm" className={mobileMenuItemClassName} onClick={onOpenFeatureSuggestion}>
+          <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} onClick={onOpenFeatureSuggestion}>
             <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
               <MessageSquarePlusIcon aria-hidden="true" className="size-3.5 shrink-0" />
               <span className="min-w-0 truncate">功能建议</span>
             </span>
           </Button>
         ) : null}
+        <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} onClick={onOpenChangelog}>
+          <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
+            <ScrollTextIcon aria-hidden="true" className="size-3.5 shrink-0" />
+            <span className="min-w-0 truncate">更新日志</span>
+          </span>
+        </Button>
+        {desktopAppUrl ? (
+          <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} asChild>
+            <a href={desktopAppUrl} rel="noreferrer" target="_blank">
+              <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
+                <MonitorIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                <span className="min-w-0 truncate">桌面版</span>
+              </span>
+            </a>
+          </Button>
+        ) : (
+          <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} disabled>
+            <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
+              <MonitorIcon aria-hidden="true" className="size-3.5 shrink-0" />
+              <span className="min-w-0 truncate">桌面版</span>
+            </span>
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -655,6 +706,16 @@ function createIdleBackgroundTask() {
 
 function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [desktopCollapsed, setDesktopCollapsed] = useState(false);
+  const wasRunningRef = useRef(false);
+
+  useEffect(() => {
+    if (task?.isRunning && !wasRunningRef.current) {
+      setDesktopCollapsed(false);
+    }
+    wasRunningRef.current = Boolean(task?.isRunning);
+  }, [task?.isRunning]);
+
   if (!task?.isRunning && !task?.highlighted) {
     return null;
   }
@@ -664,49 +725,83 @@ function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) 
   const progress = Number(task.progress ?? 0) || 0;
   const statusText = task.isRunning ? "进行中" : task.status === "failed" ? "失败" : task.status === "cancelled" ? "已取消" : "已完成";
 
-  const detail = (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-foreground">{title}</div>
-          <div className="truncate text-xs text-muted-foreground">{action}</div>
+  function handleDesktopDismiss() {
+    if (task?.isRunning) {
+      setDesktopCollapsed(true);
+      return;
+    }
+    onDismiss?.();
+  }
+
+  function renderDetail({ allowRunningDismiss = false } = {}) {
+    return (
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-foreground">{title}</div>
+            <div className="truncate text-xs text-muted-foreground">{action}</div>
+          </div>
+          <Badge variant={task.isRunning ? "default" : "secondary"} className="shrink-0">{statusText}</Badge>
         </div>
-        <Badge variant={task.isRunning ? "default" : "secondary"} className="shrink-0">{statusText}</Badge>
-      </div>
-      <Progress value={progress} className="h-2.5 rounded-full bg-muted" indicatorClassName="bg-primary" />
-      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="tabular-nums">{progress}%</span>
-        <div className="flex items-center gap-1.5">
-          {task.resultTarget ? (
-            <Button type="button" size="xs" variant="secondary" onClick={onOpenResults}>
-              查看结果
-            </Button>
-          ) : null}
-          {!task.isRunning ? (
-            <Button type="button" size="xs" variant="ghost" onClick={onDismiss}>
-              收起
-            </Button>
-          ) : null}
+        <Progress value={progress} className="h-2.5 rounded-full bg-muted" indicatorClassName="bg-primary" />
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="tabular-nums">{progress}%</span>
+          <div className="flex items-center gap-1.5">
+            {task.resultTarget ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
+                data-touch="compact"
+                className="relative overflow-visible after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
+                onClick={onOpenResults}
+              >
+                查看结果
+              </Button>
+            ) : null}
+            {allowRunningDismiss || !task.isRunning ? (
+              <Button type="button" size="xs" variant="ghost" onClick={allowRunningDismiss ? handleDesktopDismiss : onDismiss}>
+                收起
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   return (
     <>
-      <div className="fixed inset-x-3 bottom-3 z-40 hidden sm:block">
-        <div className={`mx-auto max-w-xl rounded-lg border border-border/80 bg-background/98 p-3 shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl ${isDesktopApp ? "ring-1 ring-primary/16" : ""}`}>
-          {detail}
-        </div>
+      <div className="pointer-events-none fixed inset-x-3 mobile-fixed-bottom z-40 hidden sm:block">
+        {desktopCollapsed ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label="展开后台任务中心"
+            className={`pointer-events-auto mx-auto flex max-w-max items-center gap-2 rounded-full border-border/80 bg-surface-floating px-3 shadow-[var(--shadow-panel)] backdrop-blur-xl ${isDesktopApp ? "ring-1 ring-primary/16" : ""}`}
+            onClick={() => setDesktopCollapsed(false)}
+          >
+            <RefreshCwIcon aria-hidden="true" className={task.isRunning ? "size-3.5 animate-spin" : "size-3.5"} />
+            <span className="max-w-40 truncate text-xs font-medium">{title}</span>
+            <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
+            <Badge variant={task.isRunning ? "default" : "secondary"} className="shrink-0">{statusText}</Badge>
+            <span className="text-xs text-primary">展开</span>
+          </Button>
+        ) : (
+          <div className={`pointer-events-auto mx-auto max-w-xl rounded-lg border border-border/80 bg-surface-floating p-3 shadow-[var(--shadow-panel)] backdrop-blur-xl ${isDesktopApp ? "ring-1 ring-primary/16" : ""}`}>
+            {renderDetail({ allowRunningDismiss: true })}
+          </div>
+        )}
       </div>
-      <div className="fixed bottom-3 right-3 z-40 sm:hidden">
+      <div className="fixed mobile-fixed-bottom right-3 z-40 sm:hidden">
         <Button
           type="button"
           variant={task.isRunning ? "secondary" : "outline"}
           size="icon-lg"
           aria-expanded={mobileOpen}
           aria-label="后台任务中心"
-          className="relative shadow-[0_18px_42px_-24px_rgba(15,23,42,0.46)]"
+          className="relative shadow-[var(--shadow-panel)]"
           onClick={() => setMobileOpen((current) => !current)}
         >
           <RefreshCwIcon aria-hidden="true" className={task.isRunning ? "size-4 animate-spin" : "size-4"} />
@@ -715,8 +810,8 @@ function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) 
           </span>
         </Button>
         {mobileOpen ? (
-          <div className="absolute bottom-12 right-0 w-[min(21rem,calc(100vw-1.5rem))] rounded-lg border border-border/80 bg-background/98 p-3 shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl">
-            {detail}
+          <div className="absolute bottom-12 right-0 w-[min(21rem,calc(100vw-1.5rem))] rounded-lg border border-border/80 bg-surface-floating p-3 shadow-[var(--shadow-panel)] backdrop-blur-xl">
+            {renderDetail()}
           </div>
         ) : null}
       </div>
@@ -737,12 +832,12 @@ const COMPARE_METRICS = [
   { key: "pay_count", label: "付费/收听人数", icon: ShoppingCartIcon },
 ];
 const comparePalette = [
-  "#28559A",
-  "#E86A4A",
-  "#1F9D88",
-  "#7C5CCB",
-  "#D23B86",
-  "#6B7280",
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--accent-rose)",
+  "var(--accent-neutral)",
 ];
 
 function buildProxyImageUrl(url) {
@@ -1105,7 +1200,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
             <Tabs value={selectedWindow} onValueChange={setSelectedWindow} className="w-fit shrink-0">
               <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
                 {COMPARE_WINDOWS.map((key) => (
-                  <TabsTrigger key={key} className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
+                  <TabsTrigger key={key} data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
                     {key.replace("d", "日")}
                   </TabsTrigger>
                 ))}
@@ -1114,7 +1209,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
             <Tabs value={selectedChartMode} onValueChange={setSelectedChartMode} className="w-fit shrink-0">
               <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
                 {COMPARE_CHART_MODES.map((mode) => (
-                  <TabsTrigger key={mode.key} className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={mode.key}>
+                  <TabsTrigger key={mode.key} data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={mode.key}>
                     {mode.label}
                   </TabsTrigger>
                 ))}
@@ -1141,7 +1236,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
               >
                 <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/50">
                   {item.cover ? (
-                    <img alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
+                    <LazyImage alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
                   ) : (
                     <div className="flex size-full items-center justify-center text-[0.65rem] text-muted-foreground">暂无封面</div>
                   )}
@@ -1239,10 +1334,10 @@ function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemove
 
   if (!open) {
     return (
-      <div className="fixed bottom-20 right-3 z-30 sm:bottom-3 sm:left-3 sm:right-auto">
+      <div className="fixed mobile-compare-basket right-3 z-30 sm:bottom-3 sm:left-3 sm:right-auto">
         <button
           type="button"
-          className="hidden max-w-72 items-center gap-2 rounded-lg border border-border/80 bg-background/98 p-2 text-left shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl sm:flex"
+          className="hidden max-w-72 items-center gap-2 rounded-lg border border-border/80 bg-surface-floating p-2 text-left shadow-[var(--shadow-panel)] backdrop-blur-xl sm:flex"
           aria-label="展开对比"
           onClick={() => onOpenChange(true)}
         >
@@ -1253,7 +1348,7 @@ function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemove
                 className={`size-9 overflow-hidden rounded-md border border-background bg-muted shadow-sm ${index === 0 ? "" : "-ml-2"}`}
               >
                 {item.cover ? (
-                  <img alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
+                  <LazyImage alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
                 ) : (
                   <ArrowLeftRightIcon aria-hidden="true" className="m-2 size-5 text-muted-foreground" />
                 )}
@@ -1269,7 +1364,7 @@ function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemove
           type="button"
           variant="secondary"
           size="icon-lg"
-          className="relative shadow-[0_18px_42px_-24px_rgba(15,23,42,0.46)] sm:hidden"
+          className="relative shadow-[var(--shadow-panel)] sm:hidden"
           aria-label="展开对比"
           onClick={() => onOpenChange(true)}
         >
@@ -1283,15 +1378,22 @@ function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemove
   }
 
   return (
-    <div className="fixed bottom-20 right-3 z-30 w-[min(60vw,18rem)] sm:bottom-3 sm:left-3 sm:right-auto sm:w-80">
-      <div className="grid gap-2 rounded-lg border border-border/80 bg-background/98 p-2 shadow-[0_22px_60px_-34px_rgba(15,23,42,0.48)] backdrop-blur-xl">
+    <div className="fixed mobile-compare-basket right-3 z-30 w-[min(60vw,18rem)] sm:bottom-3 sm:left-3 sm:right-auto sm:w-80">
+      <div className="grid gap-2 rounded-lg border border-border/80 bg-surface-floating p-2 shadow-[var(--shadow-panel)] backdrop-blur-xl">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 truncate text-sm font-semibold text-foreground">对比 {items.length}/{MAX_COMPARE_ITEMS}</div>
           <div className="flex shrink-0 items-center gap-1">
             <Button type="button" size="icon-xs" variant="ghost" aria-label="清空对比" title="清空" onClick={onClear}>
               <Trash2Icon />
             </Button>
-            <Button type="button" size="xs" variant="secondary" onClick={onOpenCompare} className="text-sm!">
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              data-touch="compact"
+              onClick={onOpenCompare}
+              className="relative overflow-visible text-sm! after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
+            >
               <ArrowLeftRightIcon data-icon="inline-start" />
               对比
             </Button>
@@ -1305,7 +1407,7 @@ function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemove
             <div key={`basket-row-${item.key}`} className="flex min-w-0 items-center gap-2 rounded-md bg-muted/45 p-1.5">
               <div className="size-12 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted">
               {item.cover ? (
-                <img alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
+                <LazyImage alt={item.title} className="size-full object-cover" src={buildProxyImageUrl(item.cover)} />
               ) : null}
               </div>
               <div className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{item.title}</div>
@@ -1367,6 +1469,8 @@ export function ToolView({ initialAppConfig }) {
   });
   const [notice, setNotice] = useState(null);
   const [searchJumpStatus, setSearchJumpStatus] = useState(null);
+  const [searchMetricLegendOpen, setSearchMetricLegendOpen] = useState(false);
+  const [globalSearchPending, setGlobalSearchPending] = useState(false);
   const [favoriteItems, setFavoriteItems] = useState([]);
   const [favoriteRefreshState, setFavoriteRefreshState] = useState({
     isRunning: false,
@@ -1379,7 +1483,8 @@ export function ToolView({ initialAppConfig }) {
   const [compareDialogOpen, setCompareDialogOpen] = useState(false);
   const [favoriteRefreshRevision, setFavoriteRefreshRevision] = useState(0);
   const [cancelFavoriteRequest, setCancelFavoriteRequest] = useState(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mainDrawerOpen, setMainDrawerOpen] = useState(false);
+  const [isDesktopBrowser, setIsDesktopBrowser] = useState(false);
   const [mainNavigationRanksData, setMainNavigationRanksData] = useState(null);
   const [mainNavigationRanksStatus, setMainNavigationRanksStatus] = useState("idle");
   const { changelogOpen, openChangelog, setChangelogOpen } = useChangelogDialog(appConfig.frontendVersion);
@@ -1505,7 +1610,7 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     appConfigRef.current = appConfig;
     if (typeof document !== "undefined") {
-      document.title = appConfig.brandName;
+      document.title = appConfig.titleZh || appConfig.brandName;
     }
     const normalizedRoute = normalizeToolRouteState(toolRouteStateRef.current, appConfig);
     const currentRoute = toolRouteStateRef.current;
@@ -1533,6 +1638,23 @@ export function ToolView({ initialAppConfig }) {
   }, [backgroundTask]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia("(min-width: 640px)");
+    const updateDesktopState = () => {
+      setIsDesktopBrowser(mediaQuery.matches);
+    };
+    updateDesktopState();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateDesktopState);
+      return () => mediaQuery.removeEventListener("change", updateDesktopState);
+    }
+    mediaQuery.addListener?.(updateDesktopState);
+    return () => mediaQuery.removeListener?.(updateDesktopState);
+  }, []);
+
+  useEffect(() => {
     savePersistedHistoryEntries({
       missevan: platformStates.missevan?.historyEntries || [],
       manbo: platformStates.manbo?.historyEntries || [],
@@ -1544,22 +1666,27 @@ export function ToolView({ initialAppConfig }) {
     { key: "manbo", label: "漫播" },
   ];
   const webPlatforms = [
-    { key: "search", label: "搜索" },
-    { key: "ongoing", label: "更新" },
-    { key: "ranks", label: "榜单" },
+    { key: "search", label: "统计" },
+    { key: "missevan", label: "猫耳" },
+    { key: "manbo", label: "漫播" },
     { key: "favorites", label: "收藏" },
   ];
   const desktopPlatforms = [
-    { key: "search", label: "搜索" },
+    { key: "search", label: "统计" },
     { key: "favorites", label: "收藏" },
-    { key: "report", label: "Excel 报表" },
   ];
   const visibleSearchPlatforms = searchPlatforms.filter((platform) => {
     return platform.key !== "missevan" || appConfig.missevanEnabled;
   });
   const visiblePlatforms = appConfig.desktopApp ? desktopPlatforms : webPlatforms;
-  const mobileMenuItemClassName = "relative w-full justify-start overflow-hidden text-[0.82rem] font-medium text-foreground visited:text-foreground hover:text-foreground";
+  const drawerRootItemClassName = "relative w-full justify-start overflow-hidden text-sm! font-medium text-foreground visited:text-foreground hover:text-foreground";
+  const drawerChildItemClassName = "relative w-full justify-start overflow-hidden text-[0.82rem]! font-medium text-foreground visited:text-foreground hover:text-foreground";
+  const drawerUtilityItemClassName = "relative w-full justify-start overflow-hidden text-[0.82rem]! font-normal! text-foreground visited:text-foreground hover:text-foreground";
   const mobileMenuActiveItemClassName = "bg-[rgba(45,72,139,0.12)] text-[rgb(32,54,112)] shadow-[inset_0_0_0_1px_rgba(45,72,139,0.18)] before:absolute before:inset-y-1.5 before:left-1 before:w-1 before:rounded-full before:bg-primary";
+  const defaultExpandedRootKeys = useMemo(
+    () => getInitialDrawerExpandedRootKeys(toolRouteState, isDesktopBrowser && !appConfig.desktopApp),
+    [appConfig.desktopApp, isDesktopBrowser, toolRouteState.platform, toolRouteState.view]
+  );
   const ongoingNavigationMenu = useMemo(() => buildOngoingNavigationMenu(), []);
   const ranksNavigationMenu = useMemo(
     () => buildRanksNavigationMenu(mainNavigationRanksData),
@@ -1573,25 +1700,25 @@ export function ToolView({ initialAppConfig }) {
   const sharedRevenueSummary = sharedStatsState?.revenueSummary || buildRevenueSummary(sharedStatsState?.revenueResults || [], sharedOutputPlatform);
   const sharedHistoryEntries = getMergedHistoryEntries();
   useEffect(() => {
-    closeMobileMenu();
+    closeMainDrawer();
   }, [currentPlatform]);
 
   useEffect(() => {
-    if (!mobileMenuOpen) {
+    if (!mainDrawerOpen) {
       return undefined;
     }
 
-    function handleMobileMenuKeyDown(event) {
+    function handleMainDrawerKeyDown(event) {
       if (event.key === "Escape") {
-        setMobileMenuOpen(false);
+        setMainDrawerOpen(false);
       }
     }
 
-    window.addEventListener("keydown", handleMobileMenuKeyDown);
+    window.addEventListener("keydown", handleMainDrawerKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleMobileMenuKeyDown);
+      window.removeEventListener("keydown", handleMainDrawerKeyDown);
     };
-  }, [mobileMenuOpen]);
+  }, [mainDrawerOpen]);
 
   function getActiveWorkPlatform() {
     return activeSearchPlatformRef.current === "manbo" || appConfigRef.current.missevanEnabled
@@ -1599,8 +1726,8 @@ export function ToolView({ initialAppConfig }) {
       : "manbo";
   }
 
-  function closeMobileMenu() {
-    setMobileMenuOpen(false);
+  function closeMainDrawer() {
+    setMainDrawerOpen(false);
   }
 
   function applyCurrentPlatformFromUrl() {
@@ -1663,13 +1790,18 @@ export function ToolView({ initialAppConfig }) {
   function navigateToolRouteFromMenu(routePatch) {
     navigateToolRoute(routePatch);
     scrollToPageTop();
-    setMobileMenuOpen(false);
+    setMainDrawerOpen(false);
   }
 
   function openSearchHomeFromHeader() {
     navigateCurrentPlatform("search");
     scrollToPageTop();
-    setMobileMenuOpen(false);
+    setMainDrawerOpen(false);
+  }
+
+  function commitGlobalSearchNavigation() {
+    navigateToolRoute({ view: "search" });
+    setMainDrawerOpen(false);
   }
 
   async function loadMainNavigationRanks() {
@@ -1710,17 +1842,17 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  function openMobileChangelog() {
+  function openDrawerChangelog() {
     openChangelog();
-    setMobileMenuOpen(false);
+    setMainDrawerOpen(false);
   }
 
-  function openMobileFeatureSuggestion() {
+  function openDrawerFeatureSuggestion() {
     if (!appConfig.featureSuggestionUrl) {
       return;
     }
     window.open(appConfig.featureSuggestionUrl, "_blank", "noreferrer");
-    setMobileMenuOpen(false);
+    setMainDrawerOpen(false);
   }
 
   function resolveStatsPlatform(platform) {
@@ -1755,47 +1887,13 @@ export function ToolView({ initialAppConfig }) {
     );
   }
 
-  function renderHeaderAccessHint() {
-    if (!appConfig.missevanEnabled) {
-      return null;
-    }
-
-    if (appConfig.desktopApp) {
-      return (
-        <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
-          {MISSEVAN_DESKTOP_ACCESS_HINT}
-        </p>
-      );
-    }
-
-    if (Number(appConfig.cooldownUntil ?? 0) > Date.now()) {
-      return (
-        <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
-          {renderMissevanAccessDeniedMessage(appConfig)}
-        </p>
-      );
-    }
-
-    return (
-      <p className="line-clamp-2 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
-        {appConfig.desktopAppUrl ? (
-          <a className="font-medium text-primary underline underline-offset-4" href={appConfig.desktopAppUrl} rel="noreferrer" target="_blank">
-            桌面版
-          </a>
-        ) : (
-          "桌面版"
-        )}
-      </p>
-    );
-  }
-
   function scrollToPanel(ref) {
     if (typeof window === "undefined") {
       return;
     }
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        ref.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        ref.current?.scrollIntoView?.({ behavior: getScrollBehavior(), block: "start" });
       });
     });
   }
@@ -1805,7 +1903,7 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
     window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      window.scrollTo({ top: 0, left: 0, behavior: getScrollBehavior() });
     });
   }
 
@@ -1817,7 +1915,7 @@ export function ToolView({ initialAppConfig }) {
       window.requestAnimationFrame(() => {
         document
           .querySelector(`[data-search-result-id="${CSS.escape(String(dramaId))}"]`)
-          ?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+          ?.scrollIntoView?.({ behavior: getScrollBehavior(), block: "start" });
       });
     });
   }
@@ -2452,11 +2550,18 @@ export function ToolView({ initialAppConfig }) {
         return;
       }
 
+      const visibleImportInput = normalizedRawItems.length === 1 ? normalizedRawItems[0] : normalizedRawItems.join(", ");
+      const manualInput = normalizedRawItems.join("\n");
+      updateSharedSearchForm({
+        keyword: visibleImportInput,
+        manualInput,
+      });
       updateSearchFormForPlatform(normalizedPlatform, {
-        keyword: normalizedRawItems.join("\n"),
-        manualInput: normalizedRawItems.join("\n"),
+        keyword: visibleImportInput,
+        manualInput,
       });
       setManualSearchResults(normalizedPlatform, results, { limit: normalizedRawItems.length, scroll: false });
+      navigateToolRoute({ view: "search" });
       openSearchPlatform(normalizedPlatform);
       scrollToPanel(resultsPanelRef);
       if (data.failedItems?.length) {
@@ -2496,6 +2601,7 @@ export function ToolView({ initialAppConfig }) {
       )
     );
     const manualInput = dramaIds.join("\n");
+    const visibleImportInput = dramaIds.length === 1 ? dramaIds[0] : dramaIds.join(", ");
     const dramaName = String(name ?? "").trim();
     const dramaTitles = normalizeDramaSearchTitles(titles, dramaIds, dramaName);
     const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result"].includes(String(usageAction ?? "").trim())
@@ -2569,14 +2675,15 @@ export function ToolView({ initialAppConfig }) {
       resetSearchFlow("missevan");
       resetSearchFlow("manbo");
       updateSharedSearchForm({
-        keyword: String(name ?? "").trim(),
+        keyword: visibleImportInput,
         manualInput,
       });
       updateSearchFormForPlatform(targetPlatform, {
-        keyword: String(name ?? "").trim(),
+        keyword: visibleImportInput,
         manualInput,
       });
       setManualSearchResults(targetPlatform, results, { limit: dramaIds.length, scroll: false });
+      navigateToolRoute({ view: "search" });
       openSearchPlatform(targetPlatform);
       scrollToPanel(resultsPanelRef);
     } catch (error) {
@@ -3461,93 +3568,101 @@ export function ToolView({ initialAppConfig }) {
   const manboResultCount = getPlatformResultCount("manbo");
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pb-24 pt-3 sm:px-5 sm:pb-8 lg:gap-5 lg:px-6">
-      {mobileMenuOpen ? (
-        <div className="fixed inset-0 z-40 bg-transparent sm:hidden" onClick={closeMobileMenu} aria-hidden="true" />
+    <div className="app-shell mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pt-3 sm:px-5 sm:pt-[6.5rem] lg:gap-5 lg:px-6">
+      {mainDrawerOpen ? (
+        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px]" onClick={closeMainDrawer} aria-hidden="true" />
       ) : null}
-      <div className="fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-50 sm:hidden">
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-lg"
-          aria-expanded={mobileMenuOpen}
-          aria-controls="mobile-main-menu"
-          aria-label={mobileMenuOpen ? "关闭菜单" : "打开菜单"}
-          title={mobileMenuOpen ? "关闭菜单" : "打开菜单"}
-          onClick={() => setMobileMenuOpen((open) => !open)}
-        >
-          <MenuIcon aria-hidden="true" className="size-4" />
-        </Button>
-        {mobileMenuOpen ? (
-          <MobileMainNavigationMenu
-            platforms={visiblePlatforms}
-            currentRoute={toolRouteState}
-            ongoingMenu={ongoingNavigationMenu}
-            ranksMenu={ranksNavigationMenu}
-            ranksMenuStatus={mainNavigationRanksStatus}
-            mobileMenuItemClassName={mobileMenuItemClassName}
-            mobileMenuActiveItemClassName={mobileMenuActiveItemClassName}
-            onRequestRanksMenu={loadMainNavigationRanks}
-            onCommitRoute={navigateToolRouteFromMenu}
-            onOpenChangelog={openMobileChangelog}
-            onOpenFeatureSuggestion={openMobileFeatureSuggestion}
-            featureSuggestionUrl={appConfig.featureSuggestionUrl}
-          />
-        ) : null}
-      </div>
-      <header className="-mx-3 border-b border-border/75 bg-background/92 px-3 py-3 backdrop-blur-xl sm:-mx-5 sm:px-5 lg:sticky lg:top-0 lg:z-20 lg:-mx-6 lg:px-6">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      {mainDrawerOpen ? (
+        <MainNavigationDrawer
+          platforms={visiblePlatforms}
+          currentRoute={toolRouteState}
+          ongoingMenu={ongoingNavigationMenu}
+          ranksMenu={ranksNavigationMenu}
+          ranksMenuStatus={mainNavigationRanksStatus}
+          defaultExpandedRootKeys={defaultExpandedRootKeys}
+          drawerRootItemClassName={drawerRootItemClassName}
+          drawerChildItemClassName={drawerChildItemClassName}
+          drawerUtilityItemClassName={drawerUtilityItemClassName}
+          mobileMenuActiveItemClassName={mobileMenuActiveItemClassName}
+          onRequestRanksMenu={loadMainNavigationRanks}
+          onCommitRoute={navigateToolRouteFromMenu}
+          onOpenChangelog={openDrawerChangelog}
+          onOpenFeatureSuggestion={openDrawerFeatureSuggestion}
+          featureSuggestionUrl={appConfig.featureSuggestionUrl}
+          desktopAppUrl={appConfig.desktopAppUrl}
+        />
+      ) : null}
+      <header className="-mx-3 border-b border-border/75 bg-background/92 px-3 py-3 backdrop-blur-xl sm:fixed sm:inset-x-0 sm:top-0 sm:z-30 sm:mx-0 sm:px-5 lg:px-6">
+        <div className="relative mx-auto grid max-w-7xl gap-3 sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:gap-5">
+          <div className="flex min-w-0 items-start gap-3 pr-14 sm:col-start-1 sm:row-start-1 sm:pr-0">
+            <button
+              type="button"
+              aria-label="返回统计页"
+              className="inline-flex min-w-0 shrink-0 items-center text-left text-inherit leading-none"
+              onClick={openSearchHomeFromHeader}
+            >
+              <AppIcon className="size-14 self-center rounded-xl sm:size-12" />
+            </button>
             <div className="min-w-0">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-primary">{appConfig.brandName}</div>
-                  <Badge variant="coral" className="h-5 px-2 text-[0.68rem]">
-                    v{appConfig.frontendVersion}
-                  </Badge>
-                </div>
+              <div className="flex min-w-0 flex-wrap items-baseline gap-2">
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-primary">{appConfig.brandName}</div>
+                <span className="text-xs font-semibold leading-none text-muted-foreground">
+                  v{appConfig.frontendVersion}
+                </span>
               </div>
-              <div
-                className={`mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-3 ${
-                  appConfig.desktopApp ? "" : "lg:flex-col lg:items-start lg:gap-1"
-                }`}
-              >
-                <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-                  <button
-                    type="button"
-                    className="text-left text-inherit [font:inherit] [letter-spacing:inherit]"
-                    onClick={openSearchHomeFromHeader}
-                  >
-                    {appConfig.titleZh}
-                  </button>
-                </h1>
-                {renderHeaderAccessHint()}
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-              {appConfig.featureSuggestionUrl ? (
-                <Button variant="outline" size="default" className="hidden sm:inline-flex" style={headerActionButtonStyle} asChild>
-                  <a href={appConfig.featureSuggestionUrl} rel="noreferrer" target="_blank">
-                    <MessageSquarePlusIcon data-icon="inline-start" />
-                    功能建议
-                  </a>
-                </Button>
-              ) : null}
-              <ChangelogButton className="hidden sm:inline-flex" onClick={openChangelog} style={headerActionButtonStyle} />
-              <DesktopMainNavigationMenu
-                platforms={visiblePlatforms}
-                currentRoute={toolRouteState}
-                ongoingMenu={ongoingNavigationMenu}
-                ranksMenu={ranksNavigationMenu}
-                ranksMenuStatus={mainNavigationRanksStatus}
-                onRequestRanksMenu={loadMainNavigationRanks}
-                onNavigateRoute={navigateToolRouteFromMenu}
-              />
+              <h1 className="mt-1 min-w-0 text-[22px] font-semibold leading-tight tracking-tight sm:text-xl lg:text-2xl">
+                <button
+                  type="button"
+                  aria-label="返回搜索主页"
+                  className="inline-flex min-w-0 text-left text-inherit leading-tight [font:inherit] [letter-spacing:inherit]"
+                  onClick={openSearchHomeFromHeader}
+                >
+                  <span className="min-w-0">{appConfig.titleZh}</span>
+                </button>
+              </h1>
             </div>
           </div>
+          <SearchPanel
+            className="w-full sm:col-start-2 sm:row-start-1 sm:w-full"
+            descriptionClassName="sm:hidden"
+            cooldownHours={appConfig.cooldownHours}
+            cooldownUntil={appConfig.cooldownUntil}
+            desktopAppUrl={appConfig.desktopAppUrl}
+            formState={sharedSearchForm}
+            frontendVersion={appConfig.frontendVersion}
+            handleVersionResponse={updateVersionStatusFromResponse}
+            isDesktopApp={appConfig.desktopApp}
+            onCrossPlatformImport={({ targetPlatform, rawItems, sourcePlatform, emptyResultNotice }) =>
+              importRawItemsIntoPlatform(targetPlatform, rawItems, {
+                sourcePlatform,
+                emptyResultNotice,
+              })
+            }
+            onNotice={setNotice}
+            onResetPlatformState={resetSearchFlow}
+            onSearchCommit={commitGlobalSearchNavigation}
+            onSearchPendingChange={setGlobalSearchPending}
+            onSelectPlatform={setActiveSearchPlatform}
+            onUpdateFormState={updateSharedSearchForm}
+            onUpdatePlatformResults={(platform, results, source, meta) => setSearchResults(platform, results, source, meta)}
+            placeholder="请输入关键词、ID、分享链接。"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-lg"
+            className="absolute right-0 top-0 shrink-0 sm:static sm:col-start-3 sm:row-start-1"
+            aria-expanded={mainDrawerOpen}
+            aria-controls="main-navigation-drawer"
+            aria-label={mainDrawerOpen ? "关闭菜单" : "打开菜单"}
+            title={mainDrawerOpen ? "关闭菜单" : "打开菜单"}
+            onClick={() => setMainDrawerOpen((open) => !open)}
+          >
+            <MenuIcon aria-hidden="true" className="size-4" />
+          </Button>
 
           {appConfig.versionMismatch ? (
-            <Alert className="border-destructive/30 bg-destructive/10">
+            <Alert className="border-destructive/30 bg-destructive/10 sm:col-span-3">
               <AlertTriangleIcon className="size-4" />
               <AlertTitle>工具版本已更新</AlertTitle>
               <AlertDescription>
@@ -3601,30 +3716,17 @@ export function ToolView({ initialAppConfig }) {
           onRefreshSettled={handleFavoriteRefreshSettled}
           onToggleFavorite={toggleFavorite}
         />
-      ) : currentPlatform !== "report" ? (
+      ) : (
         <div className="grid gap-4 sm:gap-5">
-          <MetricLegend />
+          <div className="hidden sm:block">
+            <MetricLegend />
+          </div>
 
-          <SearchPanel
-            cooldownHours={appConfig.cooldownHours}
-            cooldownUntil={appConfig.cooldownUntil}
-            desktopAppUrl={appConfig.desktopAppUrl}
-            formState={sharedSearchForm}
-            frontendVersion={appConfig.frontendVersion}
-            handleVersionResponse={updateVersionStatusFromResponse}
-            isDesktopApp={appConfig.desktopApp}
-            onCrossPlatformImport={({ targetPlatform, rawItems, sourcePlatform, emptyResultNotice }) =>
-              importRawItemsIntoPlatform(targetPlatform, rawItems, {
-                sourcePlatform,
-                emptyResultNotice,
-              })
-            }
-            onNotice={setNotice}
-            onResetPlatformState={resetSearchFlow}
-            onSelectPlatform={setActiveSearchPlatform}
-            onUpdateFormState={updateSharedSearchForm}
-            onUpdatePlatformResults={(platform, results, source, meta) => setSearchResults(platform, results, source, meta)}
-          />
+          {searchMetricLegendOpen ? (
+            <div id="search-metric-legend" className="sm:hidden">
+              <MetricLegend />
+            </div>
+          ) : null}
 
           <section ref={resultsPanelRef} className="grid gap-3">
             <SearchResults
@@ -3647,11 +3749,14 @@ export function ToolView({ initialAppConfig }) {
               onLoadMoreResults={() => loadMoreSearchResults(activeBrowsePlatform)}
               allResults={getAllSearchResults(currentBrowseState)}
               hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
+              isSearchPending={globalSearchPending}
               isLoadingMoreResults={Boolean(currentBrowseState?.isLoadingMoreResults)}
               loadedResultCount={Number(currentBrowseState?.searchResults?.length ?? 0) || 0}
               platformTabs={visibleSearchPlatforms}
               activePlatform={activeBrowsePlatform}
               onPlatformChange={setActiveSearchPlatform}
+              metricLegendOpen={searchMetricLegendOpen}
+              onToggleMetricLegend={() => setSearchMetricLegendOpen((open) => !open)}
               platformResultCounts={{
                 missevan: missevanResultCount,
                 manbo: manboResultCount,
@@ -3690,8 +3795,6 @@ export function ToolView({ initialAppConfig }) {
             />
           </section>
         </div>
-      ) : (
-        <DesktopReportPanel handleVersionResponse={updateVersionStatusFromResponse} />
       )}
 
       <BackgroundTaskCenter

@@ -503,7 +503,7 @@ test("desktop favorites writes recover after a failed JSON write", async () => {
     exportedAt: "2026-05-22T00:00:00.000Z",
   });
   let putCount = 0;
-  globalThis.window = { desktopExcel: {} };
+  globalThis.window = { desktopFavorites: {} };
   globalThis.fetch = async (url, options = {}) => {
     if (url === "/desktop/favorites-data" && options.method === "PUT") {
       putCount += 1;

@@ -57,7 +57,7 @@ export function getDefaultAppConfig() {
     missevanEnabled: true,
     desktopApp: false,
     hostedDeployment: false,
-    brandName: "M&M Toolkit",
+    brandName: "MMTOOLKIT.APP",
     titleZh: "小猫小狐数据分析",
     description: "支持 Missevan 与 Manbo 的作品导入、分集筛选、弹幕统计和数据汇总。",
     cooldownHours: 4,
@@ -72,6 +72,7 @@ export function getDefaultAppConfig() {
 
 export function mergeAppConfig(currentConfig, config = {}) {
   const defaults = getDefaultAppConfig();
+  const brandName = String(config.brandName || "").trim();
   const frontendVersion = normalizeVersion(
     config.frontendVersion ?? currentConfig?.frontendVersion ?? defaults.frontendVersion
   );
@@ -83,7 +84,7 @@ export function mergeAppConfig(currentConfig, config = {}) {
     missevanEnabled: config.missevanEnabled !== false,
     desktopApp: config.desktopApp === true,
     hostedDeployment: config.hostedDeployment === true,
-    brandName: config.brandName || defaults.brandName,
+    brandName: brandName && brandName !== "M&M Toolkit" ? brandName : defaults.brandName,
     titleZh: config.titleZh || defaults.titleZh,
     description: config.description || defaults.description,
     cooldownHours: Number(config.cooldownHours ?? defaults.cooldownHours) || defaults.cooldownHours,
@@ -110,6 +111,16 @@ export function buildVersionedUrl(url, frontendVersion) {
   return `${url}${separator}frontendVersion=${encodeURIComponent(normalizeVersion(frontendVersion))}`;
 }
 
+export function prefersReducedMotion() {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+export function getScrollBehavior() {
+  return prefersReducedMotion() ? "auto" : "smooth";
+}
+
 export const TOOL_VIEW_QUERY_PARAM = "view";
 export const TOOL_ROUTE_QUERY_PARAMS = {
   view: "view",
@@ -121,14 +132,15 @@ export const TOOL_ROUTE_QUERY_PARAMS = {
 
 export function getAllowedToolViews({ desktopApp = false } = {}) {
   return desktopApp
-    ? ["search", "favorites", "report"]
+    ? ["search", "favorites"]
     : ["search", "ongoing", "ranks", "favorites"];
 }
 
 export function normalizeToolView(value, options = {}) {
   const allowedViews = getAllowedToolViews(options);
   const normalized = String(value || "").trim();
-  return allowedViews.includes(normalized) ? normalized : "search";
+  const defaultView = options?.desktopApp ? "search" : "ongoing";
+  return allowedViews.includes(normalized) ? normalized : defaultView;
 }
 
 export function normalizeToolPlatform(value) {
@@ -136,7 +148,7 @@ export function normalizeToolPlatform(value) {
 }
 
 export function normalizeOngoingWindow(value) {
-  return ["3d", "7d", "30d"].includes(value) ? value : "3d";
+  return ["3d", "7d", "30d"].includes(value) ? value : "7d";
 }
 
 export function normalizeToolRouteState(routeState = {}, options = {}) {
@@ -188,14 +200,20 @@ export function buildToolRouteUrl(locationLike, routeState = {}, options = {}) {
   deleteToolRouteDetailParams(params);
 
   if (nextState.view === "search") {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.view, "search");
+  } else if (nextState.view === "ongoing" && nextState.platform === "missevan" && nextState.window === "7d") {
     params.delete(TOOL_ROUTE_QUERY_PARAMS.view);
   } else {
     params.set(TOOL_ROUTE_QUERY_PARAMS.view, nextState.view);
   }
 
   if (nextState.view === "ongoing") {
-    params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
-    params.set(TOOL_ROUTE_QUERY_PARAMS.window, nextState.window);
+    if (nextState.platform === "missevan" && nextState.window === "7d") {
+      deleteToolRouteDetailParams(params);
+    } else {
+      params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
+      params.set(TOOL_ROUTE_QUERY_PARAMS.window, nextState.window);
+    }
   } else if (nextState.view === "ranks") {
     params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
     if (nextState.category) {
@@ -217,7 +235,7 @@ export function buildToolViewUrl(locationLike, view, options = {}) {
   const params = new URLSearchParams(search);
   const nextView = normalizeToolView(view, options);
 
-  if (nextView === "search") {
+  if (nextView === "ongoing") {
     params.delete(TOOL_VIEW_QUERY_PARAM);
   } else {
     params.set(TOOL_VIEW_QUERY_PARAM, nextView);
@@ -295,6 +313,48 @@ function getFirstRankItem(category) {
   return Array.isArray(category?.ranks) ? category.ranks.find((rank) => rank?.key) || null : null;
 }
 
+function rankItemMatchesPreference(rank, preference) {
+  const key = String(rank?.key || "").trim().toLowerCase();
+  const label = String(rank?.label || "").trim();
+  if (preference === "daily") {
+    return key.includes("daily") || label === "日榜";
+  }
+  if (preference === "weekly") {
+    return key.includes("weekly") || label === "周榜";
+  }
+  if (preference === "total") {
+    return key.endsWith("total") || key === "cv" || label === "总榜";
+  }
+  return false;
+}
+
+function getPreferredRankKeyForCategory(category) {
+  const key = String(category?.key || "").trim().toLowerCase();
+  const label = String(category?.label || "").trim();
+  if (key.includes("new") || label.includes("新品")) {
+    return "daily";
+  }
+  if (key.includes("popular") || key.includes("hot") || label.includes("人气")) {
+    return "weekly";
+  }
+  if (key.includes("best_seller") || key.includes("seller") || label.includes("畅销")) {
+    return "weekly";
+  }
+  if (key.includes("cv") || label.toUpperCase().includes("CV")) {
+    return "total";
+  }
+  if (key.includes("box_office") || label.includes("票房")) {
+    return "total";
+  }
+  return "";
+}
+
+function getDefaultRankItemForCategory(category, ranks) {
+  const preference = getPreferredRankKeyForCategory(category);
+  const preferredRank = preference ? ranks.find((rank) => rankItemMatchesPreference(rank, preference)) : null;
+  return preferredRank || ranks[0];
+}
+
 function getRankItemByKey(category, rankKey) {
   const normalizedKey = String(rankKey || "").trim();
   return Array.isArray(category?.ranks)
@@ -355,7 +415,7 @@ export function buildRanksNavigationMenu(ranksPayload) {
               view: "ranks",
               platform: platformKey,
               category: categoryKey,
-              rank: ranks[0].key,
+              rank: getDefaultRankItemForCategory(category, ranks).key,
             },
             rankItems: ranks,
             ...(ranks.length > 1 ? { children: ranks } : {}),
@@ -1725,6 +1785,16 @@ export function classifyUnifiedSearchInput(rawValue) {
     }
     return "";
   });
+  const hasImportToken = tokenPlatforms.some(Boolean);
+  const hasKeywordToken = tokenPlatforms.some((item) => !item);
+
+  if (hasImportToken && hasKeywordToken) {
+    return {
+      action: "mixed_import",
+      keyword: "",
+      rawItems,
+    };
+  }
 
   if (tokenPlatforms.length > 0 && tokenPlatforms.every((item) => item === "manbo")) {
     return {

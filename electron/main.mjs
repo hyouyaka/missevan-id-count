@@ -1,9 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow } from "electron";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-import { promises as fs } from "fs";
 import { loadLocalEnv } from "../envConfig.js";
-import { buildReportWorkbook, parseTemplateWorkbook } from "./excelReport.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,151 +10,6 @@ const appIconPath = path.join(projectRoot, "windowsapp.ico");
 const preloadPath = path.join(__dirname, "preload.cjs");
 let mainWindow = null;
 let desktopUrl = "";
-
-function registerDesktopExcelHandlers() {
-  ipcMain.handle("desktop-excel:pick-input-workbook", async () => {
-    if (!mainWindow) {
-      return { canceled: true, filePath: "" };
-    }
-
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: "选择 Excel 模板",
-      properties: ["openFile"],
-      filters: [
-        { name: "Excel Workbook", extensions: ["xlsx"] },
-      ],
-    });
-
-    return {
-      canceled: result.canceled,
-      filePath: result.canceled ? "" : (result.filePaths[0] || ""),
-    };
-  });
-
-  ipcMain.handle("desktop-excel:pick-save-workbook", async (_, payload = {}) => {
-    if (!mainWindow) {
-      return { canceled: true, filePath: "" };
-    }
-
-    const defaultName = String(payload?.defaultName || "猫耳漫播统计报告.xlsx").trim()
-      || "猫耳漫播统计报告.xlsx";
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: "保存 Excel 报告",
-      defaultPath: defaultName.endsWith(".xlsx") ? defaultName : `${defaultName}.xlsx`,
-      filters: [
-        { name: "Excel Workbook", extensions: ["xlsx"] },
-      ],
-    });
-
-    return {
-      canceled: result.canceled,
-      filePath: result.canceled ? "" : (result.filePath || ""),
-    };
-  });
-
-  ipcMain.handle("desktop-excel:read-file", async (_, payload = {}) => {
-    const filePath = String(payload?.filePath || "").trim();
-    if (!filePath) {
-      return { success: false, error: "Missing file path", bytes: null };
-    }
-
-    try {
-      const bytes = await fs.readFile(filePath);
-      return {
-        success: true,
-        bytes: Array.from(bytes),
-        error: "",
-      };
-    } catch (error) {
-      return {
-        success: false,
-        bytes: null,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
-
-  ipcMain.handle("desktop-excel:parse-template-workbook", async (_, payload = {}) => {
-    const filePath = String(payload?.filePath || "").trim();
-    if (!filePath) {
-      return { success: false, rows: [], parseErrors: [], error: "Missing file path" };
-    }
-
-    try {
-      const bytes = await fs.readFile(filePath);
-      const parsed = await parseTemplateWorkbook(bytes);
-      return {
-        success: true,
-        rows: parsed.rows,
-        parseErrors: parsed.parseErrors,
-        error: "",
-      };
-    } catch (error) {
-      return {
-        success: false,
-        rows: [],
-        parseErrors: [],
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
-
-  ipcMain.handle("desktop-excel:write-file", async (_, payload = {}) => {
-    const filePath = String(payload?.filePath || "").trim();
-    const bytes = Array.isArray(payload?.bytes) ? payload.bytes : [];
-    if (!filePath) {
-      return { success: false, error: "Missing file path" };
-    }
-
-    try {
-      await fs.writeFile(filePath, Buffer.from(bytes));
-      return { success: true, error: "" };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
-
-  ipcMain.handle("desktop-excel:write-report-workbook", async (_, payload = {}) => {
-    const filePath = String(payload?.filePath || "").trim();
-    if (!filePath) {
-      return { success: false, error: "Missing file path" };
-    }
-
-    try {
-      const bytes = await buildReportWorkbook(payload?.groupedRows || {});
-      await fs.writeFile(filePath, Buffer.from(bytes));
-      return { success: true, error: "" };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
-
-  ipcMain.handle("desktop-excel:open-file", async (_, payload = {}) => {
-    const filePath = String(payload?.filePath || "").trim();
-    if (!filePath) {
-      return { success: false, error: "Missing file path" };
-    }
-
-    try {
-      const result = await shell.openPath(filePath);
-      return {
-        success: result === "",
-        error: result || "",
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
-}
 
 async function waitForServer(url, retries = 60, delayMs = 500) {
   for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -205,7 +58,7 @@ async function createMainWindow() {
     minHeight: 760,
     autoHideMenuBar: true,
     backgroundColor: "#f6f1e8",
-    title: "M&M Toolkit",
+    title: "MMTOOLKIT.APP",
     icon: appIconPath,
     webPreferences: {
       contextIsolation: true,
@@ -234,7 +87,6 @@ async function createMainWindow() {
 }
 
 app.whenReady().then(() => {
-  registerDesktopExcelHandlers();
   return createMainWindow();
 });
 

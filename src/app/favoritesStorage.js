@@ -225,7 +225,7 @@ export function shouldMigrateFavoritesBackupToDesktopJson(state = {}) {
 }
 
 function isDesktopFavoritesStorageEnabled() {
-  return typeof window !== "undefined" && Boolean(window.desktopExcel);
+  return typeof window !== "undefined" && Boolean(window.desktopFavorites);
 }
 
 function buildEmptyFavoritesBackup() {

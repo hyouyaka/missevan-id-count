@@ -54,6 +54,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { LazyImage } from "@/components/ui/lazy-image";
 import { Progress } from "@/components/ui/progress";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
@@ -1025,7 +1026,7 @@ export function FavoritesPanel({
                       <div className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-3 lg:grid-cols-[5.5rem_minmax(0,1.1fr)_minmax(25rem,1.6fr)]">
                         <div className="relative size-[4.5rem] overflow-hidden rounded-md border border-border/70 bg-muted/50 lg:size-[5.5rem]">
                           {coverUrl ? (
-                            <img alt={favorite.title} className="size-full object-cover" src={coverUrl} />
+                            <LazyImage alt={favorite.title} className="size-full object-cover" src={coverUrl} />
                           ) : (
                             <div className="flex size-full items-center justify-center text-xs text-muted-foreground">暂无封面</div>
                           )}

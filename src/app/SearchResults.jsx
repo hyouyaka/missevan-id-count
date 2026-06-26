@@ -13,6 +13,7 @@ import {
   HeartIcon,
   ImportIcon,
   ListChecksIcon,
+  LoaderCircleIcon,
   MicIcon,
   PlayCircleIcon,
   ShoppingCartIcon,
@@ -25,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { LazyImage } from "@/components/ui/lazy-image";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatPlainNumber, getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
@@ -172,12 +174,15 @@ export function SearchResults({
   hasMoreResults = false,
   loadedResultCount = 0,
   allResults = [],
+  isSearchPending = false,
   isLoadingMoreResults = false,
   totalResults = 0,
   platformTabs = [],
   activePlatform = platform,
   onPlatformChange,
   platformResultCounts = {},
+  metricLegendOpen = false,
+  onToggleMetricLegend,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   statisticsActionsDisabled = false,
@@ -195,6 +200,8 @@ export function SearchResults({
   const showLoadMore = resultSource === "search" && Boolean(hasMoreResults);
   const loadedCount = Number(loadedResultCount || visibleResults.length || 0);
   const totalCount = Number(totalResults || 0);
+  const canToggleMetricLegend = typeof onToggleMetricLegend === "function";
+  const showResultsHeader = platformTabs.length > 1 || canToggleMetricLegend;
   const selectedDramaIdSet = new Set(actionResults.filter((result) => result.checked).map((result) => String(result.id)));
   const trendLookupIds = useMemo(() => {
     const sourceResults = Array.isArray(allResults) && allResults.length > 0 ? allResults : results;
@@ -734,7 +741,7 @@ export function SearchResults({
   const mobileResultActionLongTextClass = "[font-size:clamp(0.6rem,3.15vw,0.875rem)]! [line-height:1]!";
   const mobileResultActionChromeClass = "[height:clamp(1.75rem,7vw,2rem)]! gap-[clamp(0.125rem,0.85vw,0.25rem)]! [padding-inline:clamp(0.125rem,1.55vw,0.375rem)]!";
   const mobileResultActionControlClass = `flex min-w-0 items-center justify-center rounded-[calc(var(--radius)-0.16rem)] border border-border/70 bg-background/84 font-medium text-foreground ${mobileResultActionChromeClass} ${mobileResultActionShortTextClass}`;
-  const mobileResultActionButtonClass = `min-w-0 rounded-[calc(var(--radius)-0.16rem)] leading-none [&>svg]:[height:clamp(0.625rem,3.15vw,0.875rem)]! [&>svg]:[width:clamp(0.625rem,3.15vw,0.875rem)]! ${mobileResultActionChromeClass} ${mobileResultActionLongTextClass}`;
+  const mobileResultActionButtonClass = `relative min-w-0 overflow-visible rounded-[calc(var(--radius)-0.16rem)] leading-none after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-[''] [&>svg]:[height:clamp(0.625rem,3.15vw,0.875rem)]! [&>svg]:[width:clamp(0.625rem,3.15vw,0.875rem)]! ${mobileResultActionChromeClass} ${mobileResultActionLongTextClass}`;
 
   function runMobileAction(callback) {
     setMobileActionsOpen(false);
@@ -744,7 +751,7 @@ export function SearchResults({
   function ActionPanel({ variant = "desktop" }) {
     if (variant === "mobile") {
       return (
-        <div className="grid gap-2 rounded-lg border border-border/80 bg-card/98 p-2 shadow-[0_18px_48px_-30px_rgba(15,23,42,0.42)] backdrop-blur-xl">
+        <div className="grid gap-2 rounded-lg border border-border/80 bg-surface-floating p-2 shadow-[var(--shadow-panel)] backdrop-blur-xl">
           <div className="flex flex-wrap items-center justify-center gap-2">
             <label className={batchSwitchControlClass}>
               <Switch
@@ -925,26 +932,43 @@ export function SearchResults({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_11rem] lg:items-start">
       <Card className="min-w-0 border-border/80 bg-card py-0 pt-2.5 pb-4 shadow-[0_24px_52px_-42px_rgba(15,23,42,0.24)]">
         <CardContent className="pt-0">
-        {platformTabs.length > 1 ? (
+        {showResultsHeader ? (
           <div className="border-b border-border/75 pb-1.5">
-            <Tabs value={activePlatform} onValueChange={onPlatformChange}>
-              <TabsList className="h-auto justify-start gap-1 bg-transparent p-0 border-0!">
-                {platformTabs.map((item) => (
-                  <TabsTrigger
-                    key={item.key}
-                    className="h-8 rounded-md border-0 bg-transparent px-2.5 text-sm font-medium text-muted-foreground shadow-none hover:bg-muted/55 hover:text-foreground data-[state=active]:bg-muted/65 data-[state=active]:text-foreground data-[state=active]:shadow-none"
-                    value={item.key}
-                  >
-                    <PlatformTabLabel platform={item.key} iconClassName="size-3.5" />
-                    <span className="tabular-nums">{getPlatformResultCountText(item.key)}</span>
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
+            <div className="flex items-center justify-between gap-2">
+              {platformTabs.length > 1 ? (
+                <Tabs value={activePlatform} onValueChange={onPlatformChange}>
+                  <TabsList className="h-auto justify-start gap-1 bg-transparent p-0 border-0!">
+                    {platformTabs.map((item) => (
+                      <TabsTrigger
+                        key={item.key}
+                        className="h-8 rounded-md border-0 bg-transparent px-2.5 text-sm font-medium text-muted-foreground shadow-none hover:bg-muted/55 hover:text-foreground data-[state=active]:bg-muted/65 data-[state=active]:text-foreground data-[state=active]:shadow-none"
+                        value={item.key}
+                      >
+                        <PlatformTabLabel platform={item.key} iconClassName="size-3.5" />
+                        <span className="tabular-nums">{getPlatformResultCountText(item.key)}</span>
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              ) : (
+                <div className="min-w-0" />
+              )}
+              {canToggleMetricLegend ? (
+                <button
+                  type="button"
+                  aria-controls="search-metric-legend"
+                  aria-expanded={metricLegendOpen}
+                  className="shrink-0 text-sm! font-semibold leading-5 text-primary underline-offset-4 hover:underline sm:hidden"
+                  onClick={onToggleMetricLegend}
+                >
+                  {metricLegendOpen ? "收起图例" : "查看图例"}
+                </button>
+              ) : null}
+            </div>
           </div>
         ) : null}
         {results.length ? (
-          <div className={platformTabs.length > 1 ? "mt-3 divide-y divide-border/75" : "divide-y divide-border/75"}>
+          <div className={showResultsHeader ? "mt-3 divide-y divide-border/75" : "divide-y divide-border/75"}>
             {visibleResults.map((item) => {
               const importedDrama = getImportedDrama(item.id);
               const coverUrl = buildProxyImageUrl(item.cover);
@@ -992,7 +1016,7 @@ export function SearchResults({
                         </div>
                         <div className="relative size-20 shrink-0 self-center overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
                           {coverUrl ? (
-                            <img alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
+                            <LazyImage alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
                           ) : (
                             <div className="flex aspect-square size-20 items-center justify-center text-xs text-muted-foreground lg:size-[6rem]">
                               暂无封面
@@ -1052,11 +1076,13 @@ export function SearchResults({
                             {canShowTrend ? (
                               <>
                                 <RankTrendButton
+                                  density="inline"
                                   onClick={() => openTrendDialog(item)}
                                   aria-label={`查看${item.name}趋势`}
                                   title="查看趋势"
                                 />
                                 <CompareActionButton
+                                  density="inline"
                                   onClick={() => addCompareItem(item)}
                                   aria-label={`加入${item.name}对比`}
                                   title="加入对比"
@@ -1128,11 +1154,13 @@ export function SearchResults({
                       {canShowTrend ? (
                         <>
                           <RankTrendButton
+                            density="inline"
                             onClick={() => openTrendDialog(item)}
                             aria-label={`查看${item.name}趋势`}
                             title="查看趋势"
                           />
                           <CompareActionButton
+                            density="inline"
                             onClick={() => addCompareItem(item)}
                             aria-label={`加入${item.name}对比`}
                             title="加入对比"
@@ -1175,6 +1203,7 @@ export function SearchResults({
                       <Button
                         type="button"
                         variant="secondary"
+                        data-touch="compact"
                         className={mobileResultActionButtonClass}
                         disabled={statisticsActionsDisabled}
                         onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
@@ -1185,6 +1214,7 @@ export function SearchResults({
                       <Button
                         type="button"
                         variant="secondary"
+                        data-touch="compact"
                         className={mobileResultActionButtonClass}
                         disabled={statisticsActionsDisabled}
                         onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
@@ -1255,8 +1285,15 @@ export function SearchResults({
             ) : null}
           </div>
         ) : (
-          <div className={`${platformTabs.length > 1 ? "mt-4 " : ""}rounded-lg border border-dashed border-border/80 bg-muted/30 px-6 py-10 text-center`}>
-            <div className="text-base font-semibold">还没有结果</div>
+          <div className={`${showResultsHeader ? "mt-4 " : ""}rounded-lg border border-dashed border-border/80 bg-muted/30 px-6 py-10 text-center`}>
+            {isSearchPending ? (
+              <div className="inline-flex items-center justify-center gap-2 text-base font-semibold">
+                <LoaderCircleIcon aria-hidden="true" className="size-4 animate-spin" />
+                <span>正在搜索/导入……</span>
+              </div>
+            ) : (
+              <div className="text-base font-semibold">还没有结果</div>
+            )}
           </div>
         )}
         </CardContent>
@@ -1281,13 +1318,13 @@ export function SearchResults({
               onClick={() => setMobileActionsOpen(false)}
             />
           ) : null}
-          <div className="fixed inset-x-3 bottom-3 z-40 lg:hidden">
+          <div className="fixed inset-x-3 mobile-fixed-bottom z-40 lg:hidden">
             {mobileActionsOpen ? (
               <div>
                 <ActionPanel variant="mobile" />
               </div>
             ) : null}
-            <div className="rounded-lg border border-border/80 bg-card/96 p-2 shadow-[0_18px_48px_-28px_rgba(15,23,42,0.42)] backdrop-blur-xl">
+            <div className="rounded-lg border border-border/80 bg-surface-floating p-2 shadow-[var(--shadow-panel)] backdrop-blur-xl">
             <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_auto] items-center gap-2">
               {[
                 { label: "作品", value: selectedDramaCount },

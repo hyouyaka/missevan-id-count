@@ -23,6 +23,114 @@ test("library search matches Missevan titles when query omits common symbols", a
   assert.equal(results[0].dramaId, "101");
 });
 
+test("library search treats comma separated terms as OR groups", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "101",
+      soundIds: [],
+      title: "魔道祖师 第一季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+    {
+      dramaId: "102",
+      soundIds: [],
+      title: "天官赐福 第一季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+    {
+      dramaId: "103",
+      soundIds: [],
+      title: "人鱼陷落 第一季",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+  ];
+
+  const results = searchMissevanLibraryRecords(records, "魔道，天官").map((item) => item.dramaId);
+
+  assert.deepEqual(results, ["102", "101"]);
+});
+
+test("library search treats spaces as AND terms across searchable fields", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "201",
+      soundIds: [],
+      title: "魔道祖师 第一季",
+      seriesTitle: "",
+      cvnames: { a: "路知行", b: "魏超" },
+      cvroles: {},
+      author: "墨香铜臭",
+      catalog: 89,
+    },
+    {
+      dramaId: "202",
+      soundIds: [],
+      title: "魔道祖师 第二季",
+      seriesTitle: "",
+      cvnames: { a: "路知行" },
+      cvroles: {},
+      author: "墨香铜臭",
+      catalog: 89,
+    },
+  ];
+
+  const results = searchMissevanLibraryRecords(records, "路知行 魏超 墨香").map((item) => item.dramaId);
+
+  assert.deepEqual(results, ["201"]);
+});
+
+test("library search keeps season phrases as AND terms but skips comma-only season fragments", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    {
+      dramaId: "301",
+      soundIds: [],
+      title: "魔道祖师 第一季 下",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+    {
+      dramaId: "302",
+      soundIds: [],
+      title: "魔道祖师 第一季 上",
+      seriesTitle: "",
+      cvnames: {},
+      cvroles: {},
+      author: "",
+      catalog: 89,
+    },
+  ];
+
+  assert.deepEqual(
+    searchMissevanLibraryRecords(records, "魔道祖师 第一季 下").map((item) => item.dramaId),
+    ["301"]
+  );
+  assert.deepEqual(
+    searchMissevanLibraryRecords(records, "魔道祖师，第一季，下").map((item) => item.dramaId),
+    ["302", "301"]
+  );
+});
+
 test("library search matches Manbo names when query omits common symbols", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchManboLibraryRecords } = await import("./server.js");
@@ -272,7 +380,7 @@ test("library search preserves explicit Missevan season intent before stripped q
 
   assert.deepEqual(
     searchMissevanLibraryRecords(records, "魔道祖师 第二季").map((item) => item.dramaId),
-    ["602", "601"]
+    ["602"]
   );
 });
 
@@ -329,7 +437,7 @@ test("library search preserves explicit Manbo season intent before stripped quer
 
   assert.deepEqual(
     searchManboLibraryRecords(records, "魔道祖师 第二季").map((item) => item.dramaId),
-    ["702", "701"]
+    ["702"]
   );
 });
 

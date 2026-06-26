@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MessageSquarePlusIcon, RefreshCcwIcon } from "lucide-react";
 
+import { AppIcon } from "@/app/AppIcon";
 import { ChangelogButton, ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -140,8 +141,9 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
             <div className="text-[0.7rem] font-semibold uppercase tracking-[0.32em] text-[rgb(59,62,122)]">
               M&amp;M Toolkit
             </div>
-            <div className="max-w-3xl text-2xl font-semibold tracking-tight sm:text-[2.55rem]">
-              {appConfig?.titleZh || "小猫小狐数据分析"}
+            <div className="inline-flex max-w-3xl items-center gap-3 text-2xl font-semibold leading-none tracking-tight sm:text-[2.55rem]">
+              <AppIcon className="size-10 self-center rounded-xl sm:size-12" />
+              <span className="min-w-0 leading-none">{appConfig?.titleZh || "小猫小狐数据分析"}</span>
             </div>
           </div>
 

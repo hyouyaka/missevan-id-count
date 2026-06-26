@@ -11,36 +11,36 @@ const badgeVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] [a]:hover:bg-[color-mix(in_srgb,var(--primary)_92%,black)]",
         secondary:
-          "border-[rgba(239,131,95,0.24)] bg-secondary text-secondary-foreground [a]:hover:bg-[color-mix(in_srgb,var(--secondary)_88%,white)]",
+          "border-[var(--border-warm)] bg-secondary text-secondary-foreground [a]:hover:bg-[color-mix(in_srgb,var(--secondary)_88%,white)]",
         info:
-          "border-[rgba(59,62,122,0.18)] bg-[rgb(59,62,122)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(59,62,122)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-cool)_18%,transparent)] bg-[var(--accent-cool)] text-[var(--accent-cool-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-cool)_90%,black)]",
         coral:
-          "border-[rgba(239,131,95,0.18)] bg-[rgb(239,131,95)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(239,131,95)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-warm)_90%,black)]",
         missevanPlatform:
-          "border-[rgba(107,114,128,0.2)] bg-[rgb(107,114,128)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(107,114,128)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-neutral)_20%,transparent)] bg-[var(--accent-neutral)] text-[var(--accent-neutral-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-neutral)_90%,black)]",
         manboPlatform:
-          "border-[rgba(122,93,199,0.2)] bg-[rgb(122,93,199)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(122,93,199)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-purple)_20%,transparent)] bg-[var(--accent-purple)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-purple)_90%,black)]",
         free:
-          "border-[rgba(31,157,138,0.18)] bg-[rgb(31,157,138)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(31,157,138)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-success)_18%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-success)_90%,black)]",
         member:
-          "border-[rgba(165,120,36,0.24)] bg-[rgb(245,201,93)] text-[rgb(102,63,14)] shadow-[inset_0_1px_0_rgba(255,255,255,0.24)] [a]:hover:bg-[color-mix(in_srgb,rgb(245,201,93)_90%,white)]",
+          "border-[color-mix(in_srgb,var(--accent-gold)_28%,black)] bg-[var(--accent-gold)] text-[var(--accent-gold-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.24)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-gold)_90%,white)]",
         paid:
-          "border-[rgba(239,131,95,0.18)] bg-[rgb(239,131,95)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(239,131,95)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-warm)_90%,black)]",
         radioDrama:
-          "border-[rgba(36,74,134,0.18)] bg-[rgb(36,74,134)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(36,74,134)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--primary)_90%,black)]",
         audioDrama:
-          "border-[rgba(122,93,199,0.18)] bg-[rgb(122,93,199)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(122,93,199)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-purple)_18%,transparent)] bg-[var(--accent-purple)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-purple)_90%,black)]",
         audioComic:
-          "border-[rgba(190,62,116,0.18)] bg-[rgb(190,62,116)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,rgb(190,62,116)_90%,black)]",
+          "border-[color-mix(in_srgb,var(--accent-rose)_18%,transparent)] bg-[var(--accent-rose)] text-[var(--accent-rose-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-rose)_90%,black)]",
         imported:
-          "border-[rgba(36,74,134,0.18)] bg-[rgb(224,236,252)] text-[rgb(24,54,104)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] [a]:hover:bg-[rgb(211,227,248)]",
+          "border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-accent text-accent-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] [a]:hover:bg-[color-mix(in_srgb,var(--accent)_90%,var(--primary))]",
         destructive:
           "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
         outline:
-          "border-border/85 bg-background/86 text-foreground [a]:hover:bg-[rgba(255,240,233,0.8)] [a]:hover:text-foreground",
+          "border-border/85 bg-background/86 text-foreground [a]:hover:bg-surface-hover [a]:hover:text-foreground",
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
-        link: "text-[rgb(59,62,122)] underline-offset-4 hover:underline",
+        link: "text-primary underline-offset-4 hover:underline",
       },
     },
     defaultVariants: {

@@ -6,6 +6,7 @@ import {
   CoinsIcon,
   GemIcon,
   HeartIcon,
+  InfoIcon,
   MicIcon,
   PlayCircleIcon,
   RefreshCwIcon,
@@ -44,15 +45,33 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { LazyImage } from "@/components/ui/lazy-image";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
 }
 
-const mobileRankTabClassName = "min-w-0 px-1.5 text-[12px]! leading-none";
-const mobileMenuTabsListClassName =
-  "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
+const mobilePlatformTabsListClassName =
+  "inline-flex h-8 min-h-8 w-fit max-w-full justify-start gap-6 rounded-none border-0! bg-transparent! p-0 shadow-none!";
+const mobilePlatformTabClassName =
+  "relative h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1 text-sm! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[&_.platform-tab-label-text]:font-bold data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[&_.platform-tab-label-text]:font-bold data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:absolute after:inset-x-0 after:-inset-y-1 after:rounded-md after:content-['']";
+const mobileTextTabsListClassName =
+  "grid h-8 min-h-8 w-full justify-stretch rounded-none border-0! bg-transparent! p-0 shadow-none!";
+const mobileCategoryTabClassName =
+  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1.5 text-sm! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+const mobileRankTabClassName =
+  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1 text-[12px]! font-medium leading-none text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+const mobileSelectedTabClassName =
+  "font-bold! text-primary! [text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)]";
+const mobileSelectedPlatformTabClassName = `${mobileSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
+const desktopTextTabsListClassName =
+  "inline-flex h-8 min-h-8 w-fit justify-start rounded-none border-0! bg-transparent! p-0 shadow-none!";
+const desktopTextTabClassName =
+  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1.5 text-sm! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+const desktopSelectedTabClassName = mobileSelectedTabClassName;
+const desktopSelectedPlatformTabClassName = `${desktopSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
 
 function getRankTabsGridStyle(count) {
   const columns = Math.max(1, Number(count) || 1);
@@ -123,13 +142,22 @@ function MetricIcon({ label, className = "size-3.5" }) {
   return <Icon aria-hidden="true" className={className} />;
 }
 
-function MetricLegend() {
+function MetricLegend({ variant = "default", className = "" }) {
+  const isCompact = variant === "compact";
   return (
     <div
       aria-label="榜单图标图例"
-      className="rounded-lg border border-border/75 bg-card/96 px-3 py-2 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.28)]"
+      className={`${
+        isCompact
+          ? "min-w-0 rounded-md border border-border/65 bg-card/92 px-2.5 py-1.5 shadow-none"
+          : "rounded-lg border border-border/75 bg-card/96 px-3 py-2 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.28)]"
+      } ${className}`}
     >
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.68rem] leading-5 text-muted-foreground">
+      <div
+        className={`flex flex-wrap items-center text-muted-foreground ${
+          isCompact ? "gap-x-2 gap-y-0.5 text-[0.66rem] leading-4" : "gap-x-2.5 gap-y-1 text-[0.68rem] leading-5"
+        }`}
+      >
         {metricLegendItems.map((item) => {
           const Icon = item.icon;
           return (
@@ -141,6 +169,42 @@ function MetricLegend() {
         })}
       </div>
     </div>
+  );
+}
+
+function RankInfoPopover({ infoText }) {
+  if (!infoText) {
+    return null;
+  }
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="ml-1 inline-flex align-middle text-muted-foreground hover:text-primary"
+          aria-label="查看榜单说明"
+        >
+          <InfoIcon aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="right"
+        sideOffset={8}
+        avoidCollisions
+        collisionPadding={12}
+        sticky="always"
+        className="max-h-[min(16rem,calc(100vh-2rem))] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md bg-popover/96 p-3 text-xs leading-5 shadow-[0_18px_42px_-28px_rgba(15,23,42,0.42)] backdrop-blur-xl"
+        style={{
+          width: "min(clamp(12rem,60vw,18rem),calc(100vw - 2rem))",
+          maxWidth: "calc(100vw - 2rem)",
+        }}
+      >
+        <p className="text-muted-foreground">{infoText}</p>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -393,7 +457,7 @@ function RankItemCard({
 
   return (
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
-      <CardContent className="px-3.5">
+      <CardContent className="relative px-3.5">
         <div className="flex gap-3">
           <div className="flex shrink-0 flex-col items-center gap-2">
             <RankBadge rank={item.rank} />
@@ -414,7 +478,7 @@ function RankItemCard({
           </div>
           <div className="relative size-20 shrink-0 overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
             {coverUrl ? (
-              <img alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
+              <LazyImage alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
             ) : (
               <div className="flex aspect-square size-20 items-center justify-center text-xs text-muted-foreground lg:size-[6rem]">
                 暂无封面
@@ -504,11 +568,13 @@ function RankItemCard({
                 {canShowTrend ? (
                   <>
                     <RankTrendButton
+                      density="inline"
                       onClick={openTrendDialog}
                       aria-label={`查看${item.name}趋势`}
                       title="查看趋势"
                     />
                     <CompareActionButton
+                      density="inline"
                       onClick={addCompareItem}
                       aria-label={`加入${item.name}对比`}
                       title="加入对比"
@@ -527,7 +593,7 @@ function RankItemCard({
         </div>
 
         {displayMetrics.length || (!isMissevanPeak && canShowTrend) ? (
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm lg:ml-10">
+          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm lg:ml-10 lg:min-h-11 lg:gap-y-2">
             {displayMetrics.map((metric) => (
                 <div
                   key={`${item.id}-${metric.label}`}
@@ -547,11 +613,13 @@ function RankItemCard({
             {!isMissevanPeak && canShowTrend ? (
               <>
                 <RankTrendButton
+                  density="inline"
                   onClick={openTrendDialog}
                   aria-label={`查看${item.name}趋势`}
                   title="查看趋势"
                 />
                 <CompareActionButton
+                  density="inline"
                   onClick={addCompareItem}
                   aria-label={`加入${item.name}对比`}
                   title="加入对比"
@@ -600,10 +668,7 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
   return (
     <div className="mt-3 rounded-lg border border-border/80 bg-background/78 p-2.5 sm:p-3">
       <div className="mb-2 text-sm font-semibold leading-5">作品列表</div>
-      <div
-        data-cv-works-scroll-region="true"
-        className="max-h-[24rem] overflow-y-auto overscroll-contain rounded-md border border-border/70 bg-card/70 [-webkit-overflow-scrolling:touch]"
-      >
+      <div className="max-h-[24rem] overflow-y-auto overscroll-contain rounded-md border border-border/70 bg-card/70 [-webkit-overflow-scrolling:touch]">
         {works.length ? (
           <div className="divide-y divide-border/70">
             {works.map((work) => {
@@ -616,14 +681,14 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                 >
                   <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/45 sm:size-[3.75rem]">
                     {coverUrl ? (
-                      <img alt={work.title} className="size-full object-cover" src={coverUrl} />
+                      <LazyImage alt={work.title} className="size-full object-cover" src={coverUrl} />
                     ) : (
                       <div className="flex size-full items-center justify-center text-[0.65rem] text-muted-foreground">
                         暂无封面
                       </div>
                     )}
                   </div>
-                  <div data-cv-work-mobile-detail="true" className="grid min-w-0 gap-1 sm:hidden">
+                  <div className="grid min-w-0 gap-1 sm:hidden">
                     <button
                       type="button"
                       title={work.title}
@@ -683,22 +748,13 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
   );
 }
 
-function CvRankItemCard({
-  item,
-  platform,
-  frontendVersion = "0.0.0",
-  handleVersionResponse,
-  onOpenSearchResult,
-}) {
-  const [isExpanded, setIsExpanded] = useState(false);
+function useCvRankTrend({ item, frontendVersion, handleVersionResponse }) {
   const [isTrendOpen, setIsTrendOpen] = useState(false);
   const [trendState, setTrendState] = useState({
     isLoading: false,
     error: "",
     data: null,
   });
-  const avatarUrl = buildProxyImageUrl(item.avatar);
-  const topWorksText = getCvWorksPreviewText(item.topWorks || item.works);
   const canShowTrend = Boolean(item.cvName);
 
   async function openTrendDialog() {
@@ -753,6 +809,64 @@ function CvRankItemCard({
     }
   }
 
+  return {
+    canShowTrend,
+    isTrendOpen,
+    openTrendDialog,
+    setIsTrendOpen,
+    trendState,
+  };
+}
+
+function CvRankActions({ item, canShowTrend, onOpenTrend, className }) {
+  return (
+    <div className={className}>
+      <div
+        aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
+        title={`作品数: ${formatPlainNumber(item.workCount)}`}
+        className="flex min-w-0 items-center gap-1.5"
+      >
+        <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
+        <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+          {formatPlainNumber(item.workCount)}
+        </span>
+      </div>
+      <RankTrendDeltaBadge
+        metric={item.playbackDelta}
+        className="h-[1.35rem] px-1.5 text-[0.68rem]"
+      >
+        周增：{formatRankTrendCompactDelta(item.playbackDelta)}
+      </RankTrendDeltaBadge>
+      {canShowTrend ? (
+        <RankTrendButton
+          density="inline"
+          onClick={onOpenTrend}
+          aria-label={`查看${item.cvName}趋势`}
+          title="查看趋势"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CvRankItemCard({
+  item,
+  platform,
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onOpenSearchResult,
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const {
+    canShowTrend,
+    isTrendOpen,
+    openTrendDialog,
+    setIsTrendOpen,
+    trendState,
+  } = useCvRankTrend({ item, frontendVersion, handleVersionResponse });
+  const avatarUrl = buildProxyImageUrl(item.avatar);
+  const topWorksText = getCvWorksPreviewText(item.topWorks || item.works);
+
   return (
     <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
       <CardContent className="px-3.5">
@@ -760,22 +874,18 @@ function CvRankItemCard({
           <RankBadge rank={item.rank} />
           <div className="row-span-2 size-[3.75rem] overflow-hidden rounded-full border border-border/70 bg-muted/45 sm:row-span-3 sm:size-[4.25rem]">
             {avatarUrl ? (
-              <img alt={item.cvName} className="size-full object-cover" src={avatarUrl} />
+              <LazyImage alt={item.cvName} className="size-full object-cover" src={avatarUrl} />
             ) : (
               <div className="flex size-full items-center justify-center text-xs font-semibold text-muted-foreground">
                 CV
               </div>
             )}
           </div>
-          <div
-            data-cv-card-title-row="true"
-            className="col-start-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
-          >
+          <div className="col-start-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <div className="min-w-0 break-words text-base font-semibold leading-6 text-foreground sm:text-lg">
               {item.cvName}
             </div>
             <div
-              data-cv-card-playback-total="true"
               aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
               title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
               className="flex shrink-0 items-center gap-1 text-sm font-semibold leading-5 text-foreground"
@@ -784,41 +894,16 @@ function CvRankItemCard({
               <span className="tabular-nums">{formatRankCompactCount(item.totalViewCount)}</span>
             </div>
           </div>
-          <div
-            data-cv-card-topworks-row="true"
-            className="col-start-3 min-w-0 break-words text-xs leading-5 text-muted-foreground sm:text-sm"
-          >
+          <div className="col-start-3 min-w-0 break-words text-xs leading-5 text-muted-foreground sm:text-sm">
             {topWorksText}
           </div>
-          <div
-            data-cv-card-actions-row="true"
-            className="col-start-3 hidden min-w-0 items-center justify-between gap-2 text-sm sm:flex"
-          >
-            <div className="flex min-w-0 flex-wrap items-center gap-3">
-              <div
-                aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
-                title={`作品数: ${formatPlainNumber(item.workCount)}`}
-                className="flex min-w-0 items-center gap-1.5"
-              >
-                <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
-                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                  {formatPlainNumber(item.workCount)}
-                </span>
-              </div>
-              <RankTrendDeltaBadge
-                metric={item.playbackDelta}
-                className="h-[1.35rem] px-1.5 text-[0.68rem]"
-              >
-                周增：{formatRankTrendCompactDelta(item.playbackDelta)}
-              </RankTrendDeltaBadge>
-              {canShowTrend ? (
-                <RankTrendButton
-                  onClick={openTrendDialog}
-                  aria-label={`查看${item.cvName}趋势`}
-                  title="查看趋势"
-                />
-              ) : null}
-            </div>
+          <div className="col-start-3 hidden min-w-0 items-center justify-between gap-2 text-sm sm:flex">
+            <CvRankActions
+              item={item}
+              canShowTrend={canShowTrend}
+              onOpenTrend={openTrendDialog}
+              className="flex min-w-0 flex-wrap items-center gap-3"
+            />
             <Button
               type="button"
               variant="outline"
@@ -831,36 +916,13 @@ function CvRankItemCard({
               {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
             </Button>
           </div>
-          <div
-            data-cv-mobile-summary-row="true"
-            data-cv-card-mobile-actions-row="true"
-            className="col-start-2 col-span-2 flex min-w-0 items-center justify-between gap-2 text-sm sm:hidden"
-          >
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-              <div
-                aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
-                title={`作品数: ${formatPlainNumber(item.workCount)}`}
-                className="flex min-w-0 items-center gap-1.5"
-              >
-                <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
-                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                  {formatPlainNumber(item.workCount)}
-                </span>
-              </div>
-              <RankTrendDeltaBadge
-                metric={item.playbackDelta}
-                className="h-[1.35rem] px-1.5 text-[0.68rem]"
-              >
-                周增：{formatRankTrendCompactDelta(item.playbackDelta)}
-              </RankTrendDeltaBadge>
-              {canShowTrend ? (
-                <RankTrendButton
-                  onClick={openTrendDialog}
-                  aria-label={`查看${item.cvName}趋势`}
-                  title="查看趋势"
-                />
-              ) : null}
-            </div>
+          <div className="col-start-2 col-span-2 flex min-w-0 items-center justify-between gap-2 text-sm sm:hidden">
+            <CvRankActions
+              item={item}
+              canShowTrend={canShowTrend}
+              onOpenTrend={openTrendDialog}
+              className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5"
+            />
             <Button
               type="button"
               variant="outline"
@@ -894,21 +956,27 @@ function CvRankItemCard({
 function CvRankColumn({
   rank,
   platform,
+  infoText = "",
+  refreshAt = "",
   frontendVersion = "0.0.0",
   handleVersionResponse,
   onOpenSearchResult,
 }) {
+  const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
   return (
     <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold leading-6">{rank.name}</h2>
-          <div data-rank-count-row="true" className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
+          <h2 className="inline-flex items-center text-base font-semibold leading-6">
+            <span>{rank.name}</span>
+            <RankInfoPopover infoText={infoText} />
+          </h2>
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
             <span>{rank.items.length} 位 CV</span>
-            {rank.fetchedAt ? <span className="text-right sm:hidden">更新：{formatRankUpdatedAt(rank.fetchedAt)}</span> : null}
+            {rankUpdatedAtText ? <span className="text-right sm:hidden">更新：{rankUpdatedAtText}</span> : null}
           </div>
         </div>
-        {rank.fetchedAt ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{formatRankUpdatedAt(rank.fetchedAt)}</div> : null}
+        {rankUpdatedAtText ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{rankUpdatedAtText}</div> : null}
       </div>
       {rank.items.length ? (
         <div className="grid gap-3">
@@ -935,6 +1003,8 @@ function CvRankColumn({
 function RankColumn({
   rank,
   platform,
+  infoText = "",
+  refreshAt = "",
   frontendVersion = "0.0.0",
   handleVersionResponse,
   onOpenSearchResult,
@@ -943,17 +1013,21 @@ function RankColumn({
   onToggleFavorite,
   onAddCompareItem,
 }) {
+  const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
   return (
     <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold leading-6">{rank.name}</h2>
-          <div data-rank-count-row="true" className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
+          <h2 className="inline-flex items-center text-base font-semibold leading-6">
+            <span>{rank.name}</span>
+            <RankInfoPopover infoText={infoText} />
+          </h2>
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
             <span>{rank.items.length} 项</span>
-            {rank.fetchedAt ? <span className="text-right sm:hidden">更新：{formatRankUpdatedAt(rank.fetchedAt)}</span> : null}
+            {rankUpdatedAtText ? <span className="text-right sm:hidden">更新：{rankUpdatedAtText}</span> : null}
           </div>
         </div>
-        {rank.fetchedAt ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{formatRankUpdatedAt(rank.fetchedAt)}</div> : null}
+        {rankUpdatedAtText ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{rankUpdatedAtText}</div> : null}
       </div>
       {rank.items.length ? (
         <div className="grid gap-3">
@@ -1012,6 +1086,7 @@ export function RanksPanel({
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [showMetricLegend, setShowMetricLegend] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState(() =>
     routeState?.platform === "manbo" ? "manbo" : "missevan"
   );
@@ -1214,19 +1289,33 @@ export function RanksPanel({
   }
 
   const hasRanks = availablePlatforms.length > 0;
+  const canShowMetricLegend = !isLoading && !errorMessage && hasRanks;
   const isCvCategory = category?.key === "cv";
   const cvSummary = rankData?.cvSummary || {};
-  const rankIntro = isCvCategory
-    ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品，每周更新。`
-    : "同步猫耳和漫播榜单，每日更新。";
   const rankRefreshAt = isCvCategory ? cvSummary.updatedAt || activeRank?.fetchedAt : rankData?.updatedAt;
+  const rankInfoText = isCvCategory
+    ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品，每周更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`
+    : `同步猫耳和漫播榜单，每日更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`;
+  const renderMobileMetricLegendToggle = () =>
+    canShowMetricLegend ? (
+      <button
+        type="button"
+        aria-controls="rank-metric-legend"
+        aria-expanded={showMetricLegend}
+        className="shrink-0 text-sm! font-semibold leading-5 text-primary underline-offset-4 hover:underline lg:hidden"
+        onClick={() => setShowMetricLegend((open) => !open)}
+      >
+        {showMetricLegend ? "收起图例" : "查看图例"}
+      </button>
+    ) : null;
 
   return (
     <div className="grid gap-4 sm:gap-5">
-      <div className="flex flex-col gap-1 px-1 text-sm leading-6 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-        <div>{rankIntro}</div>
-        <div className="sm:text-right">此次榜单刷新于：{formatRankUpdatedAt(rankRefreshAt)}</div>
-      </div>
+      {canShowMetricLegend && showMetricLegend ? (
+        <div id="rank-metric-legend" className="px-1 lg:hidden">
+          <MetricLegend />
+        </div>
+      ) : null}
 
       {isLoading ? (
         <Alert>
@@ -1252,83 +1341,115 @@ export function RanksPanel({
 
       {!isLoading && !errorMessage && hasRanks ? (
         <>
-          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-3">
-            <MetricLegend />
-            <div className="hidden lg:flex lg:justify-end lg:gap-2">
-              <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
-                <TabsList className="grid w-full grid-cols-2 justify-stretch sm:w-fit lg:inline-flex lg:justify-start">
-                  {availablePlatforms.map((platform) => (
-                    <TabsTrigger key={platform.key} className="px-3" value={platform.key}>
-                      <PlatformTabLabel platform={platform} />
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-              {platformData?.categories?.length ? (
-                <Tabs value={category?.key || ""} onValueChange={updateCategory} className="gap-0">
-                  <TabsList className="grid w-full justify-stretch sm:w-fit lg:inline-flex lg:justify-start">
-                    {platformData.categories.map((item) => (
-                      <TabsTrigger key={item.key} className="px-3" value={item.key}>
-                        {item.label}
+          <div className="grid gap-2">
+            <div className="hidden lg:flex lg:flex-wrap lg:items-center lg:justify-between lg:gap-x-8 lg:gap-y-2">
+              {canShowMetricLegend ? <MetricLegend variant="compact" className="max-w-full flex-none" /> : null}
+              <div className="flex flex-wrap items-center justify-end gap-x-10 gap-y-2">
+                <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
+                  <TabsList className={`${desktopTextTabsListClassName} gap-4`}>
+                    {availablePlatforms.map((platform) => (
+                      <TabsTrigger
+                        key={platform.key}
+                        className={`${desktopTextTabClassName} ${
+                          platform.key === selectedPlatform ? desktopSelectedPlatformTabClassName : ""
+                        }`}
+                        value={platform.key}
+                      >
+                        <PlatformTabLabel platform={platform} />
                       </TabsTrigger>
                     ))}
                   </TabsList>
                 </Tabs>
-              ) : null}
+                {platformData?.categories?.length ? (
+                  <Tabs value={category?.key || ""} onValueChange={updateCategory} className="gap-0">
+                    <TabsList className={`${desktopTextTabsListClassName} gap-4`}>
+                      {platformData.categories.map((item) => (
+                        <TabsTrigger
+                          key={item.key}
+                          className={`${desktopTextTabClassName} ${item.key === category?.key ? desktopSelectedTabClassName : ""}`}
+                          value={item.key}
+                        >
+                          {item.label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                ) : null}
+              </div>
             </div>
-            <div className="grid gap-0 overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-sm lg:hidden">
-              <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
-                <TabsList className={`${mobileMenuTabsListClassName} grid-cols-2`}>
-                  {availablePlatforms.map((platform) => (
-                    <TabsTrigger key={platform.key} className="min-w-0 px-2" value={platform.key}>
-                      <PlatformTabLabel platform={platform} />
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
+            <div className="grid gap-1 lg:hidden">
+              <div className="flex items-center justify-between gap-3">
+                <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="min-w-0 items-center gap-0">
+                  <TabsList className={mobilePlatformTabsListClassName}>
+                    {availablePlatforms.map((platform) => (
+                      <TabsTrigger
+                        key={platform.key}
+                        data-touch="compact"
+                        className={`${mobilePlatformTabClassName} ${
+                          platform.key === selectedPlatform ? mobileSelectedPlatformTabClassName : ""
+                        }`}
+                        value={platform.key}
+                      >
+                        <PlatformTabLabel platform={platform} />
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+                {renderMobileMetricLegendToggle()}
+              </div>
               {platformData?.categories?.length ? (
-                <>
-                  <div className="h-px bg-border/70" />
-                  <div className="flex h-9 items-center gap-2 px-1.5">
+                <div className="flex min-h-8 items-center justify-between gap-2 border-t border-border/60 pt-1">
+                  <Tabs
+                    value={category?.key || ""}
+                    onValueChange={updateCategory}
+                    className="min-w-0 basis-[min(13.75rem,58vw)] shrink-0 gap-0"
+                  >
+                    <TabsList
+                      variant="line"
+                      className={mobileTextTabsListClassName}
+                      style={getRankTabsGridStyle(platformData.categories.length)}
+                    >
+                      {platformData.categories.map((item) => (
+                        <TabsTrigger
+                          key={item.key}
+                          data-touch="compact"
+                          className={`${mobileCategoryTabClassName} ${
+                            item.key === category?.key ? mobileSelectedTabClassName : ""
+                          }`}
+                          value={item.key}
+                        >
+                          {formatMobileRankMenuLabel(item.label)}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                  {category?.ranks?.length > 1 ? (
                     <Tabs
-                      value={category?.key || ""}
-                      onValueChange={updateCategory}
-                      className="min-w-0 flex-1 gap-0"
+                      value={activeRank?.key || ""}
+                      onValueChange={updateRank}
+                      className="min-w-0 flex-1 items-end gap-0"
                     >
                       <TabsList
-                        className={mobileMenuTabsListClassName}
-                        style={getRankTabsGridStyle(platformData.categories.length)}
+                        variant="line"
+                        className={`${mobileTextTabsListClassName} ml-auto w-fit`}
+                        style={{ gridTemplateColumns: `repeat(${category.ranks.length}, minmax(0, 1fr))` }}
                       >
-                        {platformData.categories.map((item) => (
-                          <TabsTrigger key={item.key} className={mobileRankTabClassName} value={item.key}>
-                            {formatMobileRankMenuLabel(item.label)}
+                        {category.ranks.map((rank) => (
+                          <TabsTrigger
+                            key={rank.key}
+                            data-touch="compact"
+                            className={`${mobileRankTabClassName} ${
+                              rank.key === activeRank?.key ? mobileSelectedTabClassName : ""
+                            }`}
+                            value={rank.key}
+                          >
+                            {formatMobileRankMenuLabel(rank.label)}
                           </TabsTrigger>
                         ))}
                       </TabsList>
                     </Tabs>
-                    {category?.ranks?.length > 1 ? (
-                      <>
-                        <div className="h-7 w-px shrink-0 bg-border/80" />
-                        <Tabs
-                          value={activeRank?.key || ""}
-                          onValueChange={updateRank}
-                          className="w-[38%] min-w-[6.5rem] max-w-[8.75rem] shrink-0 gap-0"
-                        >
-                          <TabsList
-                            className={mobileMenuTabsListClassName}
-                            style={{ gridTemplateColumns: `repeat(${category.ranks.length}, minmax(0, 1fr))` }}
-                          >
-                            {category.ranks.map((rank) => (
-                              <TabsTrigger key={rank.key} className={mobileRankTabClassName} value={rank.key}>
-                                {formatMobileRankMenuLabel(rank.label)}
-                              </TabsTrigger>
-                            ))}
-                          </TabsList>
-                        </Tabs>
-                      </>
-                    ) : null}
-                  </div>
-                </>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </div>
@@ -1340,6 +1461,8 @@ export function RanksPanel({
                   key={rank.key}
                   platform={selectedPlatform}
                   rank={rank}
+                  infoText={rankInfoText}
+                  refreshAt={rankRefreshAt}
                   frontendVersion={frontendVersion}
                   handleVersionResponse={handleVersionResponse}
                   onOpenSearchResult={onOpenSearchResult}
@@ -1351,6 +1474,8 @@ export function RanksPanel({
                   key={rank.key}
                   platform={selectedPlatform}
                   rank={rank}
+                  infoText={rankInfoText}
+                  refreshAt={rankRefreshAt}
                   frontendVersion={frontendVersion}
                   handleVersionResponse={handleVersionResponse}
                   onOpenSearchResult={onOpenSearchResult}
@@ -1368,6 +1493,8 @@ export function RanksPanel({
               <CvRankColumn
                 platform={selectedPlatform}
                 rank={activeRank}
+                infoText={rankInfoText}
+                refreshAt={rankRefreshAt}
                 frontendVersion={frontendVersion}
                 handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}
@@ -1376,6 +1503,8 @@ export function RanksPanel({
               <RankColumn
                 platform={selectedPlatform}
                 rank={activeRank}
+                infoText={rankInfoText}
+                refreshAt={rankRefreshAt}
                 frontendVersion={frontendVersion}
                 handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}

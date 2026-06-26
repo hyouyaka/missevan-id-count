@@ -39,9 +39,15 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const RANK_TREND_CLIENT_SCHEMA_VERSION = 4;
 export const trendActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[rgba(20,121,111,0.32)] bg-[rgb(20,121,111)] px-1 text-xs! text-white shadow-[0_12px_24px_-16px_rgba(20,121,111,0.72)] hover:bg-[rgb(17,104,96)] hover:text-white";
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_srgb,var(--accent-success)_88%,black)] hover:text-[var(--accent-success-foreground)]";
 export const compareActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[rgba(32,54,112,0.34)] bg-[rgb(32,54,112)] px-1 text-xs! text-white shadow-[0_12px_24px_-16px_rgba(32,54,112,0.72)] hover:bg-[rgb(24,42,92)] hover:text-white";
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--primary)_34%,transparent)] bg-primary px-1 text-xs! text-primary-foreground shadow-[0_12px_24px_-16px_var(--primary)] hover:bg-[color-mix(in_srgb,var(--primary)_88%,black)] hover:text-primary-foreground";
+const trendActionHitAreaClassName =
+  "h-11 min-h-11 w-[58px] min-w-[58px] border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0";
+const trendActionInlineClassName =
+  "relative h-[22px] min-h-[22px] w-[50px] min-w-[50px] overflow-visible border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0 after:absolute after:inset-x-0 after:-inset-y-[11px] after:rounded-md after:content-['']";
+const trendActionVisualClassName =
+  "pointer-events-none inline-flex items-center justify-center gap-1 rounded-[calc(var(--radius)-0.18rem)] border";
 
 const rankTrendClientCache = new Map();
 const rankTrendAvailabilityCache = new Map();
@@ -970,32 +976,38 @@ function TrendMetricRow({ metric, windowLabel }) {
   );
 }
 
-export function RankTrendButton({ className = "", ...props }) {
+export function RankTrendButton({ className = "", density = "default", ...props }) {
+  const hitAreaClassName = density === "inline" ? trendActionInlineClassName : trendActionHitAreaClassName;
   return (
     <Button
       type="button"
-      variant="secondary"
-      size="xs"
-      className={`${trendActionButtonClassName} ${className}`.trim()}
+      variant="ghost"
+      data-touch="compact"
+      className={`${hitAreaClassName} ${className}`.trim()}
       {...props}
     >
-      <TrendingUpIcon data-icon="inline-start" />
-      趋势
+      <span className={`${trendActionVisualClassName} ${trendActionButtonClassName}`}>
+        <TrendingUpIcon data-icon="inline-start" />
+        趋势
+      </span>
     </Button>
   );
 }
 
-export function CompareActionButton({ className = "", ...props }) {
+export function CompareActionButton({ className = "", density = "default", ...props }) {
+  const hitAreaClassName = density === "inline" ? trendActionInlineClassName : trendActionHitAreaClassName;
   return (
     <Button
       type="button"
-      variant="secondary"
-      size="xs"
-      className={`${compareActionButtonClassName} ${className}`.trim()}
+      variant="ghost"
+      data-touch="compact"
+      className={`${hitAreaClassName} ${className}`.trim()}
       {...props}
     >
-      <ArrowLeftRightIcon data-icon="inline-start" />
-      对比
+      <span className={`${trendActionVisualClassName} ${compareActionButtonClassName}`}>
+        <ArrowLeftRightIcon data-icon="inline-start" />
+        对比
+      </span>
     </Button>
   );
 }
@@ -1130,7 +1142,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
               <Tabs value={activeWindowKey} onValueChange={setSelectedWindow} className="w-fit">
                 <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
                   {availableWindows.map((key) => (
-                    <TabsTrigger key={key} className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
+                    <TabsTrigger key={key} data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
                       {windows[key].label || cvTrendWindowFallbackLabels[key]}
                     </TabsTrigger>
                   ))}
@@ -1141,10 +1153,10 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                   aria-label="趋势曲线类型"
                   className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!"
                 >
-                  <TabsTrigger className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value="absolute">
+                  <TabsTrigger data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value="absolute">
                     绝对值
                   </TabsTrigger>
-                  <TabsTrigger className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value="increment">
+                  <TabsTrigger data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value="increment">
                     增量
                   </TabsTrigger>
                 </TabsList>

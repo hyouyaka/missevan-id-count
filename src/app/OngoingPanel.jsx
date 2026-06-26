@@ -29,6 +29,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { LazyImage } from "@/components/ui/lazy-image";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   isOngoingEmptyPaidDanmakuMetric,
@@ -44,10 +45,23 @@ const platformLabels = {
   manbo: "漫播",
 };
 
-const mobileMenuTabsListClassName =
-  "grid w-full justify-stretch rounded-none border-0! bg-transparent! shadow-none!";
-const mobileOngoingPlatformTabClassName = "h-7 min-w-0 px-1.5 text-sm!";
-const mobileOngoingWindowTabClassName = "h-7 min-w-0 px-1 text-[12px]! leading-none";
+const mobileOngoingTextTabsListClassName =
+  "grid h-8 min-h-8 w-fit justify-start rounded-none border-0! bg-transparent! p-0 shadow-none!";
+const mobileOngoingPlatformTabClassName =
+  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-2 text-base! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[&_.platform-tab-label-text]:font-bold data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[&_.platform-tab-label-text]:font-bold data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+const mobileOngoingWindowTabClassName =
+  "h-8 min-h-8 min-w-10 rounded-none border-0! bg-transparent! px-1.5 text-[12px]! font-medium leading-none text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+const mobileOngoingSelectedTabClassName =
+  "font-bold! text-primary! [text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)]";
+const mobileOngoingSelectedPlatformTabClassName =
+  `${mobileOngoingSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
+const desktopOngoingTextTabsListClassName =
+  "inline-flex h-8 min-h-8 w-fit justify-start rounded-none border-0! bg-transparent! p-0 shadow-none!";
+const desktopOngoingTabClassName =
+  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1.5 text-base! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+const desktopOngoingSelectedTabClassName = mobileOngoingSelectedTabClassName;
+const desktopOngoingSelectedPlatformTabClassName =
+  `${desktopOngoingSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
 
 const tagVariants = {
   猫耳: "missevanPlatform",
@@ -382,10 +396,10 @@ function OngoingCard({
                 <StarIcon className={isFavorite ? "fill-primary text-primary" : ""} />
               </Button>
             </div>
-            <div className="flex w-[5.35rem] shrink-0 flex-col items-center gap-1.5 sm:w-24">
-              <div className="relative size-[5.35rem] overflow-hidden rounded-md border border-border/70 bg-muted/50 sm:size-24">
+            <div className="relative flex w-[5.35rem] shrink-0 flex-col items-center sm:w-24">
+              <div className="relative size-[5.35rem] shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/50 sm:size-24">
                 {coverUrl ? (
-                  <img alt={item.name} className="size-full object-cover" src={coverUrl} />
+                  <LazyImage alt={item.name} className="size-full object-cover" src={coverUrl} />
                 ) : (
                   <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
                     暂无封面
@@ -398,14 +412,16 @@ function OngoingCard({
                 ) : null}
               </div>
               {canOpenTrend ? (
-                <div className="flex w-full justify-end overflow-visible">
-                  <div className="flex w-max flex-nowrap items-center gap-1">
+                <div className="absolute right-0 top-[5rem] flex h-11 w-max items-center justify-end overflow-visible sm:top-[5.75rem]">
+                  <div className="flex w-max flex-nowrap items-center justify-end gap-2">
                     <RankTrendButton
+                      density="inline"
                       onClick={openTrendDialog}
                       aria-label={`查看${item.name}趋势`}
                       title="查看趋势"
                     />
                     <CompareActionButton
+                      density="inline"
                       onClick={addCompareItem}
                       aria-label={`加入${item.name}对比`}
                       title="加入对比"
@@ -628,52 +644,81 @@ export function OngoingPanel({
   return (
     <div className="grid gap-4 sm:gap-5">
       <div className="px-1 py-1">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-base font-normal leading-6 tracking-tight">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h1 className="min-w-0 text-base font-normal leading-6 tracking-tight">
               {platformLabel}一周内更新：共{sortedItems.length}部
             </h1>
-            <div className="mt-1 text-xs leading-5 text-muted-foreground">
-              数据更新：{formatOngoingUpdatedAt(ongoingData?.updatedAt)}
+            <div className="shrink-0 text-xs leading-5 text-muted-foreground">
+              更新：{formatOngoingUpdatedAt(ongoingData?.updatedAt)}
             </div>
           </div>
-          <div className="grid gap-0 overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-sm sm:hidden">
-            <div className="flex h-[2.375rem] items-center gap-1.5 px-1.5">
-              <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="min-w-0 flex-[1.35] gap-0">
-                <TabsList aria-label="选择平台" className={`${mobileMenuTabsListClassName} grid-cols-2`}>
-                  {["missevan", "manbo"].map((platform) => (
-                    <TabsTrigger key={platform} className={mobileOngoingPlatformTabClassName} value={platform}>
-                      <PlatformTabLabel platform={platform} />
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-              <div className="h-6 w-px shrink-0 bg-border/80" />
-              <Tabs value={activeWindow} onValueChange={updateWindow} className="min-w-0 flex-[0.85] gap-0">
-                <TabsList aria-label="选择增量周期" className={`${mobileMenuTabsListClassName} grid-cols-3`}>
-                  {["3d", "7d", "30d"].map((key) => (
-                    <TabsTrigger key={key} className={mobileOngoingWindowTabClassName} value={key}>
-                      {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-            </div>
-          </div>
-          <div className="hidden flex-col gap-1 sm:flex sm:flex-row sm:items-center sm:justify-end lg:flex-row">
-            <Tabs value={selectedPlatform} onValueChange={updatePlatform}>
-              <TabsList aria-label="选择平台" className="grid w-full grid-cols-2 sm:w-fit">
+          <div className="flex min-h-8 items-center justify-between gap-3 sm:hidden">
+            <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="min-w-0 gap-0">
+              <TabsList
+                aria-label="选择平台"
+                variant="line"
+                className={`${mobileOngoingTextTabsListClassName} grid-cols-2`}
+              >
                 {["missevan", "manbo"].map((platform) => (
-                  <TabsTrigger key={platform} className="px-4" value={platform}>
+                  <TabsTrigger
+                    key={platform}
+                    data-touch="compact"
+                    className={`${mobileOngoingPlatformTabClassName} ${
+                      platform === selectedPlatform ? mobileOngoingSelectedPlatformTabClassName : ""
+                    }`}
+                    value={platform}
+                  >
+                    <PlatformTabLabel platform={platform} />
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <Tabs value={activeWindow} onValueChange={updateWindow} className="shrink-0 gap-0">
+              <TabsList
+                aria-label="选择增量周期"
+                variant="line"
+                className={`${mobileOngoingTextTabsListClassName} grid-cols-3 justify-end`}
+              >
+                {["3d", "7d", "30d"].map((key) => (
+                  <TabsTrigger
+                    key={key}
+                    data-touch="compact"
+                    className={`${mobileOngoingWindowTabClassName} ${
+                      key === activeWindow ? mobileOngoingSelectedTabClassName : ""
+                    }`}
+                    value={key}
+                  >
+                    {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+          <div className="hidden flex-col gap-1 sm:flex sm:flex-row sm:items-center sm:justify-end sm:gap-10 lg:flex-row lg:gap-12">
+            <Tabs value={selectedPlatform} onValueChange={updatePlatform}>
+              <TabsList aria-label="选择平台" className={`${desktopOngoingTextTabsListClassName} gap-4`}>
+                {["missevan", "manbo"].map((platform) => (
+                  <TabsTrigger
+                    key={platform}
+                    className={`${desktopOngoingTabClassName} ${
+                      platform === selectedPlatform ? desktopOngoingSelectedPlatformTabClassName : ""
+                    }`}
+                    value={platform}
+                  >
                     <PlatformTabLabel platform={platform} />
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
             <Tabs value={activeWindow} onValueChange={updateWindow}>
-              <TabsList aria-label="选择增量周期" className="grid w-full grid-cols-3 sm:w-fit">
+              <TabsList aria-label="选择增量周期" className={`${desktopOngoingTextTabsListClassName} gap-4`}>
                 {["3d", "7d", "30d"].map((key) => (
-                  <TabsTrigger key={key} className="px-3" value={key}>
+                  <TabsTrigger
+                    key={key}
+                    className={`${desktopOngoingTabClassName} ${key === activeWindow ? desktopOngoingSelectedTabClassName : ""}`}
+                    value={key}
+                  >
                     {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
                   </TabsTrigger>
                 ))}

@@ -10,7 +10,7 @@ Last updated: 2026-05-06
   - `server.js` for backend routing, cache orchestration, Upstash access, cooldown state, and task execution
   - `src/` for the browser UI
   - `shared/` for code shared across backend and frontend feature domains
-  - `electron/` for the desktop shell and Excel export IPC workflow
+  - `electron/` for the desktop shell
   - `envConfig.js` for controlled environment loading
 
 This document describes the current implementation, not the historical evolution of the repo. Generated outputs and temporary notes that happen to live in the repository are called out separately under **Repository Boundaries** and are not treated as source architecture.
@@ -27,7 +27,6 @@ This document describes the current implementation, not the historical evolution
    - Manbo search and analysis
    - Ongoing titles
    - Ranks and trends
-   - Desktop-only Excel report generation
 
 ### Backend Boot Flow
 1. `server.js` loads environment values through `loadLocalEnv()`.
@@ -36,10 +35,9 @@ This document describes the current implementation, not the historical evolution
 4. It sets `X-Backend-Version` on every response and uses frontend version input to compute version mismatch state.
 
 ### Electron Desktop Flow
-1. `electron/main.mjs` creates the desktop window and registers Excel IPC handlers.
+1. `electron/main.mjs` creates the desktop window.
 2. It starts the Express backend through `startServer(0)` on an ephemeral localhost port.
 3. It waits for `/health` to respond, then opens `/tool` in the browser window.
-4. Desktop-only Excel actions call into `electron/excelReport.mjs` through IPC and never bypass the backend UI flow.
 
 ### Development Flow
 - `vite.config.js` injects `__APP_VERSION__` from `package.json`.
@@ -56,13 +54,11 @@ This document describes the current implementation, not the historical evolution
 - `src/app/OngoingPanel.jsx`: ongoing titles UI
 - `src/app/rankTrendUi.jsx`: reusable trend dialog and charting UI
 - `electron/main.mjs`: Electron main process
-- `electron/excelReport.mjs`: template parsing and report workbook generation
 
 ### Shared Domain Modules
 - `shared/episodeRules.js`: paid/member/main-episode rules and danmaku overflow heuristics
 - `shared/ranksTrendUtils.js`: rank trend window calculation and metric normalization
 - `shared/ongoingUtils.js`: ongoing-title aggregation and window delta shaping
-- `shared/excelReportMeta.js`: Excel sheet names, headers, and theme metadata
 
 ### Data and Support Files
 - `data/`: checked-in seed/reference JSON snapshots
@@ -237,26 +233,6 @@ This subsystem is backed by shared domain utilities and Upstash snapshot keys.
 - The backend tags the response with schema version `3`.
 - Shared shaping logic lives in `shared/ongoingUtils.js`.
 - The frontend renders this data in `src/app/OngoingPanel.jsx`.
-
-## Desktop Excel Export Workflow
-
-The desktop report workflow is only active inside the Electron shell.
-
-### IPC Surface
-- `desktop-excel:pick-input-workbook`
-- `desktop-excel:pick-save-workbook`
-- `desktop-excel:read-file`
-- `desktop-excel:parse-template-workbook`
-- `desktop-excel:write-file`
-- `desktop-excel:write-report-workbook`
-- `desktop-excel:open-file`
-
-### Report Generation Flow
-1. The user selects an Excel template workbook.
-2. `parseTemplateWorkbook()` reads the Missevan and Manbo input sheets and validates title/type/ID columns.
-3. The UI groups calculated rows by platform and payment category.
-4. `buildReportWorkbook()` emits themed output sheets defined by `shared/excelReportMeta.js`.
-5. The desktop shell writes the generated file and can optionally open it on disk.
 
 ## Environment and Deployment Model
 
