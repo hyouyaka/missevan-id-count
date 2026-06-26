@@ -21,6 +21,7 @@ const outputPanelSource = readFileSync(new URL("./OutputPanel.jsx", import.meta.
 const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", import.meta.url), "utf8");
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
 const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url), "utf8");
+const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils.js", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
@@ -2458,18 +2459,19 @@ test("rank trend dialog dates historical rank badges", () => {
 });
 
 test("rank trend fetch does not reuse stale successful responses forever", () => {
-  const fetchStart = rankTrendUiSource.indexOf("export async function fetchRankTrendData");
+  const fetchStart = rankTrendDataSource.indexOf("export async function fetchRankTrendData");
   assert.notEqual(fetchStart, -1, "rank trend fetch helper should exist");
-  const fetchEnd = rankTrendUiSource.indexOf("export async function fetchRankTrendAvailabilityData", fetchStart);
+  const fetchEnd = rankTrendDataSource.indexOf("export async function fetchRankTrendAvailabilityData", fetchStart);
   assert.notEqual(fetchEnd, -1, "rank trend fetch helper should end before availability helper");
-  const fetchSource = rankTrendUiSource.slice(fetchStart, fetchEnd);
+  const fetchSource = rankTrendDataSource.slice(fetchStart, fetchEnd);
 
   assert.doesNotMatch(fetchSource, /if \(cached\?\.data\) \{\s*return cached\.data;\s*\}/);
   assert.match(fetchSource, /cache: "no-store"/);
 });
 
 test("search result trend eligibility uses historical availability lookup", () => {
-  assert.match(rankTrendUiSource, /export async function fetchRankTrendAvailabilityData/);
+  assert.match(rankTrendDataSource, /export async function fetchRankTrendAvailabilityData/);
+  assert.match(rankTrendUiSource, /fetchRankTrendAvailabilityData,[\s\S]*from "@\/app\/rankTrendData"/);
   assert.match(searchResultsSource, /fetchRankTrendAvailabilityData\(\{[\s\S]*ids: trendLookupIds/);
   assert.doesNotMatch(searchResultsSource, /fetchRanksTrendLookupData\(frontendVersion\)/);
   assert.doesNotMatch(searchResultsSource, /fetchOngoingTrendLookupData\(\{ platform, frontendVersion \}\)/);

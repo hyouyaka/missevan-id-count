@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeftRightIcon,
   BeanIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -18,6 +19,7 @@ import {
   PlayCircleIcon,
   ShoppingCartIcon,
   StarIcon,
+  TrendingUpIcon,
   UserSearchIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,13 +36,13 @@ import {
   fetchRankTrendAvailabilityData,
   fetchRankTrendData,
   logRankTrendOpen,
-  rankTrendTagVariants,
-  CompareActionButton,
-  RankTrendButton,
-  RankTrendDialog,
-} from "@/app/rankTrendUi";
+} from "@/app/rankTrendData";
 import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
+
+const RankTrendDialog = lazy(() =>
+  import("@/app/rankTrendUi").then((module) => ({ default: module.RankTrendDialog }))
+);
 
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
@@ -111,6 +113,64 @@ export function MetricLegend({ className = "" }) {
         })}
       </div>
     </div>
+  );
+}
+
+const rankTrendTagVariants = {
+  猫耳: "missevanPlatform",
+  漫播: "manboPlatform",
+  免费: "free",
+  会员: "member",
+  付费: "paid",
+  广播剧: "radioDrama",
+  有声剧: "audioDrama",
+  有声漫: "audioComic",
+};
+
+const trendActionButtonClassName =
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_srgb,var(--accent-success)_88%,black)] hover:text-[var(--accent-success-foreground)]";
+const compareActionButtonClassName =
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--primary)_34%,transparent)] bg-primary px-1 text-xs! text-primary-foreground shadow-[0_12px_24px_-16px_var(--primary)] hover:bg-[color-mix(in_srgb,var(--primary)_88%,black)] hover:text-primary-foreground";
+const trendActionHitAreaClassName =
+  "h-11 min-h-11 w-[58px] min-w-[58px] border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0";
+const trendActionInlineClassName =
+  "relative h-[22px] min-h-[22px] w-[50px] min-w-[50px] overflow-visible border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0 after:absolute after:inset-x-0 after:-inset-y-[11px] after:rounded-md after:content-['']";
+const trendActionVisualClassName =
+  "pointer-events-none inline-flex items-center justify-center gap-1 rounded-[calc(var(--radius)-0.18rem)] border";
+
+function RankTrendButton({ className = "", density = "default", ...props }) {
+  const hitAreaClassName = density === "inline" ? trendActionInlineClassName : trendActionHitAreaClassName;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      data-touch="compact"
+      className={`${hitAreaClassName} ${className}`.trim()}
+      {...props}
+    >
+      <span className={`${trendActionVisualClassName} ${trendActionButtonClassName}`}>
+        <TrendingUpIcon data-icon="inline-start" />
+        趋势
+      </span>
+    </Button>
+  );
+}
+
+function CompareActionButton({ className = "", density = "default", ...props }) {
+  const hitAreaClassName = density === "inline" ? trendActionInlineClassName : trendActionHitAreaClassName;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      data-touch="compact"
+      className={`${hitAreaClassName} ${className}`.trim()}
+      {...props}
+    >
+      <span className={`${trendActionVisualClassName} ${compareActionButtonClassName}`}>
+        <ArrowLeftRightIcon data-icon="inline-start" />
+        对比
+      </span>
+    </Button>
   );
 }
 
@@ -1169,14 +1229,16 @@ export function SearchResults({
                       ) : null}
                     </div>
 
-                    {canShowTrend ? (
-                      <RankTrendDialog
-                        open={trendDialog.open && String(trendDialog.item?.id) === String(item.id)}
-                        onOpenChange={closeTrendDialog}
-                        item={item}
-                        platform={platform}
-                        trendState={trendState}
-                      />
+                    {canShowTrend && trendDialog.open && String(trendDialog.item?.id) === String(item.id) ? (
+                      <Suspense fallback={null}>
+                        <RankTrendDialog
+                          open
+                          onOpenChange={closeTrendDialog}
+                          item={item}
+                          platform={platform}
+                          trendState={trendState}
+                        />
+                      </Suspense>
                     ) : null}
 
                     <div className={mobileResultActionsClass}>

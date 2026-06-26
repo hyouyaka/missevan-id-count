@@ -15,6 +15,35 @@ const backendTarget = `http://localhost:${Number(process.env.PORT) || 3000}`;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replaceAll("\\", "/");
+          if (!normalizedId.includes("/node_modules/")) {
+            return undefined;
+          }
+          if (
+            normalizedId.includes("/node_modules/react/") ||
+            normalizedId.includes("/node_modules/react-dom/") ||
+            normalizedId.includes("/node_modules/scheduler/")
+          ) {
+            return "vendor-react";
+          }
+          if (
+            normalizedId.includes("/node_modules/radix-ui/") ||
+            normalizedId.includes("/node_modules/@radix-ui/")
+          ) {
+            return "vendor-radix";
+          }
+          if (normalizedId.includes("/node_modules/lucide-react/")) {
+            return "vendor-icons";
+          }
+          return "vendor";
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

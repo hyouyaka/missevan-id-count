@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCwIcon,
   AlertTriangleIcon,
@@ -29,19 +29,11 @@ import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { FavoritesPanel } from "@/app/FavoritesPanel";
 import { HomeView } from "@/app/HomeView";
 import { MessageDialog } from "@/app/MessageDialog";
-import { OngoingPanel } from "@/app/OngoingPanel";
 import { OutputPanel } from "@/app/OutputPanel";
-import { RanksPanel } from "@/app/RanksPanel";
 import { SearchPanel } from "@/app/SearchPanel";
 import { SearchResults, MetricLegend } from "@/app/SearchResults";
 import { PlatformIdIcon } from "@/app/platformTabLabel";
-import { fetchRankTrendData } from "@/app/rankTrendUi";
-import {
-  buildTrendChartLines,
-  filterNonZeroTrendMetrics,
-  getTrendAxisLabelMarkers,
-  getTrendAxisY,
-} from "@/app/rankTrendChartUtils";
+import { fetchRankTrendData } from "@/app/rankTrendData";
 import { canParseShareUrl, decryptShareUrl, extractResolvedId } from "@/utils/manboCrypto";
 import {
   createFavoriteKey,
@@ -100,6 +92,14 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
+const RanksPanel = lazy(() =>
+  import("@/app/RanksPanel").then((module) => ({ default: module.RanksPanel }))
+);
+
+const OngoingPanel = lazy(() =>
+  import("@/app/OngoingPanel").then((module) => ({ default: module.OngoingPanel }))
+);
+
 const mainNavigationIconMap = {
   home: HouseIcon,
   search: CalculatorIcon,
@@ -107,6 +107,18 @@ const mainNavigationIconMap = {
   ranks: ChartNoAxesColumnIncreasingIcon,
   favorites: StarIcon,
 };
+
+function LazyRouteFallback({ title = "正在加载页面", description = "正在准备页面内容。" }) {
+  return (
+    <div className="grid gap-4 sm:gap-5">
+      <Alert className="border-border/70 bg-card/92">
+        <RefreshCwIcon className="size-4 animate-spin" />
+        <AlertTitle>{title}</AlertTitle>
+        <AlertDescription>{description}</AlertDescription>
+      </Alert>
+    </div>
+  );
+}
 
 function MainNavigationTabLabel({ platform }) {
   const Icon = mainNavigationIconMap[platform.key];
@@ -939,7 +951,27 @@ function buildCompareChartMetrics(items, windowKey, metricOption) {
     .filter(Boolean);
 }
 
-function CompareTrendChart({ items, windowKey, metricOption, chartMode }) {
+function CompareTrendChart({ items, windowKey, metricOption, chartMode, chartUtils }) {
+  const {
+    buildTrendChartLines,
+    filterNonZeroTrendMetrics,
+    getTrendAxisLabelMarkers,
+    getTrendAxisY,
+  } = chartUtils || {};
+
+  if (
+    typeof buildTrendChartLines !== "function" ||
+    typeof filterNonZeroTrendMetrics !== "function" ||
+    typeof getTrendAxisLabelMarkers !== "function" ||
+    typeof getTrendAxisY !== "function"
+  ) {
+    return (
+      <div className="flex h-56 items-center justify-center rounded-lg border border-dashed border-border bg-card text-sm text-muted-foreground">
+        正在加载趋势图
+      </div>
+    );
+  }
+
   const chartMetrics = filterNonZeroTrendMetrics(buildCompareChartMetrics(items, windowKey, metricOption));
   const chartData = buildTrendChartLines(chartMetrics, { chartMode });
   const axis = chartData?.axis || chartData?.axes?.left;
@@ -1043,6 +1075,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
   const [selectedWindow, setSelectedWindow] = useState("7d");
   const [selectedChartMode, setSelectedChartMode] = useState("absolute");
   const [trendItems, setTrendItems] = useState([]);
+  const [trendChartUtils, setTrendChartUtils] = useState(null);
   const [selectedCompareItemKeys, setSelectedCompareItemKeys] = useState(() => new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -1073,6 +1106,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
       setErrorMessage("");
       const loaded = [];
       try {
+        const chartUtils = await import("@/app/rankTrendChartUtils");
         for (const item of items) {
           const { response, data } = await fetchRankTrendData({
             platform: item.platform,
@@ -1090,6 +1124,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
           loaded.push({ ...item, trendData: data });
         }
         if (!cancelled) {
+          setTrendChartUtils(chartUtils);
           setTrendItems(loaded);
           setErrorMessage(loaded.length ? "" : "对比趋势数据暂不可用。");
         }
@@ -1269,7 +1304,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
               );
             })}
           </div>
-          {isLoading ? (
+          {isLoading || (!errorMessage && hasSelectedMetricOption && !trendChartUtils) ? (
             <Alert>
               <RefreshCwIcon className="size-4 animate-spin" />
               <AlertTitle>正在读取对比趋势</AlertTitle>
@@ -1286,6 +1321,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
               windowKey={selectedWindow}
               metricOption={selectedMetricOption}
               chartMode={selectedChartMode}
+              chartUtils={trendChartUtils}
             />
           )}
           {hasSelectedMetricOption ? (
@@ -3706,29 +3742,47 @@ export function ToolView({ initialAppConfig }) {
           onOpenSearchResult={openDramaInSearch}
         />
       ) : currentPlatform === "ranks" ? (
-        <RanksPanel
-          favoriteKeys={favoriteKeySet}
-          favoriteActionsDisabled={favoriteActionsDisabled}
-          frontendVersion={appConfig.frontendVersion}
-          handleVersionResponse={updateVersionStatusFromResponse}
-          routeState={toolRouteState}
-          onRouteStateChange={navigateToolRoute}
-          onToggleFavorite={toggleFavorite}
-          onOpenSearchResult={openDramaInSearch}
-          onAddCompareItem={addDramaToCompareBasket}
-        />
+        <Suspense
+          fallback={
+            <LazyRouteFallback
+              title="正在加载榜单"
+              description="正在准备完整榜单页，首页榜单缓存会继续复用。"
+            />
+          }
+        >
+          <RanksPanel
+            favoriteKeys={favoriteKeySet}
+            favoriteActionsDisabled={favoriteActionsDisabled}
+            frontendVersion={appConfig.frontendVersion}
+            handleVersionResponse={updateVersionStatusFromResponse}
+            routeState={toolRouteState}
+            onRouteStateChange={navigateToolRoute}
+            onToggleFavorite={toggleFavorite}
+            onOpenSearchResult={openDramaInSearch}
+            onAddCompareItem={addDramaToCompareBasket}
+          />
+        </Suspense>
       ) : currentPlatform === "ongoing" ? (
-        <OngoingPanel
-          favoriteKeys={favoriteKeySet}
-          favoriteActionsDisabled={favoriteActionsDisabled}
-          frontendVersion={appConfig.frontendVersion}
-          handleVersionResponse={updateVersionStatusFromResponse}
-          routeState={toolRouteState}
-          onRouteStateChange={navigateToolRoute}
-          onToggleFavorite={toggleFavorite}
-          onOpenSearchResult={openDramaInSearch}
-          onAddCompareItem={addDramaToCompareBasket}
-        />
+        <Suspense
+          fallback={
+            <LazyRouteFallback
+              title="正在加载追更"
+              description="正在准备完整追更页，首页连载缓存会继续复用。"
+            />
+          }
+        >
+          <OngoingPanel
+            favoriteKeys={favoriteKeySet}
+            favoriteActionsDisabled={favoriteActionsDisabled}
+            frontendVersion={appConfig.frontendVersion}
+            handleVersionResponse={updateVersionStatusFromResponse}
+            routeState={toolRouteState}
+            onRouteStateChange={navigateToolRoute}
+            onToggleFavorite={toggleFavorite}
+            onOpenSearchResult={openDramaInSearch}
+            onAddCompareItem={addDramaToCompareBasket}
+          />
+        </Suspense>
       ) : currentPlatform === "favorites" ? (
         <FavoritesPanel
           favorites={favoriteItems}

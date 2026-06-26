@@ -17,7 +17,7 @@ import {
   XIcon,
 } from "lucide-react";
 
-import { buildVersionedUrl, formatDeviceDateTime, formatPlainNumber, formatRankCompactCount } from "@/app/app-utils";
+import { formatDeviceDateTime, formatPlainNumber, formatRankCompactCount } from "@/app/app-utils";
 import {
   buildTrendChartLines as buildSingleAxisTrendChartLines,
   getTrendAxisLabelMarkers,
@@ -36,8 +36,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+export {
+  fetchRankTrendAvailabilityData,
+  fetchRankTrendData,
+  logRankTrendOpen,
+  RANK_TREND_CLIENT_SCHEMA_VERSION,
+} from "@/app/rankTrendData";
 
-export const RANK_TREND_CLIENT_SCHEMA_VERSION = 4;
 export const trendActionButtonClassName =
   "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_srgb,var(--accent-success)_88%,black)] hover:text-[var(--accent-success-foreground)]";
 export const compareActionButtonClassName =
@@ -49,9 +54,6 @@ const trendActionInlineClassName =
 const trendActionVisualClassName =
   "pointer-events-none inline-flex items-center justify-center gap-1 rounded-[calc(var(--radius)-0.18rem)] border";
 
-const rankTrendClientCache = new Map();
-const rankTrendAvailabilityCache = new Map();
-const RANK_TREND_AVAILABILITY_TTL_MS = 5 * 60 * 1000;
 const cvTrendWindowFallbackLabels = {
   "3w": "3周",
   "7w": "7周",
@@ -223,145 +225,6 @@ export function canShowRankTrend({ platform, rankKey, item, isMissevanPeak, deta
     return true;
   }
   return platform === "manbo" && rankKey !== "peak" && item?.type !== "peak";
-}
-
-export async function fetchRankTrendData({ platform, id, kind = "", frontendVersion }) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const normalizedId = String(id ?? "").trim();
-  const normalizedKind = String(kind ?? "").trim();
-  const normalizedVersion = String(frontendVersion ?? "").trim();
-  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedKind}:${normalizedPlatform}:${normalizedId}`;
-  const cached = rankTrendClientCache.get(cacheKey);
-  if (cached?.promise) {
-    return cached.promise;
-  }
-
-  const params = new URLSearchParams({
-    id: normalizedId,
-    schema: String(RANK_TREND_CLIENT_SCHEMA_VERSION),
-  });
-  if (normalizedKind) {
-    params.set("kind", normalizedKind);
-  }
-  if (normalizedPlatform) {
-    params.set("platform", normalizedPlatform);
-  }
-  const promise = (async () => {
-    try {
-      const response = await fetch(buildVersionedUrl(`/ranks/trends?${params.toString()}`, frontendVersion), {
-        cache: "no-store",
-      });
-      const data = await response.json();
-      const payload = { response, data };
-      if (response.ok && data?.success) {
-        rankTrendClientCache.set(cacheKey, { data: payload, promise: null });
-      }
-      return payload;
-    } finally {
-      const current = rankTrendClientCache.get(cacheKey);
-      if (current?.promise === promise) {
-        rankTrendClientCache.set(cacheKey, { data: current.data || null, promise: null });
-      }
-    }
-  })();
-
-  rankTrendClientCache.set(cacheKey, { data: null, promise });
-  return promise;
-}
-
-export async function fetchRankTrendAvailabilityData({ platform, ids, frontendVersion } = {}) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const normalizedIds = Array.from(
-    new Set(
-      (Array.isArray(ids) ? ids : [])
-        .map((id) => String(id ?? "").trim())
-        .filter(Boolean)
-    )
-  ).sort();
-  if (!normalizedIds.length || (normalizedPlatform !== "missevan" && normalizedPlatform !== "manbo")) {
-    return { response: { ok: false }, data: null };
-  }
-
-  const normalizedVersion = String(frontendVersion ?? "").trim();
-  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedPlatform}:${normalizedIds.join("|")}`;
-  const now = Date.now();
-  const cached = rankTrendAvailabilityCache.get(cacheKey);
-  if (cached?.data && now - cached.loadedAt < RANK_TREND_AVAILABILITY_TTL_MS) {
-    return cached.data;
-  }
-  if (cached?.promise) {
-    return cached.promise;
-  }
-
-  const params = new URLSearchParams({
-    platform: normalizedPlatform,
-    schema: String(RANK_TREND_CLIENT_SCHEMA_VERSION),
-    _: String(Date.now()),
-  });
-  normalizedIds.forEach((id) => params.append("id", id));
-  const promise = (async () => {
-    try {
-      const response = await fetch(buildVersionedUrl(`/ranks/trends/availability?${params.toString()}`, frontendVersion), {
-        cache: "no-store",
-      });
-      const data = await response.json();
-      const payload = { response, data };
-      if (response.ok && data?.success) {
-        rankTrendAvailabilityCache.set(cacheKey, {
-          data: payload,
-          loadedAt: Date.now(),
-          promise: null,
-        });
-      }
-      return payload;
-    } finally {
-      const current = rankTrendAvailabilityCache.get(cacheKey);
-      if (current?.promise === promise) {
-        rankTrendAvailabilityCache.set(cacheKey, {
-          data: current.data || null,
-          loadedAt: current.loadedAt || 0,
-          promise: null,
-        });
-      }
-    }
-  })();
-
-  rankTrendAvailabilityCache.set(cacheKey, {
-    data: cached?.data || null,
-    loadedAt: cached?.loadedAt || 0,
-    promise,
-  });
-  return promise;
-}
-
-export function logRankTrendOpen({
-  platform,
-  id,
-  name,
-  source,
-  rankKey,
-  frontendVersion,
-} = {}) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const normalizedId = String(id ?? "").trim();
-  if (!normalizedPlatform || !normalizedId) {
-    return;
-  }
-
-  fetch(buildVersionedUrl("/usage-log", frontendVersion), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      platform: normalizedPlatform,
-      action: "trend",
-      dramaId: normalizedId,
-      dramaName: String(name ?? "").trim(),
-      source: String(source ?? "").trim(),
-      rankKey: String(rankKey ?? "").trim(),
-    }),
-  }).catch((error) => {
-    console.error("Failed to log rank trend open", error);
-  });
 }
 
 function getGenericPaymentTag(item, platform) {
