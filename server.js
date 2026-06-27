@@ -10061,6 +10061,7 @@ app.post("/getdramacards", async (req, res) => {
   });
   const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
   const usageTitles = normalizeStringArray(req.body?.titles, inputItems.length);
+  const usageSource = normalizeStatsTaskSource(req.body?.source);
   const results = [];
   const failedIds = [];
   const failedItems = [];
@@ -10077,6 +10078,7 @@ app.post("/getdramacards", async (req, res) => {
         .filter((item) => item.type === "sound")
         .map((item) => Number(item.id)),
       ...(usageTitles.length ? { titles: usageTitles } : {}),
+      ...(usageSource ? { source: usageSource } : {}),
       count: inputItems.length,
     });
   }
@@ -10476,6 +10478,7 @@ app.post("/manbo/getdramacards", async (req, res) => {
   const items = normalizeRawInputItems(req.body.items || []);
   const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
   const usageTitles = normalizeStringArray(req.body?.titles, items.length);
+  const usageSource = normalizeStatsTaskSource(req.body?.source);
   const results = [];
   const failedItems = [];
   let accessDenied = false;
@@ -10486,6 +10489,7 @@ app.post("/manbo/getdramacards", async (req, res) => {
       action: usageAction,
       items: items.map((item) => item.raw),
       ...(usageTitles.length ? { titles: usageTitles } : {}),
+      ...(usageSource ? { source: usageSource } : {}),
       count: items.length,
     });
   }

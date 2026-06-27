@@ -2639,7 +2639,7 @@ export function ToolView({ initialAppConfig }) {
     return normalizedTitles.slice(0, dramaIds.length);
   }
 
-  async function openDramaInSearch({ platform, id, ids, titles, name, paymentLabel, contentTypeLabel, usageAction }) {
+  async function openDramaInSearch({ platform, id, ids, titles, name, paymentLabel, contentTypeLabel, usageAction, usageSource }) {
     const targetPlatform = platform === "manbo" ? "manbo" : "missevan";
     const dramaIds = Array.from(
       new Set(
@@ -2655,6 +2655,7 @@ export function ToolView({ initialAppConfig }) {
     const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result"].includes(String(usageAction ?? "").trim())
       ? String(usageAction).trim()
       : "";
+    const normalizedUsageSource = String(usageSource ?? "").trim().slice(0, 40);
     if (!dramaIds.length) {
       toast.error("打开搜索结果失败，请稍后重试。");
       return;
@@ -2679,9 +2680,14 @@ export function ToolView({ initialAppConfig }) {
 
     try {
       const endpoint = targetPlatform === "manbo" ? "/manbo/getdramacards" : "/getdramacards";
+      const usageFields = {
+        ...(dramaTitles.length ? { titles: dramaTitles } : {}),
+        ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}),
+        ...(normalizedUsageSource ? { source: normalizedUsageSource } : {}),
+      };
       const body = targetPlatform === "manbo"
-        ? { items: dramaIds.map((dramaId) => ({ raw: dramaId })), ...(dramaTitles.length ? { titles: dramaTitles } : {}), ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) }
-        : { drama_ids: dramaIds, ...(dramaTitles.length ? { titles: dramaTitles } : {}), ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}) };
+        ? { items: dramaIds.map((dramaId) => ({ raw: dramaId })), ...usageFields }
+        : { drama_ids: dramaIds, ...usageFields };
       const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
         method: "POST",
         headers: { "Content-Type": "application/json" },

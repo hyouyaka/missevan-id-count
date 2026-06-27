@@ -183,6 +183,7 @@ function OngoingMiniItem({ item, platform, onOpenSearchResult }) {
       paymentLabel: item.payment_label,
       contentTypeLabel: item.content_type_label,
       usageAction: "ongoing_open_search_result",
+      usageSource: "homeview",
     });
   }
 
@@ -287,6 +288,7 @@ function RankDramaItem({ item, platform, onOpenSearchResult }) {
       paymentLabel: item?.payment_label || item?.paymentLabel || item?.payStatus || "",
       contentTypeLabel: item?.content_type_label || item?.contentTypeLabel || "",
       usageAction: "ranks_open_search_result",
+      usageSource: "homeview",
     });
   }
 

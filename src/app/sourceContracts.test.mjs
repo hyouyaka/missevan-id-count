@@ -291,13 +291,28 @@ test("home view maps requested sections and see-more routes", () => {
 });
 
 test("home drama titles open the shared statistics result flow", () => {
+  const ongoingItemStart = homeViewSource.indexOf("function OngoingMiniItem");
+  const ongoingItemEnd = homeViewSource.indexOf("function OngoingPlatformList", ongoingItemStart);
+  const rankItemStart = homeViewSource.indexOf("function RankDramaItem");
+  const rankItemEnd = homeViewSource.indexOf("function RankCvItem", rankItemStart);
+
+  assert.notEqual(ongoingItemStart, -1, "home ongoing item should exist");
+  assert.notEqual(ongoingItemEnd, -1, "home ongoing item end marker should exist");
+  assert.notEqual(rankItemStart, -1, "home rank item should exist");
+  assert.notEqual(rankItemEnd, -1, "home rank item end marker should exist");
+
+  const ongoingItemSource = homeViewSource.slice(ongoingItemStart, ongoingItemEnd);
+  const rankItemSource = homeViewSource.slice(rankItemStart, rankItemEnd);
+
   assert.match(toolViewSource, /<HomeView[\s\S]*onOpenSearchResult=\{openDramaInSearch\}/);
   assert.match(homeViewSource, /export function HomeView\(\{[\s\S]*onOpenSearchResult[\s\S]*\}\)/);
-  assert.match(homeViewSource, /function OngoingMiniItem\(\{ item, platform, onOpenSearchResult \}\)/);
-  assert.match(homeViewSource, /usageAction: "ongoing_open_search_result"/);
-  assert.match(homeViewSource, /function RankDramaItem\(\{ item, platform, onOpenSearchResult \}\)/);
-  assert.match(homeViewSource, /const searchDramaIds = isMissevanPeak[\s\S]*item\.drama_ids[\s\S]*\[item\.id\]/);
-  assert.match(homeViewSource, /usageAction: "ranks_open_search_result"/);
+  assert.match(ongoingItemSource, /function OngoingMiniItem\(\{ item, platform, onOpenSearchResult \}\)/);
+  assert.match(ongoingItemSource, /usageAction: "ongoing_open_search_result"/);
+  assert.match(ongoingItemSource, /usageSource: "homeview"/);
+  assert.match(rankItemSource, /function RankDramaItem\(\{ item, platform, onOpenSearchResult \}\)/);
+  assert.match(rankItemSource, /const searchDramaIds = isMissevanPeak[\s\S]*item\.drama_ids[\s\S]*\[item\.id\]/);
+  assert.match(rankItemSource, /usageAction: "ranks_open_search_result"/);
+  assert.match(rankItemSource, /usageSource: "homeview"/);
   assert.match(homeViewSource, /onOpenSearchResult=\{onOpenSearchResult\}/);
   assert.match(homeViewSource, /underline underline-offset-4 hover:text-primary/);
   assert.match(homeViewSource, /className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary/);
@@ -953,16 +968,36 @@ test("external drama title jump includes titles in import usage logs", () => {
   const openEnd = toolViewSource.indexOf("function beginRun", openStart);
   assert.notEqual(openEnd, -1, "openDramaInSearch should end before stats run helpers");
   const openSource = toolViewSource.slice(openStart, openEnd);
+  const missevanRouteStart = serverSource.indexOf('app.post("/getdramacards"');
+  const missevanRouteEnd = serverSource.indexOf('app.post("/getdramas"', missevanRouteStart);
+  const manboRouteStart = serverSource.indexOf('app.post("/manbo/getdramacards"');
+  const manboRouteEnd = serverSource.indexOf('app.post("/manbo/getdramas"', manboRouteStart);
+
+  assert.notEqual(missevanRouteStart, -1, "Missevan dramacards route should exist");
+  assert.notEqual(missevanRouteEnd, -1, "Missevan dramacards route end marker should exist");
+  assert.notEqual(manboRouteStart, -1, "Manbo dramacards route should exist");
+  assert.notEqual(manboRouteEnd, -1, "Manbo dramacards route end marker should exist");
+
+  const missevanRouteSource = serverSource.slice(missevanRouteStart, missevanRouteEnd);
+  const manboRouteSource = serverSource.slice(manboRouteStart, manboRouteEnd);
 
   assert.match(openSource, /titles,/);
+  assert.match(openSource, /usageSource/);
   assert.match(openSource, /const dramaTitles = normalizeDramaSearchTitles\(titles, dramaIds, dramaName\)/);
+  assert.match(openSource, /const normalizedUsageSource = String\(usageSource \?\? ""\)\.trim\(\)\.slice\(0, 40\)/);
   assert.match(openSource, /titles: dramaTitles/);
+  assert.match(openSource, /source: normalizedUsageSource/);
   assert.match(ranksPanelSource, /titles: searchDramaIds\.map\(\(\) => item\.name\)/);
   assert.match(ranksPanelSource, /titles: \[work\.title\]/);
   assert.match(ongoingPanelSource, /titles: \[item\.name\]/);
-  assert.match(serverSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, inputItems\.length\)/);
-  assert.match(serverSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, items\.length\)/);
-  assert.match(serverSource, /\.\.\.\(usageTitles\.length \? \{ titles: usageTitles \} : \{\}\)/);
+  assert.match(missevanRouteSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, inputItems\.length\)/);
+  assert.match(missevanRouteSource, /const usageSource = normalizeStatsTaskSource\(req\.body\?\.source\)/);
+  assert.match(missevanRouteSource, /\.\.\.\(usageTitles\.length \? \{ titles: usageTitles \} : \{\}\)/);
+  assert.match(missevanRouteSource, /\.\.\.\(usageSource \? \{ source: usageSource \} : \{\}\)/);
+  assert.match(manboRouteSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, items\.length\)/);
+  assert.match(manboRouteSource, /const usageSource = normalizeStatsTaskSource\(req\.body\?\.source\)/);
+  assert.match(manboRouteSource, /\.\.\.\(usageTitles\.length \? \{ titles: usageTitles \} : \{\}\)/);
+  assert.match(manboRouteSource, /\.\.\.\(usageSource \? \{ source: usageSource \} : \{\}\)/);
 });
 
 test("rank and ongoing panels render cached data before background refresh", () => {
