@@ -8,7 +8,7 @@ import {
   SignalHighIcon,
 } from "lucide-react";
 
-import { formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
+import { formatDeviceDateTime, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
@@ -69,6 +69,31 @@ function formatHomeDate(value) {
   })
     .format(date)
     .replaceAll("/", "-");
+}
+
+function formatHomeUpdatedLabel(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  let date;
+  if (value instanceof Date) {
+    date = value;
+  } else if (typeof value === "number" && Number.isFinite(value)) {
+    date = new Date(value);
+  } else if (/^\d{11,}$/.test(normalized)) {
+    date = new Date(Number(normalized));
+  } else if (/^\d{10}$/.test(normalized)) {
+    date = new Date(Number(normalized) * 1000);
+  } else {
+    date = new Date(normalized);
+  }
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return `${formatDeviceDateTime(date)} 更新`;
 }
 
 function formatCompactCount(value) {
@@ -227,13 +252,20 @@ function OngoingMiniItem({ item, platform, onOpenSearchResult }) {
   );
 }
 
-function OngoingPlatformList({ platform, items, totalCount, onNavigateRoute, onOpenSearchResult }) {
+function OngoingPlatformList({ platform, items, totalCount, updatedAt, onNavigateRoute, onOpenSearchResult }) {
   return (
     <Card className="w-full min-w-[min(370px,100%)] border-border/75 bg-card/96 py-0 shadow-[0_18px_42px_-34px_rgba(15,23,42,0.22)]">
       <CardContent className="flex min-w-0 flex-col gap-2 p-3 sm:p-4">
-        <div className="flex items-center gap-2 px-1 text-sm font-semibold text-primary">
-          <PlatformTabLabel platform={platform} />
-          <span className="tabular-nums">{totalCount}</span>
+        <div className="flex min-w-0 items-start gap-2 px-1 text-sm font-semibold text-primary">
+          <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
+            <PlatformTabLabel platform={platform} />
+            <span className="tabular-nums">{totalCount}</span>
+          </span>
+          {formatHomeUpdatedLabel(updatedAt) ? (
+            <span className="translate-y-1 shrink-0 whitespace-nowrap text-[0.68rem] leading-4 font-normal text-muted-foreground">
+              {formatHomeUpdatedLabel(updatedAt)}
+            </span>
+          ) : null}
         </div>
         <div className="grid gap-1">
           {items.length ? (
@@ -347,13 +379,22 @@ function RankCvItem({ item }) {
   );
 }
 
-function HomeRankCard({ platform, rankConfig, rank, onNavigateRoute, onOpenSearchResult }) {
+function HomeRankCard({ platform, rankConfig, rank, publishedAt, onNavigateRoute, onOpenSearchResult }) {
   const items = (rank?.items || []).slice(0, 3);
   const isCvRank = rankConfig.itemType === "cv";
   return (
     <Card className="w-[320px] min-w-0 border-border/75 bg-card/96 py-0 shadow-[0_18px_42px_-34px_rgba(15,23,42,0.22)]">
       <CardContent className="flex min-h-[17rem] flex-col gap-3 p-4">
-        <h3 className="line-clamp-1 text-base font-semibold leading-6 text-primary">{rankConfig.displayTitle || rankConfig.title}</h3>
+        <div className="flex min-w-0 items-start gap-2">
+          <h3 className="line-clamp-1 min-w-0 text-base font-semibold leading-6 text-primary">
+            {rankConfig.displayTitle || rankConfig.title}
+          </h3>
+          {formatHomeUpdatedLabel(publishedAt) ? (
+            <span className="translate-y-1 shrink-0 whitespace-nowrap text-[0.65rem] leading-4 text-muted-foreground">
+              {formatHomeUpdatedLabel(publishedAt)}
+            </span>
+          ) : null}
+        </div>
         <div className="grid flex-1 gap-3">
           {items.length ? (
             items.map((item) =>
@@ -523,6 +564,7 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
               platform="missevan"
               items={ongoingItems.missevan}
               totalCount={ongoingCounts.missevan}
+              updatedAt={ongoingByPlatform.missevan?.updatedAt}
               onNavigateRoute={onNavigateRoute}
               onOpenSearchResult={onOpenSearchResult}
             />
@@ -530,6 +572,7 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
               platform="manbo"
               items={ongoingItems.manbo}
               totalCount={ongoingCounts.manbo}
+              updatedAt={ongoingByPlatform.manbo?.updatedAt}
               onNavigateRoute={onNavigateRoute}
               onOpenSearchResult={onOpenSearchResult}
             />
@@ -550,6 +593,11 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
                   platform={selectedRankPlatform}
                   rankConfig={rankConfig}
                   rank={getRankByConfig(rankData, selectedRankPlatform, rankConfig)}
+                  publishedAt={
+                    rankConfig.categoryKey === "cv"
+                      ? rankData?.meta?.cv?.publishedAt
+                      : rankData?.meta?.normal?.publishedAt
+                  }
                   onNavigateRoute={onNavigateRoute}
                   onOpenSearchResult={onOpenSearchResult}
                 />

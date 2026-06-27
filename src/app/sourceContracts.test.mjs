@@ -318,6 +318,36 @@ test("home drama titles open the shared statistics result flow", () => {
   assert.match(homeViewSource, /className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary/);
 });
 
+test("home section subtitles show platform and rank publish times", () => {
+  const ongoingListStart = homeViewSource.indexOf("function OngoingPlatformList");
+  const ongoingListEnd = homeViewSource.indexOf("function RankDramaItem", ongoingListStart);
+  const rankCardStart = homeViewSource.indexOf("function HomeRankCard");
+  const rankCardEnd = homeViewSource.indexOf("export function HomeView", rankCardStart);
+
+  assert.notEqual(ongoingListStart, -1, "home ongoing platform list should exist");
+  assert.notEqual(ongoingListEnd, -1, "home ongoing platform list end marker should exist");
+  assert.notEqual(rankCardStart, -1, "home rank card should exist");
+  assert.notEqual(rankCardEnd, -1, "home rank card end marker should exist");
+
+  const ongoingListSource = homeViewSource.slice(ongoingListStart, ongoingListEnd);
+  const rankCardSource = homeViewSource.slice(rankCardStart, rankCardEnd);
+
+  assert.match(homeViewSource, /import \{ formatDeviceDateTime, formatPlainNumber, getBackendVersionFromResponse \} from "@\/app\/app-utils"/);
+  assert.match(homeViewSource, /function formatHomeUpdatedLabel\(value\)/);
+  assert.match(homeViewSource, /return `\$\{formatDeviceDateTime\(date\)\} 更新`/);
+  assert.match(ongoingListSource, /function OngoingPlatformList\(\{ platform, items, totalCount, updatedAt,/);
+  assert.match(ongoingListSource, /inline-flex shrink-0 items-center gap-2 whitespace-nowrap/);
+  assert.match(ongoingListSource, /translate-y-1/);
+  assert.match(ongoingListSource, /\{formatHomeUpdatedLabel\(updatedAt\)\}/);
+  assert.match(homeViewSource, /updatedAt=\{ongoingByPlatform\.missevan\?\.updatedAt\}/);
+  assert.match(homeViewSource, /updatedAt=\{ongoingByPlatform\.manbo\?\.updatedAt\}/);
+  assert.match(rankCardSource, /function HomeRankCard\(\{ platform, rankConfig, rank, publishedAt,/);
+  assert.match(rankCardSource, /translate-y-1/);
+  assert.match(rankCardSource, /\{formatHomeUpdatedLabel\(publishedAt\)\}/);
+  assert.match(homeViewSource, /rankConfig\.categoryKey === "cv"\s*\? rankData\?\.meta\?\.cv\?\.publishedAt\s*: rankData\?\.meta\?\.normal\?\.publishedAt/);
+  assert.doesNotMatch(homeViewSource, /未知更新/);
+});
+
 test("home view keeps see-more links below lists instead of top-right actions", () => {
   assert.match(homeViewSource, /title="一周内更新"/);
   assert.match(homeViewSource, /title="榜单"/);
@@ -354,7 +384,7 @@ test("home update and rank cards use annotated metrics and horizontal sizing", (
   assert.match(homeViewSource, /ongoingCounts/);
   assert.match(homeViewSource, /ongoingCounts\.missevan/);
   assert.match(homeViewSource, /ongoingCounts\.manbo/);
-  assert.match(homeViewSource, /function OngoingPlatformList\(\{ platform, items, totalCount, onNavigateRoute, onOpenSearchResult \}\)/);
+  assert.match(homeViewSource, /function OngoingPlatformList\(\{ platform, items, totalCount, updatedAt, onNavigateRoute, onOpenSearchResult \}\)/);
   assert.match(homeViewSource, /<PlatformTabLabel platform=\{platform\} \/>[\s\S]*\{totalCount\}/);
   assert.doesNotMatch(homeViewSource, /selectedOngoingPlatform/);
   assert.doesNotMatch(homeViewSource, /ariaLabel="选择更新平台"/);

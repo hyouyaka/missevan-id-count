@@ -57,9 +57,24 @@ test("rank response appends normalized CV ranks per platform", async () => {
     },
   };
 
-  const response = buildNormalizedRanksResponse(snapshot, null, cvSnapshot);
+  const response = buildNormalizedRanksResponse(snapshot, null, cvSnapshot, {
+    meta: {
+      normal: {
+        updatedAt: "2026-06-10T08:00:00+00:00",
+        publishedAt: "2026-06-10T08:05:00+00:00",
+      },
+      cv: {
+        updatedAt: "2026-06-10T09:30:00+00:00",
+        publishedAt: "2026-06-10T09:35:00+00:00",
+      },
+    },
+  });
 
-  assert.equal(response.schemaVersion, 4);
+  assert.equal(response.schemaVersion, 5);
+  assert.deepEqual(response.meta, {
+    normal: { publishedAt: "2026-06-10T08:05:00+00:00" },
+    cv: { publishedAt: "2026-06-10T09:35:00+00:00" },
+  });
   assert.deepEqual(response.cvSummary, {
     updatedAt: "2026-06-10T09:30:00+00:00",
     missevanDramaCount: 842,
@@ -185,10 +200,200 @@ test("rank response keeps ordinary ranks when CV snapshot is unavailable", async
     null
   );
 
-  assert.equal(response.schemaVersion, 4);
+  assert.equal(response.schemaVersion, 5);
+  assert.deepEqual(response.meta, {
+    normal: { publishedAt: "" },
+    cv: { publishedAt: "" },
+  });
   assert.equal(response.cvSummary.updatedAt, "");
   assert.equal(response.platforms.missevan.categories.some((category) => category.key === "cv"), false);
   assert.equal(response.platforms.manbo.categories.some((category) => category.key === "cv"), false);
+});
+
+test("cold ranks response reads and exposes published times from ranks meta", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  let metaCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: null,
+    peakTrendSnapshot: null,
+    cvSnapshot: null,
+    cvTrendSnapshots: null,
+    cvBaselineSnapshot: null,
+    normalUpdatedAt: "",
+    cvUpdatedAt: "",
+    response: null,
+    loadedAt: 0,
+    loadPromise: null,
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadFailedAt: 0,
+    metaLoadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const result = await getCachedRanksResponse({
+    now: Date.parse("2026-06-20T12:00:00.000Z"),
+    readNormalRanksBundle: async () => ({
+      snapshot: {
+        _meta: { updated_at: "normal-version" },
+        missevan: { ranks: {}, dramas: {} },
+        manbo: { ranks: {}, dramas: {} },
+      },
+      peakTrendSnapshot: null,
+      updatedAt: "normal-version",
+    }),
+    readCvRanksBundle: async () => ({
+      cvSnapshot: { generated_at: "cv-version", rankings: {} },
+      cvTrendSnapshots: null,
+      cvBaselineSnapshot: null,
+      updatedAt: "cv-version",
+    }),
+    readRanksMeta: async () => {
+      metaCalls += 1;
+      return {
+        normal: {
+          updatedAt: "normal-version",
+          publishedAt: "2026-06-20T08:05:00+00:00",
+        },
+        cv: {
+          updatedAt: "cv-version",
+          publishedAt: "2026-06-19T04:10:00+00:00",
+        },
+      };
+    },
+  });
+
+  assert.equal(result.cacheStatus, "cold-refresh");
+  assert.equal(metaCalls, 1);
+  assert.deepEqual(result.response.meta, {
+    normal: { publishedAt: "2026-06-20T08:05:00+00:00" },
+    cv: { publishedAt: "2026-06-19T04:10:00+00:00" },
+  });
+});
+
+test("cold ranks response keeps rank data when ranks meta is unavailable", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+
+  __setRanksCacheForTest({
+    normalSnapshot: null,
+    peakTrendSnapshot: null,
+    cvSnapshot: null,
+    cvTrendSnapshots: null,
+    cvBaselineSnapshot: null,
+    normalUpdatedAt: "",
+    cvUpdatedAt: "",
+    response: null,
+    loadedAt: 0,
+    loadPromise: null,
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadFailedAt: 0,
+    metaLoadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    const result = await getCachedRanksResponse({
+      now: Date.parse("2026-06-20T12:00:00.000Z"),
+      readNormalRanksBundle: async () => ({
+        snapshot: {
+          _meta: { updated_at: "normal-version" },
+          missevan: { ranks: {}, dramas: {} },
+          manbo: { ranks: {}, dramas: {} },
+        },
+        peakTrendSnapshot: null,
+        updatedAt: "normal-version",
+      }),
+      readCvRanksBundle: async () => ({
+        cvSnapshot: null,
+        cvTrendSnapshots: null,
+        cvBaselineSnapshot: null,
+        updatedAt: "",
+      }),
+      readRanksMeta: async () => {
+        throw new Error("meta unavailable");
+      },
+    });
+
+    assert.equal(result.response.success, true);
+    assert.deepEqual(result.response.meta, {
+      normal: { publishedAt: "" },
+      cv: { publishedAt: "" },
+    });
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test("cached ranks response syncs published times when meta versions are unchanged", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "normal-version" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "cv-version", rankings: {} },
+    cvTrendSnapshots: null,
+    cvBaselineSnapshot: null,
+    normalUpdatedAt: "normal-version",
+    cvUpdatedAt: "cv-version",
+    response: {
+      success: true,
+      schemaVersion: 5,
+      updatedAt: "normal-version",
+      cvSummary: { updatedAt: "cv-version" },
+      meta: {
+        normal: { updatedAt: "normal-version", publishedAt: "old-normal-published" },
+        cv: { updatedAt: "cv-version", publishedAt: "old-cv-published" },
+      },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T02:34:00.000Z"),
+    loadPromise: null,
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadFailedAt: 0,
+    metaLoadPromise: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const result = await getCachedRanksResponse({
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: {
+        updatedAt: "normal-version",
+        publishedAt: "2026-06-15T00:40:00+00:00",
+      },
+      cv: {
+        updatedAt: "cv-version",
+        publishedAt: "2026-06-12T04:10:00+00:00",
+      },
+    }),
+    readNormalRanksBundle: async () => {
+      throw new Error("normal bundle should not be refreshed");
+    },
+    readCvRanksBundle: async () => {
+      throw new Error("CV bundle should not be refreshed");
+    },
+  });
+
+  assert.equal(result.cacheStatus, "meta-refresh");
+  assert.deepEqual(result.response.meta, {
+    normal: { publishedAt: "2026-06-15T00:40:00+00:00" },
+    cv: { publishedAt: "2026-06-12T04:10:00+00:00" },
+  });
 });
 
 test("rank meta probe schedule uses fixed UTC-04 ordinary script phases", async () => {
@@ -387,7 +592,7 @@ test("cached ranks response refreshes normal snapshot when meta normal version a
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -451,7 +656,7 @@ test("cached ranks response throttles stale fallback meta probes outside active 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -509,7 +714,7 @@ test("cached ranks response periodically probes meta even when idle response is 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -571,7 +776,7 @@ test("cached ranks response backs off fallback meta probe failures", async () =>
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -629,7 +834,7 @@ test("cached ranks response reports meta-refresh when active probe reads unchang
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       updatedAt: "2026-06-14T20:37:24-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -674,7 +879,7 @@ test("cached ranks response records meta versions after refresh to avoid repeate
     cvUpdatedAt: "old-cv",
     response: {
       success: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
       platforms: {
@@ -850,7 +1055,7 @@ test("admin ranks force refresh does not partially mutate cache when a requested
     cvUpdatedAt: "old-cv",
     response: {
       success: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
     },
@@ -996,25 +1201,35 @@ test("admin ranks non-force refresh does not poison a cold cache when meta is un
   assert.equal(__getRanksCacheForTest().response, null);
 });
 
-test("rank response cache validator changes when only CV ranks update", async () => {
+test("rank response cache validator changes when rank versions or published times update", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { getRanksResponseCacheValidator } = await import("./server.js");
 
   const normalVersion = "2026-06-12T23:10:00+00:00";
   const firstValidator = getRanksResponseCacheValidator({
-    schemaVersion: 4,
+    schemaVersion: 5,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-12T04:04:24+00:00" },
+    meta: {
+      normal: { publishedAt: "2026-06-12T23:15:00+00:00" },
+      cv: { publishedAt: "2026-06-12T04:10:00+00:00" },
+    },
   });
   const secondValidator = getRanksResponseCacheValidator({
-    schemaVersion: 4,
+    schemaVersion: 5,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-13T04:04:24+00:00" },
+    meta: {
+      normal: { publishedAt: "2026-06-13T23:15:00+00:00" },
+      cv: { publishedAt: "2026-06-13T04:10:00+00:00" },
+    },
   });
 
   assert.notEqual(firstValidator, secondValidator);
   assert.match(secondValidator, /2026-06-12T23:10:00\+00:00/);
   assert.match(secondValidator, /2026-06-13T04:04:24\+00:00/);
+  assert.match(secondValidator, /2026-06-13T23:15:00\+00:00/);
+  assert.match(secondValidator, /2026-06-13T04:10:00\+00:00/);
 });
 
 test("rank-derived caches expire by daily update cycle", async () => {

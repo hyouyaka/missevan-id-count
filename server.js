@@ -207,7 +207,7 @@ const ranksCache = {
 const rankTrendAggregateCache = new Map();
 const rankTrendsCache = new Map();
 const ongoingCache = new Map();
-const RANKS_RESPONSE_SCHEMA_VERSION = 4;
+const RANKS_RESPONSE_SCHEMA_VERSION = 5;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 4;
 const ONGOING_RESPONSE_SCHEMA_VERSION = 3;
 
@@ -1492,6 +1492,14 @@ function normalizeRanksMeta(meta) {
   };
 }
 
+function buildRanksResponseMeta(meta) {
+  const normalized = normalizeRanksMeta(meta);
+  return {
+    normal: { publishedAt: normalized.normal.publishedAt },
+    cv: { publishedAt: normalized.cv.publishedAt },
+  };
+}
+
 export function buildRanksMetaRefreshDecision(currentVersions = {}, meta = {}) {
   const normalizedMeta = normalizeRanksMeta(meta);
   const normalUpdatedAt = normalizedMeta.normal.updatedAt || normalizeTextValue(currentVersions.normalUpdatedAt);
@@ -2625,12 +2633,14 @@ export function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null,
       ? snapshot
       : {};
   const cvSummary = buildCvRanksSummary(cvSnapshot);
+  const meta = buildRanksResponseMeta(cvTrendOptions.meta);
 
   return {
     success: true,
     schemaVersion: RANKS_RESPONSE_SCHEMA_VERSION,
     updatedAt: normalizeTextValue(safeSnapshot?._meta?.updated_at),
     cvSummary,
+    meta,
     platforms: {
       missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan", peakTrendSnapshot, cvSnapshot, cvTrendOptions),
       manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo", null, cvSnapshot, cvTrendOptions),
@@ -2643,6 +2653,8 @@ export function getRanksResponseCacheValidator(response = {}) {
     response?.schemaVersion || RANKS_RESPONSE_SCHEMA_VERSION,
     normalizeTextValue(response?.updatedAt),
     normalizeTextValue(response?.cvSummary?.updatedAt),
+    normalizeTextValue(response?.meta?.normal?.publishedAt),
+    normalizeTextValue(response?.meta?.cv?.publishedAt),
   ].join(":");
 }
 
@@ -2730,6 +2742,7 @@ function updateCombinedRanksResponseCache() {
     {
       cvTrendSnapshots: ranksCache.cvTrendSnapshots,
       cvBaselineSnapshot: ranksCache.cvBaselineSnapshot,
+      meta: ranksCache.meta,
     }
   );
   ranksCache.response = response;
@@ -2737,6 +2750,31 @@ function updateCombinedRanksResponseCache() {
   ranksCache.normalUpdatedAt = response.updatedAt || ranksCache.normalUpdatedAt;
   ranksCache.cvUpdatedAt = response.cvSummary?.updatedAt || ranksCache.cvUpdatedAt;
   return response;
+}
+
+function updateRanksResponseMetaCache(meta = ranksCache.meta) {
+  if (!ranksCache.response) {
+    return null;
+  }
+  ranksCache.response = {
+    ...ranksCache.response,
+    meta: buildRanksResponseMeta(meta),
+  };
+  return ranksCache.response;
+}
+
+async function readInitialRanksMeta(readMeta, now) {
+  try {
+    const meta = normalizeRanksMeta(await readMeta());
+    ranksCache.meta = meta;
+    ranksCache.metaLoadedAt = now;
+    ranksCache.metaLoadFailedAt = 0;
+    return meta;
+  } catch (error) {
+    console.warn("Failed to read ranks meta during cold refresh", error);
+    ranksCache.metaLoadFailedAt = now;
+    return normalizeRanksMeta(ranksCache.meta);
+  }
 }
 
 function hasNormalRanksSnapshot(snapshot) {
@@ -2867,6 +2905,7 @@ export async function getCachedRanksResponse(options = {}) {
         const [normalBundle, cvBundle] = await Promise.all([
           readNormalBundle(),
           readCvBundle({ tolerateError: true }),
+          readInitialRanksMeta(readMeta, now),
         ]);
         ranksCache.normalSnapshot = normalBundle.snapshot;
         ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
@@ -2906,7 +2945,7 @@ export async function getCachedRanksResponse(options = {}) {
       );
       if (!decision.refreshNormal && !decision.refreshCv) {
         return {
-          response: ranksCache.response,
+          response: updateRanksResponseMetaCache(metaResult.meta),
           cacheStatus: metaResult.status || "meta-hit",
           probePhase,
         };
@@ -3091,6 +3130,7 @@ export function __getRanksCacheForTest() {
     cvSnapshot: ranksCache.cvSnapshot,
     normalUpdatedAt: ranksCache.normalUpdatedAt,
     cvUpdatedAt: ranksCache.cvUpdatedAt,
+    meta: ranksCache.meta,
     response: ranksCache.response,
     loadedAt: ranksCache.loadedAt,
   };
@@ -9522,6 +9562,7 @@ app.get("/ranks", async (req, res) => {
       success: false,
       updatedAt: "",
       cvSummary: { updatedAt: "", missevanDramaCount: 0, manboDramaCount: 0 },
+      meta: buildRanksResponseMeta(null),
       platforms: {
         missevan: { key: "missevan", label: "猫耳", categories: [] },
         manbo: { key: "manbo", label: "漫播", categories: [] },
