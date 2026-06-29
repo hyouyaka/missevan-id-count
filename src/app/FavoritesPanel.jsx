@@ -1005,7 +1005,7 @@ export function FavoritesPanel({
             const titleTags = [platformLabel, favorite.contentTypeLabel].filter(Boolean);
 
             return (
-              <Card key={favorite.key} className="border-border/80 bg-card shadow-[0_18px_42px_-36px_rgba(15,23,42,0.26)]">
+              <Card key={favorite.key}>
                 <CardContent className="grid gap-3 p-3 sm:p-4">
                   <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3">
                     <div className="flex flex-col items-center gap-2 pt-1">

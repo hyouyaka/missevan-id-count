@@ -134,11 +134,10 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-5 px-4 py-5 sm:px-6 sm:py-8">
-      <Card className="border-white/65 bg-[rgba(255,252,247,0.98)] shadow-[0_24px_56px_-42px_rgba(30,32,41,0.16)]">
+      <Card>
         <CardContent className="relative flex flex-col gap-6 p-6 sm:p-7">
-          <div className="pointer-events-none absolute left-6 top-0 h-24 w-[min(36rem,calc(100%-3rem))] rounded-b-[2rem] bg-[linear-gradient(90deg,rgba(59,62,122,0.14),rgba(239,131,95,0.16)_48%,transparent)] blur-sm sm:w-[min(40rem,calc(100%-3.5rem))]" />
           <div className="relative space-y-3">
-            <div className="text-[0.7rem] font-semibold uppercase tracking-[0.32em] text-[rgb(59,62,122)]">
+            <div className="text-[0.7rem] font-semibold uppercase tracking-[0.32em] text-primary">
               M&amp;M Toolkit
             </div>
             <div className="inline-flex max-w-3xl items-center gap-3 text-2xl font-semibold leading-none tracking-tight sm:text-[2.55rem]">
@@ -156,14 +155,14 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
                     key={`${region.key}-summary`}
                     className={`rounded-[calc(var(--radius)+0.05rem)] border px-4 py-3 ${
                       isRecommended
-                        ? "border-[rgba(59,62,122,0.24)] bg-[rgb(59,62,122)] text-white shadow-[0_18px_34px_-24px_rgba(59,62,122,0.42)]"
+                        ? "border-primary bg-primary text-primary-foreground shadow-[var(--shadow-control)]"
                         : region.statusTone === "warning"
-                          ? "border-[rgba(239,131,95,0.3)] bg-[rgba(255,240,233,0.9)]"
+                          ? "border-[var(--border-warm)] bg-[var(--surface-destructive)]"
                         : region.statusTone === "ok"
-                            ? "border-[rgba(59,62,122,0.18)] bg-[rgba(243,241,251,0.92)]"
+                            ? "border-border bg-accent"
                           : region.statusTone === "muted"
-                            ? "border-border/80 bg-[rgba(255,252,247,0.88)]"
-                          : "border-[rgba(30,32,41,0.08)] bg-[rgba(241,236,228,0.82)]"
+                            ? "border-border bg-card"
+                          : "border-border bg-[var(--surface-subtle)]"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -178,7 +177,7 @@ export function LandingView({ appConfig = getDefaultGatewayConfig() }) {
                     <Button
                       variant="link"
                       size="sm"
-                      className={`mt-2 h-auto px-0 font-semibold underline underline-offset-4 ${isRecommended ? "text-white hover:text-white/86" : "text-[rgb(59,62,122)]"} disabled:text-muted-foreground`}
+                      className={`mt-2 h-auto px-0 font-semibold underline underline-offset-4 ${isRecommended ? "text-primary-foreground hover:text-primary-foreground/85" : "text-primary"} disabled:text-muted-foreground`}
                       disabled={!region.canOpen}
                       onClick={() => openRegion(region)}
                     >

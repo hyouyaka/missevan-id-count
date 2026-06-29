@@ -98,7 +98,7 @@ function MetricIcon({ label, className = "size-3.5" }) {
 export function MetricLegend({ className = "" }) {
   return (
     <div
-      className={`rounded-lg border border-border/75 bg-card/96 px-3 py-2 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.28)] ${className}`}
+      className={`rounded-lg border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)] ${className}`}
       aria-label="统计图标图例"
     >
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.68rem] leading-5 text-muted-foreground">
@@ -128,9 +128,9 @@ const rankTrendTagVariants = {
 };
 
 const trendActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_srgb,var(--accent-success)_88%,black)] hover:text-[var(--accent-success-foreground)]";
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]";
 const compareActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--primary)_34%,transparent)] bg-primary px-1 text-xs! text-primary-foreground shadow-[0_12px_24px_-16px_var(--primary)] hover:bg-[color-mix(in_srgb,var(--primary)_88%,black)] hover:text-primary-foreground";
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--primary)_34%,transparent)] bg-primary px-1 text-xs! text-primary-foreground shadow-[0_12px_24px_-16px_var(--primary)] hover:bg-[var(--primary-hover)] hover:text-primary-foreground";
 const trendActionHitAreaClassName =
   "h-11 min-h-11 w-[58px] min-w-[58px] border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0";
 const trendActionInlineClassName =
@@ -990,18 +990,20 @@ export function SearchResults({
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_11rem] lg:items-start">
-      <Card className="min-w-0 border-border/80 bg-card py-0 pt-2.5 pb-4 shadow-[0_24px_52px_-42px_rgba(15,23,42,0.24)]">
+      <Card className="min-w-0 py-0 pt-2.5 pb-4">
         <CardContent className="pt-0">
         {showResultsHeader ? (
           <div className="border-b border-border/75 pb-1.5">
             <div className="flex items-center justify-between gap-2">
               {platformTabs.length > 1 ? (
-                <Tabs value={activePlatform} onValueChange={onPlatformChange}>
-                  <TabsList className="h-auto justify-start gap-1 bg-transparent p-0 border-0!">
+                <Tabs className="w-fit max-w-full shrink-0" value={activePlatform} onValueChange={onPlatformChange}>
+                  <TabsList className="h-9 max-w-full justify-start">
                     {platformTabs.map((item) => (
                       <TabsTrigger
                         key={item.key}
-                        className="h-8 rounded-md border-0 bg-transparent px-2.5 text-sm font-medium text-muted-foreground shadow-none hover:bg-muted/55 hover:text-foreground data-[state=active]:bg-muted/65 data-[state=active]:text-foreground data-[state=active]:shadow-none"
+                        data-touch="compact"
+                        data-platform={item.key}
+                        className="h-7 min-w-[5.25rem] flex-none px-2 text-sm"
                         value={item.key}
                       >
                         <PlatformTabLabel platform={item.key} iconClassName="size-3.5" />
@@ -1363,7 +1365,7 @@ export function SearchResults({
       {results.length ? (
         <aside className="hidden lg:sticky lg:top-36 lg:block">
           <div className="grid gap-3">
-            <div className="rounded-lg border border-border/80 bg-card p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.32)]">
+            <div className="rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)]">
               <div className="mb-3 text-xs font-semibold text-muted-foreground">批量操作</div>
               <ActionPanel />
             </div>

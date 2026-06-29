@@ -180,8 +180,9 @@ function MainNavigationMenuItem({
   showChildrenHint = true,
 }) {
   const hasChildren = Array.isArray(item?.children) && item.children.length > 0;
-  const isActive = item?.routePatch
-    ? isRoutePatchActive(item.routePatch, currentRoute)
+  const activeRoutePatch = item?.activeRoutePatch || item?.routePatch;
+  const isActive = activeRoutePatch
+    ? isRoutePatchActive(activeRoutePatch, currentRoute)
     : currentRoute?.view === item?.key;
   const bodyButton = (
     <Button
@@ -259,7 +260,7 @@ function DesktopMainNavigationMenu({
   const triggerRefs = useRef({});
   const closeTimerRef = useRef(null);
   const menuItemClassName = "h-8 min-w-[7rem] justify-start gap-2 px-2.5 text-[13px] font-medium text-foreground";
-  const activeItemClassName = "bg-[rgba(45,72,139,0.12)] text-[rgb(32,54,112)]";
+  const activeItemClassName = "bg-accent text-accent-foreground";
 
   const openMenu = openKey === "ongoing" || openKey === "ranks";
   const sourceMenu = openKey === "ongoing" ? ongoingMenu : openKey === "ranks" ? ranksMenu : [];
@@ -445,7 +446,7 @@ function DesktopMainNavigationMenu({
       {openMenu ? (
         <>
           <div className="absolute top-full z-30 h-3 w-36" style={menuAnchorStyle} />
-          <div className="absolute top-full z-40 mt-2 flex items-start gap-1 rounded-lg border border-border/80 bg-background/98 p-1.5 shadow-[0_22px_54px_-30px_rgba(15,23,42,0.48)] ring-1 ring-white/55" style={menuAnchorStyle}>
+          <div className="absolute top-full z-40 mt-2 flex items-start gap-1 rounded-lg border border-border bg-popover p-1.5 shadow-[var(--shadow-panel)]" style={menuAnchorStyle}>
           {openKey === "ranks" && ranksMenuStatus === "loading" ? (
             <div className="px-3 py-2 text-sm text-muted-foreground">加载中</div>
           ) : openKey === "ranks" && ranksMenuStatus === "error" ? (
@@ -532,6 +533,7 @@ function MainNavigationDrawer({
       key: `${platform.key}-ongoing`,
       label: "更新",
       routePatch: platformOngoingItem?.routePatch || { view: "ongoing", platform: platform.key, window: "7d" },
+      activeRoutePatch: platformOngoingItem?.activeRoutePatch || { view: "ongoing", platform: platform.key },
     };
   }
 
@@ -541,6 +543,7 @@ function MainNavigationDrawer({
       key: `${platform.key}-${category.key}`,
       label: category.label,
       routePatch: category.routePatch,
+      activeRoutePatch: category.activeRoutePatch,
     }));
   }
 
@@ -587,8 +590,8 @@ function MainNavigationDrawer({
     if (item?.key === "missevan" || item?.key === "manbo") {
       return (currentRoute?.view === "ongoing" || currentRoute?.view === "ranks") && currentRoute?.platform === item.key;
     }
-    const routePatch = item?.leafPatch || item?.routePatch;
-    return routePatch ? isRoutePatchActive(routePatch, currentRoute) : false;
+    const activeRoutePatch = item?.activeRoutePatch || item?.leafPatch || item?.routePatch;
+    return activeRoutePatch ? isRoutePatchActive(activeRoutePatch, currentRoute) : false;
   }
 
   function handleMobileItemClick(item, hasChildren, onToggle) {
@@ -647,7 +650,7 @@ function MainNavigationDrawer({
   return (
     <div
       id="main-navigation-drawer"
-      className="fixed right-0 top-0 z-50 h-dvh w-[230px] max-w-[calc(100vw-0.75rem)] overflow-y-auto overscroll-contain border-l border-border/70 bg-background/72 p-3 shadow-[0_24px_70px_-34px_rgba(15,23,42,0.48)] backdrop-blur-2xl ring-1 ring-white/45 sm:w-[260px]"
+      className="fixed right-0 top-0 z-50 h-dvh w-[230px] max-w-[calc(100vw-0.75rem)] overflow-y-auto overscroll-contain border-l border-border bg-background p-3 shadow-[var(--shadow-panel)] sm:w-[260px]"
     >
       <div className="grid min-h-full content-start gap-1">
         {rootItems.map((item) => (
@@ -986,7 +989,7 @@ function CompareTrendChart({ items, windowKey, metricOption, chartMode, chartUti
   }
 
   return (
-    <div className="rounded-lg border border-border/80 bg-card p-2.5 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.22)]">
+    <div className="rounded-lg border border-border bg-card p-2.5 shadow-[var(--shadow-card)]">
       <div className="relative h-56 overflow-visible rounded-md bg-background">
         <svg aria-label="剧集对比趋势图" className="size-full" preserveAspectRatio="none" viewBox="0 0 320 170">
           {(axis.ticks || []).map((tick) => (
@@ -1216,7 +1219,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
           <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <Tabs value={selectedMetric} onValueChange={setSelectedMetric} className="min-w-0 w-full sm:flex-1">
               <TabsList
-                className="grid h-auto w-full min-w-0 items-center justify-stretch gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!"
+                className="grid h-auto w-full min-w-0 items-center justify-stretch text-xs!"
                 style={{ gridTemplateColumns: `repeat(${Math.max(availableMetricOptions.length, 1)}, minmax(0, 1fr))` }}
               >
               {availableMetricOptions.map((option) => {
@@ -1224,7 +1227,7 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
                 return (
                   <TabsTrigger
                     key={option.key}
-                    className="h-[26px] min-w-0 rounded-md px-1.5 text-xs! sm:px-2.5"
+                    className="h-[26px] min-w-0 px-1.5 text-xs! sm:px-2.5"
                     title={option.label}
                     value={option.key}
                   >
@@ -1236,18 +1239,18 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
             </TabsList>
             </Tabs>
             <Tabs value={selectedWindow} onValueChange={setSelectedWindow} className="w-fit shrink-0">
-              <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
+              <TabsList className="inline-flex h-[34px] w-fit items-center justify-center text-xs!">
                 {COMPARE_WINDOWS.map((key) => (
-                  <TabsTrigger key={key} data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
+                  <TabsTrigger key={key} data-touch="compact" className="h-[26px] min-w-0 px-3 text-xs!" value={key}>
                     {key.replace("d", "日")}
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
             <Tabs value={selectedChartMode} onValueChange={setSelectedChartMode} className="w-fit shrink-0">
-              <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
+              <TabsList className="inline-flex h-[34px] w-fit items-center justify-center text-xs!">
                 {COMPARE_CHART_MODES.map((mode) => (
-                  <TabsTrigger key={mode.key} data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={mode.key}>
+                  <TabsTrigger key={mode.key} data-touch="compact" className="h-[26px] min-w-0 px-3 text-xs!" value={mode.key}>
                     {mode.label}
                   </TabsTrigger>
                 ))}
@@ -1719,10 +1722,16 @@ export function ToolView({ initialAppConfig }) {
     return platform.key !== "missevan" || appConfig.missevanEnabled;
   });
   const visiblePlatforms = appConfig.desktopApp ? desktopPlatforms : webPlatforms;
-  const drawerRootItemClassName = "relative w-full justify-start overflow-hidden text-sm! font-medium text-foreground visited:text-foreground hover:text-foreground";
-  const drawerChildItemClassName = "relative w-full justify-start overflow-hidden text-[0.82rem]! font-medium text-foreground visited:text-foreground hover:text-foreground";
-  const drawerUtilityItemClassName = "relative w-full justify-start overflow-hidden text-[0.82rem]! font-normal! text-foreground visited:text-foreground hover:text-foreground";
-  const mobileMenuActiveItemClassName = "bg-[rgba(45,72,139,0.12)] text-[rgb(32,54,112)] shadow-[inset_0_0_0_1px_rgba(45,72,139,0.18)] before:absolute before:inset-y-1.5 before:left-1 before:w-1 before:rounded-full before:bg-primary";
+  const drawerRootItemClassName = appConfig.desktopApp
+    ? "relative w-full justify-start overflow-hidden text-sm! font-medium text-foreground visited:text-foreground hover:text-foreground"
+    : "relative w-full justify-start overflow-hidden text-base! font-medium text-foreground visited:text-foreground hover:text-foreground";
+  const drawerChildItemClassName = appConfig.desktopApp
+    ? "relative w-full justify-start overflow-hidden text-[0.82rem]! font-medium text-foreground visited:text-foreground hover:text-foreground"
+    : "relative w-full justify-start overflow-hidden text-sm! font-medium text-foreground visited:text-foreground hover:text-foreground";
+  const drawerUtilityItemClassName = appConfig.desktopApp
+    ? "relative w-full justify-start overflow-hidden text-[0.82rem]! font-normal! text-foreground visited:text-foreground hover:text-foreground"
+    : "relative w-full justify-start overflow-hidden text-sm! font-normal! text-foreground visited:text-foreground hover:text-foreground";
+  const mobileMenuActiveItemClassName = "bg-accent text-accent-foreground before:absolute before:inset-y-1.5 before:left-1 before:w-1 before:rounded-full before:bg-primary";
   const defaultExpandedRootKeys = useMemo(
     () => getInitialDrawerExpandedRootKeys(toolRouteState, isDesktopBrowser && !appConfig.desktopApp),
     [appConfig.desktopApp, isDesktopBrowser, toolRouteState.platform, toolRouteState.view]

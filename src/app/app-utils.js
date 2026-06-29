@@ -262,6 +262,10 @@ export function buildOngoingNavigationMenu() {
       platform: platform.key,
       window: "7d",
     },
+    activeRoutePatch: {
+      view: "ongoing",
+      platform: platform.key,
+    },
   }));
 }
 
@@ -419,6 +423,11 @@ export function buildRanksNavigationMenu(ranksPayload) {
               category: categoryKey,
               rank: getDefaultRankItemForCategory(category, ranks).key,
             },
+            activeRoutePatch: {
+              view: "ranks",
+              platform: platformKey,
+              category: categoryKey,
+            },
             rankItems: ranks,
             ...(ranks.length > 1 ? { children: ranks } : {}),
           };
@@ -439,6 +448,10 @@ export function buildRanksNavigationMenu(ranksPayload) {
           platform: platformKey,
           category: categories[0].key,
           rank: categories[0].routePatch?.rank || "",
+        },
+        activeRoutePatch: {
+          view: "ranks",
+          platform: platformKey,
         },
         children: categories,
       };

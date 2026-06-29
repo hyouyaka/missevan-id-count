@@ -19,7 +19,7 @@ import {
 
 function getMetricToneClass(index) {
   const variants = [
-    "border-border/80 bg-background text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.62),0_8px_18px_-16px_rgba(15,23,42,0.18)]",
+    "border-border bg-background text-foreground shadow-[var(--shadow-card)]",
     "border-secondary/20 bg-secondary/12 text-foreground",
     "border-primary/20 bg-accent text-accent-foreground",
   ];
@@ -76,7 +76,7 @@ function ResultStrip({ metrics, inverted = false }) {
 
 function ResultCard({ title, metrics, insetInverted = false, footer = null }) {
   return (
-    <div className="w-full min-w-0 rounded-lg border border-border/80 bg-card p-3 shadow-[0_16px_34px_-30px_rgba(15,23,42,0.16)] sm:p-4">
+    <div className="w-full min-w-0 rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)] sm:p-4">
       <div className="break-words text-[11px] font-medium leading-5 text-foreground/78 sm:text-xs">{title}</div>
       {metrics?.length ? (
         <div className="mt-3">
@@ -307,7 +307,7 @@ export function OutputPanel({
   }
 
   return (
-    <Card className="border-border/80 bg-card shadow-[0_24px_52px_-42px_rgba(15,23,42,0.22)]">
+    <Card>
       <CardContent className="flex flex-col gap-5 p-4 sm:p-5">
         {isRunning || hasAnyResults ? (
           <div className="grid gap-3 rounded-lg border border-border/80 bg-background/70 p-3 sm:p-4">

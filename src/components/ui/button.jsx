@@ -9,11 +9,11 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-[var(--shadow-control)] [a]:hover:bg-[color-mix(in_srgb,var(--primary)_90%,black)] hover:bg-[color-mix(in_srgb,var(--primary)_90%,black)]",
+        default: "bg-primary text-primary-foreground shadow-[var(--shadow-control)] [a]:hover:bg-[var(--primary-hover)] hover:bg-[var(--primary-hover)]",
         outline:
           "border-border/90 bg-background/92 text-foreground hover:border-[var(--border-warm)] hover:bg-surface-hover-strong hover:text-foreground aria-expanded:border-[var(--border-warm)] aria-expanded:bg-surface-hover-strong aria-expanded:text-foreground dark:border-input dark:bg-input/30",
         secondary:
-          "border border-[color-mix(in_srgb,var(--accent-warm)_24%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[var(--shadow-secondary-control)] hover:bg-[color-mix(in_srgb,var(--accent-warm)_90%,black)] hover:text-[var(--accent-warm-foreground)] aria-expanded:bg-[color-mix(in_srgb,var(--accent-warm)_90%,black)] aria-expanded:text-[var(--accent-warm-foreground)]",
+          "border border-[color-mix(in_oklch,var(--accent-warm)_24%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[var(--shadow-secondary-control)] hover:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))] hover:text-[var(--accent-warm-foreground)] aria-expanded:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))] aria-expanded:text-[var(--accent-warm-foreground)]",
         ghost:
           "hover:bg-surface-hover hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground",
         destructive:

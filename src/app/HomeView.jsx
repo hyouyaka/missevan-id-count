@@ -1,21 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClockIcon,
+  ChartNoAxesColumnIcon,
   ChevronRightIcon,
   MicIcon,
   PlayCircleIcon,
   RefreshCwIcon,
-  SignalHighIcon,
+  TrendingUpIcon,
 } from "lucide-react";
 
-import { formatDeviceDateTime, formatPlainNumber, getBackendVersionFromResponse } from "@/app/app-utils";
+import {
+  formatDeviceDateTime,
+  formatPlainNumber,
+  formatRankCompactCount,
+  getBackendVersionFromResponse,
+} from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
+import {
+  fetchRankTrendAvailabilityData,
+  fetchRankTrendData,
+  logRankTrendOpen,
+} from "@/app/rankTrendData";
+import { RankTrendDialog } from "@/app/rankTrendUi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { sortOngoingItemsByWindowDelta } from "../../shared/ongoingUtils.js";
@@ -42,12 +53,30 @@ const HOME_RANK_CONFIG = {
   ],
 };
 
-const homeTextTabsListClassName =
-  "inline-flex h-8 min-h-8 w-fit justify-start rounded-none border-0! bg-transparent! p-0 shadow-none!";
-const homeTextTabClassName =
-  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-2 text-sm! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[&_.platform-tab-label-text]:font-bold data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[&_.platform-tab-label-text]:font-bold data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
-const homeSelectedTextTabClassName =
-  "font-bold! text-primary! [text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] [&_.platform-tab-label-text]:font-bold!";
+const homePillTabsListClassName = "inline-flex h-9 min-h-9 w-fit";
+const homePillTabClassName = "h-7 min-h-7 min-w-0 px-3 text-sm!";
+const homeRankItemTitleClassName =
+  "min-w-0 truncate whitespace-nowrap text-base! font-semibold! leading-6! text-foreground";
+
+function HomeTrendCoverAction({ children, disabled = false, title = "", onClick }) {
+  return (
+    <button
+      type="button"
+      className="home-editorial-trend-cover-action"
+      aria-label={disabled ? "暂无趋势数据" : `查看${title || "剧集"}趋势`}
+      disabled={disabled}
+      title={disabled ? "暂无趋势数据" : "查看趋势"}
+      onClick={disabled ? undefined : onClick}
+    >
+      {children}
+      <span aria-hidden="true" className="home-editorial-trend-cue">
+        <span className="home-editorial-trend-line" />
+        <TrendingUpIcon />
+        <span className="home-editorial-trend-line" />
+      </span>
+    </button>
+  );
+}
 
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
@@ -129,6 +158,14 @@ function getViewCountValue(item) {
   return item?.metrics?.view_count?.value ?? item?.view_count ?? item?.viewCount ?? null;
 }
 
+function getHomeCvWorksPreviewText(works) {
+  const titles = (Array.isArray(works) ? works : [])
+    .slice(0, 3)
+    .map((work) => String(work?.title ?? "").trim())
+    .filter(Boolean);
+  return titles.length ? `TOP3：${titles.map((title) => `《${title}》`).join("")}` : "TOP3：暂无";
+}
+
 function getPlatformRanks(data, platform) {
   return data?.platforms?.[platform]?.categories || [];
 }
@@ -136,6 +173,16 @@ function getPlatformRanks(data, platform) {
 function getRankByConfig(data, platform, rankConfig) {
   const category = getPlatformRanks(data, platform).find((item) => item?.key === rankConfig.categoryKey);
   return (category?.ranks || []).find((rank) => rank?.key === rankConfig.rankKey) || null;
+}
+
+function getHomeTrendLookup(item, platform, rankKey = "") {
+  const isMissevanPeak = platform === "missevan" && (rankKey === "peak" || item?.type === "peak");
+  const id = String(isMissevanPeak ? item?.name : item?.id ?? "").trim();
+  return {
+    id,
+    isMissevanPeak,
+    canUseSeriesTrend: isMissevanPeak && Boolean(item?.daily_view_delta?.available),
+  };
 }
 
 function getSettledPayload(result) {
@@ -150,9 +197,9 @@ function logRejectedHomePayload(label, result) {
 
 function SectionHeader({ title, sectionIcon: SectionIcon }) {
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      {SectionIcon ? <SectionIcon aria-hidden="true" className="size-5 shrink-0 text-primary" /> : null}
-      <h2 className="min-w-0 text-xl leading-7 font-semibold tracking-tight">{title}</h2>
+    <div className="home-editorial-section-heading">
+      {SectionIcon ? <SectionIcon aria-hidden="true" className="home-editorial-section-icon" /> : null}
+      <h2>{title}</h2>
     </div>
   );
 }
@@ -160,12 +207,13 @@ function SectionHeader({ title, sectionIcon: SectionIcon }) {
 function PlatformTabs({ value, onValueChange, ariaLabel, counts = null }) {
   return (
     <Tabs value={value} onValueChange={onValueChange} className="shrink-0 gap-0">
-      <TabsList aria-label={ariaLabel} variant="line" className={`${homeTextTabsListClassName} grid-cols-2 gap-3`}>
+      <TabsList aria-label={ariaLabel} className={`${homePillTabsListClassName} grid-cols-2`}>
         {["missevan", "manbo"].map((platform) => (
           <TabsTrigger
             key={platform}
             data-touch="compact"
-            className={`${homeTextTabClassName} ${platform === value ? homeSelectedTextTabClassName : ""}`}
+            data-platform={platform}
+            className={homePillTabClassName}
             value={platform}
           >
             <PlatformTabLabel platform={platform} />
@@ -192,7 +240,14 @@ function HomeTextLink({ children, ariaLabel, onClick }) {
   );
 }
 
-function OngoingMiniItem({ item, platform, onOpenSearchResult }) {
+function OngoingMiniItem({
+  item,
+  platform,
+  onOpenSearchResult,
+  onOpenTrend,
+  canOpenTrend = false,
+  featured = false,
+}) {
   const coverUrl = buildProxyImageUrl(item?.cover);
   const delta = getSevenDayViewDelta(item);
 
@@ -213,15 +268,23 @@ function OngoingMiniItem({ item, platform, onOpenSearchResult }) {
   }
 
   return (
-    <div className="grid min-w-0 grid-cols-[4.25rem_minmax(0,1fr)] gap-3 rounded-md p-2 transition-colors hover:bg-muted/45">
-      <div className="size-[4.25rem] overflow-hidden rounded-md border border-border/70 bg-muted/55">
-        {coverUrl ? (
-          <LazyImage alt={item?.name || "剧集封面"} className="size-full object-cover" src={coverUrl} />
-        ) : (
-          <div className="flex size-full items-center justify-center text-xs text-muted-foreground">暂无封面</div>
-        )}
+    <article className={`home-editorial-update-item ${featured ? "is-featured" : ""}`}>
+      <div className="home-editorial-cover-stack">
+        <HomeTrendCoverAction
+          disabled={!canOpenTrend}
+          title={item?.name}
+          onClick={() => canOpenTrend && onOpenTrend?.({ item, platform, rankKey: "ongoing" })}
+        >
+          <div className="home-editorial-update-cover">
+            {coverUrl ? (
+              <LazyImage alt={item?.name || "剧集封面"} className="size-full object-cover" src={coverUrl} />
+            ) : (
+              <div className="flex size-full items-center justify-center text-xs text-muted-foreground">暂无封面</div>
+            )}
+          </div>
+        </HomeTrendCoverAction>
       </div>
-      <div className="flex min-w-0 flex-col gap-1">
+      <div className="home-editorial-update-copy">
         <button
           type="button"
           className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-base"
@@ -234,73 +297,146 @@ function OngoingMiniItem({ item, platform, onOpenSearchResult }) {
           <MicIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
           <span className="line-clamp-1 min-w-0">{getMainCvText(item)}</span>
         </div>
-        <div className="grid min-w-0 grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)] gap-2 text-xs leading-5 text-muted-foreground">
-          <span className="inline-flex min-w-0 items-center gap-1">
+        <div className="home-editorial-update-meta">
+          <span className="inline-flex flex-none items-center gap-1 whitespace-nowrap">
             <RefreshCwIcon aria-hidden="true" className="size-3.5 shrink-0" />
-            <span className="truncate">{formatHomeDate(item?.updated_at)}</span>
+            <span>{formatHomeDate(item?.updated_at)}</span>
           </span>
-          <span className="inline-flex min-w-0 items-center gap-1">
+          <span className="inline-flex flex-none items-center gap-1 whitespace-nowrap">
             <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
-            <span className="truncate tabular-nums">
+            <span className="tabular-nums">
               {formatCompactCount(getViewCountValue(item))}
-              <span className="text-[rgb(20,137,111)]">（{formatDelta(delta)}）</span>
+              <span className="home-editorial-delta">（{formatDelta(delta)}）</span>
             </span>
           </span>
         </div>
       </div>
+    </article>
+  );
+}
+
+function OngoingPlatformList({
+  platform,
+  items,
+  totalCount,
+  updatedAt,
+  onNavigateRoute,
+  onOpenSearchResult,
+  canOpenTrend,
+  onOpenTrend,
+}) {
+  const [featuredItem, ...compactItems] = items;
+
+  return (
+    <div className="home-editorial-platform">
+      <div className="home-editorial-platform-header">
+        <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
+          <PlatformTabLabel platform={platform} />
+          <span className="home-editorial-count tabular-nums">{totalCount}</span>
+        </span>
+        {formatHomeUpdatedLabel(updatedAt) ? (
+          <span className="home-editorial-updated-at">
+            {formatHomeUpdatedLabel(updatedAt)}
+          </span>
+        ) : null}
+      </div>
+      <div className="home-editorial-update-list">
+        {featuredItem ? (
+          <>
+            <OngoingMiniItem
+              item={featuredItem}
+              platform={platform}
+              onOpenSearchResult={onOpenSearchResult}
+              onOpenTrend={onOpenTrend}
+              canOpenTrend={canOpenTrend(featuredItem, platform)}
+              featured={true}
+            />
+            <div className="home-editorial-compact-list">
+              {compactItems.map((item) => (
+                <OngoingMiniItem
+                  key={`${platform}-${item.id}`}
+                  item={item}
+                  platform={platform}
+                  onOpenSearchResult={onOpenSearchResult}
+                  onOpenTrend={onOpenTrend}
+                  canOpenTrend={canOpenTrend(item, platform)}
+                />
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="home-editorial-empty">
+            <CalendarClockIcon aria-hidden="true" className="size-5" />
+            <span>暂无更新数据</span>
+          </div>
+        )}
+      </div>
+      <HomeTextLink
+        ariaLabel={`查看更多${platformMeta[platform].label}一周内更新`}
+        onClick={() => onNavigateRoute({
+          view: "ongoing",
+          platform,
+          window: "7d",
+        })}
+      >
+        查看更多
+      </HomeTextLink>
     </div>
   );
 }
 
-function OngoingPlatformList({ platform, items, totalCount, updatedAt, onNavigateRoute, onOpenSearchResult }) {
+function HomeSkeleton() {
   return (
-    <Card className="w-full min-w-[min(370px,100%)] border-border/75 bg-card/96 py-0 shadow-[0_18px_42px_-34px_rgba(15,23,42,0.22)]">
-      <CardContent className="flex min-w-0 flex-col gap-2 p-3 sm:p-4">
-        <div className="flex min-w-0 items-start gap-2 px-1 text-sm font-semibold text-primary">
-          <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
-            <PlatformTabLabel platform={platform} />
-            <span className="tabular-nums">{totalCount}</span>
-          </span>
-          {formatHomeUpdatedLabel(updatedAt) ? (
-            <span className="translate-y-1 shrink-0 whitespace-nowrap text-[0.68rem] leading-4 font-normal text-muted-foreground">
-              {formatHomeUpdatedLabel(updatedAt)}
-            </span>
-          ) : null}
-        </div>
-        <div className="grid gap-1">
-          {items.length ? (
-            items.map((item) => (
-              <OngoingMiniItem
-                key={`${platform}-${item.id}`}
-                item={item}
-                platform={platform}
-                onOpenSearchResult={onOpenSearchResult}
-              />
-            ))
-          ) : (
-            <div className="rounded-md border border-dashed border-border/75 px-4 py-8 text-center text-sm text-muted-foreground">
-              暂无更新数据
+    <div className="home-editorial-skeleton" aria-hidden="true">
+      <section className="home-editorial-section home-editorial-section-first">
+        <div className="home-editorial-skeleton-line home-editorial-skeleton-title" />
+        <div className="home-editorial-updates-grid">
+          {[0, 1].map((platformIndex) => (
+            <div className="home-editorial-platform" key={platformIndex}>
+              <div className="home-editorial-skeleton-line home-editorial-skeleton-label" />
+              <div className="home-editorial-skeleton-feature">
+                <div className="home-editorial-skeleton-block" />
+                <div className="grid flex-1 gap-3">
+                  <div className="home-editorial-skeleton-line" />
+                  <div className="home-editorial-skeleton-line is-short" />
+                  <div className="home-editorial-skeleton-line is-shorter" />
+                </div>
+              </div>
             </div>
-          )}
+          ))}
         </div>
-        <HomeTextLink
-          ariaLabel={`查看更多${platformMeta[platform].label}一周内更新`}
-          onClick={() => onNavigateRoute({
-            view: "ongoing",
-            platform,
-            window: "7d",
-          })}
-        >
-          查看更多
-        </HomeTextLink>
-      </CardContent>
-    </Card>
+      </section>
+      <section className="home-editorial-section">
+        <div className="home-editorial-skeleton-line home-editorial-skeleton-title" />
+        <div className="home-editorial-skeleton-ranks">
+          {[0, 1, 2].map((rankIndex) => (
+            <div className="home-editorial-skeleton-card" key={rankIndex}>
+              <div className="home-editorial-skeleton-line home-editorial-skeleton-label" />
+              {[0, 1, 2].map((rowIndex) => (
+                <div className="home-editorial-skeleton-row" key={rowIndex}>
+                  <div className="home-editorial-skeleton-avatar" />
+                  <div className="home-editorial-skeleton-line" />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 
-function RankDramaItem({ item, platform, onOpenSearchResult }) {
+function RankDramaItem({
+  item,
+  platform,
+  rankKey,
+  onOpenSearchResult,
+  onOpenTrend,
+  canOpenTrend = false,
+}) {
   const coverUrl = buildProxyImageUrl(item?.cover);
   const isMissevanPeak = platform === "missevan" && item?.type === "peak";
+  const playCountText = formatRankCompactCount(getViewCountValue(item));
   const searchDramaIds = isMissevanPeak
     ? (Array.isArray(item.drama_ids) ? item.drama_ids : [])
     : item?.id != null
@@ -325,31 +461,48 @@ function RankDramaItem({ item, platform, onOpenSearchResult }) {
   }
 
   return (
-    <div className="grid min-w-0 grid-cols-[auto_3.5rem_minmax(0,1fr)] items-center gap-2">
+    <div className="grid min-w-0 grid-cols-[auto_4rem_minmax(0,1fr)] items-center gap-2">
       <RankBadge rank={item?.rank} className="size-6 text-[0.68rem]" />
-      <div className="size-14 overflow-hidden rounded-md border border-border/70 bg-muted/55">
-        {coverUrl ? (
-          <LazyImage alt={item?.name || "剧集封面"} className="size-full object-cover" src={coverUrl} />
-        ) : (
-          <div className="flex size-full items-center justify-center text-[0.62rem] text-muted-foreground">暂无</div>
-        )}
+      <div className="home-editorial-rank-cover-stack">
+        <HomeTrendCoverAction
+          disabled={!canOpenTrend}
+          title={item?.name}
+          onClick={() => canOpenTrend && onOpenTrend?.({ item, platform, rankKey })}
+        >
+          <div className="size-16 overflow-hidden rounded-md border border-border bg-muted/55">
+            {coverUrl ? (
+              <LazyImage alt={item?.name || "剧集封面"} className="size-full object-cover" src={coverUrl} />
+            ) : (
+              <div className="flex size-full items-center justify-center text-[0.62rem] text-muted-foreground">暂无</div>
+            )}
+          </div>
+        </HomeTrendCoverAction>
       </div>
       <div className="min-w-0">
         {searchDramaIds.length ? (
           <button
             type="button"
-            className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className={`${homeRankItemTitleClassName} block w-full rounded-sm text-left underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
             title={item?.name || "未命名剧集"}
             onClick={openSearchResult}
           >
             {item?.name || "未命名剧集"}
           </button>
         ) : (
-          <div className="line-clamp-1 text-sm font-semibold leading-5 text-foreground">{item?.name || "未命名剧集"}</div>
+          <div className={`${homeRankItemTitleClassName} w-full`}>
+            {item?.name || "未命名剧集"}
+          </div>
         )}
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground">
           <MicIcon aria-hidden="true" className="size-3.5 shrink-0" />
           <span className="truncate">{getMainCvText(item)}</span>
+        </div>
+        <div
+          className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground"
+          title={`${isMissevanPeak ? "系列总播放量" : "播放量"}：${playCountText}`}
+        >
+          <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
+          <span className="whitespace-nowrap tabular-nums">{playCountText}</span>
         </div>
       </div>
     </div>
@@ -358,6 +511,8 @@ function RankDramaItem({ item, platform, onOpenSearchResult }) {
 
 function RankCvItem({ item }) {
   const avatarUrl = buildProxyImageUrl(item?.avatar);
+  const playCountText = formatRankCompactCount(item?.totalViewCount);
+  const topWorksText = getHomeCvWorksPreviewText(item?.topWorks || item?.works);
   return (
     <div className="grid min-w-0 grid-cols-[auto_3.5rem_minmax(0,1fr)] items-center gap-2">
       <RankBadge rank={item?.rank} className="size-6 text-[0.68rem]" />
@@ -369,33 +524,51 @@ function RankCvItem({ item }) {
         )}
       </div>
       <div className="min-w-0">
-        <div className="line-clamp-1 text-sm font-semibold leading-5 text-foreground">{item?.cvName || "未命名CV"}</div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground">
-          <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="truncate tabular-nums">{formatCompactCount(item?.totalViewCount)}</span>
+        <div className="inline-flex max-w-full min-w-0 items-center gap-2">
+          <div className={homeRankItemTitleClassName}>
+            {item?.cvName || "未命名CV"}
+          </div>
+          <span
+            className="inline-flex flex-none items-center gap-1 whitespace-nowrap text-xs leading-5 text-muted-foreground"
+            title={`播放量：${playCountText}`}
+          >
+            <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
+            <span className="tabular-nums">{playCountText}</span>
+          </span>
+        </div>
+        <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground" title={topWorksText}>
+          {topWorksText}
         </div>
       </div>
     </div>
   );
 }
 
-function HomeRankCard({ platform, rankConfig, rank, publishedAt, onNavigateRoute, onOpenSearchResult }) {
+function HomeRankCard({
+  platform,
+  rankConfig,
+  rank,
+  publishedAt,
+  onNavigateRoute,
+  onOpenSearchResult,
+  canOpenTrend,
+  onOpenTrend,
+}) {
   const items = (rank?.items || []).slice(0, 3);
   const isCvRank = rankConfig.itemType === "cv";
   return (
-    <Card className="w-[320px] min-w-0 border-border/75 bg-card/96 py-0 shadow-[0_18px_42px_-34px_rgba(15,23,42,0.22)]">
-      <CardContent className="flex min-h-[17rem] flex-col gap-3 p-4">
-        <div className="flex min-w-0 items-start gap-2">
-          <h3 className="line-clamp-1 min-w-0 text-base font-semibold leading-6 text-primary">
+    <div className="home-editorial-rank-card">
+      <div className="home-editorial-rank-header">
+          <h3 className="line-clamp-1 min-w-0">
             {rankConfig.displayTitle || rankConfig.title}
           </h3>
           {formatHomeUpdatedLabel(publishedAt) ? (
-            <span className="translate-y-1 shrink-0 whitespace-nowrap text-[0.65rem] leading-4 text-muted-foreground">
+            <span className="home-editorial-updated-at">
               {formatHomeUpdatedLabel(publishedAt)}
             </span>
           ) : null}
-        </div>
-        <div className="grid flex-1 gap-3">
+      </div>
+      <div className="home-editorial-rank-items">
           {items.length ? (
             items.map((item) =>
               isCvRank ? (
@@ -405,29 +578,32 @@ function HomeRankCard({ platform, rankConfig, rank, publishedAt, onNavigateRoute
                   key={`${rankConfig.rankKey}-${item.rank}-${item.id || item.name}`}
                   item={item}
                   platform={platform}
+                  rankKey={rankConfig.rankKey}
                   onOpenSearchResult={onOpenSearchResult}
+                  onOpenTrend={onOpenTrend}
+                  canOpenTrend={canOpenTrend(item, platform, rankConfig.rankKey)}
                 />
               )
             )
           ) : (
-            <div className="rounded-md border border-dashed border-border/75 px-4 py-8 text-center text-sm text-muted-foreground">
-              暂无榜单数据
+            <div className="home-editorial-empty">
+              <ChartNoAxesColumnIcon aria-hidden="true" className="size-5" />
+              <span>暂无榜单数据</span>
             </div>
           )}
-        </div>
-        <HomeTextLink
-          ariaLabel={`查看更多${rankConfig.title}`}
-          onClick={() => onNavigateRoute({
-            view: "ranks",
-            platform,
-            category: rankConfig.categoryKey,
-            rank: rankConfig.rankKey,
-          })}
-        >
-          查看更多
-        </HomeTextLink>
-      </CardContent>
-    </Card>
+      </div>
+      <HomeTextLink
+        ariaLabel={`查看更多${rankConfig.title}`}
+        onClick={() => onNavigateRoute({
+          view: "ranks",
+          platform,
+          category: rankConfig.categoryKey,
+          rank: rankConfig.rankKey,
+        })}
+      >
+        查看更多
+      </HomeTextLink>
+    </div>
   );
 }
 
@@ -438,6 +614,13 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [trendEligibility, setTrendEligibility] = useState({
+    missevan: { ids: new Set(), isLoaded: false },
+    manbo: { ids: new Set(), isLoaded: false },
+  });
+  const [trendDialog, setTrendDialog] = useState({ open: false, item: null, platform: "", rankKey: "" });
+  const [trendState, setTrendState] = useState({ isLoading: false, error: "", data: null });
+  const trendRequestIdRef = useRef(0);
 
   useEffect(() => {
     handleVersionResponseRef.current = handleVersionResponse;
@@ -535,31 +718,167 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
   }), [ongoingByPlatform.missevan?.items, ongoingByPlatform.manbo?.items]);
 
   const activeRankConfigs = HOME_RANK_CONFIG[selectedRankPlatform] || [];
+  const trendIdsByPlatform = useMemo(() => {
+    const ids = {
+      missevan: new Set(ongoingItems.missevan.map((item) => String(item?.id ?? "").trim()).filter(Boolean)),
+      manbo: new Set(ongoingItems.manbo.map((item) => String(item?.id ?? "").trim()).filter(Boolean)),
+    };
+    activeRankConfigs.forEach((rankConfig) => {
+      if (rankConfig.itemType === "cv") {
+        return;
+      }
+      const rank = getRankByConfig(rankData, selectedRankPlatform, rankConfig);
+      (rank?.items || []).slice(0, 3).forEach((item) => {
+        const lookup = getHomeTrendLookup(item, selectedRankPlatform, rankConfig.rankKey);
+        if (lookup.id && !lookup.isMissevanPeak) {
+          ids[selectedRankPlatform].add(lookup.id);
+        }
+      });
+    });
+    return {
+      missevan: Array.from(ids.missevan).sort(),
+      manbo: Array.from(ids.manbo).sort(),
+    };
+  }, [activeRankConfigs, ongoingItems.manbo, ongoingItems.missevan, rankData, selectedRankPlatform]);
+  const missevanTrendLookupKey = trendIdsByPlatform.missevan.join("|");
+  const manboTrendLookupKey = trendIdsByPlatform.manbo.join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    const requests = [
+      ["missevan", trendIdsByPlatform.missevan],
+      ["manbo", trendIdsByPlatform.manbo],
+    ];
+
+    requests.forEach(([platform, ids]) => {
+      if (!ids.length) {
+        setTrendEligibility((current) => ({
+          ...current,
+          [platform]: { ids: new Set(), isLoaded: true },
+        }));
+        return;
+      }
+      setTrendEligibility((current) => ({
+        ...current,
+        [platform]: { ids: current[platform]?.ids || new Set(), isLoaded: false },
+      }));
+      fetchRankTrendAvailabilityData({ platform, ids, frontendVersion })
+        .then(({ response, data } = {}) => {
+          if (cancelled) {
+            return;
+          }
+          setTrendEligibility((current) => ({
+            ...current,
+            [platform]: {
+              ids: response?.ok && data?.success
+                ? new Set((Array.isArray(data.ids) ? data.ids : []).map((id) => String(id)))
+                : new Set(),
+              isLoaded: true,
+            },
+          }));
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.error(`Failed to load home ${platform} trend availability`, error);
+            setTrendEligibility((current) => ({
+              ...current,
+              [platform]: { ids: new Set(), isLoaded: true },
+            }));
+          }
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [frontendVersion, manboTrendLookupKey, missevanTrendLookupKey]);
+
+  function canOpenHomeTrend(item, platform, rankKey = "") {
+    const lookup = getHomeTrendLookup(item, platform, rankKey);
+    if (!lookup.id) {
+      return false;
+    }
+    if (lookup.isMissevanPeak) {
+      return lookup.canUseSeriesTrend;
+    }
+    const eligibility = trendEligibility[platform];
+    return Boolean(eligibility?.isLoaded && eligibility.ids.has(lookup.id));
+  }
+
+  async function openHomeTrend({ item, platform, rankKey = "" }) {
+    if (!canOpenHomeTrend(item, platform, rankKey)) {
+      return;
+    }
+    const lookup = getHomeTrendLookup(item, platform, rankKey);
+    const trendItem = lookup.isMissevanPeak ? { ...item, id: lookup.id } : item;
+    const requestId = trendRequestIdRef.current + 1;
+    trendRequestIdRef.current = requestId;
+    setTrendDialog({ open: true, item: trendItem, platform, rankKey });
+    logRankTrendOpen({
+      platform,
+      id: lookup.id,
+      name: item?.name,
+      source: "home",
+      rankKey,
+      frontendVersion,
+    });
+    setTrendState((current) => ({
+      ...current,
+      isLoading: !current.data || String(current.data?.id ?? "") !== lookup.id,
+      error: "",
+    }));
+    try {
+      const { response, data } = await fetchRankTrendData({
+        platform,
+        id: lookup.id,
+        frontendVersion,
+      });
+      if (trendRequestIdRef.current !== requestId) {
+        return;
+      }
+      handleVersionResponseRef.current?.({
+        ...data,
+        backendVersion: getBackendVersionFromResponse(response, data),
+        frontendVersion,
+      });
+      if (!response.ok || !data?.success) {
+        setTrendState({ isLoading: false, error: data?.message || "趋势数据暂不可用。", data: null });
+        return;
+      }
+      setTrendState({ isLoading: false, error: "", data });
+    } catch (error) {
+      console.error("Failed to load home trend", error);
+      if (trendRequestIdRef.current === requestId) {
+        setTrendState({ isLoading: false, error: "趋势数据暂不可用。", data: null });
+      }
+    }
+  }
+
+  const hasVisibleContent = Boolean(
+    ongoingByPlatform.missevan?.items?.length ||
+    ongoingByPlatform.manbo?.items?.length ||
+    rankData
+  );
 
   return (
-    <div className="grid gap-4 sm:gap-5">
-      {isLoading ? (
-        <Alert>
-          <RefreshCwIcon className="size-4 animate-spin" />
-          <AlertTitle>正在读取首页</AlertTitle>
-          <AlertDescription>正在读取一周内更新和榜单数据。</AlertDescription>
-        </Alert>
-      ) : null}
-
+    <div className="home-editorial" aria-busy={isLoading}>
+      {isLoading && !hasVisibleContent ? <HomeSkeleton /> : null}
       {!isLoading && errorMessage ? (
-        <Alert className="border-destructive/30 bg-destructive/10">
+        <Alert className="home-editorial-error">
           <AlertTitle>首页暂不可用</AlertTitle>
           <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       ) : null}
 
-      <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border/75 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)] sm:p-4">
-        <div className="mb-2 flex items-center justify-between gap-3">
+      {!isLoading || hasVisibleContent ? (
+        <>
+      <section className="home-editorial-section home-editorial-section-first">
+        <div className="home-editorial-section-header">
           <SectionHeader title="一周内更新" sectionIcon={CalendarClockIcon} />
+          <p>按近七日播放增量排列</p>
         </div>
 
-        <div className="min-w-0 max-w-full overflow-x-auto overflow-y-hidden overscroll-x-contain pb-1 [scrollbar-width:thin]">
-          <div className="grid w-max min-w-full auto-cols-[minmax(min(370px,100%),1fr)] grid-flow-col gap-3 sm:auto-cols-auto sm:grid-cols-[repeat(2,minmax(370px,1fr))]">
+        <div className="home-editorial-updates-grid">
             <OngoingPlatformList
               platform="missevan"
               items={ongoingItems.missevan}
@@ -567,6 +886,8 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
               updatedAt={ongoingByPlatform.missevan?.updatedAt}
               onNavigateRoute={onNavigateRoute}
               onOpenSearchResult={onOpenSearchResult}
+              canOpenTrend={canOpenHomeTrend}
+              onOpenTrend={openHomeTrend}
             />
             <OngoingPlatformList
               platform="manbo"
@@ -575,20 +896,27 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
               updatedAt={ongoingByPlatform.manbo?.updatedAt}
               onNavigateRoute={onNavigateRoute}
               onOpenSearchResult={onOpenSearchResult}
+              canOpenTrend={canOpenHomeTrend}
+              onOpenTrend={openHomeTrend}
             />
-          </div>
         </div>
       </section>
 
-      <section className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border/75 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)] sm:p-4">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <SectionHeader title="榜单" sectionIcon={SignalHighIcon} />
+      <section className="home-editorial-section">
+        <div className="home-editorial-section-header home-editorial-ranks-header">
+          <div>
+            <SectionHeader title="榜单速览" sectionIcon={ChartNoAxesColumnIcon} />
+          </div>
           <PlatformTabs value={selectedRankPlatform} onValueChange={setSelectedRankPlatform} ariaLabel="选择榜单平台" />
         </div>
-        <div className="min-w-0 max-w-full overflow-x-auto overflow-y-hidden overscroll-x-contain pb-2 [scrollbar-width:thin]">
-          <div className="grid w-max min-w-full auto-cols-[320px] grid-flow-col gap-3">
-            {activeRankConfigs.map((rankConfig) => (
-              <div key={`${selectedRankPlatform}-${rankConfig.categoryKey}-${rankConfig.rankKey}`} className="w-[320px] min-w-0 scroll-ml-1 snap-start">
+        <div className="home-editorial-ranks-viewport">
+          <div className="home-editorial-ranks-grid">
+            {activeRankConfigs.map((rankConfig, index) => (
+              <div
+                key={`${selectedRankPlatform}-${rankConfig.categoryKey}-${rankConfig.rankKey}`}
+                className="home-editorial-rank-slot"
+                data-featured={index < 2 ? "true" : "false"}
+              >
                 <HomeRankCard
                   platform={selectedRankPlatform}
                   rankConfig={rankConfig}
@@ -600,12 +928,23 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
                   }
                   onNavigateRoute={onNavigateRoute}
                   onOpenSearchResult={onOpenSearchResult}
+                  canOpenTrend={canOpenHomeTrend}
+                  onOpenTrend={openHomeTrend}
                 />
               </div>
             ))}
           </div>
         </div>
       </section>
+        </>
+      ) : null}
+      <RankTrendDialog
+        open={trendDialog.open}
+        onOpenChange={(open) => setTrendDialog((current) => ({ ...current, open }))}
+        item={trendDialog.item}
+        platform={trendDialog.platform}
+        trendState={trendState}
+      />
     </div>
   );
 }

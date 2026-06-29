@@ -9,31 +9,31 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] [a]:hover:bg-[color-mix(in_srgb,var(--primary)_92%,black)]",
+        default: "bg-primary text-primary-foreground shadow-[inset_0_1px_0_oklch(1_0_0/0.16)] [a]:hover:bg-[var(--primary-hover)]",
         secondary:
-          "border-[var(--border-warm)] bg-secondary text-secondary-foreground [a]:hover:bg-[color-mix(in_srgb,var(--secondary)_88%,white)]",
+          "border-[var(--border-warm)] bg-secondary text-secondary-foreground [a]:hover:bg-[color-mix(in_oklch,var(--secondary)_88%,var(--card))]",
         info:
-          "border-[color-mix(in_srgb,var(--accent-cool)_18%,transparent)] bg-[var(--accent-cool)] text-[var(--accent-cool-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-cool)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--accent-cool)_18%,transparent)] bg-[var(--accent-cool)] text-[var(--accent-cool-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-cool)_90%,var(--foreground))]",
         coral:
-          "border-[color-mix(in_srgb,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-warm)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))]",
         missevanPlatform:
-          "border-[color-mix(in_srgb,var(--accent-neutral)_20%,transparent)] bg-[var(--accent-neutral)] text-[var(--accent-neutral-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-neutral)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--platform-missevan)_20%,transparent)] bg-[var(--platform-missevan)] text-[var(--accent-neutral-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--platform-missevan-hover)]",
         manboPlatform:
-          "border-[color-mix(in_srgb,var(--accent-purple)_20%,transparent)] bg-[var(--accent-purple)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-purple)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--platform-manbo)_20%,transparent)] bg-[var(--platform-manbo)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--platform-manbo-hover)]",
         free:
-          "border-[color-mix(in_srgb,var(--accent-success)_18%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-success)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--accent-success)_18%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-success)_90%,var(--foreground))]",
         member:
-          "border-[color-mix(in_srgb,var(--accent-gold)_28%,black)] bg-[var(--accent-gold)] text-[var(--accent-gold-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.24)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-gold)_90%,white)]",
+          "border-[color-mix(in_oklch,var(--accent-gold)_78%,var(--foreground))] bg-[var(--accent-gold)] text-[var(--accent-gold-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.24)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-gold)_90%,var(--card))]",
         paid:
-          "border-[color-mix(in_srgb,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-warm)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))]",
         radioDrama:
-          "border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--primary)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--primary)_18%,transparent)] bg-primary text-primary-foreground shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--primary-hover)]",
         audioDrama:
-          "border-[color-mix(in_srgb,var(--accent-purple)_18%,transparent)] bg-[var(--accent-purple)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-purple)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--accent-purple)_18%,transparent)] bg-[var(--accent-purple)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--platform-manbo-hover)]",
         audioComic:
-          "border-[color-mix(in_srgb,var(--accent-rose)_18%,transparent)] bg-[var(--accent-rose)] text-[var(--accent-rose-foreground)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] [a]:hover:bg-[color-mix(in_srgb,var(--accent-rose)_90%,black)]",
+          "border-[color-mix(in_oklch,var(--accent-rose)_18%,transparent)] bg-[var(--accent-rose)] text-[var(--accent-rose-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-rose)_90%,var(--foreground))]",
         imported:
-          "border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-accent text-accent-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] [a]:hover:bg-[color-mix(in_srgb,var(--accent)_90%,var(--primary))]",
+          "border-[color-mix(in_oklch,var(--primary)_18%,transparent)] bg-accent text-accent-foreground shadow-[inset_0_1px_0_oklch(1_0_0/0.5)] [a]:hover:bg-[color-mix(in_oklch,var(--accent)_90%,var(--primary))]",
         destructive:
           "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
         outline:

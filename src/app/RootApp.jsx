@@ -83,7 +83,7 @@ export function RootApp() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-10">
-      <Card className="w-full max-w-md border-white/55 bg-[rgba(245,240,230,0.9)] shadow-xl shadow-[0_18px_40px_-28px_rgba(54,54,54,0.18)] backdrop-blur">
+      <Card className="w-full max-w-md">
         <CardContent className="flex flex-col gap-2 p-6">
           <div className="text-xl font-semibold">正在加载入口</div>
           <p className="text-sm leading-6 text-muted-foreground">

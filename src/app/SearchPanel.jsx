@@ -349,7 +349,7 @@ export function SearchPanel({
           align="start"
           side="bottom"
           sideOffset={6}
-          className="w-[var(--radix-popper-anchor-width)] max-w-[calc(100vw-2rem)] gap-1.5 rounded-md bg-popover/96 p-3 text-xs leading-5 shadow-[0_18px_42px_-28px_rgba(15,23,42,0.42)] backdrop-blur-xl"
+          className="w-[var(--radix-popper-anchor-width)] max-w-[calc(100vw-2rem)] gap-1.5 rounded-md bg-popover p-3 text-xs leading-5 shadow-[var(--shadow-panel)]"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
           {searchHelpText.map((line) => (

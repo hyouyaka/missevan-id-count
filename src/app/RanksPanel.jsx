@@ -54,24 +54,25 @@ function buildProxyImageUrl(url) {
 }
 
 const mobilePlatformTabsListClassName =
-  "inline-flex h-8 min-h-8 w-fit max-w-full justify-start gap-6 rounded-none border-0! bg-transparent! p-0 shadow-none!";
+  "inline-flex h-9 min-h-9 w-fit max-w-full justify-start";
 const mobilePlatformTabClassName =
-  "relative h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1 text-sm! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[&_.platform-tab-label-text]:font-bold data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[&_.platform-tab-label-text]:font-bold data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:absolute after:inset-x-0 after:-inset-y-1 after:rounded-md after:content-['']";
+  "relative h-7 min-h-7 min-w-0 px-3 text-sm!";
 const mobileTextTabsListClassName =
-  "grid h-8 min-h-8 w-full justify-stretch rounded-none border-0! bg-transparent! p-0 shadow-none!";
+  "grid h-9 min-h-9 w-full justify-stretch";
 const mobileCategoryTabClassName =
-  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1.5 text-sm! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+  "h-7 min-h-7 min-w-0 px-2 text-sm!";
 const mobileRankTabClassName =
-  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1 text-[12px]! font-medium leading-none text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
-const mobileSelectedTabClassName =
-  "font-bold! text-primary! [text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)]";
-const mobileSelectedPlatformTabClassName = `${mobileSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
+  "h-7 min-h-7 min-w-0 px-2 text-xs!";
+const mobileSelectedTabClassName = "";
+const mobileSelectedPlatformTabClassName = "";
 const desktopTextTabsListClassName =
-  "inline-flex h-8 min-h-8 w-fit justify-start rounded-none border-0! bg-transparent! p-0 shadow-none!";
+  "inline-flex h-9 min-h-9 w-fit justify-start";
 const desktopTextTabClassName =
-  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1.5 text-sm! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+  "h-7 min-h-7 min-w-0 px-3 text-sm!";
 const desktopSelectedTabClassName = mobileSelectedTabClassName;
 const desktopSelectedPlatformTabClassName = `${desktopSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
+const desktopRankToolbarClassName = "hidden min-w-0 items-center gap-3 lg:flex lg:flex-nowrap";
+const desktopRankControlsClassName = "flex shrink-0 items-center gap-3";
 
 function getRankTabsGridStyle(count) {
   const columns = Math.max(1, Number(count) || 1);
@@ -150,12 +151,14 @@ function MetricLegend({ variant = "default", className = "" }) {
       className={`${
         isCompact
           ? "min-w-0 rounded-md border border-border/65 bg-card/92 px-2.5 py-1.5 shadow-none"
-          : "rounded-lg border border-border/75 bg-card/96 px-3 py-2 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.28)]"
+          : "rounded-lg border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]"
       } ${className}`}
     >
       <div
-        className={`flex flex-wrap items-center text-muted-foreground ${
-          isCompact ? "gap-x-2 gap-y-0.5 text-[0.66rem] leading-4" : "gap-x-2.5 gap-y-1 text-[0.68rem] leading-5"
+        className={`flex items-center text-muted-foreground ${
+          isCompact
+            ? "w-max min-w-full flex-nowrap justify-end gap-x-2 text-[0.64rem] leading-4"
+            : "flex-wrap gap-x-2.5 gap-y-1 text-[0.68rem] leading-5"
         }`}
       >
         {metricLegendItems.map((item) => {
@@ -196,7 +199,7 @@ function RankInfoPopover({ infoText }) {
         avoidCollisions
         collisionPadding={12}
         sticky="always"
-        className="max-h-[min(16rem,calc(100vh-2rem))] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md bg-popover/96 p-3 text-xs leading-5 shadow-[0_18px_42px_-28px_rgba(15,23,42,0.42)] backdrop-blur-xl"
+        className="max-h-[min(16rem,calc(100vh-2rem))] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md bg-popover p-3 text-xs leading-5 shadow-[var(--shadow-panel)]"
         style={{
           width: "min(clamp(12rem,60vw,18rem),calc(100vw - 2rem))",
           maxWidth: "calc(100vw - 2rem)",
@@ -456,7 +459,7 @@ function RankItemCard({
   }
 
   return (
-    <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
+    <Card className="py-3">
       <CardContent className="relative px-3.5">
         <div className="flex gap-3">
           <div className="flex shrink-0 flex-col items-center gap-2">
@@ -868,7 +871,7 @@ function CvRankItemCard({
   const topWorksText = getCvWorksPreviewText(item.topWorks || item.works);
 
   return (
-    <Card className="border-border/75 bg-card py-3 shadow-[0_18px_36px_-32px_rgba(15,23,42,0.18)]">
+    <Card className="py-3">
       <CardContent className="px-3.5">
         <div className="grid grid-cols-[auto_3.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[auto_4.25rem_minmax(0,1fr)]">
           <RankBadge rank={item.rank} />
@@ -964,7 +967,7 @@ function CvRankColumn({
 }) {
   const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
   return (
-    <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
+    <section className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h2 className="inline-flex items-center text-base font-semibold leading-6">
@@ -1015,7 +1018,7 @@ function RankColumn({
 }) {
   const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
   return (
-    <section className="min-w-0 rounded-lg border border-border/80 bg-background/76 p-3 shadow-[0_20px_46px_-38px_rgba(15,23,42,0.26)]">
+    <section className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h2 className="inline-flex items-center text-base font-semibold leading-6">
@@ -1342,14 +1345,14 @@ export function RanksPanel({
       {!isLoading && !errorMessage && hasRanks ? (
         <>
           <div className="grid gap-2">
-            <div className="hidden lg:flex lg:flex-wrap lg:items-center lg:justify-between lg:gap-x-8 lg:gap-y-2">
-              {canShowMetricLegend ? <MetricLegend variant="compact" className="max-w-full flex-none" /> : null}
-              <div className="flex flex-wrap items-center justify-end gap-x-10 gap-y-2">
+            <div className={desktopRankToolbarClassName}>
+              <div className={desktopRankControlsClassName}>
                 <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
-                  <TabsList className={`${desktopTextTabsListClassName} gap-4`}>
+                  <TabsList className={`${desktopTextTabsListClassName} gap-1`}>
                     {availablePlatforms.map((platform) => (
                       <TabsTrigger
                         key={platform.key}
+                        data-platform={platform.key}
                         className={`${desktopTextTabClassName} ${
                           platform.key === selectedPlatform ? desktopSelectedPlatformTabClassName : ""
                         }`}
@@ -1362,7 +1365,7 @@ export function RanksPanel({
                 </Tabs>
                 {platformData?.categories?.length ? (
                   <Tabs value={category?.key || ""} onValueChange={updateCategory} className="gap-0">
-                    <TabsList className={`${desktopTextTabsListClassName} gap-4`}>
+                    <TabsList className={`${desktopTextTabsListClassName} gap-1`}>
                       {platformData.categories.map((item) => (
                         <TabsTrigger
                           key={item.key}
@@ -1376,6 +1379,12 @@ export function RanksPanel({
                   </Tabs>
                 ) : null}
               </div>
+              {canShowMetricLegend ? (
+                <MetricLegend
+                  variant="compact"
+                  className="ml-auto w-max min-w-0 max-w-full shrink overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                />
+              ) : null}
             </div>
             <div className="grid gap-1 lg:hidden">
               <div className="flex items-center justify-between gap-3">
@@ -1385,6 +1394,7 @@ export function RanksPanel({
                       <TabsTrigger
                         key={platform.key}
                         data-touch="compact"
+                        data-platform={platform.key}
                         className={`${mobilePlatformTabClassName} ${
                           platform.key === selectedPlatform ? mobileSelectedPlatformTabClassName : ""
                         }`}

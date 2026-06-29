@@ -296,12 +296,14 @@ test("ongoing navigation menu exposes platform route patches that default to 7 d
       label: "猫耳",
       platform: { key: "missevan", label: "猫耳" },
       routePatch: { view: "ongoing", platform: "missevan", window: "7d" },
+      activeRoutePatch: { view: "ongoing", platform: "missevan" },
     },
     {
       key: "manbo",
       label: "漫播",
       platform: { key: "manbo", label: "漫播" },
       routePatch: { view: "ongoing", platform: "manbo", window: "7d" },
+      activeRoutePatch: { view: "ongoing", platform: "manbo" },
     },
   ]);
 });
@@ -357,12 +359,21 @@ test("ranks navigation menu derives platform category and rank route patches fro
     category: "new",
     rank: "new_daily",
   });
+  assert.deepEqual(menu[0].activeRoutePatch, {
+    view: "ranks",
+    platform: "missevan",
+  });
   assert.deepEqual(menu[0].platform, { key: "missevan", label: "猫耳" });
   assert.deepEqual(menu[0].children[0].routePatch, {
     view: "ranks",
     platform: "missevan",
     category: "new",
     rank: "new_daily",
+  });
+  assert.deepEqual(menu[0].children[0].activeRoutePatch, {
+    view: "ranks",
+    platform: "missevan",
+    category: "new",
   });
   assert.deepEqual(menu[0].children[0].children[1], {
     key: "new_weekly",
@@ -401,6 +412,11 @@ test("ranks navigation menu derives platform category and rank route patches fro
     platform: "manbo",
     category: "box_office",
     rank: "box_office_total",
+  });
+  assert.deepEqual(menu[1].children[0].activeRoutePatch, {
+    view: "ranks",
+    platform: "manbo",
+    category: "box_office",
   });
   assert.deepEqual(menu[1].platform, { key: "manbo", label: "漫播" });
   assert.deepEqual(menu[1].children[0].children[2], {

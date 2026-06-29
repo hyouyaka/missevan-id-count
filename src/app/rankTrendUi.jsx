@@ -44,9 +44,9 @@ export {
 } from "@/app/rankTrendData";
 
 export const trendActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_srgb,var(--accent-success)_88%,black)] hover:text-[var(--accent-success-foreground)]";
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]";
 export const compareActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_srgb,var(--primary)_34%,transparent)] bg-primary px-1 text-xs! text-primary-foreground shadow-[0_12px_24px_-16px_var(--primary)] hover:bg-[color-mix(in_srgb,var(--primary)_88%,black)] hover:text-primary-foreground";
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--primary)_34%,transparent)] bg-primary px-1 text-xs! text-primary-foreground shadow-[0_12px_24px_-16px_var(--primary)] hover:bg-[var(--primary-hover)] hover:text-primary-foreground";
 const trendActionHitAreaClassName =
   "h-11 min-h-11 w-[58px] min-w-[58px] border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0";
 const trendActionInlineClassName =
@@ -262,35 +262,35 @@ function getTrendMetaTags(item, platform) {
 const trendMetricStyles = {
   view_count: {
     color: "var(--chart-1)",
-    background: "rgba(36, 74, 134, 0.1)",
+    background: "color-mix(in oklch, var(--chart-1) 10%, transparent)",
   },
   danmaku_uid_count: {
     color: "var(--chart-3)",
-    background: "rgba(31, 157, 138, 0.1)",
+    background: "color-mix(in oklch, var(--chart-3) 10%, transparent)",
   },
   subscription_num: {
     color: "var(--chart-2)",
-    background: "rgba(230, 107, 79, 0.11)",
+    background: "color-mix(in oklch, var(--chart-2) 11%, transparent)",
   },
   pay_count: {
     color: "var(--chart-2)",
-    background: "rgba(230, 107, 79, 0.11)",
+    background: "color-mix(in oklch, var(--chart-2) 11%, transparent)",
   },
   missevan_total_view_count: {
     color: "var(--chart-1)",
-    background: "rgba(36, 74, 134, 0.1)",
+    background: "color-mix(in oklch, var(--chart-1) 10%, transparent)",
   },
   missevan_paid_view_count: {
     color: "var(--chart-3)",
-    background: "rgba(31, 157, 138, 0.1)",
+    background: "color-mix(in oklch, var(--chart-3) 10%, transparent)",
   },
   manbo_total_view_count: {
     color: "var(--chart-2)",
-    background: "rgba(230, 107, 79, 0.11)",
+    background: "color-mix(in oklch, var(--chart-2) 11%, transparent)",
   },
   manbo_paid_view_count: {
     color: "var(--chart-4)",
-    background: "rgba(126, 87, 194, 0.11)",
+    background: "color-mix(in oklch, var(--chart-4) 11%, transparent)",
   },
 };
 
@@ -463,7 +463,7 @@ function RankTrendLineChart({ metrics, legendMetrics = metrics, selectedMetricKe
   }, [windowKey, chartMetricSignature, chartMode]);
 
   return (
-    <div className="rounded-lg border border-border/80 bg-background/82 p-2.5 shadow-[0_18px_38px_-34px_rgba(15,23,42,0.22)]">
+    <div className="rounded-lg border border-border bg-card p-2.5 shadow-[var(--shadow-card)]">
       <TrendMetricRadioLegend
         metrics={availableLegendMetrics}
         selectedMetricKey={selectedMetricKey}
@@ -1003,9 +1003,9 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
           <div className="grid min-w-0 gap-2.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Tabs value={activeWindowKey} onValueChange={setSelectedWindow} className="w-fit">
-                <TabsList className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!">
+                <TabsList className="inline-flex h-[34px] w-fit items-center justify-center text-xs!">
                   {availableWindows.map((key) => (
-                    <TabsTrigger key={key} data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value={key}>
+                    <TabsTrigger key={key} data-touch="compact" className="h-[26px] min-w-0 px-3 text-xs!" value={key}>
                       {windows[key].label || cvTrendWindowFallbackLabels[key]}
                     </TabsTrigger>
                   ))}
@@ -1014,12 +1014,12 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
               <Tabs value={selectedChartMode} onValueChange={setSelectedChartMode} className="w-fit shrink-0">
                 <TabsList
                   aria-label="趋势曲线类型"
-                  className="inline-flex h-[34px] w-fit items-center justify-center gap-1 rounded-lg border border-border/70 bg-background/82 p-1 text-xs!"
+                  className="inline-flex h-[34px] w-fit items-center justify-center text-xs!"
                 >
-                  <TabsTrigger data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value="absolute">
+                  <TabsTrigger data-touch="compact" className="h-[26px] min-w-0 px-3 text-xs!" value="absolute">
                     绝对值
                   </TabsTrigger>
-                  <TabsTrigger data-touch="compact" className="h-[26px] min-w-0 rounded-md px-3 text-xs!" value="increment">
+                  <TabsTrigger data-touch="compact" className="h-[26px] min-w-0 px-3 text-xs!" value="increment">
                     增量
                   </TabsTrigger>
                 </TabsList>

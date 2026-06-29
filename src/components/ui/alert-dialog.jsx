@@ -32,7 +32,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-[rgba(30,32,41,0.16)] duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 z-50 bg-[oklch(0.18_0.02_255/0.28)] duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props} />
@@ -58,7 +58,7 @@ function AlertDialogContent({
           <div className="flex min-h-full w-full items-start justify-center">
             <div
               className={cn(
-                "group/alert-dialog-content relative z-50 grid w-full gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-[rgba(30,32,41,0.1)] bg-[rgba(255,250,243,0.98)] p-4 text-popover-foreground shadow-[0_24px_60px_-34px_rgba(30,32,41,0.24)] ring-1 ring-[rgba(255,255,255,0.58)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+                "group/alert-dialog-content relative z-50 grid w-full gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-border bg-[var(--surface-floating)] p-4 text-popover-foreground shadow-[var(--shadow-panel)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
                 className
               )}
             >
@@ -75,7 +75,7 @@ function AlertDialogContent({
       data-slot="alert-dialog-content"
       data-size={size}
       className={cn(
-        "group/alert-dialog-content z-50 grid w-full gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-[rgba(30,32,41,0.1)] bg-[rgba(255,250,243,0.98)] p-4 text-popover-foreground shadow-[0_24px_60px_-34px_rgba(30,32,41,0.24)] ring-1 ring-[rgba(255,255,255,0.58)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        "group/alert-dialog-content z-50 grid w-full gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-border bg-[var(--surface-floating)] p-4 text-popover-foreground shadow-[var(--shadow-panel)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
         "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
         className
       )}
@@ -113,7 +113,7 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-[calc(var(--radius)+0.32rem)] border-t border-[rgba(30,32,41,0.08)] bg-[rgba(255,240,233,0.55)] p-4 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
+        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-[calc(var(--radius)+0.32rem)] border-t border-border bg-[var(--surface-subtle)] p-4 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
         className
       )}
       {...props} />
@@ -128,7 +128,7 @@ function AlertDialogMedia({
     <div
       data-slot="alert-dialog-media"
       className={cn(
-        "mb-2 inline-flex size-10 items-center justify-center rounded-md bg-[rgba(59,62,122,0.14)] text-[rgb(59,62,122)] sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-6",
+        "mb-2 inline-flex size-10 items-center justify-center rounded-md bg-accent text-accent-foreground sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-6",
         className
       )}
       {...props} />

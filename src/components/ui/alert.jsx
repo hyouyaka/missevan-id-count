@@ -8,7 +8,7 @@ const alertVariants = cva(
   {
     variants: {
       variant: {
-        default: "border-[color-mix(in_srgb,var(--primary)_18%,transparent)] bg-[var(--surface-alert)] text-card-foreground",
+        default: "border-[color-mix(in_oklch,var(--primary)_18%,transparent)] bg-[var(--surface-alert)] text-card-foreground",
         destructive:
           "border-[var(--border-warm)] bg-[var(--surface-destructive)] text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
       },

@@ -43,19 +43,17 @@ const platformLabels = {
 };
 
 const mobileOngoingTextTabsListClassName =
-  "grid h-8 min-h-8 w-fit justify-start rounded-none border-0! bg-transparent! p-0 shadow-none!";
+  "grid h-9 min-h-9 w-fit justify-start";
 const mobileOngoingPlatformTabClassName =
-  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-2 text-base! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[&_.platform-tab-label-text]:font-bold data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[&_.platform-tab-label-text]:font-bold data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+  "h-7 min-h-7 min-w-0 px-3 text-sm!";
 const mobileOngoingWindowTabClassName =
-  "h-8 min-h-8 min-w-10 rounded-none border-0! bg-transparent! px-1.5 text-[12px]! font-medium leading-none text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] data-active:border-transparent data-active:bg-transparent data-active:font-bold data-active:text-primary data-active:shadow-none data-active:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
-const mobileOngoingSelectedTabClassName =
-  "font-bold! text-primary! [text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)]";
-const mobileOngoingSelectedPlatformTabClassName =
-  `${mobileOngoingSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
+  "h-7 min-h-7 min-w-10 px-2 text-xs!";
+const mobileOngoingSelectedTabClassName = "";
+const mobileOngoingSelectedPlatformTabClassName = "";
 const desktopOngoingTextTabsListClassName =
-  "inline-flex h-8 min-h-8 w-fit justify-start rounded-none border-0! bg-transparent! p-0 shadow-none!";
+  "inline-flex h-9 min-h-9 w-fit justify-start";
 const desktopOngoingTabClassName =
-  "h-8 min-h-8 min-w-0 rounded-none border-0! bg-transparent! px-1.5 text-base! font-medium text-muted-foreground shadow-none! hover:bg-transparent hover:text-primary data-[state=active]:border-transparent data-[state=active]:bg-transparent data-[state=active]:font-bold data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:[text-shadow:0_1px_6px_color-mix(in_srgb,var(--primary)_28%,transparent)] after:hidden";
+  "h-7 min-h-7 min-w-0 px-3 text-sm!";
 const desktopOngoingSelectedTabClassName = mobileOngoingSelectedTabClassName;
 const desktopOngoingSelectedPlatformTabClassName =
   `${desktopOngoingSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
@@ -176,7 +174,7 @@ function OngoingMetric({ item, windowKey, metricKey }) {
       <div className={`mt-1 text-[0.92rem] leading-5 tabular-nums text-foreground ${showEmptyPaidDanmaku ? "font-normal" : "font-semibold"}`}>
         {showEmptyPaidDanmaku ? "暂无付费集" : formatOngoingMetricValue(getMetricValue(item, metricKey), metricKey, numberOptions)}
       </div>
-      <div className="text-[0.74rem] font-medium leading-5 tabular-nums text-[rgb(20,137,111)]">
+      <div className="text-[0.74rem] font-medium leading-5 tabular-nums text-[var(--accent-success)]">
         {showEmptyPaidDanmaku ? "\u00a0" : showMissingDelta ? "暂无" : formatDelta(delta, metricKey, numberOptions)}
       </div>
     </div>
@@ -322,7 +320,7 @@ function OngoingCard({
   return (
     <>
       <Card
-        className="overflow-hidden border-border/75 bg-card py-0 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.22)] transition-shadow hover:shadow-[0_22px_48px_-34px_rgba(15,23,42,0.34)]"
+        className="overflow-hidden py-0"
       >
         <CardContent className="p-0">
           <div className="flex h-[9.5rem] gap-3 overflow-hidden p-3.5 sm:h-[10.25rem]">
@@ -447,6 +445,10 @@ export function OngoingPanel({
     ["3d", "7d", "30d"].includes(routeState?.window) ? routeState.window : "3d"
   );
   const [ongoingData, setOngoingData] = useState(null);
+  const [platformCounts, setPlatformCounts] = useState({
+    missevan: null,
+    manbo: null,
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const loggedOngoingRef = useRef(new Set());
@@ -469,6 +471,10 @@ export function OngoingPanel({
       });
       if (cachedPayload?.data?.success) {
         setOngoingData(cachedPayload.data);
+        setPlatformCounts((current) => ({
+          ...current,
+          [selectedPlatform]: cachedPayload.data.items?.length || 0,
+        }));
       }
       setIsLoading(!cachedPayload);
       setErrorMessage("");
@@ -494,6 +500,10 @@ export function OngoingPanel({
           return;
         }
         setOngoingData(data);
+        setPlatformCounts((current) => ({
+          ...current,
+          [selectedPlatform]: data.items?.length || 0,
+        }));
       } catch (error) {
         if (!cancelled) {
           console.error("Failed to load ongoing dramas", error);
@@ -514,6 +524,46 @@ export function OngoingPanel({
       cancelled = true;
     };
   }, [frontendVersion, selectedPlatform]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    ["missevan", "manbo"].forEach((platform) => {
+      const cachedPayload = getCachedOngoingData({
+        platform,
+        frontendVersion,
+      });
+      if (cachedPayload?.data?.success) {
+        setPlatformCounts((current) => ({
+          ...current,
+          [platform]: cachedPayload.data.items?.length || 0,
+        }));
+      }
+
+      fetchOngoingData({
+        platform,
+        frontendVersion,
+        revalidate: false,
+      })
+        .then(({ response, data } = {}) => {
+          if (!cancelled && response?.ok && data?.success) {
+            setPlatformCounts((current) => ({
+              ...current,
+              [platform]: data.items?.length || 0,
+            }));
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.error(`Failed to load ${platform} ongoing count`, error);
+          }
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [frontendVersion]);
 
   useEffect(() => {
     if (isLoading || errorMessage || !ongoingData?.success) {
@@ -564,8 +614,6 @@ export function OngoingPanel({
     () => sortOngoingItemsByWindowDelta(ongoingData?.items || [], activeWindow),
     [activeWindow, ongoingData?.items]
   );
-  const platformLabel = platformLabels[selectedPlatform] || selectedPlatform;
-
   function updatePlatform(platform) {
     const nextPlatform = platform === "manbo" ? "manbo" : "missevan";
     setSelectedPlatform(nextPlatform);
@@ -591,9 +639,6 @@ export function OngoingPanel({
       <div className="px-1 py-1">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <h1 className="min-w-0 text-base font-normal leading-6 tracking-tight">
-              {platformLabel}一周内更新：共{sortedItems.length}部
-            </h1>
             <div className="shrink-0 text-xs leading-5 text-muted-foreground">
               更新：{formatOngoingUpdatedAt(ongoingData?.updatedAt)}
             </div>
@@ -609,12 +654,14 @@ export function OngoingPanel({
                   <TabsTrigger
                     key={platform}
                     data-touch="compact"
+                    data-platform={platform}
                     className={`${mobileOngoingPlatformTabClassName} ${
                       platform === selectedPlatform ? mobileOngoingSelectedPlatformTabClassName : ""
                     }`}
                     value={platform}
                   >
                     <PlatformTabLabel platform={platform} />
+                    <span className="tabular-nums">{platformCounts[platform] ?? "—"}</span>
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -646,12 +693,14 @@ export function OngoingPanel({
                 {["missevan", "manbo"].map((platform) => (
                   <TabsTrigger
                     key={platform}
+                    data-platform={platform}
                     className={`${desktopOngoingTabClassName} ${
                       platform === selectedPlatform ? desktopOngoingSelectedPlatformTabClassName : ""
                     }`}
                     value={platform}
                   >
                     <PlatformTabLabel platform={platform} />
+                    <span className="tabular-nums">{platformCounts[platform] ?? "—"}</span>
                   </TabsTrigger>
                 ))}
               </TabsList>

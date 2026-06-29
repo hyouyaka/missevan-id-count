@@ -19,12 +19,12 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex h-9 w-fit items-center justify-center rounded-[calc(var(--radius)+0.05rem)] border border-border/80 p-0.5 text-muted-foreground group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  "group/tabs-list inline-flex h-9 w-fit items-center justify-center rounded-full border-0 bg-[var(--control-track)] p-1 text-muted-foreground shadow-none group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col",
   {
     variants: {
       variant: {
-        default: "bg-surface-panel",
-        line: "gap-1 bg-transparent",
+        default: "",
+        line: "",
       },
     },
     defaultVariants: {
@@ -55,10 +55,7 @@ function TabsTrigger({
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(
-        "relative inline-flex h-[30px] flex-1 items-center justify-center gap-1.5 rounded-[calc(var(--radius)-0.18rem)] border border-transparent px-3 py-1 text-sm font-medium whitespace-nowrap text-foreground/66 transition-all group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 dark:text-muted-foreground dark:hover:text-foreground group-data-[variant=default]/tabs-list:data-active:shadow-[0_12px_24px_-18px_rgba(54,54,54,0.28)] group-data-[variant=line]/tabs-list:data-active:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-        "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-active:bg-transparent dark:group-data-[variant=line]/tabs-list:data-active:border-transparent dark:group-data-[variant=line]/tabs-list:data-active:bg-transparent",
-        "hover:bg-surface-hover data-active:border-[var(--surface-selected-border)] data-active:bg-surface-selected data-active:text-primary dark:data-active:text-primary",
-        "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-horizontal/tabs:after:inset-x-0 group-data-horizontal/tabs:after:bottom-[-5px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-0 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
+        "relative inline-flex h-[30px] flex-1 items-center justify-center gap-1.5 rounded-full border-0 px-3 py-1 text-sm font-medium whitespace-nowrap text-muted-foreground transition-[background-color,color,box-shadow] group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start hover:bg-surface-hover hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 data-[state=active]:bg-[var(--control-selected)] data-[state=active]:text-foreground data-[state=active]:shadow-[var(--shadow-selected)] data-[platform=manbo]:text-[var(--platform-manbo)] data-[platform=manbo]:data-[state=active]:bg-[var(--platform-manbo-soft)] data-[platform=manbo]:data-[state=active]:text-[var(--platform-manbo)] data-[platform=missevan]:text-[var(--platform-missevan)] data-[platform=missevan]:data-[state=active]:bg-[var(--platform-missevan-soft)] data-[platform=missevan]:data-[state=active]:text-[var(--platform-missevan)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props} />
