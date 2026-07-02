@@ -14,6 +14,8 @@ const buttonVariants = cva(
           "border-border/90 bg-background/92 text-foreground hover:border-[var(--border-warm)] hover:bg-surface-hover-strong hover:text-foreground aria-expanded:border-[var(--border-warm)] aria-expanded:bg-surface-hover-strong aria-expanded:text-foreground dark:border-input dark:bg-input/30",
         secondary:
           "border border-[color-mix(in_oklch,var(--accent-warm)_24%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[var(--shadow-secondary-control)] hover:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))] hover:text-[var(--accent-warm-foreground)] aria-expanded:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))] aria-expanded:text-[var(--accent-warm-foreground)]",
+        compare:
+          "border border-[color-mix(in_oklch,var(--accent-compare)_24%,transparent)] bg-[var(--accent-compare)] text-[var(--accent-compare-foreground)] shadow-[0_14px_28px_-20px_var(--accent-compare)] hover:bg-[var(--accent-compare-hover)] hover:text-[var(--accent-compare-foreground)] aria-expanded:bg-[var(--accent-compare-hover)] aria-expanded:text-[var(--accent-compare-foreground)]",
         ghost:
           "hover:bg-surface-hover hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground",
         destructive:

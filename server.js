@@ -22,6 +22,7 @@ import {
   buildPinyinSearchTokens,
   buildPinyinSearchUnits,
 } from "./shared/pinyinSearchUtils.js";
+import { canonicalizeCompatibleSearchText } from "./shared/searchCompatibility.js";
 import { createUpstashRestClient } from "./shared/upstashRestClient.js";
 import { loadLocalEnv } from "./envConfig.js";
 import { isMissevanLikelyDanmakuOverflow } from "./shared/episodeRules.js";
@@ -1778,6 +1779,14 @@ export function buildManboSearchApiUsageLog(keyword, options = {}) {
     matchedCount,
     cached: false,
     ...(error ? { error: message } : {}),
+  };
+}
+
+export function buildCompatibilitySearchUsageLog(platform, keyword) {
+  return {
+    platform: normalizeTextValue(platform),
+    action: "compatibility_search",
+    keyword: normalizeKeyword(keyword),
   };
 }
 
@@ -4745,7 +4754,7 @@ function sortScoredDramaRecords(items, keyword) {
   });
 }
 
-export function searchManboLibraryRecords(records, keyword, limit = null) {
+function searchManboLibraryRecordsStrict(records, keyword, limit = null) {
   const compoundMatches = buildCompoundScoredMatches(
     records,
     keyword,
@@ -4776,7 +4785,7 @@ export function searchManboLibraryRecords(records, keyword, limit = null) {
   return applyOptionalSearchLimit(matchedRecords, limit);
 }
 
-export function searchMissevanLibraryRecords(records, keyword, limit = null) {
+function searchMissevanLibraryRecordsStrict(records, keyword, limit = null) {
   const compoundMatches = buildCompoundScoredMatches(
     records,
     keyword,
@@ -4805,6 +4814,120 @@ export function searchMissevanLibraryRecords(records, keyword, limit = null) {
       .values()
   ).map((item) => item.record);
   return applyOptionalSearchLimit(matchedRecords, limit);
+}
+
+function canonicalizeCompatibleStringArray(values) {
+  return (Array.isArray(values) ? values : [])
+    .map(canonicalizeCompatibleSearchText);
+}
+
+function canonicalizeCompatibleStringMap(values) {
+  return Object.fromEntries(
+    Object.entries(values && typeof values === "object" ? values : {})
+      .map(([key, value]) => [key, canonicalizeCompatibleSearchText(value)])
+  );
+}
+
+function buildCompatibleManboSearchRecord(record) {
+  return {
+    ...record,
+    name: canonicalizeCompatibleSearchText(record?.name),
+    aliases: canonicalizeCompatibleStringArray(record?.aliases),
+    mainCvNicknames: canonicalizeCompatibleStringArray(record?.mainCvNicknames),
+    mainCvNames: canonicalizeCompatibleStringArray(record?.mainCvNames),
+    mainCvRoleNames: canonicalizeCompatibleStringArray(record?.mainCvRoleNames),
+    seriesTitle: canonicalizeCompatibleSearchText(record?.seriesTitle),
+    author: canonicalizeCompatibleSearchText(record?.author),
+    catalogName: canonicalizeCompatibleSearchText(record?.catalogName),
+    genre: canonicalizeCompatibleSearchText(record?.genre),
+  };
+}
+
+function buildCompatibleMissevanSearchRecord(record) {
+  return {
+    ...record,
+    title: canonicalizeCompatibleSearchText(record?.title),
+    seriesTitle: canonicalizeCompatibleSearchText(record?.seriesTitle),
+    cvnames: canonicalizeCompatibleStringMap(record?.cvnames),
+    cvroles: canonicalizeCompatibleStringMap(record?.cvroles),
+    author: canonicalizeCompatibleSearchText(record?.author),
+  };
+}
+
+function restoreOriginalSearchRecords(matchedRecords, records) {
+  const recordsById = new Map(
+    (Array.isArray(records) ? records : [])
+      .map((record) => [String(record?.dramaId ?? ""), record])
+      .filter(([dramaId]) => dramaId)
+  );
+  return matchedRecords
+    .map((record) => recordsById.get(String(record?.dramaId ?? "")))
+    .filter(Boolean);
+}
+
+function searchCompatibleLibraryRecords(
+  records,
+  keyword,
+  limit,
+  buildCompatibleRecord,
+  searchStrict
+) {
+  const compatibleRecords = (Array.isArray(records) ? records : [])
+    .map(buildCompatibleRecord);
+  const matchedRecords = searchStrict(
+    compatibleRecords,
+    canonicalizeCompatibleSearchText(keyword),
+    limit
+  );
+  return restoreOriginalSearchRecords(matchedRecords, records);
+}
+
+export function searchManboLibraryRecords(records, keyword, limit = null, matchMode = "fallback") {
+  if (matchMode === "compatible") {
+    return searchCompatibleLibraryRecords(
+      records,
+      keyword,
+      limit,
+      buildCompatibleManboSearchRecord,
+      searchManboLibraryRecordsStrict
+    );
+  }
+
+  const strictMatches = searchManboLibraryRecordsStrict(records, keyword, limit);
+  if (strictMatches.length || matchMode === "strict") {
+    return strictMatches;
+  }
+  return searchCompatibleLibraryRecords(
+    records,
+    keyword,
+    limit,
+    buildCompatibleManboSearchRecord,
+    searchManboLibraryRecordsStrict
+  );
+}
+
+export function searchMissevanLibraryRecords(records, keyword, limit = null, matchMode = "fallback") {
+  if (matchMode === "compatible") {
+    return searchCompatibleLibraryRecords(
+      records,
+      keyword,
+      limit,
+      buildCompatibleMissevanSearchRecord,
+      searchMissevanLibraryRecordsStrict
+    );
+  }
+
+  const strictMatches = searchMissevanLibraryRecordsStrict(records, keyword, limit);
+  if (strictMatches.length || matchMode === "strict") {
+    return strictMatches;
+  }
+  return searchCompatibleLibraryRecords(
+    records,
+    keyword,
+    limit,
+    buildCompatibleMissevanSearchRecord,
+    searchMissevanLibraryRecordsStrict
+  );
 }
 
 function buildMainCvText(mainCvs) {
@@ -5527,7 +5650,7 @@ export function buildUnifiedSearchFallbackPlan(missevanResult, manboResult) {
   };
 }
 
-async function runMissevanLibraryUnifiedSearch(keyword, offset, limit) {
+async function runMissevanLibraryUnifiedSearch(keyword, offset, limit, matchMode = "fallback") {
   let source = "library_only";
   let totalMatched = 0;
   let results = [];
@@ -5536,7 +5659,8 @@ async function runMissevanLibraryUnifiedSearch(keyword, offset, limit) {
     const matchedRecords = searchMissevanLibraryRecords(
       missevanInfoStore.records,
       keyword,
-      SEARCH_RESULT_LIMIT
+      SEARCH_RESULT_LIMIT,
+      matchMode
     );
     source = "library";
     totalMatched = matchedRecords.length;
@@ -5561,11 +5685,12 @@ async function runMissevanLibraryUnifiedSearch(keyword, offset, limit) {
   };
 }
 
-async function runManboLibraryUnifiedSearch(keyword, offset, limit) {
+async function runManboLibraryUnifiedSearch(keyword, offset, limit, matchMode = "fallback") {
   const matchedRecords = searchManboLibraryRecords(
     manboInfoStore.records,
     keyword,
-    SEARCH_RESULT_LIMIT
+    SEARCH_RESULT_LIMIT,
+    matchMode
   );
 
   if (!matchedRecords.length) {
@@ -9684,21 +9809,42 @@ app.get("/unified-search", async (req, res) => {
     await refreshMissevanCooldownState();
 
     const [missevanLibrarySettled, manboLibrarySettled] = await Promise.allSettled([
-      runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit),
-      runManboLibraryUnifiedSearch(normalizedKeyword, offset, limit),
+      runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "strict"),
+      runManboLibraryUnifiedSearch(normalizedKeyword, offset, limit, "strict"),
     ]);
-    const missevanLibraryResult = normalizeSettledUnifiedSearchResult("missevan",
+    let missevanLibraryResult = normalizeSettledUnifiedSearchResult("missevan",
       missevanLibrarySettled,
       buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "library_error"),
       "library"
     );
-    const manboLibraryResult = normalizeSettledUnifiedSearchResult("manbo",
+    let manboLibraryResult = normalizeSettledUnifiedSearchResult("manbo",
       manboLibrarySettled,
       buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "library_error", {
         hydratedCount: 0,
       }),
       "library"
     );
+    const shouldRunCompatibilitySearch = !hasUnifiedSearchMatches(missevanLibraryResult) &&
+      !hasUnifiedSearchMatches(manboLibraryResult);
+
+    if (shouldRunCompatibilitySearch) {
+      void writeUsageLog(buildCompatibilitySearchUsageLog("unified", normalizedKeyword));
+      const [missevanCompatibleSettled, manboCompatibleSettled] = await Promise.allSettled([
+        runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "compatible"),
+        runManboLibraryUnifiedSearch(normalizedKeyword, offset, limit, "compatible"),
+      ]);
+      missevanLibraryResult = normalizeSettledUnifiedSearchResult("missevan",
+        missevanCompatibleSettled,
+        missevanLibraryResult,
+        "compatibility"
+      );
+      manboLibraryResult = normalizeSettledUnifiedSearchResult("manbo",
+        manboCompatibleSettled,
+        manboLibraryResult,
+        "compatibility"
+      );
+    }
+
     const fallbackPlan = buildUnifiedSearchFallbackPlan(
       missevanLibraryResult,
       manboLibraryResult
@@ -9805,11 +9951,21 @@ app.get("/search", async (req, res) => {
     let results = [];
 
     if (missevanInfoStore.remoteAvailable) {
-      const matchedRecords = searchMissevanLibraryRecords(
+      let matchedRecords = searchMissevanLibraryRecords(
         missevanInfoStore.records,
         normalizedKeyword,
-        SEARCH_RESULT_LIMIT
+        SEARCH_RESULT_LIMIT,
+        "strict"
       );
+      if (!matchedRecords.length) {
+        void writeUsageLog(buildCompatibilitySearchUsageLog("missevan", normalizedKeyword));
+        matchedRecords = searchMissevanLibraryRecords(
+          missevanInfoStore.records,
+          normalizedKeyword,
+          SEARCH_RESULT_LIMIT,
+          "compatible"
+        );
+      }
       source = "library";
       totalMatched = matchedRecords.length;
 
@@ -10442,11 +10598,21 @@ app.get("/manbo/search", async (req, res) => {
 
   try {
     await ensureInfoStoreLoaded(manboInfoStore);
-    const matchedRecords = searchManboLibraryRecords(
+    let matchedRecords = searchManboLibraryRecords(
       manboInfoStore.records,
       keyword,
-      SEARCH_RESULT_LIMIT
+      SEARCH_RESULT_LIMIT,
+      "strict"
     );
+    if (!matchedRecords.length) {
+      void writeUsageLog(buildCompatibilitySearchUsageLog("manbo", keyword));
+      matchedRecords = searchManboLibraryRecords(
+        manboInfoStore.records,
+        keyword,
+        SEARCH_RESULT_LIMIT,
+        "compatible"
+      );
+    }
     if (!matchedRecords.length && !useApiFallback) {
       return res.json({
         success: false,

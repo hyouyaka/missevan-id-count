@@ -195,11 +195,14 @@ function logRejectedHomePayload(label, result) {
   }
 }
 
-function SectionHeader({ title, sectionIcon: SectionIcon }) {
+function SectionHeader({ title, description, sectionIcon: SectionIcon }) {
   return (
     <div className="home-editorial-section-heading">
-      {SectionIcon ? <SectionIcon aria-hidden="true" className="home-editorial-section-icon" /> : null}
-      <h2>{title}</h2>
+      <div className="home-editorial-section-title">
+        {SectionIcon ? <SectionIcon aria-hidden="true" className="home-editorial-section-icon" /> : null}
+        <h2>{title}</h2>
+      </div>
+      {description ? <p className="home-editorial-section-note">{description}</p> : null}
     </div>
   );
 }
@@ -818,7 +821,7 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
       platform,
       id: lookup.id,
       name: item?.name,
-      source: "home",
+      source: "homeview",
       rankKey,
       frontendVersion,
     });
@@ -874,8 +877,11 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
         <>
       <section className="home-editorial-section home-editorial-section-first">
         <div className="home-editorial-section-header">
-          <SectionHeader title="一周内更新" sectionIcon={CalendarClockIcon} />
-          <p>按近七日播放增量排列</p>
+          <SectionHeader
+            title="一周内更新"
+            description="按近七日播放量增量排列，点击封面可查看趋势"
+            sectionIcon={CalendarClockIcon}
+          />
         </div>
 
         <div className="home-editorial-updates-grid">
@@ -904,9 +910,11 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
 
       <section className="home-editorial-section">
         <div className="home-editorial-section-header home-editorial-ranks-header">
-          <div>
-            <SectionHeader title="榜单速览" sectionIcon={ChartNoAxesColumnIcon} />
-          </div>
+          <SectionHeader
+            title="榜单速览"
+            description="点击封面可查看趋势"
+            sectionIcon={ChartNoAxesColumnIcon}
+          />
           <PlatformTabs value={selectedRankPlatform} onValueChange={setSelectedRankPlatform} ariaLabel="选择榜单平台" />
         </div>
         <div className="home-editorial-ranks-viewport">

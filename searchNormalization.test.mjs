@@ -1,6 +1,156 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+function buildMissevanSearchRecord(title, dramaId) {
+  return {
+    dramaId,
+    soundIds: [],
+    title,
+    seriesTitle: "",
+    cvnames: {},
+    cvroles: {},
+    author: "",
+    catalog: 89,
+  };
+}
+
+function buildManboSearchRecord(name, dramaId) {
+  return {
+    dramaId,
+    name,
+    aliases: [],
+    mainCvNicknames: [],
+    mainCvNames: [],
+    mainCvRoleNames: [],
+    seriesTitle: "",
+    author: "",
+    catalogName: "",
+  };
+}
+
+test("library search falls back to Traditional and Simplified Chinese compatibility", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords, searchManboLibraryRecords } = await import("./server.js");
+
+  assert.deepEqual(
+    searchMissevanLibraryRecords(
+      [buildMissevanSearchRecord("嚣张 第一季", "101")],
+      "囂張"
+    ).map((item) => item.dramaId),
+    ["101"]
+  );
+  assert.deepEqual(
+    searchMissevanLibraryRecords(
+      [buildMissevanSearchRecord("囂張 第二季", "102")],
+      "嚣张"
+    ).map((item) => item.dramaId),
+    ["102"]
+  );
+  assert.deepEqual(
+    searchManboLibraryRecords(
+      [buildManboSearchRecord("嚣张 第一季", "201")],
+      "囂張"
+    ).map((item) => item.dramaId),
+    ["201"]
+  );
+  assert.deepEqual(
+    searchManboLibraryRecords(
+      [buildManboSearchRecord("囂張 第二季", "202")],
+      "嚣张"
+    ).map((item) => item.dramaId),
+    ["202"]
+  );
+});
+
+test("compatibility search usage logs preserve platform and original keyword", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildCompatibilitySearchUsageLog } = await import("./server.js");
+
+  assert.deepEqual(buildCompatibilitySearchUsageLog("unified", " 囂張 "), {
+    platform: "unified",
+    action: "compatibility_search",
+    keyword: "囂張",
+  });
+  assert.deepEqual(buildCompatibilitySearchUsageLog("manbo", "愚蠢有钱人"), {
+    platform: "manbo",
+    action: "compatibility_search",
+    keyword: "愚蠢有钱人",
+  });
+});
+
+test("library search falls back to optional internal 的 compatibility", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords, searchManboLibraryRecords } = await import("./server.js");
+
+  assert.deepEqual(
+    searchMissevanLibraryRecords(
+      [buildMissevanSearchRecord("谁来言说夜晚", "301")],
+      "谁来言说的夜晚"
+    ).map((item) => item.dramaId),
+    ["301"]
+  );
+  assert.deepEqual(
+    searchManboLibraryRecords(
+      [buildManboSearchRecord("愚蠢的有钱人", "302")],
+      "愚蠢有钱人"
+    ).map((item) => item.dramaId),
+    ["302"]
+  );
+});
+
+test("library search returns strict matches without compatible-only candidates", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords, searchManboLibraryRecords } = await import("./server.js");
+
+  assert.deepEqual(
+    searchMissevanLibraryRecords(
+      [
+        buildMissevanSearchRecord("囂張 特别篇", "401"),
+        buildMissevanSearchRecord("嚣张 第一季", "402"),
+      ],
+      "囂張"
+    ).map((item) => item.dramaId),
+    ["401"]
+  );
+  assert.deepEqual(
+    searchManboLibraryRecords(
+      [
+        buildManboSearchRecord("愚蠢有钱人", "501"),
+        buildManboSearchRecord("愚蠢的有钱人", "502"),
+      ],
+      "愚蠢有钱人"
+    ).map((item) => item.dramaId),
+    ["501"]
+  );
+});
+
+test("compatible search preserves boundary 的 and season sorting", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords, searchManboLibraryRecords } = await import("./server.js");
+
+  assert.deepEqual(
+    searchMissevanLibraryRecords(
+      [
+        buildMissevanSearchRecord("士", "601"),
+        buildMissevanSearchRecord("我的", "602"),
+      ],
+      "的士"
+    ),
+    []
+  );
+  assert.deepEqual(
+    searchManboLibraryRecords(
+      [
+        buildManboSearchRecord("嚣张 番外篇", "703"),
+        buildManboSearchRecord("嚣张 第二季", "702"),
+        buildManboSearchRecord("嚣张 第一季", "701"),
+      ],
+      "囂張"
+    ).map((item) => item.name),
+    ["嚣张 第一季", "嚣张 第二季", "嚣张 番外篇"]
+  );
+});
+
 test("library search matches Missevan titles when query omits common symbols", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords } = await import("./server.js");

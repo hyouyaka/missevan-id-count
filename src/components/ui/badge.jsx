@@ -29,7 +29,7 @@ const badgeVariants = cva(
         radioDrama:
           "border-[color-mix(in_oklch,var(--primary)_18%,transparent)] bg-primary text-primary-foreground shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--primary-hover)]",
         audioDrama:
-          "border-[color-mix(in_oklch,var(--accent-purple)_18%,transparent)] bg-[var(--accent-purple)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--platform-manbo-hover)]",
+          "border-[color-mix(in_oklch,var(--accent-rose)_18%,transparent)] bg-[var(--accent-rose)] text-[var(--accent-rose-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-rose)_90%,var(--foreground))]",
         audioComic:
           "border-[color-mix(in_oklch,var(--accent-rose)_18%,transparent)] bg-[var(--accent-rose)] text-[var(--accent-rose-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-rose)_90%,var(--foreground))]",
         imported:

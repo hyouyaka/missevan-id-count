@@ -56,6 +56,43 @@ test("project palette uses shared OKLCH semantic colors", () => {
   assert.match(cardSource, /bg-card[\s\S]*shadow-\[var\(--shadow-card\)\]/);
 });
 
+test("semantic role colors keep the requested labels and actions distinct", () => {
+  assert.match(indexCssSource, /--accent-compare: oklch\(0\.54 0\.09 215\)/);
+  assert.match(indexCssSource, /--accent-compare-hover: oklch\(0\.48 0\.09 215\)/);
+  assert.match(indexCssSource, /--accent-compare-foreground: oklch\(0\.99 0\.004 215\)/);
+  assert.match(indexCssSource, /\.dark \{[\s\S]*--accent-compare: oklch\(0\.72 0\.1 215\)/);
+  assert.match(indexCssSource, /\.dark \{[\s\S]*--accent-compare-hover: oklch\(0\.78 0\.08 215\)/);
+  assert.match(indexCssSource, /\.dark \{[\s\S]*--accent-compare-foreground: oklch\(0\.2 0\.02 215\)/);
+
+  const audioDramaStart = badgeSource.indexOf("audioDrama:");
+  const audioDramaEnd = badgeSource.indexOf("audioComic:", audioDramaStart);
+  const audioDramaSource = badgeSource.slice(audioDramaStart, audioDramaEnd);
+  assert.match(audioDramaSource, /bg-\[var\(--accent-rose\)\]/);
+  assert.match(audioDramaSource, /text-\[var\(--accent-rose-foreground\)\]/);
+  assert.match(audioDramaSource, /color-mix\(in_oklch,var\(--accent-rose\)_90%,var\(--foreground\)\)/);
+  assert.doesNotMatch(audioDramaSource, /accent-purple|platform-manbo/);
+
+  const compareVariantStart = buttonSource.indexOf("compare:");
+  const compareVariantEnd = buttonSource.indexOf("destructive:", compareVariantStart);
+  const compareVariantSource = buttonSource.slice(compareVariantStart, compareVariantEnd);
+  assert.match(compareVariantSource, /bg-\[var\(--accent-compare\)\]/);
+  assert.match(compareVariantSource, /text-\[var\(--accent-compare-foreground\)\]/);
+  assert.match(compareVariantSource, /hover:bg-\[var\(--accent-compare-hover\)\]/);
+
+  for (const actionSource of [rankTrendUiSource, searchResultsSource]) {
+    const compareActionStart = actionSource.indexOf("const compareActionButtonClassName");
+    const compareActionEnd = actionSource.indexOf("const trendActionHitAreaClassName", compareActionStart);
+    const compareActionSource = actionSource.slice(compareActionStart, compareActionEnd);
+    assert.match(compareActionSource, /var\(--accent-compare\)/);
+    assert.match(compareActionSource, /var\(--accent-compare-foreground\)/);
+    assert.match(compareActionSource, /var\(--accent-compare-hover\)/);
+    assert.doesNotMatch(compareActionSource, /bg-primary|text-primary-foreground|primary-hover/);
+    assert.match(actionSource, /const trendActionButtonClassName[\s\S]*var\(--accent-success\)/);
+  }
+
+  assert.equal(toolViewSource.match(/variant="compare"/g)?.length ?? 0, 2);
+});
+
 test("platform pills use globally distinct selected surfaces", () => {
   assert.match(indexCssSource, /--control-track: oklch\(0\.945 0\.01 255\)/);
   assert.match(indexCssSource, /--platform-missevan-soft: oklch\(0\.875 0\.02 255\)/);
@@ -237,8 +274,23 @@ test("Manbo search supports local-only fallback mode", () => {
   const apiCallIndex = routeSource.indexOf("fetchManboSearchApiRecords");
 
   assert.match(routeSource, /req\.query\.apiFallback/);
+  assert.match(routeSource, /searchManboLibraryRecords\(\s*manboInfoStore\.records,\s*keyword,\s*SEARCH_RESULT_LIMIT,\s*"strict"\s*\)/);
+  assert.match(routeSource, /if \(!matchedRecords\.length\) \{\s*void writeUsageLog\(buildCompatibilitySearchUsageLog\("manbo", keyword\)\)/);
+  assert.match(routeSource, /searchManboLibraryRecords\(\s*manboInfoStore\.records,\s*keyword,\s*SEARCH_RESULT_LIMIT,\s*"compatible"\s*\)/);
   assert.ok(localOnlyIndex >= 0, "Manbo search should return library_only when API fallback is disabled");
   assert.ok(apiCallIndex > localOnlyIndex, "Manbo API fetch should occur after local-only branch");
+});
+
+test("Missevan search logs compatibility fallback before API fallback", () => {
+  const routeStart = serverSource.indexOf('app.get("/search"');
+  assert.notEqual(routeStart, -1, "Missevan search route should exist");
+  const routeEnd = serverSource.indexOf('app.post("/getdramacards"', routeStart);
+  assert.notEqual(routeEnd, -1, "Missevan search route end marker should exist");
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+
+  assert.match(routeSource, /searchMissevanLibraryRecords\(\s*missevanInfoStore\.records,\s*normalizedKeyword,\s*SEARCH_RESULT_LIMIT,\s*"strict"\s*\)/);
+  assert.match(routeSource, /if \(!matchedRecords\.length\) \{\s*void writeUsageLog\(buildCompatibilitySearchUsageLog\("missevan", normalizedKeyword\)\)/);
+  assert.match(routeSource, /searchMissevanLibraryRecords\(\s*missevanInfoStore\.records,\s*normalizedKeyword,\s*SEARCH_RESULT_LIMIT,\s*"compatible"\s*\)/);
 });
 
 test("search result cards show original author between ID and main CV with a distinct icon", () => {
@@ -477,6 +529,12 @@ test("home drama titles open the shared statistics result flow", () => {
   assert.match(homeViewSource, /className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary/);
 });
 
+test("home title and trend logs use the same homeview source", () => {
+  assert.match(homeViewSource, /usageSource: "homeview"/);
+  assert.match(homeViewSource, /logRankTrendOpen\(\{[\s\S]*source: "homeview"/);
+  assert.doesNotMatch(homeViewSource, /source: "home"/);
+});
+
 test("home section subtitles show platform and rank publish times", () => {
   const ongoingListStart = homeViewSource.indexOf("function OngoingPlatformList");
   const ongoingListEnd = homeViewSource.indexOf("function RankDramaItem", ongoingListStart);
@@ -556,6 +614,66 @@ test("home update and rank sections use editorial responsive layouts", () => {
   assert.match(homeViewSource, /home-editorial-rank-card/);
   assert.match(homeViewSource, /data-featured=\{index < 2 \? "true" : "false"\}/);
   assert.match(homeViewSource, /displayTitle: "CV总榜"/);
+});
+
+test("home update cards show three items without a scroll region", () => {
+  assert.doesNotMatch(homeViewSource, /HOME_ONGOING_LIMIT/);
+  const ongoingItemsStart = homeViewSource.indexOf("const ongoingItems = useMemo");
+  const ongoingItemsEnd = homeViewSource.indexOf("const ongoingCounts = useMemo", ongoingItemsStart);
+  const ongoingItemsSource = homeViewSource.slice(ongoingItemsStart, ongoingItemsEnd);
+  assert.equal(
+    ongoingItemsSource.match(/slice\(0, 3\)/g)?.length ?? 0,
+    2
+  );
+
+  const updateListCss = indexCssSource.match(/\.home-editorial-update-list \{[^}]*\}/)?.[0] ?? "";
+  assert.match(updateListCss, /min-height: 15\.75rem;/);
+  assert.match(updateListCss, /flex: 1;/);
+  assert.doesNotMatch(
+    updateListCss,
+    /(?:height: 2[34]\.\d+rem|overflow-y: auto|overscroll-behavior-y: contain|scrollbar-width: thin)/
+  );
+});
+
+test("home section hints stay intact and wrap as complete units", () => {
+  assert.match(
+    homeViewSource,
+    /function SectionHeader\(\{ title, description, sectionIcon: SectionIcon \}\)/
+  );
+  assert.match(
+    homeViewSource,
+    /<div className="home-editorial-section-title">[\s\S]*<h2>\{title\}<\/h2>[\s\S]*<\/div>/
+  );
+  assert.doesNotMatch(homeViewSource, /<span className="home-editorial-section-title">/);
+  assert.match(
+    homeViewSource,
+    /\{description \? <p className="home-editorial-section-note">\{description\}<\/p> : null\}/
+  );
+  assert.match(
+    homeViewSource,
+    /title="一周内更新"[\s\S]*description="按近七日播放量增量排列，点击封面可查看趋势"/
+  );
+  assert.match(
+    homeViewSource,
+    /title="榜单速览"[\s\S]*description="点击封面可查看趋势"/
+  );
+  assert.doesNotMatch(homeViewSource, /<p>按近七日播放增量排列<\/p>/);
+  assert.match(
+    indexCssSource,
+    /\.home-editorial-section-heading \{[\s\S]*align-items: flex-end;[\s\S]*flex-wrap: wrap;/
+  );
+  assert.match(
+    indexCssSource,
+    /\.home-editorial-section-title \{[\s\S]*align-items: center;/
+  );
+  assert.match(
+    indexCssSource,
+    /\.home-editorial-section-note \{[\s\S]*flex: none;[\s\S]*white-space: nowrap;/
+  );
+  assert.doesNotMatch(
+    indexCssSource,
+    /\.home-editorial-section-note \{[\s\S]*text-overflow: ellipsis;/
+  );
 });
 
 test("home rank previews keep titles compact and expose formatted playback context", () => {
@@ -948,9 +1066,20 @@ test("backend unified search route aggregates libraries before API fallback", ()
   assert.equal(routeSource.match(/refreshMissevanCooldownState/g)?.length ?? 0, 1);
   assert.match(routeSource, /runMissevanLibraryUnifiedSearch/);
   assert.match(routeSource, /runManboLibraryUnifiedSearch/);
+  assert.match(routeSource, /runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "strict"\)/);
+  assert.match(routeSource, /runManboLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "strict"\)/);
+  assert.match(routeSource, /runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "compatible"\)/);
+  assert.match(routeSource, /runManboLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "compatible"\)/);
+  assert.match(routeSource, /const shouldRunCompatibilitySearch = !hasUnifiedSearchMatches\(missevanLibraryResult\) &&\s*!hasUnifiedSearchMatches\(manboLibraryResult\)/);
+  const strictSearchIndex = routeSource.indexOf('runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "strict")');
+  const compatibleSearchIndex = routeSource.indexOf('runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "compatible")');
+  const apiFallbackIndex = routeSource.indexOf("const fallbackPlan = buildUnifiedSearchFallbackPlan");
+  assert.ok(strictSearchIndex >= 0 && strictSearchIndex < compatibleSearchIndex);
+  assert.ok(compatibleSearchIndex < apiFallbackIndex);
+  assert.match(routeSource, /if \(shouldRunCompatibilitySearch\) \{\s*void writeUsageLog\(buildCompatibilitySearchUsageLog\("unified", normalizedKeyword\)\)/);
   assert.match(routeSource, /const fallbackPlan = buildUnifiedSearchFallbackPlan\(\s*missevanLibraryResult,\s*manboLibraryResult\s*\)/);
   assert.match(routeSource, /if \(!fallbackPlan\.usedApiFallback\)/);
-  assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit\),\s*runManboLibraryUnifiedSearch\(normalizedKeyword, offset, limit\),\s*\]\)/);
+  assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "strict"\),\s*runManboLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "strict"\),\s*\]\)/);
   assert.match(routeSource, /fallbackPlan\.missevan[\s\S]*runMissevanApiUnifiedSearch\(normalizedKeyword, offset, limit\)[\s\S]*Promise\.resolve\(missevanLibraryResult\)/);
   assert.match(routeSource, /fallbackPlan\.manbo[\s\S]*runManboApiUnifiedSearch\(normalizedKeyword, offset, limit\)[\s\S]*Promise\.resolve\(manboLibraryResult\)/);
   assert.match(serverSource, /async function runManboApiUnifiedSearch\(keyword, offset, limit\)[\s\S]*const pagedResults = apiResults\.slice\(offset, offset \+ limit\)[\s\S]*results: pagedResults[\s\S]*buildSearchPageMeta\(keyword, apiResults\.length, offset, limit\)/);

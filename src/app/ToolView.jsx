@@ -1404,7 +1404,7 @@ function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemove
         </button>
         <Button
           type="button"
-          variant="secondary"
+          variant="compare"
           size="icon-lg"
           className="relative shadow-[var(--shadow-panel)] sm:hidden"
           aria-label="展开对比"
@@ -1431,7 +1431,7 @@ function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, onRemove
             <Button
               type="button"
               size="xs"
-              variant="secondary"
+              variant="compare"
               data-touch="compact"
               onClick={onOpenCompare}
               className="relative overflow-visible text-sm! after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"

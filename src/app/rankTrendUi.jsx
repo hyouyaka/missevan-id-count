@@ -46,7 +46,7 @@ export {
 export const trendActionButtonClassName =
   "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]";
 export const compareActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--primary)_34%,transparent)] bg-primary px-1 text-xs! text-primary-foreground shadow-[0_12px_24px_-16px_var(--primary)] hover:bg-[var(--primary-hover)] hover:text-primary-foreground";
+  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-compare)_34%,transparent)] bg-[var(--accent-compare)] px-1 text-xs! text-[var(--accent-compare-foreground)] shadow-[0_12px_24px_-16px_var(--accent-compare)] hover:bg-[var(--accent-compare-hover)] hover:text-[var(--accent-compare-foreground)]";
 const trendActionHitAreaClassName =
   "h-11 min-h-11 w-[58px] min-w-[58px] border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0";
 const trendActionInlineClassName =
