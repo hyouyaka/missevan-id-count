@@ -36,6 +36,20 @@ import {
   STATS_HISTORY_STORAGE_KEY,
 } from "./app-utils.js";
 
+const { readJsonResponse } = await import("./app-utils.js");
+
+test("non-JSON HTTP errors fall back without throwing a parse error", async () => {
+  assert.equal(typeof readJsonResponse, "function");
+  const response = {
+    ok: false,
+    async json() {
+      throw new SyntaxError("Unexpected token <");
+    },
+  };
+
+  assert.equal(await readJsonResponse(response), null);
+});
+
 function createRevenueDrama(overrides = {}) {
   return {
     platform: "missevan",

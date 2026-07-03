@@ -326,7 +326,7 @@ export function OutputPanel({
                   <Badge variant="secondary" className="px-3 py-1 text-[11px] sm:text-xs">空闲</Badge>
                 )}
                 {isRunning ? (
-                  <Button variant="secondary" size="sm" className="text-[11px] sm:text-xs" onClick={onCancelStatistics}>
+                  <Button variant="secondary" size="sm" data-touch="compact" className="relative overflow-visible text-[11px] after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-[''] sm:text-xs" onClick={onCancelStatistics}>
                     <PauseCircleIcon data-icon="inline-start" />
                     取消
                   </Button>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
   BeanIcon,
@@ -38,11 +38,8 @@ import {
   logRankTrendOpen,
 } from "@/app/rankTrendData";
 import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
+import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
-
-const RankTrendDialog = lazy(() =>
-  import("@/app/rankTrendUi").then((module) => ({ default: module.RankTrendDialog }))
-);
 
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
@@ -1232,15 +1229,13 @@ export function SearchResults({
                     </div>
 
                     {canShowTrend && trendDialog.open && String(trendDialog.item?.id) === String(item.id) ? (
-                      <Suspense fallback={null}>
-                        <RankTrendDialog
-                          open
-                          onOpenChange={closeTrendDialog}
-                          item={item}
-                          platform={platform}
-                          trendState={trendState}
-                        />
-                      </Suspense>
+                      <LazyRankTrendDialog
+                        open
+                        onOpenChange={closeTrendDialog}
+                        item={item}
+                        platform={platform}
+                        trendState={trendState}
+                      />
                     ) : null}
 
                     <div className={mobileResultActionsClass}>

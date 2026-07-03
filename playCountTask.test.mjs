@@ -14,9 +14,21 @@ const {
   buildFetchOptions,
   buildMissevanFallbackUrl,
   buildMissevanRouteCooldownStateAfterAccessDenied,
+  createTimeoutSignal,
   getNearestMissevanAccessUntil,
+  getStatsTaskItemCounts,
+  isStatsTaskItemLimitExceeded,
   shouldPersistAccessDeniedCooldownForEnv,
 } = await import("./server.js");
+
+test("request timeout signal also follows task cancellation", () => {
+  const taskController = new AbortController();
+  const timeout = createTimeoutSignal(10_000, taskController.signal);
+
+  taskController.abort();
+  assert.equal(timeout.signal.aborted, true);
+  timeout.cleanup();
+});
 
 test("Missevan play count plan requests selected episodes when selected is no larger", () => {
   const playCountDramas = normalizePlayCountDramas([
@@ -155,6 +167,67 @@ test("Missevan play count subtract mode does not produce a deducted total after 
 
   assert.equal(result.playCountTotal, 0);
   assert.equal(result.playCountFailed, true);
+});
+
+test("stats task item counts include nested play count episodes", () => {
+  assert.deepEqual(
+    getStatsTaskItemCounts({
+      taskType: "play_count",
+      episodes: [{ sound_id: "1" }, { sound_id: "2" }],
+      dramaIds: [1],
+      playCountDramas: [
+        { episodes: [{ sound_id: "1" }, { sound_id: "2" }, { sound_id: "3" }] },
+        { episodes: [{ sound_id: "4" }] },
+      ],
+    }),
+    {
+      primary: 2,
+      playCountDramas: 2,
+      playCountEpisodes: 4,
+    }
+  );
+
+  assert.equal(
+    getStatsTaskItemCounts({
+      taskType: "revenue",
+      episodes: [{ sound_id: "1" }],
+      dramaIds: [1, 2, 3],
+      playCountDramas: [],
+    }).primary,
+    3
+  );
+});
+
+test("stats task item limit accepts 1000 items and rejects 1001", () => {
+  assert.equal(
+    isStatsTaskItemLimitExceeded({
+      primary: 1000,
+      playCountDramas: 0,
+      playCountEpisodes: 0,
+    }),
+    false
+  );
+  assert.equal(
+    isStatsTaskItemLimitExceeded({
+      primary: 1001,
+      playCountDramas: 0,
+      playCountEpisodes: 0,
+    }),
+    true
+  );
+});
+
+test("stats task item limit accepts drama 81979 total and paid episode counts", () => {
+  for (const episodeCount of [669, 603]) {
+    assert.equal(
+      isStatsTaskItemLimitExceeded({
+        primary: episodeCount,
+        playCountDramas: 1,
+        playCountEpisodes: episodeCount,
+      }),
+      false
+    );
+  }
 });
 
 test("Missevan fetch options attach browser-like headers without Cookie", () => {

@@ -16,6 +16,7 @@ const backendTarget = `http://localhost:${Number(process.env.PORT) || 3000}`;
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
+    manifest: true,
     rollupOptions: {
       output: {
         manualChunks(id) {

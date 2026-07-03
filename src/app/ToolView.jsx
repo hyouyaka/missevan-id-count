@@ -67,6 +67,7 @@ import {
   normalizeToolRouteState,
   normalizeVersion,
   readToolRouteStateFromLocation,
+  readJsonResponse,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
   selectDramaEpisodesByMode,
@@ -99,6 +100,11 @@ const RanksPanel = lazy(() =>
 const OngoingPanel = lazy(() =>
   import("@/app/OngoingPanel").then((module) => ({ default: module.OngoingPanel }))
 );
+
+function getStatsRequestErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.trim() || "统计失败，请稍后重试。";
+}
 
 const mainNavigationIconMap = {
   home: HouseIcon,
@@ -2901,10 +2907,10 @@ export function ToolView({ initialAppConfig }) {
       body: JSON.stringify(payload),
       signal,
     });
+    const data = await readJsonResponse(response);
     if (!response.ok) {
-      throw new Error(`${errorMessage}: ${response.status}`);
+      throw new Error(data?.message || data?.error || `${errorMessage}: ${response.status}`);
     }
-    const data = await response.json();
     updateVersionStatusFromResponse({
       backendVersion: getBackendVersionFromResponse(response, data),
       frontendVersion: appConfigRef.current.frontendVersion,
@@ -2948,7 +2954,11 @@ export function ToolView({ initialAppConfig }) {
 
   function applyTaskSnapshot(platform, snapshot) {
     const progress = Number(snapshot?.progress ?? 0);
-    const currentAction = snapshot?.currentAction || "统计中";
+    const queuePosition = Number(snapshot?.queuePosition ?? 0);
+    const currentAction =
+      snapshot?.status === "queued" && queuePosition > 0
+        ? `任务排队中，前方 ${queuePosition} 个任务`
+        : snapshot?.currentAction || "统计中";
     setBackgroundTask((current) =>
       current.type === "statistics"
         ? {
@@ -3455,11 +3465,12 @@ export function ToolView({ initialAppConfig }) {
     } catch (error) {
       if (!isAbortError(error)) {
         finalStatus = "failed";
+        toast.error(getStatsRequestErrorMessage(error));
         updatePlatformState(platform, (state) => ({
           ...state,
           stats: {
             ...state.stats,
-            currentAction: "统计失败",
+            currentAction: getStatsRequestErrorMessage(error),
           },
         }));
       } else {
@@ -3504,11 +3515,12 @@ export function ToolView({ initialAppConfig }) {
     } catch (error) {
       if (!isAbortError(error)) {
         finalStatus = "failed";
+        toast.error(getStatsRequestErrorMessage(error));
         updatePlatformState(platform, (state) => ({
           ...state,
           stats: {
             ...state.stats,
-            currentAction: "统计失败",
+            currentAction: getStatsRequestErrorMessage(error),
           },
         }));
       } else {
@@ -3596,11 +3608,12 @@ export function ToolView({ initialAppConfig }) {
     } catch (error) {
       if (!isAbortError(error)) {
         finalStatus = "failed";
+        toast.error(getStatsRequestErrorMessage(error));
         updatePlatformState(platform, (state) => ({
           ...state,
           stats: {
             ...state.stats,
-            currentAction: "统计失败",
+            currentAction: getStatsRequestErrorMessage(error),
           },
         }));
       } else {

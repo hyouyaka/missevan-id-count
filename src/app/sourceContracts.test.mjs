@@ -14,6 +14,7 @@ const appIconSource = readFileSync(new URL("./AppIcon.jsx", import.meta.url), "u
 const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import.meta.url), "utf8");
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
 const homeViewSource = readSourceIfExists("./HomeView.jsx");
+const lazyRankTrendDialogSource = readSourceIfExists("./LazyRankTrendDialog.jsx");
 const landingViewSource = readFileSync(new URL("./LandingView.jsx", import.meta.url), "utf8");
 const ongoingDataSource = readSourceIfExists("./ongoingData.js");
 const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.meta.url), "utf8");
@@ -28,7 +29,10 @@ const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
 const serverSource = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+const taskEngineSource = readFileSync(new URL("../../server/stats/taskEngine.js", import.meta.url), "utf8");
+const taskStateSource = readFileSync(new URL("../../server/stats/taskState.js", import.meta.url), "utf8");
 const envConfigSource = readFileSync(new URL("../../envConfig.js", import.meta.url), "utf8");
+const packageSource = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
 const indexCssSource = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 const buttonSource = readFileSync(new URL("../components/ui/button.jsx", import.meta.url), "utf8");
 const alertDialogSource = readFileSync(new URL("../components/ui/alert-dialog.jsx", import.meta.url), "utf8");
@@ -274,9 +278,10 @@ test("Manbo search supports local-only fallback mode", () => {
   const apiCallIndex = routeSource.indexOf("fetchManboSearchApiRecords");
 
   assert.match(routeSource, /req\.query\.apiFallback/);
-  assert.match(routeSource, /searchManboLibraryRecords\(\s*manboInfoStore\.records,\s*keyword,\s*SEARCH_RESULT_LIMIT,\s*"strict"\s*\)/);
-  assert.match(routeSource, /if \(!matchedRecords\.length\) \{\s*void writeUsageLog\(buildCompatibilitySearchUsageLog\("manbo", keyword\)\)/);
-  assert.match(routeSource, /searchManboLibraryRecords\(\s*manboInfoStore\.records,\s*keyword,\s*SEARCH_RESULT_LIMIT,\s*"compatible"\s*\)/);
+  assert.match(routeSource, /searchLibraryWithFallback\(\{/);
+  assert.match(routeSource, /libraryOnly: true/);
+  assert.match(routeSource, /mode === "compatible"[\s\S]*buildCompatibilitySearchUsageLog\("manbo", keyword\)/);
+  assert.match(routeSource, /searchManboLibraryRecords\([\s\S]*searchKeyword,[\s\S]*SEARCH_RESULT_LIMIT,[\s\S]*mode/);
   assert.ok(localOnlyIndex >= 0, "Manbo search should return library_only when API fallback is disabled");
   assert.ok(apiCallIndex > localOnlyIndex, "Manbo API fetch should occur after local-only branch");
 });
@@ -288,9 +293,10 @@ test("Missevan search logs compatibility fallback before API fallback", () => {
   assert.notEqual(routeEnd, -1, "Missevan search route end marker should exist");
   const routeSource = serverSource.slice(routeStart, routeEnd);
 
-  assert.match(routeSource, /searchMissevanLibraryRecords\(\s*missevanInfoStore\.records,\s*normalizedKeyword,\s*SEARCH_RESULT_LIMIT,\s*"strict"\s*\)/);
-  assert.match(routeSource, /if \(!matchedRecords\.length\) \{\s*void writeUsageLog\(buildCompatibilitySearchUsageLog\("missevan", normalizedKeyword\)\)/);
-  assert.match(routeSource, /searchMissevanLibraryRecords\(\s*missevanInfoStore\.records,\s*normalizedKeyword,\s*SEARCH_RESULT_LIMIT,\s*"compatible"\s*\)/);
+  assert.match(routeSource, /searchLibraryWithFallback\(\{/);
+  assert.match(routeSource, /libraryOnly: true/);
+  assert.match(routeSource, /mode === "compatible"[\s\S]*buildCompatibilitySearchUsageLog\("missevan", normalizedKeyword\)/);
+  assert.match(routeSource, /searchMissevanLibraryRecords\([\s\S]*searchKeyword,[\s\S]*SEARCH_RESULT_LIMIT,[\s\S]*mode/);
 });
 
 test("search result cards show original author between ID and main CV with a distinct icon", () => {
@@ -924,6 +930,14 @@ test("mobile touch targets use real layout space instead of overlapping hit over
   assert.match(rankTrendUiSource, /density === "inline" \? trendActionInlineClassName : trendActionHitAreaClassName/);
   assert.match(rankTrendUiSource, /data-touch="compact"[\s\S]*hitAreaClassName/);
   assert.match(rankTrendUiSource, /const trendActionVisualClassName =\s*\n\s*"pointer-events-none inline-flex/);
+});
+
+test("running statistics cancel keeps compact visuals with a 44px touch target", () => {
+  assert.match(
+    outputPanelSource,
+    /<Button variant="secondary" size="sm" data-touch="compact" className="relative overflow-visible text-\[11px\] after:absolute after:inset-x-0 after:-inset-y-1\.5 after:rounded-md after:content-\[''\] sm:text-xs" onClick=\{onCancelStatistics\}>/
+  );
+  assert.match(buttonSource, /sm: "h-8 /);
 });
 
 test("list artwork uses shared lazy image loading", () => {
@@ -1960,7 +1974,7 @@ test("favorites cancellation is confirmed and removes saved snapshots", () => {
 
 test("favorite stats task source flows into danmaku usage logs", () => {
   assert.match(favoritesPanelSource, /source: "favorite"/, "favorite refresh should mark stats tasks as favorite sourced");
-  assert.match(serverSource, /source: task\.source/, "stat task source should be passed into danmaku summary calls");
+  assert.match(serverSource, /getDanmakuSummary\([\s\S]*task\.source/, "stat task source should be passed into danmaku summary calls");
   assert.match(serverSource, /\.\.\.\(source \? \{ source \} : \{\}\)/, "danmaku usage logs should include optional source");
   assert.match(
     favoritesPanelSource,
@@ -1969,12 +1983,12 @@ test("favorite stats task source flows into danmaku usage logs", () => {
   );
   assert.match(
     serverSource,
-    /fetchDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*String\(episode\?\.name \?\? ""\)\.trim\(\),\s*task\.source\s*\)/,
+    /missevanClient\.getDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*String\(episode\?\.name \?\? ""\)\.trim\(\),\s*task\.source,/,
     "Missevan revenue danmaku logs should inherit the stats task source"
   );
   assert.match(
     serverSource,
-    /fetchManboDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*String\(episode\?\.name \?\? ""\)\.trim\(\),\s*task\.source\s*\)/,
+    /manboClient\.getDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*String\(episode\?\.name \?\? ""\)\.trim\(\),\s*task\.source,/,
     "Manbo revenue danmaku logs should inherit the stats task source"
   );
 });
@@ -2037,7 +2051,7 @@ test("Missevan external requests are paced with a shared jitter limiter", () => 
   );
   const jsonCooldownRethrowIndex = fetchJsonSource.indexOf("if (isCooldownError(error))");
   const jsonAccessDeniedThrowIndex = fetchJsonSource.indexOf("throw error", fetchJsonSource.indexOf("if (options.missevan && isAccessDeniedError(error))"));
-  const jsonRetrySleepIndex = fetchJsonSource.indexOf("await sleep(delayMs * (attempt + 1))");
+  const jsonRetrySleepIndex = fetchJsonSource.indexOf("await sleep(delayMs * (attempt + 1), options.signal)");
   assert.ok(
     jsonCooldownRethrowIndex >= 0 && jsonCooldownRethrowIndex < jsonRetrySleepIndex,
     "cooldown errors raised before JSON fetch should not retry"
@@ -2047,20 +2061,20 @@ test("Missevan external requests are paced with a shared jitter limiter", () => 
     "HTTP 418 JSON responses should mark cooldown and stop before retry sleep"
   );
   const cooldownRethrowIndex = fetchTextSource.indexOf("if (isCooldownError(error))");
-  const retrySleepIndex = fetchTextSource.indexOf("await sleep(delayMs * (attempt + 1))");
+  const retrySleepIndex = fetchTextSource.indexOf("await sleep(delayMs * (attempt + 1), options.signal)");
   assert.ok(
     cooldownRethrowIndex >= 0 && retrySleepIndex >= 0 && cooldownRethrowIndex < retrySleepIndex,
     "cooldown errors raised after waiting for a getdm slot should not retry"
   );
   const danmakuStart = serverSource.indexOf("async function fetchDanmakuSummary");
   const cacheIndex = serverSource.indexOf("const cached = getCachedValue", danmakuStart);
-  const limiterIndex = serverSource.indexOf("beforeAttempt: waitForMissevanRequestSlot", danmakuStart);
+  const limiterIndex = serverSource.indexOf("beforeAttempt: () => waitForMissevanRequestSlot(options.signal)", danmakuStart);
   const getdmCallStart = serverSource.indexOf("const text = await fetchTextWithRetry", danmakuStart);
   const getdmCallEnd = serverSource.indexOf(");", getdmCallStart);
   const getdmCallSource = serverSource.slice(getdmCallStart, getdmCallEnd);
   assert.match(getdmCallSource, /www\.missevan\.com\/sound\/getdm\?soundid=\$\{soundId\}/);
   assert.match(getdmCallSource, /missevan: true/);
-  assert.match(getdmCallSource, /beforeAttempt: waitForMissevanRequestSlot/);
+  assert.match(getdmCallSource, /beforeAttempt: \(\) => waitForMissevanRequestSlot\(options\.signal\)/);
   assert.ok(cacheIndex >= 0 && limiterIndex >= 0 && cacheIndex < limiterIndex, "cached getdm summaries should not wait for a limiter slot");
 });
 
@@ -2876,7 +2890,10 @@ test("search result trend eligibility uses historical availability lookup", () =
 
 test("rank trend backend reads ordinary trends from aggregate platform keys", () => {
   assert.match(serverSource, /RANK_TREND_AGGREGATE_KEYS/);
-  assert.match(serverSource, /const rankTrendAggregateCache = new Map\(\)/);
+  assert.match(
+    serverSource,
+    /const rankTrendAggregateCache = new TtlLruCache\(\{ maxEntries: CACHE_MAX_ENTRIES \}\)/
+  );
   assert.match(serverSource, /readRankTrendAggregateSnapshot\(normalizedPlatform\)/);
   assert.match(serverSource, /getCachedRankTrendAggregateSnapshot/);
   assert.match(serverSource, /buildAggregatedRankTrendResponse/);
@@ -2947,6 +2964,7 @@ test("server compresses JSON responses but skips images", () => {
 test("image proxy retries aborted image bodies and logs concise failures", () => {
   assert.match(serverSource, /const IMAGE_PROXY_TIMEOUT_MS = 8000/);
   assert.match(serverSource, /const IMAGE_PROXY_RETRIES = 2/);
+  assert.match(serverSource, /IMAGE_PROXY_MAX_BYTES/);
   assert.match(serverSource, /async function fetchImageBufferWithRetry/);
   assert.match(serverSource, /function formatImageProxyError/);
 
@@ -2957,7 +2975,14 @@ test("image proxy retries aborted image bodies and logs concise failures", () =>
   const helperSource = serverSource.slice(helperStart, helperEnd);
 
   assert.match(helperSource, /createTimeoutSignal\(IMAGE_PROXY_TIMEOUT_MS\)/);
-  assert.match(helperSource, /response\.arrayBuffer\(\)/);
+  assert.match(helperSource, /redirect: "manual"/);
+  assert.match(helperSource, /response\.body\?\.destroy\(\)/);
+  assert.match(helperSource, /validateImageProxyUrl/);
+  assert.match(helperSource, /assertImageContentLength/);
+  assert.match(helperSource, /detectImageContentType\(buffer\)/);
+  assert.doesNotMatch(helperSource, /isAllowedImageContentType/);
+  assert.match(helperSource, /readImageBodyWithLimit/);
+  assert.doesNotMatch(helperSource, /response\.arrayBuffer\(\)/);
   assert.match(helperSource, /response\.status >= 400 && response\.status < 500/);
 
   const routeStart = serverSource.indexOf('app.get("/image-proxy"');
@@ -2969,6 +2994,105 @@ test("image proxy retries aborted image bodies and logs concise failures", () =>
   assert.match(routeSource, /fetchImageBufferWithRetry\(targetUrl\)/);
   assert.match(routeSource, /formatImageProxyError\(error\)/);
   assert.match(routeSource, /console\.warn\(/);
-  assert.match(routeSource, /res\.status\(502\)\.send\("Image proxy failed"\)/);
+  assert.match(routeSource, /IMAGE_TOO_LARGE/);
+  assert.match(routeSource, /IMAGE_TYPE_UNSUPPORTED/);
   assert.doesNotMatch(routeSource, /console\.error\(error\)/);
+});
+
+test("server applies tiered rate limits and queues stats tasks by platform", () => {
+  assert.match(serverSource, /import \{ rateLimit \} from "express-rate-limit"/);
+  assert.match(serverSource, /createStatsTaskEngine/);
+  assert.match(serverSource, /TASK_RATE_LIMITED/);
+  assert.match(serverSource, /TASK_QUEUE_FULL/);
+  assert.match(serverSource, /TASK_CLIENT_QUEUE_FULL/);
+  assert.match(serverSource, /STATS_TASK_MAX_ITEMS/);
+  assert.match(
+    serverSource,
+    /getFiniteNumberEnv\("STATS_TASK_MAX_ITEMS",\s*1000\)/
+  );
+  assert.match(serverSource, /queuePosition/);
+  assert.match(serverSource, /statsTaskEngine\.enqueue\(task\)/);
+  assert.match(serverSource, /statsTaskEngine\.cancel\(req\.params\.taskId\)/);
+  assert.match(serverSource, /statsTaskEngine\.restore\(\)/);
+  assert.match(serverSource, /app\.get\("\/admin\/task-metrics"/);
+  assert.match(serverSource, /app\.post\("\/stat-tasks", statsTaskCreationLimiter/);
+  assert.match(serverSource, /app\.post\("\/manbo\/stat-tasks", statsTaskCreationLimiter/);
+});
+
+test("all stats task routes wait for asynchronous task recovery", () => {
+  assert.match(serverSource, /void statsTaskEngine\.restore\(\)\.catch/);
+  [
+    'app.post("/stat-tasks"',
+    'app.get("/stat-tasks/:taskId"',
+    'app.post("/stat-tasks/:taskId/cancel"',
+    'app.post("/manbo/stat-tasks"',
+    'app.get("/manbo/stat-tasks/:taskId"',
+    'app.post("/manbo/stat-tasks/:taskId/cancel"',
+  ].forEach((route, index, routes) => {
+    const start = serverSource.indexOf(route);
+    const end = index + 1 < routes.length
+      ? serverSource.indexOf(routes[index + 1], start)
+      : serverSource.indexOf('app.use(express.static', start);
+    assert.notEqual(start, -1, `${route} should exist`);
+    assert.match(
+      serverSource.slice(start, end),
+      /await statsTaskEngine\.whenReady\(\)/,
+      `${route} should wait for recovery`
+    );
+  });
+  assert.match(taskEngineSource, /whenReady\(\)/);
+  assert.match(taskStateSource, /ALLOWED_TRANSITIONS/);
+  assert.doesNotMatch(serverSource, /manboStatsTaskStore/);
+});
+
+test("home loads the trend dialog only after it is opened", () => {
+  assert.match(homeViewSource, /import \{ LazyRankTrendDialog \} from "@\/app\/LazyRankTrendDialog"/);
+  assert.match(homeViewSource, /trendDialog\.open \? \([\s\S]*<LazyRankTrendDialog/);
+  assert.match(lazyRankTrendDialogSource, /lazy\(\(\) => import\("@\/app\/RankTrendDialog"\)\)/);
+  assert.doesNotMatch(homeViewSource, /from "@\/app\/rankTrendUi"/);
+});
+
+test("desktop package includes extracted backend modules", () => {
+  assert.match(packageSource, /"server\/\*\*\/\*"/);
+});
+
+test("lazy trend dialog handles chunk failures with a retry action", () => {
+  assert.match(lazyRankTrendDialogSource, /class TrendDialogErrorBoundary extends Component/);
+  assert.match(lazyRankTrendDialogSource, /getDerivedStateFromError/);
+  assert.match(lazyRankTrendDialogSource, /window\.location\.reload\(\)/);
+  assert.match(lazyRankTrendDialogSource, /<Suspense/);
+});
+
+test("Missevan request-slot waiting follows task cancellation", () => {
+  assert.match(serverSource, /async function waitForMissevanRequestSlot\(signal\)/);
+  assert.match(serverSource, /await sleep\(waitMs, signal\)/);
+  assert.match(
+    serverSource,
+    /beforeAttempt: \(\) => waitForMissevanRequestSlot\(options\.signal\)/
+  );
+});
+
+test("resource protection environment keys are loaded from local env files", () => {
+  [
+    "CACHE_MAX_ENTRIES",
+    "MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES",
+    "STATS_TASK_MAX_ITEMS",
+    "MISSEVAN_STATS_MAX_CONCURRENCY",
+    "MANBO_STATS_MAX_CONCURRENCY",
+    "STATS_TASK_QUEUE_MAX",
+    "STATS_TASK_CLIENT_QUEUE_MAX",
+    "IMAGE_PROXY_MAX_BYTES",
+  ].forEach((key) => assert.match(envConfigSource, new RegExp(`"${key}"`)));
+});
+
+test("stats task errors parse backend JSON messages before throwing", () => {
+  const postJsonStart = toolViewSource.indexOf("async function postJson");
+  const postJsonEnd = toolViewSource.indexOf("async function getJson", postJsonStart);
+  const postJsonSource = toolViewSource.slice(postJsonStart, postJsonEnd);
+
+  assert.match(postJsonSource, /await readJsonResponse\(response\)/);
+  assert.match(postJsonSource, /data\?\.message \|\| data\?\.error/);
+  assert.match(toolViewSource, /queuePosition/);
+  assert.match(toolViewSource, /function getStatsRequestErrorMessage/);
+  assert.match(toolViewSource, /toast\.error\(getStatsRequestErrorMessage\(error\)\)/);
 });

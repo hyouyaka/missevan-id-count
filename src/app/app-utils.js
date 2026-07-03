@@ -111,6 +111,17 @@ export function buildVersionedUrl(url, frontendVersion) {
   return `${url}${separator}frontendVersion=${encodeURIComponent(normalizeVersion(frontendVersion))}`;
 }
 
+export async function readJsonResponse(response) {
+  try {
+    return await response.json();
+  } catch (error) {
+    if (response?.ok) {
+      throw error;
+    }
+    return null;
+  }
+}
+
 export function prefersReducedMotion() {
   return typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&

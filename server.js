@@ -1,7 +1,8 @@
-﻿import fs from "fs/promises";
+import fs from "fs/promises";
 import compression from "compression";
 import cors from "cors";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import fetch from "node-fetch";
 import https from "https";
 import { createRequire } from "module";
@@ -47,6 +48,25 @@ import {
   normalizeRankTrendDates,
 } from "./shared/ranksTrendUtils.js";
 import { normalizeVersion } from "./shared/versionUtils.js";
+import {
+  ImageProxyPolicyError,
+  assertImageContentLength,
+  detectImageContentType,
+  readImageBodyWithLimit,
+  validateImageProxyUrl,
+} from "./shared/imageProxyPolicy.js";
+import { TtlLruCache } from "./shared/ttlLruCache.js";
+import { createStatsTaskEngine } from "./server/stats/taskEngine.js";
+import {
+  createJsonTaskStoreAdapter,
+  createStatsTaskStore,
+  createUpstashTaskStoreAdapter,
+} from "./server/stats/taskStore.js";
+import { createMissevanClient } from "./server/clients/missevanClient.js";
+import { createManboClient } from "./server/clients/manboClient.js";
+import { createSharedRequestRegistry } from "./server/clients/sharedRequest.js";
+import { createDramaService } from "./server/services/dramaService.js";
+import { searchLibraryWithFallback } from "./server/services/searchService.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("./package.json");
@@ -61,6 +81,9 @@ await loadLocalEnv({
 });
 
 const app = express();
+if (isHostedDeployment()) {
+  app.set("trust proxy", 1);
+}
 const defaultPort = Number(process.env.PORT) || 3000;
 const appDataDir = process.env.APP_DATA_DIR
   ? path.resolve(process.env.APP_DATA_DIR)
@@ -139,19 +162,46 @@ const MANBO_INFO_FALLBACK_PATH = path.join(runtimeDir, "manbo-drama-info.json");
 const MISSEVAN_INFO_FALLBACK_PATH = path.join(runtimeDir, "missevan-drama-info.json");
 const NEW_DRAMA_IDS_FALLBACK_PATH = path.join(runtimeDir, "new-drama-ids.json");
 
-const danmakuCache = new Map();
-const dramaCache = new Map();
-const soundSummaryCache = new Map();
-const rewardSummaryCache = new Map();
-const rewardDetailCache = new Map();
-const missevanSearchApiCache = new Map();
-const manboSearchApiCache = new Map();
-const manboDramaCache = new Map();
-const manboSetCache = new Map();
-const manboSetV530Cache = new Map();
-const manboDanmakuCache = new Map();
-const manboDanmakuInFlight = new Map();
-const manboStatsTaskStore = new Map();
+const CACHE_MAX_ENTRIES = Math.max(
+  0,
+  Math.floor(
+    getFiniteNumberEnv("CACHE_MAX_ENTRIES", isHostedDeployment() ? 500 : 1000)
+  )
+);
+const MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES = Math.max(
+  0,
+  Math.floor(
+    getFiniteNumberEnv(
+      "MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES",
+      isHostedDeployment() ? 20 : 200
+    )
+  )
+);
+const MANBO_DANMAKU_CACHE_MAX_ENTRIES = Math.max(
+  0,
+  Math.floor(
+    getFiniteNumberEnv(
+      "MANBO_DANMAKU_CACHE_MAX_ENTRIES",
+      isHostedDeployment() ? 20 : 200
+    )
+  )
+);
+const danmakuCache = new TtlLruCache({
+  maxEntries: MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES,
+});
+const dramaCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const soundSummaryCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const rewardSummaryCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const rewardDetailCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const missevanSearchApiCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const manboSearchApiCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const manboDramaCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const manboSetCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const manboSetV530Cache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const manboDanmakuCache = new TtlLruCache({
+  maxEntries: MANBO_DANMAKU_CACHE_MAX_ENTRIES,
+});
+const manboDanmakuRequests = createSharedRequestRegistry();
 const upstashClient = createUpstashRestClient();
 const manboInfoStore = {
   platform: "manbo",
@@ -205,9 +255,9 @@ const ranksCache = {
     cv: null,
   },
 };
-const rankTrendAggregateCache = new Map();
-const rankTrendsCache = new Map();
-const ongoingCache = new Map();
+const rankTrendAggregateCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
+const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const RANKS_RESPONSE_SCHEMA_VERSION = 5;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 4;
 const ONGOING_RESPONSE_SCHEMA_VERSION = 3;
@@ -237,15 +287,6 @@ const MANBO_STATS_TASK_TTL_MS = Math.max(
   getFiniteNumberEnv("MANBO_STATS_TASK_TTL_MS", DEFAULT_MANBO_STATS_TASK_TTL_MS)
 );
 const MANBO_STATS_TASK_HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
-const MANBO_DANMAKU_CACHE_MAX_ENTRIES = Math.max(
-  0,
-  Math.floor(
-    getFiniteNumberEnv(
-      "MANBO_DANMAKU_CACHE_MAX_ENTRIES",
-      isHostedDeployment() ? 20 : 200
-    )
-  )
-);
 const RANKS_CACHE_TTL_MS = Math.max(
   60 * 1000,
   Number(process.env.RANKS_CACHE_TTL_MS ?? 30 * 60 * 1000) || 30 * 60 * 1000
@@ -328,6 +369,33 @@ const MISSEVAN_FALLBACK_ROUTES = Object.freeze([
 const IMAGE_PROXY_TIMEOUT_MS = 8000;
 const IMAGE_PROXY_RETRIES = 2;
 const IMAGE_PROXY_RETRY_DELAY_MS = 250;
+const IMAGE_PROXY_MAX_REDIRECTS = 3;
+const IMAGE_PROXY_MAX_BYTES = Math.max(
+  1024,
+  Math.floor(
+    getFiniteNumberEnv("IMAGE_PROXY_MAX_BYTES", 10 * 1024 * 1024)
+  )
+);
+const STATS_TASK_MAX_ITEMS = Math.max(
+  1,
+  Math.floor(getFiniteNumberEnv("STATS_TASK_MAX_ITEMS", 1000))
+);
+const MISSEVAN_STATS_MAX_CONCURRENCY = Math.max(
+  1,
+  Math.floor(getFiniteNumberEnv("MISSEVAN_STATS_MAX_CONCURRENCY", 2))
+);
+const MANBO_STATS_MAX_CONCURRENCY = Math.max(
+  1,
+  Math.floor(getFiniteNumberEnv("MANBO_STATS_MAX_CONCURRENCY", 3))
+);
+const STATS_TASK_QUEUE_MAX = Math.max(
+  0,
+  Math.floor(getFiniteNumberEnv("STATS_TASK_QUEUE_MAX", 20))
+);
+const STATS_TASK_CLIENT_QUEUE_MAX = Math.max(
+  0,
+  Math.floor(getFiniteNumberEnv("STATS_TASK_CLIENT_QUEUE_MAX", 3))
+);
 const MISSEVAN_BROWSER_HEADERS = Object.freeze({
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
   "Accept": "application/json,text/plain,*/*",
@@ -364,6 +432,113 @@ let cooldownRefreshPromise = null;
 let lastCooldownRefreshSucceeded = false;
 let nextMissevanRequestAt = 0;
 let missevanRequestThrottleTail = Promise.resolve();
+
+function getRateLimitRetryAfterSeconds(req, fallbackSeconds = 60) {
+  const resetTime = req.rateLimit?.resetTime;
+  const resetAt = resetTime instanceof Date ? resetTime.getTime() : Number(resetTime ?? 0);
+  if (!Number.isFinite(resetAt) || resetAt <= Date.now()) {
+    return fallbackSeconds;
+  }
+  return Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+}
+
+function createJsonRateLimitHandler(code, message, fallbackSeconds) {
+  return (req, res) => {
+    const retryAfterSeconds = getRateLimitRetryAfterSeconds(req, fallbackSeconds);
+    res.setHeader("Retry-After", String(retryAfterSeconds));
+    return res.status(429).json({
+      success: false,
+      code,
+      message,
+      retryAfterSeconds,
+    });
+  };
+}
+
+const statsTaskCreationLimiter = rateLimit({
+  windowMs: 2 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: createJsonRateLimitHandler(
+    "TASK_RATE_LIMITED",
+    "统计任务创建过于频繁，请稍后重试。",
+    120
+  ),
+});
+const expensiveDataLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: createJsonRateLimitHandler(
+    "DATA_RATE_LIMITED",
+    "数据请求过于频繁，请稍后重试。",
+    60
+  ),
+});
+const imageProxyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: createJsonRateLimitHandler(
+    "IMAGE_RATE_LIMITED",
+    "图片请求过于频繁，请稍后重试。",
+    60
+  ),
+});
+
+const statsTaskInstanceId = String(
+  process.env.RENDER_INSTANCE_ID ||
+  process.env.RAILWAY_REPLICA_ID ||
+  process.env.HOSTNAME ||
+  "local"
+).trim() || "local";
+const statsTaskStore = createStatsTaskStore({
+  adapter: upstashClient.enabled
+    ? createUpstashTaskStoreAdapter({
+        client: upstashClient,
+        instanceId: statsTaskInstanceId,
+        ttlSeconds: Math.ceil(MANBO_STATS_TASK_TTL_MS / 1000),
+      })
+    : createJsonTaskStoreAdapter(path.join(runtimeDir, "stats-tasks.json")),
+  onError(error) {
+    console.warn(`Stats task snapshot failed: ${formatImageProxyError(error)}`);
+  },
+});
+const statsTaskEngine = createStatsTaskEngine({
+  limits: {
+    missevan: {
+      maxActive: MISSEVAN_STATS_MAX_CONCURRENCY,
+      maxActivePerClient: 1,
+      maxQueued: STATS_TASK_QUEUE_MAX,
+      maxQueuedPerClient: STATS_TASK_CLIENT_QUEUE_MAX,
+    },
+    manbo: {
+      maxActive: MANBO_STATS_MAX_CONCURRENCY,
+      maxActivePerClient: 2,
+      maxQueued: STATS_TASK_QUEUE_MAX,
+      maxQueuedPerClient: STATS_TASK_CLIENT_QUEUE_MAX,
+    },
+  },
+  execute: executeStatsTask,
+  store: statsTaskStore,
+  retentionMs: MANBO_STATS_TASK_TTL_MS,
+});
+const missevanClient = createMissevanClient({
+  soundSummary: fetchSoundSummary,
+  dramaInfo: fetchDramaInfo,
+  danmakuSummary: fetchDanmakuSummary,
+  rewardSummary: fetchRewardSummary,
+  rewardDetailMeta: fetchRewardDetailMeta,
+});
+const manboClient = createManboClient({
+  dramaDetail: fetchManboDramaDetail,
+  setDetail: fetchManboStatsSetDetail,
+  danmakuSummary: fetchManboDanmakuSummary,
+});
+const dramaService = createDramaService({ missevanClient, manboClient });
 
 app.use(cors());
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
@@ -666,9 +841,21 @@ app.get("/favorites/meta", async (req, res) => {
   }
 });
 
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(signal.reason || new DOMException("Aborted", "AbortError"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -733,19 +920,49 @@ export function getMissevanRequestJitterDelayMs(
   );
 }
 
-async function waitForMissevanRequestSlot() {
+function waitForPromiseWithSignal(promise, signal) {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(signal.reason || new DOMException("Aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      reject(signal.reason || new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function waitForMissevanRequestSlot(signal) {
   const previousTail = missevanRequestThrottleTail;
   let releaseSlot = () => {};
   missevanRequestThrottleTail = new Promise((resolve) => {
     releaseSlot = resolve;
   });
 
-  await previousTail;
+  try {
+    await waitForPromiseWithSignal(previousTail, signal);
+  } catch (error) {
+    void previousTail.finally(releaseSlot);
+    throw error;
+  }
 
   try {
     const waitMs = Math.max(0, nextMissevanRequestAt - Date.now());
     if (waitMs > 0) {
-      await sleep(waitMs);
+      await sleep(waitMs, signal);
     }
 
     nextMissevanRequestAt =
@@ -760,48 +977,22 @@ function createTaskId() {
 }
 
 function cleanupExpiredStatsTasks() {
-  const now = Date.now();
-  for (const [taskId, task] of manboStatsTaskStore.entries()) {
-    const updatedAt = Number(task?.updatedAt ?? task?.createdAt ?? 0);
-    if (now - updatedAt > MANBO_STATS_TASK_TTL_MS) {
-      manboStatsTaskStore.delete(taskId);
-    }
-  }
+  statsTaskEngine.pruneExpired();
 }
 
 function buildStatsTaskSnapshot(task) {
-  return {
-    taskId: task.taskId,
-    platform: task.platform,
-    taskType: task.taskType,
-    status: task.status,
-    progress: task.progress,
-    currentAction: task.currentAction,
-    totalCount: task.totalCount,
-    completedCount: task.completedCount,
-    failedCount: task.failedCount,
-    totalDanmaku: task.totalDanmaku,
-    totalUsers: task.totalUsers,
-    accessDenied: task.accessDenied,
-    source: task.source,
-    result:
-      task.status === "completed" || task.status === "cancelled"
-        ? task.result
-        : null,
-    error: task.error || "",
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt,
-    lastSeenAt: task.lastSeenAt,
-  };
+  return statsTaskEngine.getSnapshot(task?.taskId);
 }
 
-function updateStatsTask(task, patch) {
-  Object.assign(task, patch, { updatedAt: Date.now() });
-}
+const statsTaskReporters = new WeakMap();
 
-function refreshStatsTaskHeartbeat(task) {
-  task.lastSeenAt = Date.now();
-  task.updatedAt = task.lastSeenAt;
+function reportStatsTask(task, patch) {
+  const { status, ...safePatch } = patch || {};
+  const reported = statsTaskReporters.get(task)?.(safePatch) ?? false;
+  if (status === "completed" || status === "cancelled") {
+    return { status, patch: safePatch };
+  }
+  return reported;
 }
 
 function formatPlayCountWan(value) {
@@ -5925,20 +6116,36 @@ async function writeUsageLog(entry) {
   }
 }
 
-function createTimeoutSignal(timeoutMs) {
+export function createTimeoutSignal(timeoutMs, externalSignal) {
   const normalizedTimeout = Number(timeoutMs);
-  if (!Number.isFinite(normalizedTimeout) || normalizedTimeout <= 0) {
+  const hasTimeout = Number.isFinite(normalizedTimeout) && normalizedTimeout > 0;
+  if (!hasTimeout && !externalSignal) {
     return { signal: undefined, cleanup: () => {} };
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort(new Error(`Request timeout after ${normalizedTimeout}ms`));
-  }, normalizedTimeout);
+  const onExternalAbort = () => {
+    controller.abort(externalSignal.reason);
+  };
+  if (externalSignal?.aborted) {
+    onExternalAbort();
+  } else {
+    externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
+  }
+  const timer = hasTimeout
+    ? setTimeout(() => {
+        controller.abort(new Error(`Request timeout after ${normalizedTimeout}ms`));
+      }, normalizedTimeout)
+    : null;
 
   return {
     signal: controller.signal,
-    cleanup: () => clearTimeout(timer),
+    cleanup: () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+    },
   };
 }
 
@@ -6084,7 +6291,8 @@ async function fetchMissevanViaFallbackRoute(url, route, options = {}, details =
   }
 
   const timeout = createTimeoutSignal(
-    options.fallbackTimeoutMs ?? route.timeoutMs
+    options.fallbackTimeoutMs ?? route.timeoutMs,
+    options.signal
   );
   const requestStartedAt = Date.now();
   let responseStatus = "";
@@ -6214,6 +6422,7 @@ export function buildFetchOptions(url, options = {}) {
       : options.headers,
     signal: options.signal,
     agent: options.agent,
+    redirect: options.redirect,
   };
 
   if (!fetchOptions.agent && targetUrl.hostname === MANBO_API_HOST) {
@@ -6257,7 +6466,7 @@ function ensureMissevanFetchOptions(options = {}) {
   }
   return {
     ...options,
-    beforeAttempt: waitForMissevanRequestSlot,
+    beforeAttempt: () => waitForMissevanRequestSlot(options.signal),
   };
 }
 
@@ -6317,7 +6526,7 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
         throw createCooldownError();
       }
 
-      const timeout = createTimeoutSignal(options.timeoutMs);
+      const timeout = createTimeoutSignal(options.timeoutMs, options.signal);
       const signal = timeout.signal;
       cleanup = timeout.cleanup;
       requestStartedAt = Date.now();
@@ -6398,8 +6607,11 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
       }
 
       lastError = error;
+      if (options.signal?.aborted) {
+        throw error;
+      }
       if (attempt < retries) {
-        await sleep(delayMs * (attempt + 1));
+        await sleep(delayMs * (attempt + 1), options.signal);
       }
     } finally {
       cleanup();
@@ -6465,7 +6677,7 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
         throw createCooldownError();
       }
 
-      const timeout = createTimeoutSignal(options.timeoutMs);
+      const timeout = createTimeoutSignal(options.timeoutMs, options.signal);
       const signal = timeout.signal;
       cleanup = timeout.cleanup;
 
@@ -6547,8 +6759,11 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       }
 
       lastError = error;
+      if (options.signal?.aborted) {
+        throw error;
+      }
       if (attempt < retries) {
-        await sleep(delayMs * (attempt + 1));
+        await sleep(delayMs * (attempt + 1), options.signal);
       }
     } finally {
       cleanup();
@@ -6578,10 +6793,34 @@ async function fetchImageBufferWithRetry(targetUrl) {
     let response;
 
     try {
-      response = await fetch(
-        targetUrl.toString(),
-        buildFetchOptions(targetUrl, { signal })
-      );
+      let currentUrl = validateImageProxyUrl(targetUrl, isAllowedImageHost);
+      for (let redirectCount = 0; redirectCount <= IMAGE_PROXY_MAX_REDIRECTS; redirectCount += 1) {
+        response = await fetch(
+          currentUrl.toString(),
+          buildFetchOptions(currentUrl, {
+            signal,
+            redirect: "manual",
+          })
+        );
+        if (![301, 302, 303, 307, 308].includes(response.status)) {
+          break;
+        }
+        response.body?.destroy();
+        if (redirectCount >= IMAGE_PROXY_MAX_REDIRECTS) {
+          throw new ImageProxyPolicyError("Image proxy redirect limit exceeded", {
+            status: 400,
+            code: "INVALID_IMAGE_REDIRECT",
+          });
+        }
+        const location = response.headers.get("location");
+        if (!location) {
+          throw new ImageProxyPolicyError("Image proxy redirect is missing a location", {
+            status: 502,
+            code: "INVALID_IMAGE_REDIRECT",
+          });
+        }
+        currentUrl = validateImageProxyUrl(new URL(location, currentUrl), isAllowedImageHost);
+      }
 
       if (!response.ok) {
         const error = new Error(`HTTP ${response.status}`);
@@ -6589,15 +6828,37 @@ async function fetchImageBufferWithRetry(targetUrl) {
         throw error;
       }
 
-      const arrayBuffer = await response.arrayBuffer();
+      try {
+        assertImageContentLength(
+          response.headers.get("content-length"),
+          IMAGE_PROXY_MAX_BYTES
+        );
+      } catch (error) {
+        response.body?.destroy();
+        throw error;
+      }
+      const buffer = await readImageBodyWithLimit(
+        response.body,
+        IMAGE_PROXY_MAX_BYTES
+      );
+      const contentType = detectImageContentType(buffer);
+      if (!contentType) {
+        throw new ImageProxyPolicyError("Image response type is not supported", {
+          status: 415,
+          code: "IMAGE_TYPE_UNSUPPORTED",
+        });
+      }
       return {
         attempts,
-        buffer: Buffer.from(arrayBuffer),
-        contentType: response.headers.get("content-type") || "image/jpeg",
+        buffer,
+        contentType,
       };
     } catch (error) {
       lastError = error;
-      if (response && response.status >= 400 && response.status < 500) {
+      if (
+        error?.retryable === false ||
+        (response && response.status >= 400 && response.status < 500)
+      ) {
         break;
       }
       if (attempt < IMAGE_PROXY_RETRIES) {
@@ -6659,7 +6920,7 @@ export function normalizeMissevanDramaInfo(info) {
   };
 }
 
-async function fetchSoundSummary(soundId) {
+async function fetchSoundSummary(soundId, options = {}) {
   const cached = getCachedValue(
     soundSummaryCache,
     soundId,
@@ -6676,7 +6937,7 @@ async function fetchSoundSummary(soundId) {
     `https://www.missevan.com/sound/getsound?soundid=${soundId}`,
     2,
     250,
-    { missevan: true }
+    { missevan: true, signal: options.signal }
   );
   const sound = data?.info?.sound || data?.info || {};
   const viewCount = Number(sound.view_count ?? 0);
@@ -6724,7 +6985,7 @@ function writeWatchCountUsageLog({
   });
 }
 
-async function fetchDramaInfo(dramaId, soundId = null) {
+async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
   const cacheKey = soundId ? `sound:${soundId}` : `drama:${dramaId}`;
   const cached = getCachedValue(dramaCache, cacheKey, DRAMA_CACHE_TTL_MS);
   if (cached) {
@@ -6737,7 +6998,7 @@ async function fetchDramaInfo(dramaId, soundId = null) {
       : `https://www.missevan.com/dramaapi/getdrama?drama_id=${dramaId}`,
     2,
     250,
-    { missevan: true }
+    { missevan: true, signal: options.signal }
   );
 
   if (data.success && data.info) {
@@ -6755,7 +7016,7 @@ async function fetchDramaInfo(dramaId, soundId = null) {
           `https://www.missevan.com/dramaapi/getdramabysound?sound_id=${resolvedSoundId}`,
           2,
           250,
-          { missevan: true }
+          { missevan: true, signal: options.signal }
         );
         if (bySoundData?.success && bySoundData?.info) {
           const bySoundNormalized = normalizeMissevanDramaInfo(bySoundData.info);
@@ -6797,7 +7058,7 @@ async function fetchDramaInfo(dramaId, soundId = null) {
   return null;
 }
 
-async function fetchRewardSummary(dramaId) {
+async function fetchRewardSummary(dramaId, options = {}) {
   const cached = getCachedValue(
     rewardSummaryCache,
     dramaId,
@@ -6811,7 +7072,7 @@ async function fetchRewardSummary(dramaId) {
     `https://www.missevan.com/reward/user-reward-rank?period=3&drama_id=${dramaId}`,
     2,
     250,
-    { missevan: true }
+    { missevan: true, signal: options.signal }
   );
   const rankList = data?.info?.list || data?.info?.data || data?.list || [];
   const rewardCoinTotal = rankList.reduce((sum, item) => {
@@ -6830,7 +7091,7 @@ async function fetchRewardSummary(dramaId) {
   return summary;
 }
 
-async function fetchRewardDetailMeta(dramaId) {
+async function fetchRewardDetailMeta(dramaId, options = {}) {
   const cached = getCachedValue(
     rewardDetailCache,
     dramaId,
@@ -6844,7 +7105,7 @@ async function fetchRewardDetailMeta(dramaId) {
     `https://www.missevan.com/reward/drama-reward-detail?drama_id=${dramaId}`,
     2,
     250,
-    { missevan: true }
+    { missevan: true, signal: options.signal }
   );
   const rewardNum = Number(data?.info?.reward_num ?? data?.info?.data?.reward_num);
   const summary = {
@@ -6955,14 +7216,17 @@ function mergeManboDramaMemberSupplement(legacyPayload, v530Payload) {
   };
 }
 
-async function fetchManboLegacyDramaPayload(dramaId) {
+async function fetchManboLegacyDramaPayload(dramaId, options = {}) {
   const normalizedDramaId = String(dramaId ?? "").trim();
   if (!isNumericId(normalizedDramaId)) {
     return null;
   }
 
   const data = await fetchJsonWithRetry(
-    `${MANBO_API_BASE}/dramaDetail?dramaId=${normalizedDramaId}`
+    `${MANBO_API_BASE}/dramaDetail?dramaId=${normalizedDramaId}`,
+    2,
+    250,
+    { signal: options.signal }
   );
 
   if (Number(data?.code) !== 200 || !data?.data) {
@@ -6972,7 +7236,7 @@ async function fetchManboLegacyDramaPayload(dramaId) {
   return data.data;
 }
 
-async function fetchManboV530DramaPayload(dramaId) {
+async function fetchManboV530DramaPayload(dramaId, options = {}) {
   const normalizedDramaId = String(dramaId ?? "").trim();
   if (!isNumericId(normalizedDramaId)) {
     return null;
@@ -6980,7 +7244,10 @@ async function fetchManboV530DramaPayload(dramaId) {
 
   try {
     const v530Data = await fetchJsonWithRetry(
-      `${MANBO_API_V530_BASE}/detail?radioDramaId=${normalizedDramaId}`
+      `${MANBO_API_V530_BASE}/detail?radioDramaId=${normalizedDramaId}`,
+      2,
+      250,
+      { signal: options.signal }
     );
     if (Number(v530Data?.h?.code) === 200 && v530Data?.b) {
       return v530Data.b;
@@ -6992,7 +7259,13 @@ async function fetchManboV530DramaPayload(dramaId) {
   return null;
 }
 
-async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "", rawSource = "") {
+async function fetchDanmakuSummary(
+  soundId,
+  dramaTitle,
+  episodeTitle = "",
+  rawSource = "",
+  options = {}
+) {
   const source = normalizeStatsTaskSource(rawSource);
   const cacheKey = String(soundId);
   const cached = getCachedValue(danmakuCache, cacheKey, SOUND_SUMMARY_CACHE_TTL_MS);
@@ -7025,7 +7298,8 @@ async function fetchDanmakuSummary(soundId, dramaTitle, episodeTitle = "", rawSo
       250,
       {
         missevan: true,
-        beforeAttempt: waitForMissevanRequestSlot,
+        beforeAttempt: () => waitForMissevanRequestSlot(options.signal),
+        signal: options.signal,
       }
     );
     const lines = text.split("\n").filter((line) => line.includes('<d p='));
@@ -7289,7 +7563,7 @@ function resolveManboEpisodeTitle(setId, episodeTitle = "") {
   return cachedTitle;
 }
 
-async function fetchManboDramaDetail(dramaId) {
+async function fetchManboDramaDetail(dramaId, options = {}) {
   const normalizedDramaId = String(dramaId ?? "").trim();
   const cached = getCachedValue(
     manboDramaCache,
@@ -7300,7 +7574,7 @@ async function fetchManboDramaDetail(dramaId) {
     return cached;
   }
 
-  const payload = await fetchManboDramaPayload(normalizedDramaId);
+  const payload = await fetchManboDramaPayload(normalizedDramaId, options);
   if (!payload) {
     return null;
   }
@@ -7313,7 +7587,7 @@ async function fetchManboDramaDetail(dramaId) {
   return normalized;
 }
 
-async function fetchManboDramaPayload(dramaId) {
+async function fetchManboDramaPayload(dramaId, options = {}) {
   const normalizedDramaId = String(dramaId ?? "").trim();
   if (!isNumericId(normalizedDramaId)) {
     return null;
@@ -7321,9 +7595,9 @@ async function fetchManboDramaPayload(dramaId) {
 
   let legacyPayload = null;
   try {
-    legacyPayload = await fetchManboLegacyDramaPayload(normalizedDramaId);
+    legacyPayload = await fetchManboLegacyDramaPayload(normalizedDramaId, options);
   } catch (legacyErr) {
-    const v530Fallback = await fetchManboV530DramaPayload(normalizedDramaId);
+    const v530Fallback = await fetchManboV530DramaPayload(normalizedDramaId, options);
     if (v530Fallback) {
       return v530Fallback;
     }
@@ -7331,18 +7605,18 @@ async function fetchManboDramaPayload(dramaId) {
   }
 
   if (!legacyPayload) {
-    return await fetchManboV530DramaPayload(normalizedDramaId);
+    return await fetchManboV530DramaPayload(normalizedDramaId, options);
   }
 
   if (!shouldFetchManboMemberSupplement(legacyPayload)) {
     return legacyPayload;
   }
 
-  const v530Payload = await fetchManboV530DramaPayload(normalizedDramaId);
+  const v530Payload = await fetchManboV530DramaPayload(normalizedDramaId, options);
   return mergeManboDramaMemberSupplement(legacyPayload, v530Payload);
 }
 
-async function fetchManboSetDetail(setId) {
+async function fetchManboSetDetail(setId, options = {}) {
   const normalizedSetId = String(setId ?? "").trim();
   if (!isNumericId(normalizedSetId)) {
     return null;
@@ -7354,7 +7628,10 @@ async function fetchManboSetDetail(setId) {
   }
 
   const data = await fetchJsonWithRetry(
-    `${MANBO_API_BASE}/dramaSetDetail?dramaSetId=${normalizedSetId}`
+    `${MANBO_API_BASE}/dramaSetDetail?dramaSetId=${normalizedSetId}`,
+    2,
+    250,
+    { signal: options.signal }
   );
   if (Number(data?.code) !== 200 || !data?.data) {
     return null;
@@ -7364,7 +7641,7 @@ async function fetchManboSetDetail(setId) {
   return data.data;
 }
 
-async function fetchManboV530SetDetail(setId) {
+async function fetchManboV530SetDetail(setId, options = {}) {
   const normalizedSetId = String(setId ?? "").trim();
   if (!isNumericId(normalizedSetId)) {
     return null;
@@ -7377,7 +7654,10 @@ async function fetchManboV530SetDetail(setId) {
 
   try {
     const v530Data = await fetchJsonWithRetry(
-      `${MANBO_API_V530_BASE}/set/detail/new?radioDramaSetId=${normalizedSetId}`
+      `${MANBO_API_V530_BASE}/set/detail/new?radioDramaSetId=${normalizedSetId}`,
+      2,
+      250,
+      { signal: options.signal }
     );
     if (Number(v530Data?.h?.code) === 200 && v530Data?.b) {
       setCachedValue(manboSetV530Cache, normalizedSetId, v530Data.b);
@@ -7390,12 +7670,12 @@ async function fetchManboV530SetDetail(setId) {
   return null;
 }
 
-async function fetchManboStatsSetDetail(setId) {
-  const v530Detail = await fetchManboV530SetDetail(setId);
+async function fetchManboStatsSetDetail(setId, options = {}) {
+  const v530Detail = await fetchManboV530SetDetail(setId, options);
   if (v530Detail) {
     return v530Detail;
   }
-  return fetchManboSetDetail(setId);
+  return fetchManboSetDetail(setId, options);
 }
 
 async function resolveManboDramaIdFromSetId(setId) {
@@ -7775,7 +8055,13 @@ async function fetchManboSetSummary(setId) {
   };
 }
 
-async function fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle = "", rawSource = "") {
+async function fetchManboDanmakuSummary(
+  setId,
+  dramaTitle,
+  episodeTitle = "",
+  rawSource = "",
+  options = {}
+) {
   const source = normalizeStatsTaskSource(rawSource);
   const resolvedEpisodeTitle = resolveManboEpisodeTitle(setId, episodeTitle);
   const cached = getCachedValue(
@@ -7805,148 +8091,143 @@ async function fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle = "", ra
     };
   }
 
-  const inFlight = manboDanmakuInFlight.get(String(setId));
-  if (inFlight) {
-    const result = await inFlight;
-    return {
-      ...result,
-      drama_title: dramaTitle,
-      episode_title: resolvedEpisodeTitle || String(result?.episode_title ?? "").trim(),
-    };
-  }
+  const result = await manboDanmakuRequests.run(
+    String(setId),
+    options.signal,
+    async (sharedSignal) => {
+      const startedAt = Date.now();
 
-  const summaryPromise = (async () => {
-    const startedAt = Date.now();
+      try {
+        const pageSize = 200;
+        const users = new Set();
+        const pageFetchOptions = {
+          timeoutMs: MANBO_FETCH_TIMEOUT_MS,
+          signal: sharedSignal,
+        };
+        const firstPageData = await fetchJsonWithRetry(
+          `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=1`,
+          2,
+          250,
+          pageFetchOptions
+        );
+        const firstPayload = firstPageData?.data || {};
+        const firstList = Array.isArray(firstPayload.list) ? firstPayload.list : [];
+        const totalDanmaku = Math.max(
+          0,
+          Number(firstPayload.count ?? firstList.length ?? 0)
+        );
+        const totalPages =
+          totalDanmaku > 0 ? Math.ceil(totalDanmaku / pageSize) : 1;
 
-    try {
-      const pageSize = 200;
-      const users = new Set();
-      const pageFetchOptions = {
-        timeoutMs: MANBO_FETCH_TIMEOUT_MS,
-      };
-      const firstPageData = await fetchJsonWithRetry(
-        `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=1`,
-        2,
-        250,
-        pageFetchOptions
-      );
-      const firstPayload = firstPageData?.data || {};
-      const firstList = Array.isArray(firstPayload.list) ? firstPayload.list : [];
-      const totalDanmaku = Math.max(
-        0,
-        Number(firstPayload.count ?? firstList.length ?? 0)
-      );
-      const totalPages =
-        totalDanmaku > 0 ? Math.ceil(totalDanmaku / pageSize) : 1;
+        firstList.forEach((item) => {
+          if (item?.eid) {
+            users.add(String(item.eid));
+          }
+        });
 
-      firstList.forEach((item) => {
-        if (item?.eid) {
-          users.add(String(item.eid));
-        }
-      });
+        const remainingPages = Array.from(
+          { length: Math.max(0, totalPages - 1) },
+          (_, index) => index + 2
+        );
 
-      const remainingPages = Array.from(
-        { length: Math.max(0, totalPages - 1) },
-        (_, index) => index + 2
-      );
+        await runWithConcurrency(
+          remainingPages,
+          MANBO_DANMAKU_PAGE_CONCURRENCY,
+          async (pageNo) => {
+            const data = await fetchJsonWithRetry(
+              `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=${pageNo}`,
+              2,
+              250,
+              pageFetchOptions
+            );
+            const payload = data?.data || {};
+            const list = Array.isArray(payload.list) ? payload.list : [];
+            list.forEach((item) => {
+              if (item?.eid) {
+                users.add(String(item.eid));
+              }
+            });
+          }
+        );
 
-      await runWithConcurrency(
-        remainingPages,
-        MANBO_DANMAKU_PAGE_CONCURRENCY,
-        async (pageNo) => {
-          const data = await fetchJsonWithRetry(
-            `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=${pageNo}`,
-            2,
-            250,
-            pageFetchOptions
-          );
-          const payload = data?.data || {};
-          const list = Array.isArray(payload.list) ? payload.list : [];
-          list.forEach((item) => {
-            if (item?.eid) {
-              users.add(String(item.eid));
-            }
-          });
-        }
-      );
+        const summary = {
+          success: true,
+          sound_id: String(setId),
+          danmaku: totalDanmaku,
+          users: [...users],
+          accessDenied: false,
+          error: "",
+        };
 
-      const summary = {
-        success: true,
-        sound_id: String(setId),
-        danmaku: totalDanmaku,
-        users: [...users],
-        accessDenied: false,
-        error: "",
-      };
+        setCachedValue(
+          manboDanmakuCache,
+          setId,
+          summary,
+          MANBO_DANMAKU_CACHE_MAX_ENTRIES
+        );
+        void writeUsageLog({
+          platform: "manbo",
+          action: "danmaku_summary",
+          soundId: String(setId),
+          dramaTitle,
+          episodeTitle: resolvedEpisodeTitle,
+          success: true,
+          danmaku: totalDanmaku,
+          userCount: users.size,
+          accessDenied: false,
+          cached: false,
+          ...(source ? { source } : {}),
+          pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
+          totalPages,
+          durationMs: Date.now() - startedAt,
+        });
 
-      setCachedValue(
-        manboDanmakuCache,
-        setId,
-        summary,
-        MANBO_DANMAKU_CACHE_MAX_ENTRIES
-      );
-      void writeUsageLog({
-        platform: "manbo",
-        action: "danmaku_summary",
-        soundId: String(setId),
-        dramaTitle,
-        episodeTitle: resolvedEpisodeTitle,
-        success: true,
-        danmaku: totalDanmaku,
-        userCount: users.size,
-        accessDenied: false,
-        cached: false,
-        ...(source ? { source } : {}),
-        pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
-        totalPages,
-        durationMs: Date.now() - startedAt,
-      });
+        return {
+          ...summary,
+          drama_title: dramaTitle,
+          episode_title: resolvedEpisodeTitle,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to fetch Manbo danmaku set_id=${setId}: ${message}`);
+        const accessDenied =
+          isAccessDeniedError(error) ||
+          String(message).startsWith("ACCESS_DENIED_COOLDOWN:");
+        void writeUsageLog({
+          platform: "manbo",
+          action: "danmaku_summary",
+          soundId: String(setId),
+          dramaTitle,
+          episodeTitle: resolvedEpisodeTitle,
+          success: false,
+          danmaku: 0,
+          userCount: 0,
+          accessDenied,
+          cached: false,
+          ...(source ? { source } : {}),
+          error: message,
+          pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
+          durationMs: Date.now() - startedAt,
+        });
 
-      return {
-        ...summary,
-        drama_title: dramaTitle,
-        episode_title: resolvedEpisodeTitle,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to fetch Manbo danmaku set_id=${setId}: ${message}`);
-      const accessDenied =
-        isAccessDeniedError(error) ||
-        String(message).startsWith("ACCESS_DENIED_COOLDOWN:");
-      void writeUsageLog({
-        platform: "manbo",
-        action: "danmaku_summary",
-        soundId: String(setId),
-        dramaTitle,
-        episodeTitle: resolvedEpisodeTitle,
-        success: false,
-        danmaku: 0,
-        userCount: 0,
-        accessDenied,
-        cached: false,
-        ...(source ? { source } : {}),
-        error: message,
-        pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
-        durationMs: Date.now() - startedAt,
-      });
-
-      return {
-        success: false,
-        sound_id: String(setId),
-        drama_title: dramaTitle,
-        episode_title: resolvedEpisodeTitle,
-        danmaku: 0,
-        users: [],
-        accessDenied,
-        error: message,
-      };
-    } finally {
-      manboDanmakuInFlight.delete(String(setId));
+        return {
+          success: false,
+          sound_id: String(setId),
+          drama_title: dramaTitle,
+          episode_title: resolvedEpisodeTitle,
+          danmaku: 0,
+          users: [],
+          accessDenied,
+          error: message,
+        };
+      }
     }
-  })();
-
-  manboDanmakuInFlight.set(String(setId), summaryPromise);
-  return summaryPromise;
+  );
+  return {
+    ...result,
+    drama_title: dramaTitle,
+    episode_title: resolvedEpisodeTitle || String(result?.episode_title ?? "").trim(),
+  };
 }
 
 async function runWithConcurrency(items, limit, worker) {
@@ -8403,13 +8684,15 @@ function shouldUseManboOfficialPayCount(info, revenueType) {
   return revenueType !== "episode" && revenueType !== "member" && Number(payCount ?? 0) > 0;
 }
 
-async function finalizeCancelledTask(task, patch = {}) {
-  updateStatsTask(task, {
+function finalizeCancelledTask(task, patch = {}) {
+  return {
     status: "cancelled",
+    patch: {
     currentAction: patch.currentAction || "统计已取消",
     result: patch.result ?? task.result ?? null,
     ...patch,
-  });
+    },
+  };
 }
 
 function initializeRevenueProgress(task, dramaIds) {
@@ -8423,7 +8706,7 @@ function setRevenueProgress(task, completedUnits, currentAction) {
     0,
     Math.min(Number(completedUnits ?? 0) || 0, Number(task.progressTotalUnits ?? 0) || 0)
   );
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     progress: task.progressTotalUnits > 0
       ? Math.floor((task.progressCompletedUnits / task.progressTotalUnits) * 100)
       : 100,
@@ -8460,7 +8743,7 @@ function completeRevenueDramaUnits(task, dramaUnit, currentAction) {
     advanceRevenueProgress(task, remainingUnits, currentAction);
     return;
   }
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     currentAction,
   });
 }
@@ -8471,7 +8754,7 @@ async function executeMissevanIdTask(task) {
   const allUsers = new Set();
   const suspectedOverflowEpisodes = new Set();
 
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     status: "running",
     currentAction: "开始统计弹幕与去重 ID",
     progress: 0,
@@ -8482,7 +8765,7 @@ async function executeMissevanIdTask(task) {
   await refreshMissevanCooldownState();
   if (shouldBlockMissevanAccessForCooldown()) {
     task.accessDenied = true;
-    return updateStatsTask(task, {
+    return reportStatsTask(task, {
       status: "completed",
       progress: 100,
       currentAction: "访问受限",
@@ -8513,7 +8796,13 @@ async function executeMissevanIdTask(task) {
     const episodeTitle = String(episode?.episode_title ?? episode?.name ?? "").trim();
     const durationMs = Number(episode?.duration ?? 0);
     try {
-      const result = await fetchDanmakuSummary(soundId, dramaTitle, episodeTitle, task.source);
+      const result = await missevanClient.getDanmakuSummary(
+        soundId,
+        dramaTitle,
+        episodeTitle,
+        task.source,
+        { signal: task.abortSignal }
+      );
       if (result.success) {
         const drama = dramaMap.get(dramaId || dramaTitle);
         if (drama) {
@@ -8547,7 +8836,7 @@ async function executeMissevanIdTask(task) {
       }
     }
     task.completedCount += 1;
-    updateStatsTask(task, {
+    reportStatsTask(task, {
       progress: task.totalCount > 0
         ? Math.floor((task.completedCount / task.totalCount) * 100)
         : 100,
@@ -8562,7 +8851,7 @@ async function executeMissevanIdTask(task) {
     });
   }
 
-  updateStatsTask(task, {
+  return reportStatsTask(task, {
     status: "completed",
     progress: 100,
     currentAction: task.accessDenied
@@ -8593,7 +8882,7 @@ async function executeManboIdTask(task) {
   const allUsers = new Set();
   const suspectedOverflowEpisodes = new Set();
 
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     status: "running",
     currentAction: "开始统计弹幕与去重 ID",
     progress: 0,
@@ -8613,7 +8902,13 @@ async function executeManboIdTask(task) {
       const dramaTitle = String(episode?.drama_title ?? "").trim() || "Unknown";
       const episodeTitle = String(episode?.episode_title ?? episode?.name ?? "").trim();
       try {
-        const result = await fetchManboDanmakuSummary(setId, dramaTitle, episodeTitle, task.source);
+        const result = await manboClient.getDanmakuSummary(
+          setId,
+          dramaTitle,
+          episodeTitle,
+          task.source,
+          { signal: task.abortSignal }
+        );
         if (result.success) {
           const drama = dramaMap.get(dramaId || dramaTitle);
           if (drama) {
@@ -8642,7 +8937,7 @@ async function executeManboIdTask(task) {
         }
       }
       task.completedCount += 1;
-      updateStatsTask(task, {
+      reportStatsTask(task, {
         progress: task.totalCount > 0
           ? Math.floor((task.completedCount / task.totalCount) * 100)
           : 100,
@@ -8658,7 +8953,7 @@ async function executeManboIdTask(task) {
     });
   }
 
-  updateStatsTask(task, {
+  return reportStatsTask(task, {
     status: "completed",
     progress: 100,
     currentAction: task.accessDenied
@@ -8690,7 +8985,7 @@ async function executeMissevanPlayCountTask(task) {
     playCountDramas: task.playCountDramas,
   });
 
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     status: "running",
     currentAction: "开始统计播放量",
     progress: 0,
@@ -8699,7 +8994,7 @@ async function executeMissevanPlayCountTask(task) {
   await refreshMissevanCooldownState();
   if (shouldBlockMissevanAccessForCooldown()) {
     task.accessDenied = true;
-    return updateStatsTask(task, {
+    return reportStatsTask(task, {
       status: "completed",
       progress: 100,
       currentAction: "访问受限",
@@ -8734,7 +9029,9 @@ async function executeMissevanPlayCountTask(task) {
       }
       const soundId = Number(episode?.sound_id ?? 0);
       try {
-        const summary = await fetchSoundSummary(soundId);
+        const summary = await missevanClient.getSoundSummary(soundId, {
+          signal: task.abortSignal,
+        });
         writeWatchCountUsageLog({
           episode,
           summary,
@@ -8765,7 +9062,7 @@ async function executeMissevanPlayCountTask(task) {
         task.failedCount += 1;
       }
       task.completedCount += 1;
-      updateStatsTask(task, {
+      reportStatsTask(task, {
         progress: Math.floor((task.completedCount / requestTotal) * 100),
         currentAction: `统计播放量 ${task.completedCount}/${requestTotal}`,
       });
@@ -8796,7 +9093,7 @@ async function executeMissevanPlayCountTask(task) {
   }, 0);
   const playCountFailed = playCountResults.some((item) => item.playCountFailed);
 
-  updateStatsTask(task, {
+  return reportStatsTask(task, {
     status: "completed",
     progress: 100,
     currentAction: task.accessDenied
@@ -8815,7 +9112,7 @@ async function executeManboPlayCountTask(task) {
   const episodes = Array.isArray(task.episodes) ? task.episodes : [];
   const dramaMap = buildPlayCountDramaMap(episodes);
 
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     status: "running",
     currentAction: "开始统计播放量",
     progress: 0,
@@ -8845,7 +9142,7 @@ async function executeManboPlayCountTask(task) {
       task.failedCount += 1;
     }
     task.completedCount += 1;
-    updateStatsTask(task, {
+    reportStatsTask(task, {
       progress: task.totalCount > 0
         ? Math.floor((task.completedCount / task.totalCount) * 100)
         : 100,
@@ -8868,7 +9165,7 @@ async function executeManboPlayCountTask(task) {
   }, 0);
   const playCountFailed = playCountResults.some((item) => item.playCountFailed);
 
-  updateStatsTask(task, {
+  return reportStatsTask(task, {
     status: "completed",
     progress: 100,
     currentAction: task.failedCount > 0
@@ -8889,7 +9186,7 @@ async function executeMissevanRevenueTask(task) {
   const suspectedOverflowEpisodes = new Set();
   initializeRevenueProgress(task, dramaIds);
 
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     status: "running",
     currentAction: "开始最低收益预估",
     progress: 0,
@@ -8898,7 +9195,7 @@ async function executeMissevanRevenueTask(task) {
   await refreshMissevanCooldownState();
   if (shouldBlockMissevanAccessForCooldown()) {
     task.accessDenied = true;
-    return updateStatsTask(task, {
+    return reportStatsTask(task, {
       status: "completed",
       progress: 100,
       currentAction: "访问受限",
@@ -8920,12 +9217,16 @@ async function executeMissevanRevenueTask(task) {
     let title = `Drama ${dramaId}`;
     let dramaUnit = null;
     try {
-      const dramaInfo = await fetchDramaInfo(dramaId);
+      const dramaInfo = await missevanClient.getDramaInfo(dramaId, null, {
+        signal: task.abortSignal,
+      });
       title = dramaInfo?.drama?.name || title;
       const viewCount = Number(dramaInfo?.drama?.view_count ?? 0);
       const price = Number(dramaInfo?.drama?.price ?? 0);
       const memberPrice = Number(dramaInfo?.drama?.member_price ?? 0);
-      const rewardMeta = await fetchRewardDetailMeta(dramaId).catch(() => null);
+      const rewardMeta = await missevanClient
+        .getRewardDetailMeta(dramaId, { signal: task.abortSignal })
+        .catch(() => null);
       const rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
       const isMember = Boolean(dramaInfo?.drama?.is_member) || Number(dramaInfo?.drama?.vip ?? 0) === 1;
       const payType = normalizeMissevanPayType(dramaInfo?.drama?.pay_type ?? dramaInfo?.drama?.payType);
@@ -8955,11 +9256,12 @@ async function executeMissevanRevenueTask(task) {
         if (task.cancelled) {
           break;
         }
-        const danmakuResult = await fetchDanmakuSummary(
+        const danmakuResult = await missevanClient.getDanmakuSummary(
           episode.sound_id,
           title,
           String(episode?.name ?? "").trim(),
-          task.source
+          task.source,
+          { signal: task.abortSignal }
         );
         if (!danmakuResult.success) {
           failed = true;
@@ -9000,10 +9302,12 @@ async function executeMissevanRevenueTask(task) {
       }
 
       if (!failed && !task.cancelled) {
-        updateStatsTask(task, {
+        reportStatsTask(task, {
           currentAction: `正在统计收益：${title} / 打赏汇总`,
         });
-        const rewardSummary = await fetchRewardSummary(dramaId);
+        const rewardSummary = await missevanClient.getRewardSummary(dramaId, {
+          signal: task.abortSignal,
+        });
         if (!rewardSummary?.success) {
           failed = true;
           accessDenied = accessDenied || Boolean(rewardSummary?.accessDenied);
@@ -9132,7 +9436,7 @@ async function executeMissevanRevenueTask(task) {
   }
 
   const revenueSummary = createRevenueSummary(results);
-  updateStatsTask(task, {
+  return reportStatsTask(task, {
     status: "completed",
     progress: 100,
     currentAction: results.some((item) => item.failed)
@@ -9154,7 +9458,7 @@ async function executeManboRevenueTask(task) {
   const suspectedOverflowEpisodes = new Set();
   initializeRevenueProgress(task, dramaIds);
 
-  updateStatsTask(task, {
+  reportStatsTask(task, {
     status: "running",
     currentAction: "开始最低收益预估",
     progress: 0,
@@ -9168,7 +9472,9 @@ async function executeManboRevenueTask(task) {
     let title = `Drama ${dramaId}`;
     let dramaUnit = null;
     try {
-      const dramaInfo = await fetchManboDramaDetail(dramaId);
+      const dramaInfo = await manboClient.getDramaDetail(dramaId, {
+        signal: task.abortSignal,
+      });
       title = dramaInfo?.drama?.name || title;
       const viewCount = Number(dramaInfo?.drama?.view_count ?? 0);
       const diamondValue = Number(dramaInfo?.drama?.diamond_value ?? 0);
@@ -9252,11 +9558,12 @@ async function executeManboRevenueTask(task) {
           if (task.cancelled) {
             break;
           }
-          const danmakuResult = await fetchManboDanmakuSummary(
+          const danmakuResult = await manboClient.getDanmakuSummary(
             episode.sound_id,
             title,
             String(episode?.name ?? "").trim(),
-            task.source
+            task.source,
+            { signal: task.abortSignal }
           );
           if (!danmakuResult.success) {
             failed = true;
@@ -9441,7 +9748,7 @@ async function executeManboRevenueTask(task) {
   }
 
   const revenueSummary = createRevenueSummary(results);
-  updateStatsTask(task, {
+  return reportStatsTask(task, {
     status: "completed",
     progress: 100,
     currentAction: results.some((item) => item.failed)
@@ -9457,47 +9764,33 @@ async function executeManboRevenueTask(task) {
   });
 }
 
-async function executeStatsTask(task) {
+async function executeStatsTask(task, { report }) {
+  statsTaskReporters.set(task, report);
   try {
     if (task.taskType === "id") {
       if (task.platform === "manbo") {
-        await executeManboIdTask(task);
-        return;
+        return await executeManboIdTask(task);
       }
-      await executeMissevanIdTask(task);
-      return;
+      return await executeMissevanIdTask(task);
     }
 
     if (task.taskType === "play_count") {
       if (task.platform === "manbo") {
-        await executeManboPlayCountTask(task);
-        return;
+        return await executeManboPlayCountTask(task);
       }
-      await executeMissevanPlayCountTask(task);
-      return;
+      return await executeMissevanPlayCountTask(task);
     }
 
     if (task.taskType === "revenue") {
       if (task.platform === "manbo") {
-        await executeManboRevenueTask(task);
-        return;
+        return await executeManboRevenueTask(task);
       }
-      await executeMissevanRevenueTask(task);
-      return;
+      return await executeMissevanRevenueTask(task);
     }
 
-    updateStatsTask(task, {
-      status: "failed",
-      currentAction: "统计失败",
-      error: `Unsupported task type: ${task.taskType}`,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    updateStatsTask(task, {
-      status: "failed",
-      currentAction: "统计失败",
-      error: message,
-    });
+    throw new Error(`Unsupported task type: ${task.taskType}`);
+  } finally {
+    statsTaskReporters.delete(task);
   }
 }
 
@@ -9705,29 +9998,52 @@ app.post("/admin/cache/refresh", async (req, res) => {
   return res.status(result.status).json(result.payload);
 });
 
+app.get("/admin/task-metrics", (req, res) => {
+  if (!ADMIN_CACHE_REFRESH_TOKEN) {
+    return res.status(503).json({
+      success: false,
+      code: "ADMIN_TOKEN_NOT_CONFIGURED",
+      message: "管理员令牌未配置。",
+    });
+  }
+  if (req.get("Authorization") !== `Bearer ${ADMIN_CACHE_REFRESH_TOKEN}`) {
+    return res.status(401).json({
+      success: false,
+      code: "ADMIN_UNAUTHORIZED",
+      message: "管理员鉴权失败。",
+    });
+  }
+  return res.json({
+    success: true,
+    generatedAt: new Date().toISOString(),
+    ...statsTaskEngine.getMetrics(),
+  });
+});
+
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/image-proxy", async (req, res) => {
+app.get("/image-proxy", imageProxyLimiter, async (req, res) => {
   const { url } = req.query;
 
   if (!url) {
-    return res.status(400).send("Missing url");
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_IMAGE_URL",
+      message: "缺少图片地址。",
+    });
   }
 
   let targetUrl;
   try {
-    targetUrl = new URL(url);
-  } catch {
-    return res.status(400).send("Invalid image url");
-  }
-
-  if (
-    targetUrl.protocol !== "https:" ||
-    !isAllowedImageHost(targetUrl.hostname)
-  ) {
-    return res.status(400).send("Invalid image host");
+    targetUrl = validateImageProxyUrl(url, isAllowedImageHost);
+  } catch (error) {
+    return res.status(error?.status || 400).json({
+      success: false,
+      code: error?.code || "INVALID_IMAGE_URL",
+      message: "图片地址无效。",
+    });
   }
 
   try {
@@ -9741,11 +10057,27 @@ app.get("/image-proxy", async (req, res) => {
     console.warn(
       `Image proxy failed url=${targetUrl.toString()} attempts=${attempts} error=${summary}`
     );
-    return res.status(502).send("Image proxy failed");
+    const isPolicyError = error instanceof ImageProxyPolicyError;
+    const status = isPolicyError ? error.status : 502;
+    const code = error?.code === "IMAGE_TOO_LARGE"
+      ? "IMAGE_TOO_LARGE"
+      : error?.code === "IMAGE_TYPE_UNSUPPORTED"
+        ? "IMAGE_TYPE_UNSUPPORTED"
+        : "IMAGE_PROXY_FAILED";
+    const message = code === "IMAGE_TOO_LARGE"
+      ? "图片大小超过 10 MiB 限制。"
+      : code === "IMAGE_TYPE_UNSUPPORTED"
+        ? "图片类型不受支持。"
+        : "图片代理请求失败。";
+    return res.status(status).json({
+      success: false,
+      code,
+      message,
+    });
   }
 });
 
-app.get("/unified-search", async (req, res) => {
+app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
   const normalizedKeyword = normalizeKeyword(req.query.keyword);
   const offset = normalizeSearchOffset(req.query.offset);
   const limit = normalizeSearchLimit(req.query.limit, 5, 5);
@@ -9897,7 +10229,7 @@ app.get("/unified-search", async (req, res) => {
   }
 });
 
-app.get("/search", async (req, res) => {
+app.get("/search", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
@@ -9951,21 +10283,24 @@ app.get("/search", async (req, res) => {
     let results = [];
 
     if (missevanInfoStore.remoteAvailable) {
-      let matchedRecords = searchMissevanLibraryRecords(
-        missevanInfoStore.records,
-        normalizedKeyword,
-        SEARCH_RESULT_LIMIT,
-        "strict"
-      );
-      if (!matchedRecords.length) {
-        void writeUsageLog(buildCompatibilitySearchUsageLog("missevan", normalizedKeyword));
-        matchedRecords = searchMissevanLibraryRecords(
-          missevanInfoStore.records,
-          normalizedKeyword,
-          SEARCH_RESULT_LIMIT,
-          "compatible"
-        );
-      }
+      const librarySearch = await searchLibraryWithFallback({
+        keyword: normalizedKeyword,
+        libraryOnly: true,
+        searchLibrary(searchKeyword, mode) {
+          if (mode === "compatible") {
+            void writeUsageLog(
+              buildCompatibilitySearchUsageLog("missevan", normalizedKeyword)
+            );
+          }
+          return searchMissevanLibraryRecords(
+            missevanInfoStore.records,
+            searchKeyword,
+            SEARCH_RESULT_LIMIT,
+            mode
+          );
+        },
+      });
+      const matchedRecords = librarySearch.items;
       source = "library";
       totalMatched = matchedRecords.length;
 
@@ -10248,7 +10583,7 @@ app.post("/usage-log", async (req, res) => {
   }
 });
 
-app.post("/getdramacards", async (req, res) => {
+app.post("/getdramacards", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
@@ -10338,7 +10673,7 @@ app.post("/getdramacards", async (req, res) => {
   });
 });
 
-app.post("/getdramas", async (req, res) => {
+app.post("/getdramas", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
@@ -10385,7 +10720,7 @@ app.post("/getdramas", async (req, res) => {
   return res.json(results);
 });
 
-app.post("/getsoundsummary", async (req, res) => {
+app.post("/getsoundsummary", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
@@ -10439,7 +10774,7 @@ app.post("/getsoundsummary", async (req, res) => {
   return res.json(results);
 });
 
-app.post("/getrewardsummary", async (req, res) => {
+app.post("/getrewardsummary", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
@@ -10474,7 +10809,7 @@ app.post("/getrewardsummary", async (req, res) => {
   }
 });
 
-app.post("/getrewardmeta", async (req, res) => {
+app.post("/getrewardmeta", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
@@ -10509,7 +10844,7 @@ app.post("/getrewardmeta", async (req, res) => {
   }
 });
 
-app.post("/getsounddanmaku", async (req, res) => {
+app.post("/getsounddanmaku", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
@@ -10537,7 +10872,7 @@ app.post("/getsounddanmaku", async (req, res) => {
   return res.json(result);
 });
 
-app.post("/manbo/resolve-input", async (req, res) => {
+app.post("/manbo/resolve-input", expensiveDataLimiter, async (req, res) => {
   const items = normalizeRawInputItems(req.body.items || []);
   const results = [];
 
@@ -10566,7 +10901,7 @@ app.post("/manbo/resolve-input", async (req, res) => {
   return res.json({ success: true, results });
 });
 
-app.get("/manbo/search", async (req, res) => {
+app.get("/manbo/search", expensiveDataLimiter, async (req, res) => {
   const keyword = normalizeKeyword(req.query.keyword);
   const offset = normalizeSearchOffset(req.query.offset);
   const limit = normalizeSearchLimit(req.query.limit, 5, 5);
@@ -10598,21 +10933,22 @@ app.get("/manbo/search", async (req, res) => {
 
   try {
     await ensureInfoStoreLoaded(manboInfoStore);
-    let matchedRecords = searchManboLibraryRecords(
-      manboInfoStore.records,
+    const librarySearch = await searchLibraryWithFallback({
       keyword,
-      SEARCH_RESULT_LIMIT,
-      "strict"
-    );
-    if (!matchedRecords.length) {
-      void writeUsageLog(buildCompatibilitySearchUsageLog("manbo", keyword));
-      matchedRecords = searchManboLibraryRecords(
-        manboInfoStore.records,
-        keyword,
-        SEARCH_RESULT_LIMIT,
-        "compatible"
-      );
-    }
+      libraryOnly: true,
+      searchLibrary(searchKeyword, mode) {
+        if (mode === "compatible") {
+          void writeUsageLog(buildCompatibilitySearchUsageLog("manbo", keyword));
+        }
+        return searchManboLibraryRecords(
+          manboInfoStore.records,
+          searchKeyword,
+          SEARCH_RESULT_LIMIT,
+          mode
+        );
+      },
+    });
+    const matchedRecords = librarySearch.items;
     if (!matchedRecords.length && !useApiFallback) {
       return res.json({
         success: false,
@@ -10681,7 +11017,7 @@ app.get("/manbo/search", async (req, res) => {
   }
 });
 
-app.post("/manbo/getdramacards", async (req, res) => {
+app.post("/manbo/getdramacards", expensiveDataLimiter, async (req, res) => {
   const items = normalizeRawInputItems(req.body.items || []);
   const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
   const usageTitles = normalizeStringArray(req.body?.titles, items.length);
@@ -10711,7 +11047,7 @@ app.post("/manbo/getdramacards", async (req, res) => {
         continue;
       }
 
-      const info = await fetchManboDramaDetail(resolved.dramaId);
+      const info = await dramaService.getManboDrama(resolved.dramaId);
       const card = normalizeManboCardFromDramaInfo(info);
       if (card) {
         const libraryRecord = manboInfoStore.byDramaId.get(String(card.id));
@@ -10765,13 +11101,13 @@ app.post("/manbo/getdramacards", async (req, res) => {
   });
 });
 
-app.post("/manbo/getdramas", async (req, res) => {
+app.post("/manbo/getdramas", expensiveDataLimiter, async (req, res) => {
   const ids = normalizeStringIds(req.body.drama_ids || []);
   const results = [];
 
   for (const id of ids) {
     try {
-      const info = await fetchManboDramaDetail(id);
+      const info = await dramaService.getManboDrama(id);
       if (info) {
         results.push({
           success: true,
@@ -10793,7 +11129,7 @@ app.post("/manbo/getdramas", async (req, res) => {
   return res.json(results);
 });
 
-app.post("/manbo/getsetsummary", async (req, res) => {
+app.post("/manbo/getsetsummary", expensiveDataLimiter, async (req, res) => {
   const setIds = normalizeStringIds(req.body.set_ids || req.body.sound_ids || []);
   const results = [];
 
@@ -10822,7 +11158,7 @@ app.post("/manbo/getsetsummary", async (req, res) => {
   return res.json(results);
 });
 
-app.post("/manbo/getsetdanmaku", async (req, res) => {
+app.post("/manbo/getsetdanmaku", expensiveDataLimiter, async (req, res) => {
   const {
     sound_id: setId,
     drama_title: dramaTitle = "",
@@ -10870,7 +11206,15 @@ function normalizeTaskDramaIds(rawDramaIds = [], platform = "missevan") {
   );
 }
 
-function createStatsTask({ platform, taskType, episodes = [], dramaIds = [], playCountDramas = [], source = "" }) {
+function createStatsTask({
+  platform,
+  taskType,
+  episodes = [],
+  dramaIds = [],
+  playCountDramas = [],
+  source = "",
+  clientKey = "unknown",
+}) {
   const taskId = createTaskId();
   const task = {
     taskId,
@@ -10886,6 +11230,8 @@ function createStatsTask({ platform, taskType, episodes = [], dramaIds = [], pla
     totalUsers: 0,
     accessDenied: false,
     source: normalizeStatsTaskSource(source),
+    clientKey: String(clientKey ?? "").trim() || "unknown",
+    queuePosition: 0,
     episodes,
     dramaIds,
     playCountDramas,
@@ -10898,19 +11244,53 @@ function createStatsTask({ platform, taskType, episodes = [], dramaIds = [], pla
   };
 
   cleanupExpiredStatsTasks();
-  manboStatsTaskStore.set(taskId, task);
-  executeStatsTask(task);
   return task;
 }
 
-function getStatsTaskOr404(taskId, res) {
+function getStatsTaskSnapshotOr404(taskId, res, { touch = false } = {}) {
   cleanupExpiredStatsTasks();
-  const task = manboStatsTaskStore.get(String(taskId));
-  if (!task) {
+  const snapshot = touch
+    ? statsTaskEngine.touch(taskId)
+    : statsTaskEngine.getSnapshot(taskId);
+  if (!snapshot) {
     res.status(404).json({ error: "Task not found" });
     return null;
   }
-  return task;
+  return snapshot;
+}
+
+export function getStatsTaskItemCounts({
+  taskType = "",
+  episodes = [],
+  dramaIds = [],
+  playCountDramas = [],
+} = {}) {
+  const normalizedPlayCountDramas = Array.isArray(playCountDramas)
+    ? playCountDramas
+    : [];
+  return {
+    primary:
+      taskType === "revenue"
+        ? (Array.isArray(dramaIds) ? dramaIds.length : 0)
+        : (Array.isArray(episodes) ? episodes.length : 0),
+    playCountDramas: normalizedPlayCountDramas.length,
+    playCountEpisodes: normalizedPlayCountDramas.reduce(
+      (count, drama) =>
+        count + (Array.isArray(drama?.episodes) ? drama.episodes.length : 0),
+      0
+    ),
+  };
+}
+
+export function isStatsTaskItemLimitExceeded(
+  itemCounts,
+  limit = STATS_TASK_MAX_ITEMS
+) {
+  return (
+    Number(itemCounts?.primary ?? 0) > limit ||
+    Number(itemCounts?.playCountDramas ?? 0) > limit ||
+    Number(itemCounts?.playCountEpisodes ?? 0) > limit
+  );
 }
 
 function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTaskType = null) {
@@ -10924,6 +11304,12 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
     ? normalizePlayCountDramas(req.body?.playCountDramas)
     : [];
   const source = normalizeStatsTaskSource(req.body?.source);
+  const itemCounts = getStatsTaskItemCounts({
+    taskType: normalizedTaskType,
+    episodes,
+    dramaIds,
+    playCountDramas,
+  });
 
   if (!["play_count", "id", "revenue"].includes(normalizedTaskType)) {
     res.status(400).json({ error: "Invalid taskType" });
@@ -10940,17 +11326,54 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
     return null;
   }
 
-  return createStatsTask({
+  if (isStatsTaskItemLimitExceeded(itemCounts)) {
+    res.status(400).json({
+      success: false,
+      code: "TASK_ITEM_LIMIT_EXCEEDED",
+      message: `单次统计最多处理 ${STATS_TASK_MAX_ITEMS} 个条目。`,
+      limit: STATS_TASK_MAX_ITEMS,
+    });
+    return null;
+  }
+
+  const task = createStatsTask({
     platform,
     taskType: normalizedTaskType,
     episodes,
     dramaIds,
     playCountDramas,
     source,
+    clientKey: req.ip,
   });
+  const enqueueResult = statsTaskEngine.enqueue(task);
+  if (!enqueueResult.accepted) {
+    const code = enqueueResult.code === "TASK_CLIENT_QUEUE_FULL"
+      ? "TASK_CLIENT_QUEUE_FULL"
+      : "TASK_QUEUE_FULL";
+    const message = code === "TASK_CLIENT_QUEUE_FULL"
+      ? "当前设备排队中的统计任务已达上限，请稍后重试。"
+      : "统计任务队列已满，请稍后重试。";
+    res.setHeader("Retry-After", "30");
+    res.status(429).json({
+      success: false,
+      code,
+      message,
+      platform,
+      retryAfterSeconds: 30,
+    });
+    return null;
+  }
+  task.queuePosition = enqueueResult.queuePosition;
+  if (task.queuePosition > 0) {
+    statsTaskEngine.report(task.taskId, {
+      currentAction: `任务排队中，前方 ${task.queuePosition} 个任务`,
+    });
+  }
+  return task;
 }
 
-app.post("/stat-tasks", async (req, res) => {
+app.post("/stat-tasks", statsTaskCreationLimiter, async (req, res) => {
+  await statsTaskEngine.whenReady();
   if ((req.body?.platform === "manbo" ? "manbo" : "missevan") === "missevan") {
     await refreshMissevanCooldownState();
   }
@@ -11000,29 +11423,27 @@ app.get("/landing/regions", async (req, res) => {
 });
 
 app.get("/stat-tasks/:taskId", async (req, res) => {
-  const task = getStatsTaskOr404(req.params.taskId, res);
-  if (!task) {
+  await statsTaskEngine.whenReady();
+  const snapshot = getStatsTaskSnapshotOr404(req.params.taskId, res, { touch: true });
+  if (!snapshot) {
     return;
   }
   setNoStoreHeaders(res);
-  refreshStatsTaskHeartbeat(task);
-  return res.json(buildStatsTaskSnapshot(task));
+  return res.json(snapshot);
 });
 
 app.post("/stat-tasks/:taskId/cancel", async (req, res) => {
-  const task = getStatsTaskOr404(req.params.taskId, res);
-  if (!task) {
+  await statsTaskEngine.whenReady();
+  const current = getStatsTaskSnapshotOr404(req.params.taskId, res);
+  if (!current) {
     return;
   }
-  task.cancelled = true;
-  updateStatsTask(task, {
-    status: task.status === "completed" ? "completed" : "cancelled",
-    currentAction: task.status === "completed" ? task.currentAction : "统计已取消",
-  });
-  return res.json(buildStatsTaskSnapshot(task));
+  const result = statsTaskEngine.cancel(req.params.taskId);
+  return res.json(result.snapshot);
 });
 
-app.post("/manbo/stat-tasks", async (req, res) => {
+app.post("/manbo/stat-tasks", statsTaskCreationLimiter, async (req, res) => {
+  await statsTaskEngine.whenReady();
   const task = createStatsTaskFromRequest(req, res, "manbo", "id");
   if (!task) {
     return;
@@ -11031,26 +11452,23 @@ app.post("/manbo/stat-tasks", async (req, res) => {
 });
 
 app.get("/manbo/stat-tasks/:taskId", async (req, res) => {
-  const task = getStatsTaskOr404(req.params.taskId, res);
-  if (!task) {
+  await statsTaskEngine.whenReady();
+  const snapshot = getStatsTaskSnapshotOr404(req.params.taskId, res, { touch: true });
+  if (!snapshot) {
     return;
   }
   setNoStoreHeaders(res);
-  refreshStatsTaskHeartbeat(task);
-  return res.json(buildStatsTaskSnapshot(task));
+  return res.json(snapshot);
 });
 
 app.post("/manbo/stat-tasks/:taskId/cancel", async (req, res) => {
-  const task = getStatsTaskOr404(req.params.taskId, res);
-  if (!task) {
+  await statsTaskEngine.whenReady();
+  const current = getStatsTaskSnapshotOr404(req.params.taskId, res);
+  if (!current) {
     return;
   }
-  task.cancelled = true;
-  updateStatsTask(task, {
-    status: task.status === "completed" ? "completed" : "cancelled",
-    currentAction: task.status === "completed" ? task.currentAction : "统计已取消",
-  });
-  return res.json(buildStatsTaskSnapshot(task));
+  const result = statsTaskEngine.cancel(req.params.taskId);
+  return res.json(result.snapshot);
 });
 
 app.use(express.static(path.join(__dirname, "dist")));
@@ -11082,6 +11500,10 @@ export async function startServer(port = defaultPort) {
 
   const actualPort = serverInstance.address()?.port ?? port;
   console.log(`server running on ${actualPort}`);
+  void statsTaskEngine.restore().catch((error) => {
+    console.warn(`Stats task recovery failed: ${formatImageProxyError(error)}`);
+    return [];
+  });
   return serverInstance;
 }
 

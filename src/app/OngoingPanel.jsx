@@ -17,6 +17,7 @@ import {
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
+import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
@@ -24,8 +25,7 @@ import {
   fetchRankTrendData,
   logRankTrendOpen,
   RankTrendButton,
-  RankTrendDialog,
-} from "@/app/rankTrendUi";
+} from "@/app/rankTrendActions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -414,8 +414,8 @@ function OngoingCard({
           </div>
         </CardContent>
       </Card>
-      {canOpenTrend ? (
-        <RankTrendDialog
+      {canOpenTrend && isTrendOpen ? (
+        <LazyRankTrendDialog
           open={isTrendOpen}
           onOpenChange={setIsTrendOpen}
           item={item}

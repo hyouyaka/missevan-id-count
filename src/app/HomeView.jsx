@@ -16,6 +16,7 @@ import {
   getBackendVersionFromResponse,
 } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
+import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
@@ -24,7 +25,6 @@ import {
   fetchRankTrendData,
   logRankTrendOpen,
 } from "@/app/rankTrendData";
-import { RankTrendDialog } from "@/app/rankTrendUi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { LazyImage } from "@/components/ui/lazy-image";
@@ -946,13 +946,22 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
       </section>
         </>
       ) : null}
-      <RankTrendDialog
-        open={trendDialog.open}
-        onOpenChange={(open) => setTrendDialog((current) => ({ ...current, open }))}
-        item={trendDialog.item}
-        platform={trendDialog.platform}
-        trendState={trendState}
-      />
+      {trendDialog.open ? (
+        <LazyRankTrendDialog
+          open={trendDialog.open}
+          onOpenChange={(open) => setTrendDialog((current) => ({ ...current, open }))}
+          item={trendDialog.item}
+          platform={trendDialog.platform}
+          trendState={trendState}
+          fallback={
+            <Alert className="border-border/70 bg-card/92">
+              <RefreshCwIcon className="size-4 animate-spin" />
+              <AlertTitle>正在加载趋势</AlertTitle>
+              <AlertDescription>正在准备趋势图表。</AlertDescription>
+            </Alert>
+          }
+        />
+      ) : null}
     </div>
   );
 }

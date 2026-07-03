@@ -27,6 +27,7 @@ import {
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
 import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
+import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { RankBadge } from "@/app/RankBadge";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
 import {
@@ -39,8 +40,7 @@ import {
   rankTrendTagVariants,
   RankTrendDeltaBadge,
   RankTrendButton,
-  RankTrendDialog as SharedRankTrendDialog,
-} from "@/app/rankTrendUi";
+} from "@/app/rankTrendActions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -631,8 +631,8 @@ function RankItemCard({
             ) : null}
           </div>
         ) : null}
-        {canShowTrend ? (
-          <SharedRankTrendDialog
+        {canShowTrend && isTrendOpen ? (
+          <LazyRankTrendDialog
             open={isTrendOpen}
             onOpenChange={setIsTrendOpen}
             item={trendItem}
@@ -942,8 +942,8 @@ function CvRankItemCard({
         {isExpanded ? (
           <CvWorksList works={item.works || []} platform={platform} onOpenSearchResult={onOpenSearchResult} />
         ) : null}
-        {canShowTrend ? (
-          <SharedRankTrendDialog
+        {canShowTrend && isTrendOpen ? (
+          <LazyRankTrendDialog
             open={isTrendOpen}
             onOpenChange={setIsTrendOpen}
             item={{ id: item.cvName, name: item.cvName }}

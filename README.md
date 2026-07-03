@@ -147,6 +147,29 @@ MISSEVAN_FORCE_FALLBACK=0
 | `MANBO_DANMAKU_CACHE_MAX_ENTRIES` | 弹幕用户缓存最大条目数，托管部署默认更小以降低内存占用 | Render/Railway `20`，本地 `200` |
 | `MANBO_STATS_TASK_TTL_MS` | 统计任务结果保留时间，托管部署默认更短以降低内存占用 | Render/Railway `900000`，本地 `3600000` |
 
+### 资源保护
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CACHE_MAX_ENTRIES` | 普通详情、摘要、搜索和趋势缓存最大条目数 | Render/Railway `500`，本地 `1000` |
+| `MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES` | 猫耳弹幕用户缓存最大条目数 | Render/Railway `20`，本地 `200` |
+| `STATS_TASK_MAX_ITEMS` | 单个统计任务允许的最大作品或分集数 | `1000` |
+| `MISSEVAN_STATS_MAX_CONCURRENCY` | 同时运行的猫耳统计任务数 | `2` |
+| `MANBO_STATS_MAX_CONCURRENCY` | 同时运行的漫播统计任务数 | `3` |
+| `STATS_TASK_QUEUE_MAX` | 每个平台等待队列最大任务数 | `20` |
+| `STATS_TASK_CLIENT_QUEUE_MAX` | 每个 IP 在单个平台最多排队任务数 | `3` |
+| `IMAGE_PROXY_MAX_BYTES` | 图片代理最大响应字节数 | `10485760`（10 MiB） |
+
+统计任务创建接口按 IP 每 2 分钟最多接受 10 次请求。猫耳每个 IP 同时运行 1 个任务，漫播每个 IP 同时运行 2 个任务；超出的任务进入平台队列，不会降低已经运行任务的抓取并发。
+
+队列已满、单个 IP 排队已满或创建过于频繁时，接口返回 `429`，同时提供 `Retry-After`、稳定错误码和中文提示。单任务超过 `STATS_TASK_MAX_ITEMS` 时返回 `400 TASK_ITEM_LIMIT_EXCEEDED`。
+
+统计任务会异步保存恢复快照：Upstash 可用时按当前实例保存，否则写入 `runtime/stats-tasks.json`。服务重启后，未完成任务使用原任务 ID 从头重新排队；进度快照最多每 2 秒写入一次，不阻塞分集抓取。使用 `ADMIN_CACHE_REFRESH_TOKEN` 访问 `GET /admin/task-metrics` 可读取不含 IP 和任务输入的队列指标。
+
+任务取消后状态不会再被迟到的完成或失败回写覆盖；若取消前已经产生部分结果，快照会保留结果并返回 `resultIncomplete=true`。服务恢复期间，统计任务的创建、查询和取消接口会等待快照加载完成，首页与健康检查不受影响。
+
+图片代理根据文件内容识别 JPEG、PNG、WebP、GIF 和 AVIF，不依赖上游 `Content-Type`；重定向的每一跳都会重新验证 HTTPS 与 CDN 主机白名单。响应超过限制时返回 `413 IMAGE_TOO_LARGE`，类型不受支持时返回 `415 IMAGE_TYPE_UNSUPPORTED`。
+
 ### 节点路由
 
 | 变量 | 说明 |
