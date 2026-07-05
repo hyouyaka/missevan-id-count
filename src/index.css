@@ -841,3 +841,19 @@ textarea {
     animation: none !important;
   }
 }
+
+#twikoo-feedback,
+#twikoo-feedback * {
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "Apple Color Emoji",
+    "Segoe UI Emoji",
+    "Segoe UI Symbol",
+    "Noto Color Emoji",
+    "Noto Sans SC",
+    "Microsoft YaHei",
+    sans-serif;
+}

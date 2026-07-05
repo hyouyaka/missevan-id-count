@@ -131,7 +131,7 @@ export const TOOL_ROUTE_QUERY_PARAMS = {
 export function getAllowedToolViews({ desktopApp = false } = {}) {
   return desktopApp
     ? ["search", "favorites"]
-    : ["home", "search", "ongoing", "ranks", "favorites"];
+    : ["home", "search", "ongoing", "ranks", "favorites", "feedback"];
 }
 
 export function normalizeToolView(value, options = {}) {

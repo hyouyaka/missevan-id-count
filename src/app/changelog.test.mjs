@@ -54,8 +54,17 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.0", () => {
-  assert.equal(packageJson.version, "1.7.0");
+test("package version is 1.7.1", () => {
+  assert.equal(packageJson.version, "1.7.1");
+});
+
+test("changelog contains 1.7.1 anonymous feedback board update", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.1");
+
+  assert.deepEqual(entry, {
+    version: "1.7.1",
+    changes: ["功能建议页面更新为匿名留言板模式方便交流"],
+  });
 });
 
 test("changelog contains 1.7 homepage and search updates", () => {

@@ -40,6 +40,9 @@ export default defineConfig({
           if (normalizedId.includes("/node_modules/lucide-react/")) {
             return "vendor-icons";
           }
+          if (normalizedId.includes("/node_modules/twikoo/")) {
+            return "twikoo";
+          }
           return "vendor";
         },
       },

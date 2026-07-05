@@ -4,6 +4,12 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.1",
+    changes: [
+      "功能建议页面更新为匿名留言板模式方便交流",
+    ],
+  },
+  {
     version: "1.7.0",
     changes: [
       "请保存本工具新地址https://mmtoolkit.app，旧地址将于7月底失效",

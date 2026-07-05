@@ -13,6 +13,7 @@ const appUtilsSource = readFileSync(new URL("./app-utils.js", import.meta.url), 
 const appIconSource = readFileSync(new URL("./AppIcon.jsx", import.meta.url), "utf8");
 const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import.meta.url), "utf8");
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
+const feedbackViewSource = readSourceIfExists("./FeedbackView.jsx");
 const homeViewSource = readSourceIfExists("./HomeView.jsx");
 const lazyRankTrendDialogSource = readSourceIfExists("./LazyRankTrendDialog.jsx");
 const landingViewSource = readSourceIfExists("./LandingView.jsx");
@@ -464,7 +465,7 @@ test("web navigation keeps platform drawer roots and favorites with statistics l
 });
 
 test("tool routes default to the new home view", () => {
-  assert.match(appUtilsSource, /return desktopApp\s*\?\s*\["search", "favorites"\]\s*:\s*\["home", "search", "ongoing", "ranks", "favorites"\]/);
+  assert.match(appUtilsSource, /return desktopApp\s*\?\s*\["search", "favorites"\]\s*:\s*\["home", "search", "ongoing", "ranks", "favorites", "feedback"\]/);
   assert.match(appUtilsSource, /const defaultView = options\?\.desktopApp \? "search" : "home"/);
   assert.match(appUtilsSource, /if \(nextState\.view === "home"\) \{\s*params\.delete\(TOOL_ROUTE_QUERY_PARAMS\.view\);/);
   assert.match(appUtilsSource, /else if \(nextState\.view === "ongoing"\) \{\s*params\.set\(TOOL_ROUTE_QUERY_PARAMS\.view, "ongoing"\);/);
@@ -823,8 +824,9 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /const \[mainDrawerOpen, setMainDrawerOpen\] = useState\(false\)/);
   assert.match(toolViewSource, /function closeMainDrawer\(\)/);
   assert.match(toolViewSource, /function openDrawerChangelog\(\)/);
-  assert.match(toolViewSource, /function openDrawerFeatureSuggestion\(\)/);
-  assert.match(toolViewSource, /window\.open\(appConfig\.featureSuggestionUrl, "_blank", "noreferrer"\)/);
+  assert.match(toolViewSource, /function openDrawerFeedback\(\)/);
+  assert.match(toolViewSource, /navigateToolRoute\(\{ view: "feedback" \}\)/);
+  assert.doesNotMatch(toolViewSource, /window\.open\(appConfig\.featureSuggestionUrl/);
   assert.match(toolViewSource, /window\.addEventListener\("keydown", handleMainDrawerKeyDown\)/);
   assert.match(toolViewSource, /event\.key === "Escape"/);
   assert.match(toolViewSource, /setMainDrawerOpen\(false\)/);
@@ -863,8 +865,9 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /更新日志/);
   assert.match(toolViewSource, /桌面版/);
   assert.match(toolViewSource, /<MonitorIcon aria-hidden="true"/);
-  assert.match(toolViewSource, /featureSuggestionUrl \? \(/);
-  assert.match(toolViewSource, /功能建议/);
+  assert.match(toolViewSource, /!desktopApp && featureSuggestionUrl \? \(/);
+  assert.match(toolViewSource, /建议反馈/);
+  assert.doesNotMatch(toolViewSource, /功能建议/);
   assert.match(toolViewSource, /const drawerRootItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /const drawerChildItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /const drawerUtilityItemClassName = appConfig\.desktopApp/);
@@ -872,6 +875,60 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /fixed right-0 top-0 z-50 h-dvh w-\[230px\]/);
   assert.match(toolViewSource, /sm:w-\[260px\]/);
   assert.match(toolViewSource, /border-l border-border bg-background p-3 shadow-\[var\(--shadow-panel\)\]/);
+});
+
+test("web feedback route initializes the npm Twikoo client inside its own view", () => {
+  assert.match(packageSource, /"twikoo": "\^1\.7\.13"/);
+  assert.match(toolViewSource, /import \{ FeedbackView \} from "@\/app\/FeedbackView"/);
+  assert.match(toolViewSource, /feedback: MessageSquarePlusIcon/);
+  assert.match(
+    toolViewSource,
+    /currentPlatform === "feedback" \? \([\s\S]*<FeedbackView featureSuggestionUrl=\{appConfig\.featureSuggestionUrl\} \/>/
+  );
+
+  assert.match(feedbackViewSource, /export function FeedbackView\(\{ featureSuggestionUrl \}\)/);
+  assert.match(feedbackViewSource, /import\("twikoo"\)/);
+  assert.doesNotMatch(feedbackViewSource, /window\.twikoo/);
+  assert.match(feedbackViewSource, /typeof twikooModule\.init === "function"/);
+  assert.doesNotMatch(feedbackViewSource, /twikooModule\.default \|\| twikooModule/);
+  assert.match(feedbackViewSource, /String\(featureSuggestionUrl \|\| ""\)\.trim\(\)\.replace\(\/\\\/\+\$\/, ""\)/);
+  assert.match(feedbackViewSource, /envId: normalizedEnvId/);
+  assert.match(feedbackViewSource, /el: feedbackElement/);
+  assert.match(feedbackViewSource, /path: "\/feedback"/);
+  assert.match(feedbackViewSource, /lang: "zh-CN"/);
+  assert.match(feedbackViewSource, /建议反馈暂未启用/);
+  assert.match(feedbackViewSource, /反馈区加载失败，请稍后刷新重试。/);
+  assert.match(feedbackViewSource, /可以提交Bug、数据异常、新功能建议等，我的回复也会显示在这里。/);
+  assert.doesNotMatch(feedbackViewSource, /可以匿名提交 Bug、数据异常、新功能建议/);
+  assert.match(feedbackViewSource, />参考提交格式<\/h2>/);
+  assert.doesNotMatch(feedbackViewSource, />建议提交格式<\/h2>/);
+  assert.match(feedbackViewSource, /类型：Bug \/ 数据异常 \/ 新功能建议/);
+  assert.match(feedbackViewSource, /详细描述：说明现象、期望或建议内容/);
+  assert.match(feedbackViewSource, /昵称和联系方式（选填）：便于进一步确认/);
+  assert.match(feedbackViewSource, /<div id="twikoo-feedback" ref=\{feedbackRef\} \/>/);
+});
+
+test("Twikoo feedback font fallback stays scoped to its container", () => {
+  const expectedCss = `#twikoo-feedback,
+#twikoo-feedback * {
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "Apple Color Emoji",
+    "Segoe UI Emoji",
+    "Segoe UI Symbol",
+    "Noto Color Emoji",
+    "Noto Sans SC",
+    "Microsoft YaHei",
+    sans-serif;
+}`;
+
+  assert.ok(
+    indexCssSource.replace(/\r\n/g, "\n").trimEnd().endsWith(expectedCss),
+    "Twikoo font fallback should be the final scoped rule in the global stylesheet"
+  );
 });
 
 test("header uses plain version text, full-width desktop search, and no desktop link", () => {

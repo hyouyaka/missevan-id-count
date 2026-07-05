@@ -138,21 +138,24 @@ test("tool view URL helper defaults to home without query", () => {
 
 test("tool view URL helper reads valid view query", () => {
   assert.equal(readToolViewFromLocation({ search: "?view=ranks" }), "ranks");
+  assert.equal(readToolViewFromLocation({ search: "?view=feedback" }), "feedback");
 });
 
 test("tool view URL helper rejects unavailable desktop views", () => {
   assert.equal(readToolViewFromLocation({ search: "?view=ranks" }, { desktopApp: true }), "search");
   assert.equal(readToolViewFromLocation({ search: "?view=home" }, { desktopApp: true }), "search");
+  assert.equal(readToolViewFromLocation({ search: "?view=feedback" }, { desktopApp: true }), "search");
 });
 
 test("tool view URL helper exposes platform-specific allowed views", () => {
-  assert.deepEqual(getAllowedToolViews(), ["home", "search", "ongoing", "ranks", "favorites"]);
+  assert.deepEqual(getAllowedToolViews(), ["home", "search", "ongoing", "ranks", "favorites", "feedback"]);
   assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "favorites"]);
 });
 
 test("tool view URL builder keeps explicit views and omits default home view", () => {
   assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "search"), "/tool?view=search");
   assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "ongoing"), "/tool?view=ongoing");
+  assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "feedback"), "/tool?view=feedback");
   assert.equal(buildToolViewUrl({ pathname: "/tool", search: "?view=ranks", hash: "" }, "home"), "/tool");
 });
 

@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import { AppIcon } from "@/app/AppIcon";
 import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { FavoritesPanel } from "@/app/FavoritesPanel";
+import { FeedbackView } from "@/app/FeedbackView";
 import { HomeView } from "@/app/HomeView";
 import { MessageDialog } from "@/app/MessageDialog";
 import { OutputPanel } from "@/app/OutputPanel";
@@ -113,6 +114,7 @@ const mainNavigationIconMap = {
   ongoing: Clock3Icon,
   ranks: ChartNoAxesColumnIncreasingIcon,
   favorites: StarIcon,
+  feedback: MessageSquarePlusIcon,
 };
 
 function LazyRouteFallback({ title = "正在加载页面", description = "正在准备页面内容。" }) {
@@ -516,8 +518,9 @@ function MainNavigationDrawer({
   onRequestRanksMenu,
   onCommitRoute,
   onOpenChangelog,
-  onOpenFeatureSuggestion,
+  onOpenFeedback,
   featureSuggestionUrl,
+  desktopApp,
   desktopAppUrl,
 }) {
   const [expandedRootKeys, setExpandedRootKeys] = useState(() => new Set(defaultExpandedRootKeys));
@@ -679,12 +682,9 @@ function MainNavigationDrawer({
           </div>
         ))}
         <div className="my-2 border-t border-dashed border-border/80" />
-        {featureSuggestionUrl ? (
-          <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} onClick={onOpenFeatureSuggestion}>
-            <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
-              <MessageSquarePlusIcon aria-hidden="true" className="size-3.5 shrink-0" />
-              <span className="min-w-0 truncate">功能建议</span>
-            </span>
+        {!desktopApp && featureSuggestionUrl ? (
+          <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} onClick={onOpenFeedback}>
+            <MainNavigationTabLabel platform={{ key: "feedback", label: "建议反馈" }} />
           </Button>
         ) : null}
         <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} onClick={onOpenChangelog}>
@@ -1911,11 +1911,11 @@ export function ToolView({ initialAppConfig }) {
     setMainDrawerOpen(false);
   }
 
-  function openDrawerFeatureSuggestion() {
-    if (!appConfig.featureSuggestionUrl) {
+  function openDrawerFeedback() {
+    if (appConfig.desktopApp || !appConfig.featureSuggestionUrl) {
       return;
     }
-    window.open(appConfig.featureSuggestionUrl, "_blank", "noreferrer");
+    navigateToolRoute({ view: "feedback" });
     setMainDrawerOpen(false);
   }
 
@@ -3686,8 +3686,9 @@ export function ToolView({ initialAppConfig }) {
           onRequestRanksMenu={loadMainNavigationRanks}
           onCommitRoute={navigateToolRouteFromMenu}
           onOpenChangelog={openDrawerChangelog}
-          onOpenFeatureSuggestion={openDrawerFeatureSuggestion}
+          onOpenFeedback={openDrawerFeedback}
           featureSuggestionUrl={appConfig.featureSuggestionUrl}
+          desktopApp={appConfig.desktopApp}
           desktopAppUrl={appConfig.desktopAppUrl}
         />
       ) : null}
@@ -3834,6 +3835,8 @@ export function ToolView({ initialAppConfig }) {
             onAddCompareItem={addDramaToCompareBasket}
           />
         </Suspense>
+      ) : currentPlatform === "feedback" ? (
+        <FeedbackView featureSuggestionUrl={appConfig.featureSuggestionUrl} />
       ) : currentPlatform === "favorites" ? (
         <FavoritesPanel
           favorites={favoriteItems}

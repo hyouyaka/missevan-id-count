@@ -43,6 +43,19 @@ if (!(manifest[entryKey].dynamicImports || []).includes(trendDialogEntry[0])) {
   throw new Error("Homepage entry must load RankTrendDialog dynamically");
 }
 
+const twikooEntry = Object.entries(manifest).find(
+  ([, value]) => value?.name === "twikoo" && value?.isDynamicEntry
+);
+if (!twikooEntry) {
+  throw new Error("Twikoo must be emitted as a dynamic entry");
+}
+if (visited.has(twikooEntry[0])) {
+  throw new Error("Homepage entry must not statically import Twikoo");
+}
+if (!(manifest[entryKey].dynamicImports || []).includes(twikooEntry[0])) {
+  throw new Error("Feedback view must load Twikoo dynamically");
+}
+
 const entryFile = path.join(root, "dist", manifest[entryKey].file);
 const gzipBytes = gzipSync(await readFile(entryFile)).length;
 const maxGzipBytes = Math.floor(79.99 * 1024);
