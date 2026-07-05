@@ -4,12 +4,9 @@ import {
   normalizeSearchText,
   parseMissevanInputToken,
 } from "../../shared/searchUtils.js";
+import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 export { normalizeVersion };
-
-export function normalizeRegionBaseUrl(value) {
-  return String(value ?? "").trim().replace(/\/+$/, "");
-}
 
 export function getInlineTaggedTitleDisplayText(title, options = {}) {
   const normalized = String(title ?? "").replace(/\s+/g, " ").trim();
@@ -44,19 +41,10 @@ function normalizeExternalHttpUrl(value) {
   }
 }
 
-export function getDefaultGatewayConfig() {
-  return {
-    desktopApp: false,
-    hostedDeployment: false,
-    featureSuggestionUrl: "",
-  };
-}
-
 export function getDefaultAppConfig() {
   return {
     missevanEnabled: true,
     desktopApp: false,
-    hostedDeployment: false,
     brandName: "MMTOOLKIT.APP",
     titleZh: "小猫小狐数据分析",
     description: "支持 Missevan 与 Manbo 的作品导入、分集筛选、弹幕统计和数据汇总。",
@@ -83,7 +71,6 @@ export function mergeAppConfig(currentConfig, config = {}) {
   return {
     missevanEnabled: config.missevanEnabled !== false,
     desktopApp: config.desktopApp === true,
-    hostedDeployment: config.hostedDeployment === true,
     brandName: brandName && brandName !== "M&M Toolkit" ? brandName : defaults.brandName,
     titleZh: config.titleZh || defaults.titleZh,
     description: config.description || defaults.description,
@@ -739,29 +726,6 @@ export function createRuntimeMeta() {
   };
 }
 
-export function createRegionState(key, label, baseUrl) {
-  return {
-    key,
-    label,
-    baseUrl,
-    loading: Boolean(baseUrl),
-    requestFailed: false,
-    requestError: "",
-    missevanEnabled: false,
-    cooldownUntil: 0,
-    cooldownHours: 0,
-    frontendVersion: "0.0.0",
-    desktopApp: false,
-    versionMismatch: false,
-    requestToken: 0,
-  };
-}
-
-export function pickPreferredRegion(regions) {
-  const preferredOrder = ["area1", "area2", "area3"];
-  return preferredOrder.map((key) => regions.find((region) => region.key === key)).find(Boolean) || regions[0] || null;
-}
-
 export function isAbortError(error) {
   return error?.name === "AbortError";
 }
@@ -792,6 +756,56 @@ export function collectSelectedEpisodesFromDramas(dramas = []) {
     });
   });
   return selectedEpisodes;
+}
+
+export function resolveIdStatisticsSource({
+  platform = "missevan",
+  dramas = [],
+  selectedEpisodes = [],
+  source = "",
+} = {}) {
+  const fallbackSource = String(source ?? "").trim();
+  const normalizedSelectedEpisodes = Array.isArray(selectedEpisodes)
+    ? selectedEpisodes
+    : [];
+  const selectedDramaIds = new Set(
+    normalizedSelectedEpisodes
+      .map((episode) => String(episode?.drama_id ?? "").trim())
+      .filter(Boolean)
+  );
+  if (!normalizedSelectedEpisodes.length || selectedDramaIds.size !== 1) {
+    return fallbackSource;
+  }
+
+  const [dramaId] = selectedDramaIds;
+  const drama = (Array.isArray(dramas) ? dramas : []).find(
+    (item) => String(item?.drama?.id ?? "").trim() === dramaId
+  );
+  const episodes = Array.isArray(drama?.episodes?.episode)
+    ? drama.episodes.episode
+    : [];
+  const paidEpisodeIds = new Set(
+    episodes
+      .filter(
+        (episode) =>
+          isPaidEpisode(platform, episode) || isMemberEpisode(platform, episode)
+      )
+      .map((episode) => String(episode?.sound_id ?? "").trim())
+      .filter(Boolean)
+  );
+  const selectedEpisodeIds = new Set(
+    normalizedSelectedEpisodes
+      .map((episode) => String(episode?.sound_id ?? "").trim())
+      .filter(Boolean)
+  );
+  const isCompletePaidSelection =
+    paidEpisodeIds.size > 0 &&
+    selectedEpisodeIds.size === paidEpisodeIds.size &&
+    Array.from(selectedEpisodeIds).every((soundId) =>
+      paidEpisodeIds.has(soundId)
+    );
+
+  return isCompletePaidSelection ? `${dramaId}payID` : fallbackSource;
 }
 
 export function buildPlayCountDramasFromDramas(dramas = []) {

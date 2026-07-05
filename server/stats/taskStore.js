@@ -44,18 +44,20 @@ export function createUpstashTaskStoreAdapter({
   client,
   instanceId,
   ttlSeconds = 3600,
+  commandTimeoutMs = 10_000,
 } = {}) {
   const indexKey = `stats:tasks:v1:${instanceId}`;
+  const commandOptions = { timeoutMs: commandTimeoutMs };
   return {
     async load() {
-      const ids = await client.command(["SMEMBERS", indexKey]);
+      const ids = await client.command(["SMEMBERS", indexKey], commandOptions);
       if (!Array.isArray(ids) || ids.length === 0) {
         return { tasks: [], staleIds: [] };
       }
       const values = await client.command([
         "MGET",
         ...ids.map((id) => `${indexKey}:${id}`),
-      ]);
+      ], commandOptions);
       const parsed = (Array.isArray(values) ? values : [])
         .map((value) => {
           try {
@@ -70,31 +72,59 @@ export function createUpstashTaskStoreAdapter({
       };
     },
 
-    async save(tasks) {
-      for (const task of tasks) {
-        const key = `${indexKey}:${task.taskId}`;
-        await client.command(["SET", key, JSON.stringify(task), "EX", ttlSeconds]);
-        await client.command(["SADD", indexKey, String(task.taskId)]);
-      }
-      await client.command(["EXPIRE", indexKey, ttlSeconds]);
+    async saveTask(task) {
+      const key = `${indexKey}:${task.taskId}`;
+      await client.command(
+        ["SET", key, JSON.stringify(task), "EX", ttlSeconds],
+        commandOptions
+      );
+      await client.command(
+        ["SADD", indexKey, String(task.taskId)],
+        commandOptions
+      );
+      await client.command(["EXPIRE", indexKey, ttlSeconds], commandOptions);
     },
 
     async remove(taskId) {
-      await client.command(["DEL", `${indexKey}:${taskId}`]);
-      await client.command(["SREM", indexKey, String(taskId)]);
+      await client.command(
+        ["DEL", `${indexKey}:${taskId}`],
+        commandOptions
+      );
+      await client.command(
+        ["SREM", indexKey, String(taskId)],
+        commandOptions
+      );
     },
   };
 }
 
 export function createStatsTaskStore({ adapter, onError = console.warn } = {}) {
-  if (!adapter || typeof adapter.load !== "function" || typeof adapter.save !== "function") {
-    throw new TypeError("Stats task store requires a load/save adapter");
+  const supportsFullSnapshots = typeof adapter?.save === "function";
+  const supportsIncrementalSnapshots = typeof adapter?.saveTask === "function";
+  const supportsRemoval = typeof adapter?.remove === "function";
+  if (
+    !adapter ||
+    typeof adapter.load !== "function" ||
+    (!supportsFullSnapshots && !supportsIncrementalSnapshots) ||
+    (supportsIncrementalSnapshots && !supportsFullSnapshots && !supportsRemoval)
+  ) {
+    throw new TypeError(
+      "Stats task store requires load plus save, or saveTask plus remove"
+    );
   }
   const tasks = new Map();
   let writeTail = Promise.resolve();
 
-  async function persist() {
+  async function persistAll() {
     await adapter.save([...tasks.values()].map(sanitizeTask));
+  }
+
+  async function persistTask(task) {
+    if (supportsIncrementalSnapshots) {
+      await adapter.saveTask(sanitizeTask(task));
+      return;
+    }
+    await persistAll();
   }
 
   return {
@@ -135,18 +165,19 @@ export function createStatsTaskStore({ adapter, onError = console.warn } = {}) {
           await adapter.remove(taskId);
         }
       } else if (removedIds.length > 0) {
-        await persist();
+        await persistAll();
       }
       return [...tasks.values()].map(sanitizeTask);
     },
 
     save(task) {
+      const snapshot = sanitizeTask(task);
       if (task?.taskId) {
-        tasks.set(String(task.taskId), sanitizeTask(task));
+        tasks.set(String(task.taskId), snapshot);
       }
       writeTail = writeTail
         .catch(() => {})
-        .then(persist)
+        .then(() => persistTask(snapshot))
         .catch((error) => {
           onError?.(error);
         });
@@ -158,7 +189,7 @@ export function createStatsTaskStore({ adapter, onError = console.warn } = {}) {
       tasks.delete(key);
       writeTail = writeTail
         .catch(() => {})
-        .then(() => adapter.remove ? adapter.remove(key) : persist())
+        .then(() => adapter.remove ? adapter.remove(key) : persistAll())
         .catch((error) => {
           onError?.(error);
         });

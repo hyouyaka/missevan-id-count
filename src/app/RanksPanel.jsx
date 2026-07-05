@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   BeanIcon,
   ChevronDownIcon,
-  ChevronUpIcon,
   CoinsIcon,
   GemIcon,
   HeartIcon,
@@ -671,7 +670,7 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
   return (
     <div className="mt-3 rounded-lg border border-border/80 bg-background/78 p-2.5 sm:p-3">
       <div className="mb-2 text-sm font-semibold leading-5">作品列表</div>
-      <div className="max-h-[24rem] overflow-y-auto overscroll-contain rounded-md border border-border/70 bg-card/70 [-webkit-overflow-scrolling:touch]">
+      <div className="max-h-[24rem] overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
         {works.length ? (
           <div className="divide-y divide-border/70">
             {works.map((work) => {
@@ -680,9 +679,9 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
               return (
                 <div
                   key={`${platform}-${work.dramaId}`}
-                  className="grid grid-cols-[4rem_minmax(0,1fr)] gap-2 p-2.5 sm:grid-cols-[3.75rem_minmax(0,1fr)_minmax(8rem,0.45fr)_minmax(9rem,0.55fr)] sm:items-center"
+                  className="grid grid-cols-[4rem_minmax(0,1fr)] gap-3 p-2.5 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-3.5 sm:p-3"
                 >
-                  <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/45 sm:size-[3.75rem]">
+                  <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/45 sm:size-[4.5rem]">
                     {coverUrl ? (
                       <LazyImage alt={work.title} className="size-full object-cover" src={coverUrl} />
                     ) : (
@@ -691,53 +690,29 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                       </div>
                     )}
                   </div>
-                  <div className="grid min-w-0 gap-1 sm:hidden">
+                  <div className="grid min-w-0 content-start gap-1.5">
                     <button
                       type="button"
                       title={work.title}
-                      className="block max-w-full truncate rounded-sm text-left text-sm font-semibold leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      className="min-w-0 w-full truncate rounded-sm text-left text-sm font-semibold leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-base"
                       onClick={() => openWorkInSearch(work)}
                     >
                       {work.title}
                     </button>
-                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:text-sm">
                       <PlatformIdIcon platform={platform} aria-label="作品ID" className={metaIconClassName} title="作品ID" />
                       <span className="min-w-0 truncate text-foreground" title={work.dramaId}>{work.dramaId}</span>
                     </div>
-                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:text-sm">
                       <PlayCircleIcon aria-label="播放量" className={metaIconClassName} title="播放量" />
-                      <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
+                      <span className="min-w-0 break-words font-medium tabular-nums text-foreground">
                         {formatRankCompactCount(work.viewCount)}
                       </span>
                     </div>
-                    <div className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
+                    <div className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground sm:text-sm">
                       <MicIcon aria-label="主役CV" className={`${metaIconClassName} mt-0.5`} title="主役CV" />
                       <span className="min-w-0 break-words text-foreground">{mainCvText}</span>
                     </div>
-                  </div>
-                  <div className="hidden min-w-0 sm:block">
-                    <button
-                      type="button"
-                      title={work.title}
-                      className="min-w-0 break-words rounded-sm text-left text-sm font-semibold leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      onClick={() => openWorkInSearch(work)}
-                    >
-                      {work.title}
-                    </button>
-                    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                      <PlatformIdIcon platform={platform} aria-label="作品ID" className={metaIconClassName} title="作品ID" />
-                      <span className="min-w-0 break-all text-foreground" title={work.dramaId}>{work.dramaId}</span>
-                    </div>
-                  </div>
-                  <div className="hidden min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:flex sm:text-sm">
-                    <PlayCircleIcon aria-label="播放量" className={metaIconClassName} title="播放量" />
-                    <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-                      {formatRankCompactCount(work.viewCount)}
-                    </span>
-                  </div>
-                  <div className="hidden min-w-0 items-start gap-1.5 text-xs text-muted-foreground sm:flex sm:text-sm">
-                    <MicIcon aria-label="主役CV" className={`${metaIconClassName} mt-0.5`} title="主役CV" />
-                    <span className="min-w-0 break-words text-foreground">{mainCvText}</span>
                   </div>
                 </div>
               );
@@ -860,6 +835,7 @@ function CvRankItemCard({
   onOpenSearchResult,
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const worksRegionId = useId();
   const {
     canShowTrend,
     isTrendOpen,
@@ -875,7 +851,7 @@ function CvRankItemCard({
       <CardContent className="px-3.5">
         <div className="grid grid-cols-[auto_3.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[auto_4.25rem_minmax(0,1fr)]">
           <RankBadge rank={item.rank} />
-          <div className="row-span-2 size-[3.75rem] overflow-hidden rounded-full border border-border/70 bg-muted/45 sm:row-span-3 sm:size-[4.25rem]">
+          <div className="row-span-2 size-[3.75rem] overflow-hidden rounded-full border border-border/70 bg-muted/45 sm:size-[4.25rem]">
             {avatarUrl ? (
               <LazyImage alt={item.cvName} className="size-full object-cover" src={avatarUrl} />
             ) : (
@@ -897,50 +873,34 @@ function CvRankItemCard({
               <span className="tabular-nums">{formatRankCompactCount(item.totalViewCount)}</span>
             </div>
           </div>
-          <div className="col-start-3 min-w-0 break-words text-xs leading-5 text-muted-foreground sm:text-sm">
-            {topWorksText}
-          </div>
-          <div className="col-start-3 hidden min-w-0 items-center justify-between gap-2 text-sm sm:flex">
+          <div className="col-start-3 min-w-0 text-sm">
             <CvRankActions
               item={item}
               canShowTrend={canShowTrend}
               onOpenTrend={openTrendDialog}
-              className="flex min-w-0 flex-wrap items-center gap-3"
+              className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5"
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              className="shrink-0 bg-background/84"
-              onClick={() => setIsExpanded((current) => !current)}
-              aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
-              title={isExpanded ? "收起作品列表" : "展开作品列表"}
-            >
-              {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-            </Button>
           </div>
-          <div className="col-start-2 col-span-2 flex min-w-0 items-center justify-between gap-2 text-sm sm:hidden">
-            <CvRankActions
-              item={item}
-              canShowTrend={canShowTrend}
-              onOpenTrend={openTrendDialog}
-              className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5"
+          <button
+            type="button"
+            className="group col-start-2 col-span-2 -ml-3 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-sm text-left text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-sm"
+            onClick={() => setIsExpanded((current) => !current)}
+            aria-expanded={isExpanded}
+            aria-controls={worksRegionId}
+            aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
+            title={isExpanded ? "收起作品列表" : "展开作品列表"}
+          >
+            <span className="min-w-0 flex-1 break-words">{topWorksText}</span>
+            <ChevronDownIcon
+              aria-hidden="true"
+              className="size-4 shrink-0 transition-transform duration-200 group-aria-expanded:rotate-180"
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              className="shrink-0 bg-background/84"
-              onClick={() => setIsExpanded((current) => !current)}
-              aria-label={isExpanded ? `收起${item.cvName}作品列表` : `展开${item.cvName}作品列表`}
-              title={isExpanded ? "收起作品列表" : "展开作品列表"}
-            >
-              {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-            </Button>
-          </div>
+          </button>
         </div>
         {isExpanded ? (
-          <CvWorksList works={item.works || []} platform={platform} onOpenSearchResult={onOpenSearchResult} />
+          <div id={worksRegionId}>
+            <CvWorksList works={item.works || []} platform={platform} onOpenSearchResult={onOpenSearchResult} />
+          </div>
         ) : null}
         {canShowTrend && isTrendOpen ? (
           <LazyRankTrendDialog

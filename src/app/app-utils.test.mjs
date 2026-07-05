@@ -36,7 +36,58 @@ import {
   STATS_HISTORY_STORAGE_KEY,
 } from "./app-utils.js";
 
-const { readJsonResponse } = await import("./app-utils.js");
+const appUtilsModule = await import("./app-utils.js");
+const { readJsonResponse } = appUtilsModule;
+
+test("resolveIdStatisticsSource marks only one drama's complete paid episode set as payID", () => {
+  const resolveSource = appUtilsModule.resolveIdStatisticsSource;
+  const dramas = [
+    {
+      drama: { id: 12345 },
+      episodes: {
+        episode: [
+          { sound_id: 101, need_pay: 1 },
+          { sound_id: 102, vip_free: 1 },
+          { sound_id: 103 },
+        ],
+      },
+    },
+    {
+      drama: { id: 67890 },
+      episodes: {
+        episode: [{ sound_id: 201, need_pay: 1 }],
+      },
+    },
+  ];
+  const resolve = (selectedEpisodes, source = "search") =>
+    typeof resolveSource === "function"
+      ? resolveSource({ platform: "missevan", dramas, selectedEpisodes, source })
+      : undefined;
+
+  assert.equal(
+    resolve([
+      { drama_id: "12345", sound_id: 101 },
+      { drama_id: "12345", sound_id: 102 },
+    ]),
+    "12345payID"
+  );
+  assert.equal(resolve([{ drama_id: "12345", sound_id: 101 }]), "search");
+  assert.equal(
+    resolve([
+      { drama_id: "12345", sound_id: 101 },
+      { drama_id: "12345", sound_id: 103 },
+    ]),
+    "search"
+  );
+  assert.equal(
+    resolve([
+      { drama_id: "12345", sound_id: 101 },
+      { drama_id: "12345", sound_id: 102 },
+      { drama_id: "67890", sound_id: 201 },
+    ]),
+    "search"
+  );
+});
 
 test("non-JSON HTTP errors fall back without throwing a parse error", async () => {
   assert.equal(typeof readJsonResponse, "function");

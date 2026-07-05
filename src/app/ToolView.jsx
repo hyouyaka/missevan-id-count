@@ -68,6 +68,7 @@ import {
   normalizeVersion,
   readToolRouteStateFromLocation,
   readJsonResponse,
+  resolveIdStatisticsSource,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
   selectDramaEpisodesByMode,
@@ -3486,6 +3487,12 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
     const platform = resolveStatsPlatform(options?.platform);
+    const source = resolveIdStatisticsSource({
+      platform,
+      dramas: platformStatesRef.current[platform]?.dramas,
+      selectedEpisodes,
+      source: options?.source,
+    });
     await cancelActiveRun(platform);
     resetOutputs(platform);
     const { runId, signal } = beginRun(platform);
@@ -3510,7 +3517,13 @@ export function ToolView({ initialAppConfig }) {
     scrollToPanel(outputPanelRef);
     let finalStatus = "completed";
     try {
-      await startStatsTask(platform, "id", { episodes: selectedEpisodes }, runId, signal);
+      await startStatsTask(
+        platform,
+        "id",
+        { episodes: selectedEpisodes, source },
+        runId,
+        signal
+      );
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
@@ -3576,7 +3589,11 @@ export function ToolView({ initialAppConfig }) {
       episode_title: episode.name,
       duration: Number(episode.duration ?? 0),
     }));
-    await startIdStatisticsForEpisodes(selectedPaidEpisodes, "没有可统计的付费分集。", { platform });
+    await startIdStatisticsForEpisodes(
+      selectedPaidEpisodes,
+      "没有可统计的付费分集。",
+      { platform, source: options?.source }
+    );
   }
 
   async function startRevenueEstimate(dramaIds, options = {}) {
@@ -3603,7 +3620,13 @@ export function ToolView({ initialAppConfig }) {
     let finalStatus = "completed";
     try {
       await registerApiSearchDramaIds(platform, dramaIds);
-      await startStatsTask(platform, "revenue", { dramaIds }, runId, signal);
+      await startStatsTask(
+        platform,
+        "revenue",
+        { dramaIds, source: options?.source },
+        runId,
+        signal
+      );
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {

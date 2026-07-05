@@ -15,7 +15,7 @@ const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
 const homeViewSource = readSourceIfExists("./HomeView.jsx");
 const lazyRankTrendDialogSource = readSourceIfExists("./LazyRankTrendDialog.jsx");
-const landingViewSource = readFileSync(new URL("./LandingView.jsx", import.meta.url), "utf8");
+const landingViewSource = readSourceIfExists("./LandingView.jsx");
 const ongoingDataSource = readSourceIfExists("./ongoingData.js");
 const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.meta.url), "utf8");
 const outputPanelSource = readFileSync(new URL("./OutputPanel.jsx", import.meta.url), "utf8");
@@ -28,6 +28,7 @@ const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
+const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
 const serverSource = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
 const taskEngineSource = readFileSync(new URL("../../server/stats/taskEngine.js", import.meta.url), "utf8");
 const taskStateSource = readFileSync(new URL("../../server/stats/taskState.js", import.meta.url), "utf8");
@@ -38,10 +39,15 @@ const buttonSource = readFileSync(new URL("../components/ui/button.jsx", import.
 const alertDialogSource = readFileSync(new URL("../components/ui/alert-dialog.jsx", import.meta.url), "utf8");
 const badgeSource = readFileSync(new URL("../components/ui/badge.jsx", import.meta.url), "utf8");
 const cardSource = readFileSync(new URL("../components/ui/card.jsx", import.meta.url), "utf8");
+const carouselSource = readSourceIfExists("../components/ui/carousel.jsx");
 const tabsSource = readFileSync(new URL("../components/ui/tabs.jsx", import.meta.url), "utf8");
 const lazyImageSource = readFileSync(new URL("../components/ui/lazy-image.jsx", import.meta.url), "utf8");
 const indexHtmlSource = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
 const electronMainSource = readFileSync(new URL("../../electron/main.mjs", import.meta.url), "utf8");
+const viteConfigSource = readFileSync(new URL("../../vite.config.js", import.meta.url), "utf8");
+const readmeSource = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+const architectureSource = readFileSync(new URL("../../missevan-id-count_architecture.md", import.meta.url), "utf8");
+const renderConfigSource = readSourceIfExists("../../render.yaml");
 
 test("project palette uses shared OKLCH semantic colors", () => {
   [
@@ -616,10 +622,40 @@ test("home update and rank sections use editorial responsive layouts", () => {
   assert.doesNotMatch(homeViewSource, /selectedOngoingPlatform/);
   assert.doesNotMatch(homeViewSource, /ariaLabel="选择更新平台"/);
   assert.match(homeViewSource, /home-editorial-updates-grid/);
-  assert.match(homeViewSource, /home-editorial-ranks-grid/);
+  assert.match(homeViewSource, /<Carousel[\s\S]*<CarouselContent[\s\S]*<CarouselItem[\s\S]*<CarouselPrevious[\s\S]*<CarouselNext/);
+  assert.match(homeViewSource, /basis-full[^"]*sm:basis-1\/2[^"]*lg:basis-1\/3/);
   assert.match(homeViewSource, /home-editorial-rank-card/);
-  assert.match(homeViewSource, /data-featured=\{index < 2 \? "true" : "false"\}/);
+  assert.doesNotMatch(homeViewSource, /home-editorial-ranks-grid/);
+  assert.doesNotMatch(homeViewSource, /data-featured=/);
+  assert.doesNotMatch(indexCssSource, /\.home-editorial-rank-slot\[data-featured=/);
   assert.match(homeViewSource, /displayTitle: "CV总榜"/);
+});
+
+test("home rank carousel uses the shadcn Embla composition without replacing shared buttons", () => {
+  assert.match(homeViewSource, /from "@\/components\/ui\/carousel"/);
+  assert.match(carouselSource, /useEmblaCarousel from "embla-carousel-react"/);
+  assert.match(carouselSource, /role="region"/);
+  assert.match(carouselSource, /aria-roledescription="carousel"/);
+  assert.match(carouselSource, /event\.key === "ArrowLeft"/);
+  assert.match(carouselSource, /event\.key === "ArrowRight"/);
+  assert.match(carouselSource, /disabled=\{!canScrollPrev\}/);
+  assert.match(carouselSource, /disabled=\{!canScrollNext\}/);
+  assert.match(packageSource, /"embla-carousel-react"/);
+});
+
+test("home rank carousel keeps equal responsive cards, one compact gap, and centered overlay controls", () => {
+  const rankCardCss = indexCssSource.match(/\.home-editorial-rank-card \{[^}]*\}/)?.[0] ?? "";
+
+  assert.match(homeViewSource, /<CarouselContent className="-ml-3">/);
+  assert.match(
+    homeViewSource,
+    /<CarouselItem[\s\S]*className="flex basis-full pl-3 sm:basis-1\/2 lg:basis-1\/3"/
+  );
+  assert.doesNotMatch(homeViewSource, /sm:pl-4/);
+  assert.match(homeViewSource, /<CarouselPrevious className="left-2" \/>/);
+  assert.match(homeViewSource, /<CarouselNext className="right-2" \/>/);
+  assert.doesNotMatch(homeViewSource, /sm:-left-|lg:-left-|sm:-right-|lg:-right-/);
+  assert.match(rankCardCss, /width: 100%;/);
 });
 
 test("home update cards show three items without a scroll region", () => {
@@ -708,13 +744,20 @@ test("home rank previews keep titles compact and expose formatted playback conte
   assert.match(dramaItemSource, /<PlayCircleIcon[\s\S]*tabular-nums/);
   assert.match(homeViewSource, /function getHomeCvWorksPreviewText\(works\)/);
   assert.match(homeViewSource, /titles\.map\(\(title\) => `《\$\{title\}》`\)\.join\(""\)/);
-  assert.match(cvItemSource, /inline-flex max-w-full min-w-0 items-center gap-2/);
-  assert.match(cvItemSource, /className=\{homeRankItemTitleClassName\}/);
-  assert.doesNotMatch(cvItemSource, /min-w-0 flex-1 truncate/);
+  assert.match(dramaItemSource, /<MicIcon[\s\S]*className="min-w-0 break-words"/);
+  assert.doesNotMatch(
+    dramaItemSource.slice(dramaItemSource.indexOf("<MicIcon"), dramaItemSource.indexOf("<PlayCircleIcon")),
+    /truncate|whitespace-nowrap/
+  );
+  assert.doesNotMatch(dramaItemSource.slice(dramaItemSource.indexOf("<PlayCircleIcon")), /truncate|whitespace-nowrap/);
+  assert.match(cvItemSource, /break-words text-base! font-semibold! leading-6! text-foreground/);
+  assert.doesNotMatch(cvItemSource, /className=\{homeRankItemTitleClassName\}/);
+  assert.doesNotMatch(cvItemSource, /whitespace-nowrap/);
   assert.doesNotMatch(cvItemSource, /underline/);
   assert.match(cvItemSource, /formatRankCompactCount\(item\?\.totalViewCount\)/);
   assert.match(cvItemSource, /getHomeCvWorksPreviewText\(item\?\.topWorks \|\| item\?\.works\)/);
-  assert.match(cvItemSource, /line-clamp-2/);
+  assert.match(cvItemSource, /className="[^"]*line-clamp-2[^"]*" title=\{topWorksText\}/);
+  assert.doesNotMatch(cvItemSource, /\btruncate\b/);
   assert.doesNotMatch(cvItemSource, /formatCompactCount\(item\?\.totalViewCount\)/);
 });
 
@@ -873,8 +916,6 @@ test("app icon appears in page titles and browser chrome", () => {
   assert.match(toolViewSource, /className="inline-flex min-w-0 text-left text-inherit leading-tight/);
   assert.match(toolViewSource, /<AppIcon className="size-14 self-center rounded-xl sm:size-12" \/>/);
   assert.match(toolViewSource, /<span className="min-w-0">\{appConfig\.titleZh\}<\/span>/);
-  assert.match(landingViewSource, /className="inline-flex max-w-3xl items-center gap-3/);
-  assert.match(landingViewSource, /<AppIcon className="size-10 self-center rounded-xl sm:size-12" \/>/);
 });
 
 test("motion-sensitive users get reduced scrolling and animation", () => {
@@ -977,12 +1018,25 @@ test("mobile bottom layers share safe-area offsets", () => {
   assert.doesNotMatch(toolViewSource, /pb-24/);
 });
 
-test("landing node footer actions use compact mobile sizing", () => {
-  assert.match(landingViewSource, /const landingFooterActionButtonClassName = "h-9 w-\[90px\] justify-center px-1\.5 text-xs sm:h-10 sm:w-auto sm:min-w-fit sm:px-4 sm:text-sm"/);
-  assert.match(landingViewSource, /<Button variant="outline" className=\{landingFooterActionButtonClassName\} asChild>/);
-  assert.match(landingViewSource, /<ChangelogButton className=\{landingFooterActionButtonClassName\} size="default" onClick=\{openChangelog\} \/>/);
-  assert.match(landingViewSource, /<Button variant="outline" className=\{landingFooterActionButtonClassName\} disabled=\{loading\} onClick=\{refreshAllRegions\}>/);
-  assert.doesNotMatch(landingViewSource, /className="h-10 min-w-fit px-3 sm:px-4"/);
+test("web deployment is Railway-only while Render remains a Missevan fallback proxy", () => {
+  assert.equal(renderConfigSource, "");
+  assert.equal(landingViewSource, "");
+  assert.doesNotMatch(rootAppSource, /LandingView|isNodesPath|resolvedView === "landing"/);
+  assert.doesNotMatch(appUtilsSource, /normalizeRegionBaseUrl|getDefaultGatewayConfig|createRegionState|pickPreferredRegion/);
+  assert.doesNotMatch(serverSource, /LANDING_REGION_COOLDOWN_KEYS|buildLandingRegionSnapshot|app\.get\("\/landing\/regions"/);
+  assert.doesNotMatch(viteConfigSource, /"\/landing"/);
+  assert.doesNotMatch(serverSource, /RENDER_INSTANCE_ID|env\.RENDER\b|RENDER_SERVICE_ID/);
+  assert.match(serverSource, /RAILWAY_REPLICA_ID|RAILWAY_PROJECT_ID|RAILWAY_SERVICE_ID/);
+  assert.doesNotMatch(serverSource, /hostedDeployment:\s*isHostedDeployment\(\)/);
+  assert.doesNotMatch(appUtilsSource, /hostedDeployment:\s*false|hostedDeployment:\s*config\.hostedDeployment/);
+  assert.doesNotMatch(readmeSource, /Render\/Railway|Render \/ Railway|RENDER_\*|VITE_REGION_AREA[123]_URL/);
+  assert.doesNotMatch(
+    architectureSource,
+    /LandingView|landing\/tool bootstrap|GET \/landing\/regions|cooldown:render:area[123]|Multi-Region Cooldown State/
+  );
+  assert.match(serverSource, /MISSEVAN_FALLBACK_DEFAULT_BASE_URL[\s\S]*msbackup\.onrender\.com\/missevan/);
+  assert.match(serverSource, /fallbackRoute:\s*"render"/);
+  assert.match(serverSource, /fallbackRoute:\s*"deno"/);
 });
 
 test("main navigation keeps discovery pages route-driven", () => {
@@ -2153,6 +2207,19 @@ test("Missevan JSON and text requests can use Render fallback with usage log mar
   assert.match(logHelperSource, /fallbackReason/);
 });
 
+test("Missevan cooldown availability checks fallback routes in priority order", () => {
+  const cooldownStart = serverSource.indexOf("function getMissevanAccessDeniedCooldownUntil");
+  const cooldownEnd = serverSource.indexOf("\nfunction shouldBlockMissevanAccessForCooldown", cooldownStart);
+  const cooldownSource = serverSource.slice(cooldownStart, cooldownEnd);
+
+  assert.match(cooldownSource, /if \(!isInAccessDeniedCooldown\(\)\) \{\s*return 0;\s*\}/);
+  assert.match(
+    cooldownSource,
+    /for \(const route of routes\) \{[\s\S]*isMissevanFallbackRouteInCooldown\(route\)[\s\S]*break;[\s\S]*\}/
+  );
+  assert.doesNotMatch(cooldownSource, /routes\.forEach/);
+});
+
 test("Missevan stats tasks do not bypass fallback routes during direct cooldown", () => {
   const idTaskSource = serverSource.slice(
     serverSource.indexOf("async function executeMissevanIdTask"),
@@ -2374,7 +2441,8 @@ test("CV ranks use a dedicated expandable works layout", () => {
   assert.match(ranksPanelSource, /overflow-y-auto/);
   assert.match(ranksPanelSource, /ScrollTextIcon/);
   assert.match(ranksPanelSource, /ChevronDownIcon/);
-  assert.match(ranksPanelSource, /ChevronUpIcon/);
+  assert.doesNotMatch(ranksPanelSource, /ChevronUpIcon/);
+  assert.match(ranksPanelSource, /group-aria-expanded:rotate-180/);
 });
 
 test("CV rank mobile cards use compact TOP3 copy without a CV badge", () => {
@@ -2387,7 +2455,7 @@ test("CV rank mobile cards use compact TOP3 copy without a CV badge", () => {
   assert.match(ranksPanelSource, /TOP3：/);
   assert.doesNotMatch(ranksPanelSource, /代表作：/);
   assert.doesNotMatch(cvItemSource, /<Badge[\s\S]*CV[\s\S]*<\/Badge>/);
-  assert.match(cvItemSource, /sm:hidden/);
+  assert.doesNotMatch(cvItemSource, /sm:hidden/);
   assert.match(cvItemSource, /CvRankActions/);
 });
 
@@ -2426,6 +2494,155 @@ test("CV rank works expose platform ids and search result jumps", () => {
   assert.match(cvWorksSource, /title=\{work\.title\}/);
   assert.match(cvWorksSource, /title=\{work\.dramaId\}/);
   assert.match(cvWorksSource, /truncate/);
+});
+
+test("CV rank works share one responsive cover and four-row details layout", () => {
+  const cvWorksStart = ranksPanelSource.indexOf("function CvWorksList");
+  assert.notEqual(cvWorksStart, -1, "CV works list should exist");
+  const cvWorksEnd = ranksPanelSource.indexOf("function CvRankItemCard", cvWorksStart);
+  assert.notEqual(cvWorksEnd, -1, "CV works list should end before CV item card");
+  const cvWorksSource = ranksPanelSource.slice(cvWorksStart, cvWorksEnd);
+
+  assert.match(
+    cvWorksSource,
+    /grid-cols-\[4rem_minmax\(0,1fr\)\][\s\S]*sm:grid-cols-\[4\.5rem_minmax\(0,1fr\)\]/
+  );
+  assert.match(cvWorksSource, /size-16[\s\S]*sm:size-\[4\.5rem\]/);
+  assert.equal(cvWorksSource.match(/<PlatformIdIcon/g)?.length ?? 0, 1);
+  assert.equal(cvWorksSource.match(/<PlayCircleIcon/g)?.length ?? 0, 1);
+  assert.equal(cvWorksSource.match(/<MicIcon/g)?.length ?? 0, 1);
+  assert.doesNotMatch(cvWorksSource, /sm:hidden/);
+  assert.doesNotMatch(cvWorksSource, /hidden min-w-0 sm:block/);
+  assert.match(
+    cvWorksSource,
+    /title=\{work\.title\}[\s\S]*className="[^"]*w-full truncate[^"]*"[\s\S]*PlatformIdIcon[\s\S]*title=\{work\.dramaId\}[\s\S]*PlayCircleIcon[\s\S]*MicIcon/
+  );
+  assert.doesNotMatch(
+    cvWorksSource.slice(cvWorksSource.indexOf("<PlayCircleIcon"), cvWorksSource.indexOf("<MicIcon")),
+    /truncate/
+  );
+  assert.doesNotMatch(cvWorksSource.slice(cvWorksSource.indexOf("<MicIcon")), /truncate/);
+});
+
+test("CV works scroll directly inside the single works-list frame", () => {
+  const cvWorksStart = ranksPanelSource.indexOf("function CvWorksList");
+  const cvWorksEnd = ranksPanelSource.indexOf("function useCvRankTrend", cvWorksStart);
+  const cvWorksSource = ranksPanelSource.slice(cvWorksStart, cvWorksEnd);
+  const scrollClass = cvWorksSource.match(/className="([^"]*max-h-\[24rem\][^"]*)"/)?.[1] ?? "";
+
+  assert.match(cvWorksSource, /className="mt-3 rounded-lg border border-border\/80 bg-background\/78 p-2\.5 sm:p-3"/);
+  assert.match(scrollClass, /overflow-y-auto/);
+  assert.match(scrollClass, /overscroll-contain/);
+  assert.doesNotMatch(scrollClass, /\brounded/);
+  assert.doesNotMatch(scrollClass, /\bborder/);
+  assert.doesNotMatch(scrollClass, /\bbg-/);
+});
+
+test("CV rank TOP3 row uses one accordion-style disclosure trigger", () => {
+  const cvItemStart = ranksPanelSource.indexOf("function CvRankItemCard");
+  assert.notEqual(cvItemStart, -1, "CV item card should exist");
+  const cvItemEnd = ranksPanelSource.indexOf("function CvRankColumn", cvItemStart);
+  assert.notEqual(cvItemEnd, -1, "CV item card should end before CV column");
+  const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
+
+  assert.match(cvItemSource, /const worksRegionId = useId\(\)/);
+  assert.match(
+    cvItemSource,
+    /<button[\s\S]*className="[^"]*col-start-2[^"]*col-span-2[^"]*w-\[calc\(100%\+0\.75rem\)\][^"]*"[\s\S]*aria-expanded=\{isExpanded\}[\s\S]*aria-controls=\{worksRegionId\}[\s\S]*\{topWorksText\}[\s\S]*<ChevronDownIcon/
+  );
+  assert.match(cvItemSource, /group-aria-expanded:rotate-180/);
+  assert.match(cvItemSource, /id=\{worksRegionId\}[\s\S]*<CvWorksList/);
+  assert.equal(cvItemSource.match(/<ChevronDownIcon/g)?.length ?? 0, 1);
+  assert.doesNotMatch(cvItemSource, /<ChevronUpIcon/);
+  assert.doesNotMatch(cvItemSource, /variant="outline"[\s\S]*收起作品列表/);
+});
+
+test("CV rank actions appear before the TOP3 disclosure row", () => {
+  const cvItemStart = ranksPanelSource.indexOf("function CvRankItemCard");
+  const cvItemEnd = ranksPanelSource.indexOf("function CvRankColumn", cvItemStart);
+  const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
+  const actionsIndex = cvItemSource.indexOf("<CvRankActions");
+  const disclosureIndex = cvItemSource.indexOf("<button", cvItemSource.indexOf("return ("));
+
+  assert.notEqual(actionsIndex, -1, "CV actions should exist");
+  assert.notEqual(disclosureIndex, -1, "TOP3 disclosure should exist");
+  assert.ok(actionsIndex < disclosureIndex, "CV actions should render before the TOP3 disclosure");
+});
+
+test("CV rank card aligns actions with the CV name and TOP3 with the rank edge", () => {
+  const cvItemStart = ranksPanelSource.indexOf("function CvRankItemCard");
+  const cvItemEnd = ranksPanelSource.indexOf("function CvRankColumn", cvItemStart);
+  const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
+
+  assert.equal(cvItemSource.match(/<CvRankActions/g)?.length ?? 0, 1);
+  assert.match(
+    cvItemSource,
+    /className="row-span-2 size-\[3\.75rem\][^"]*sm:size-\[4\.25rem\]"/
+  );
+  assert.doesNotMatch(cvItemSource, /sm:row-span-3/);
+  assert.match(
+    cvItemSource,
+    /<div className="col-start-3 min-w-0 text-sm">[\s\S]*<CvRankActions/
+  );
+  assert.match(
+    cvItemSource,
+    /className="group col-start-2 col-span-2 -ml-3 flex w-\[calc\(100%\+0\.75rem\)\][^"]*"/
+  );
+});
+
+test("CV rank action items use compact spacing without shrinking the trend touch target", () => {
+  const actionsStart = ranksPanelSource.indexOf("function CvRankActions");
+  const cvItemStart = ranksPanelSource.indexOf("function CvRankItemCard");
+  const cvItemEnd = ranksPanelSource.indexOf("function CvRankColumn", cvItemStart);
+  const actionsSource = ranksPanelSource.slice(actionsStart, cvItemStart);
+  const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
+
+  assert.match(
+    cvItemSource,
+    /<CvRankActions[\s\S]*className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1\.5"/
+  );
+  assert.match(actionsSource, /<RankTrendButton[\s\S]*density="inline"/);
+});
+
+test("paid ID-equivalent tasks and revenue actions pass ID-scoped stats sources", () => {
+  assert.equal(
+    searchResultsSource.match(/source: `\$\{getResultDramaId\(item\)\}payID`/g)?.length ?? 0,
+    2
+  );
+  assert.equal(
+    searchResultsSource.match(/source: `\$\{getResultDramaId\(item\)\}earn`/g)?.length ?? 0,
+    2
+  );
+  assert.match(
+    toolViewSource,
+    /startIdStatisticsForEpisodes\(\s*selectedPaidEpisodes,[\s\S]*?\{ platform, source: options\?\.source \}\s*\)/
+  );
+  assert.match(
+    toolViewSource,
+    /const source = resolveIdStatisticsSource\(\{[\s\S]*platform,[\s\S]*dramas: platformStatesRef\.current\[platform\]\?\.dramas,[\s\S]*selectedEpisodes,[\s\S]*source: options\?\.source,[\s\S]*\}\)/
+  );
+  assert.match(
+    toolViewSource,
+    /startStatsTask\(\s*platform,\s*"id",\s*\{ episodes: selectedEpisodes, source \}/
+  );
+  assert.match(appUtilsSource, /return isCompletePaidSelection \? `\$\{dramaId\}payID` : fallbackSource/);
+  assert.match(
+    toolViewSource,
+    /startStatsTask\(\s*platform,\s*"revenue",\s*\{ dramaIds, source: options\?\.source \}/
+  );
+});
+
+test("completed stats tasks write one full-result usage log through the engine hook", () => {
+  assert.match(serverSource, /export function buildStatsTaskCompletedUsageLog\(snapshot = \{\}\)/);
+  const completionLogSource = serverSource.slice(
+    serverSource.indexOf("export function buildStatsTaskCompletedUsageLog"),
+    serverSource.indexOf("\nexport function buildFavoriteUsageLog")
+  );
+  assert.match(completionLogSource, /action: "calculate"/);
+  assert.doesNotMatch(completionLogSource, /action: "missevan_request"/);
+  assert.match(serverSource, /result: snapshot\.result \?\? null/);
+  assert.match(serverSource, /onCompleted: async \(snapshot\)/);
+  assert.match(serverSource, /await writeUsageLog\(entry\)/);
 });
 
 test("rank category tabs adapt to the number of categories", () => {
@@ -2898,14 +3115,10 @@ test("rank trend backend reads ordinary trends from aggregate platform keys", ()
   assert.match(serverSource, /getCachedRankTrendAggregateSnapshot/);
   assert.match(serverSource, /buildAggregatedRankTrendResponse/);
 
-  const fallbackStart = serverSource.indexOf("async function getLegacyRankTrendResponse");
-  assert.notEqual(fallbackStart, -1, "legacy rank trend fallback should exist");
-  const fallbackEnd = serverSource.indexOf("async function getCachedRankTrendResponse", fallbackStart);
-  assert.notEqual(fallbackEnd, -1, "fallback should end before cached trend route loader");
-  const primarySource = serverSource.slice(fallbackEnd, serverSource.indexOf("function normalizeMissevanSeasonRecord", fallbackEnd));
-
-  assert.doesNotMatch(primarySource, /ranks:metrics:\$\{date\}:\$\{normalizedPlatform\}/);
-  assert.doesNotMatch(primarySource, /ranks:list:\$\{date\}:\$\{normalizedPlatform\}/);
+  assert.doesNotMatch(serverSource, /getLegacyRankTrendResponse/);
+  const primaryStart = serverSource.indexOf("async function getCachedRankTrendResponse");
+  const primarySource = serverSource.slice(primaryStart, serverSource.indexOf("function normalizeMissevanSeasonRecord", primaryStart));
+  assert.match(primarySource, /buildAggregatedRankTrendResponse/);
   assert.match(primarySource, /MISSEVAN_PEAK_SERIES_TREND_KEY/);
   assert.match(
     primarySource,
@@ -2922,9 +3135,46 @@ test("rank trend backend reads ordinary trends from aggregate platform keys", ()
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
 });
 
+test("transient rank aggregate failures are not retained in daily caches", () => {
+  const aggregateStart = serverSource.indexOf(
+    "async function getCachedRankTrendAggregateSnapshot"
+  );
+  const aggregateEnd = serverSource.indexOf(
+    "function getOngoingCacheKey",
+    aggregateStart
+  );
+  const aggregateSource = serverSource.slice(aggregateStart, aggregateEnd);
+  const validationIndex = aggregateSource.indexOf(
+    "isRankTrendAggregateSnapshot(snapshot, normalizedPlatform)"
+  );
+  const cacheWriteIndex = aggregateSource.indexOf(
+    "rankTrendAggregateCache.set(cacheKey, {",
+    validationIndex
+  );
+
+  assert.notEqual(validationIndex, -1, "aggregate cache should validate snapshots");
+  assert.ok(
+    validationIndex < cacheWriteIndex,
+    "aggregate validation should happen before caching the snapshot"
+  );
+
+  const cvStart = serverSource.indexOf(
+    "async function getCachedCvRankTrendResponse"
+  );
+  const cvEnd = serverSource.indexOf(
+    "async function getCachedRankTrendResponse",
+    cvStart
+  );
+  const cvSource = serverSource.slice(cvStart, cvEnd);
+  assert.match(
+    cvSource,
+    /response\.status === 503[\s\S]*rankTrendsCache\.delete\(cacheKey\)/
+  );
+});
+
 test("rank trend availability route reads historical aggregate samples", () => {
   assert.match(serverSource, /buildRankTrendAvailabilityResponse/);
-  assert.match(serverSource, /async function getLegacyRankTrendAvailabilityResponse/);
+  assert.doesNotMatch(serverSource, /getLegacyRankTrendAvailabilityResponse/);
 
   const routeStart = serverSource.indexOf('app.get("/ranks/trends/availability"');
   assert.notEqual(routeStart, -1, "rank trend availability route should exist");
@@ -2934,23 +3184,28 @@ test("rank trend availability route reads historical aggregate samples", () => {
 
   assert.match(routeSource, /getCachedRankTrendAggregateSnapshot\(platform\)/);
   assert.match(routeSource, /buildRankTrendAvailabilityResponse/);
-  assert.match(routeSource, /getLegacyRankTrendAvailabilityResponse/);
+  assert.match(routeSource, /isRankTrendAggregateSnapshot\(aggregateSnapshot, platform\)/);
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
 });
 
-test("ongoing backend reads metrics from rank trend aggregate before legacy shards", () => {
+test("ongoing backend reads metrics only from the rank trend aggregate", () => {
   assert.match(serverSource, /buildMetricSnapshotsFromRankTrendAggregate/);
-  assert.match(serverSource, /async function getLegacyOngoingMetricSnapshots/);
+  assert.doesNotMatch(serverSource, /getLegacyOngoingMetricSnapshots/);
 
-  const fallbackStart = serverSource.indexOf("async function getLegacyOngoingMetricSnapshots");
-  assert.notEqual(fallbackStart, -1, "legacy ongoing metric fallback should exist");
-  const fallbackEnd = serverSource.indexOf("async function getCachedOngoingResponse", fallbackStart);
-  assert.notEqual(fallbackEnd, -1, "ongoing fallback should end before cached loader");
-  const primarySource = serverSource.slice(fallbackEnd, serverSource.indexOf("async function getLegacyRankTrendResponse", fallbackEnd));
-
+  const primaryStart = serverSource.indexOf("async function getCachedOngoingResponse");
+  const primarySource = serverSource.slice(primaryStart, serverSource.indexOf("async function getCachedCvRankTrendResponse", primaryStart));
   assert.match(primarySource, /getCachedRankTrendAggregateSnapshot\(normalizedPlatform, \{ force: forceRefresh \}\)/);
+  assert.match(primarySource, /isRankTrendAggregateSnapshot\(aggregateSnapshot, normalizedPlatform\)/);
+  assert.match(primarySource, /error\.status = 503/);
   assert.match(primarySource, /buildMetricSnapshotsFromRankTrendAggregate\(aggregateSnapshot, normalizedPlatform\)/);
-  assert.doesNotMatch(primarySource, /ranks:metrics:\$\{date\}:\$\{normalizedPlatform\}/);
+});
+
+test("rank-derived runtime has no dated shard reads or fixed CV baseline", () => {
+  assert.doesNotMatch(serverSource, /RANKS_INDEX_KEY|CV_RANK_BASELINE_KEY/);
+  assert.doesNotMatch(serverSource, /ranks:index|ranks:metrics:|ranks:list:|ranks:cv:20\d{2}-\d{2}-\d{2}/);
+  assert.doesNotMatch(serverSource, /falling back to legacy/i);
+  assert.doesNotMatch(ranksTrendUtilsSource, /baselineSnapshot|getCvBaselineDate|findCvRankingItem/);
+  assert.doesNotMatch(architectureSource, /ranks:index|ranks:metrics:\*|ranks:list:\*/);
 });
 
 test("server compresses JSON responses but skips images", () => {

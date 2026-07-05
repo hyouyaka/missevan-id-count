@@ -73,6 +73,7 @@ export function createStatsTaskEngine({
   persistenceDebounceMs = 2000,
   retentionMs = Infinity,
   onRestore = null,
+  onCompleted = null,
   now = Date.now,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -95,7 +96,7 @@ export function createStatsTaskEngine({
 
   function persist(task, immediate = false) {
     if (!store?.save || !task?.taskId) {
-      return;
+      return null;
     }
     const taskId = String(task.taskId);
     const existingTimer = persistenceTimers.get(taskId);
@@ -104,8 +105,7 @@ export function createStatsTaskEngine({
       persistenceTimers.delete(taskId);
     }
     if (immediate || TERMINAL_TASK_STATUSES.has(task.status)) {
-      void store.save(task);
-      return;
+      return Promise.resolve(store.save(task));
     }
     const timer = setTimer(() => {
       persistenceTimers.delete(taskId);
@@ -113,6 +113,7 @@ export function createStatsTaskEngine({
     }, persistenceDebounceMs);
     timer?.unref?.();
     persistenceTimers.set(taskId, timer);
+    return null;
   }
 
   function report(task, patch) {
@@ -122,6 +123,24 @@ export function createStatsTaskEngine({
     stamp(task);
     persist(task);
     return true;
+  }
+
+  function finalizeTaskInBackground(task, finalStatus) {
+    const snapshot = buildTaskSnapshot(task);
+    void (async () => {
+      try {
+        await persist(task, true);
+      } catch (error) {
+        console.error("Stats task final persistence failed", error);
+      }
+      if (finalStatus === "completed" && typeof onCompleted === "function") {
+        try {
+          await onCompleted(snapshot);
+        } catch (error) {
+          console.error("Stats task completion callback failed", error);
+        }
+      }
+    })();
   }
 
   const scheduler = createStatsTaskScheduler({
@@ -199,7 +218,7 @@ export function createStatsTaskEngine({
         cancellations.release(task.taskId);
         delete task.abortSignal;
         if (tasks.get(String(task.taskId)) === task) {
-          persist(task, true);
+          finalizeTaskInBackground(task, finalStatus);
         }
       }
     },

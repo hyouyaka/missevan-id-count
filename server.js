@@ -42,8 +42,8 @@ import {
   buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
   buildRankTrendAvailabilityResponse,
-  buildRankTrendResponse,
   getPeakSeriesDailyViewDelta,
+  isCvRankTrendAggregateSnapshot,
   isRankTrendAggregateSnapshot,
   normalizeRankTrendDates,
 } from "./shared/ranksTrendUtils.js";
@@ -112,23 +112,6 @@ const FEATURE_SUGGESTION_URL = String(
 const MISSEVAN_COOLDOWN_KEY = String(
   process.env.MISSEVAN_COOLDOWN_KEY || "missevan:cooldown:v1"
 ).trim() || "missevan:cooldown:v1";
-const LANDING_REGION_COOLDOWN_KEYS = Object.freeze([
-  {
-    key: "area1",
-    label: "节点1",
-    cooldownKey: "missevan:cooldown:render:area1",
-  },
-  {
-    key: "area2",
-    label: "节点2",
-    cooldownKey: "missevan:cooldown:render:area2",
-  },
-  {
-    key: "area3",
-    label: "节点3",
-    cooldownKey: "missevan:cooldown:render:area3",
-  },
-]);
 const MISSEVAN_COOLDOWN_MS = MISSEVAN_COOLDOWN_HOURS * 60 * 60 * 1000;
 const MISSEVAN_REPEAT_COOLDOWN_MS =
   MISSEVAN_REPEAT_COOLDOWN_HOURS * 60 * 60 * 1000;
@@ -142,8 +125,6 @@ const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
 const CV_RANKS_KEY = "ranks:cv:latest";
-const CV_RANK_BASELINE_KEY = "ranks:cv:2026-06-13";
-const RANKS_INDEX_KEY = "ranks:index";
 const MISSEVAN_PEAK_SERIES_TREND_KEY = "ranks:trend:peak:missevan";
 const RANK_TREND_AGGREGATE_KEYS = Object.freeze({
   missevan: "ranks:trend:missevan",
@@ -240,7 +221,6 @@ const ranksCache = {
   peakTrendSnapshot: null,
   cvSnapshot: null,
   cvTrendSnapshots: null,
-  cvBaselineSnapshot: null,
   normalUpdatedAt: "",
   cvUpdatedAt: "",
   response: null,
@@ -490,7 +470,6 @@ const imageProxyLimiter = rateLimit({
 });
 
 const statsTaskInstanceId = String(
-  process.env.RENDER_INSTANCE_ID ||
   process.env.RAILWAY_REPLICA_ID ||
   process.env.HOSTNAME ||
   "local"
@@ -525,6 +504,12 @@ const statsTaskEngine = createStatsTaskEngine({
   execute: executeStatsTask,
   store: statsTaskStore,
   retentionMs: MANBO_STATS_TASK_TTL_MS,
+  onCompleted: async (snapshot) => {
+    const entry = buildStatsTaskCompletedUsageLog(snapshot);
+    if (entry) {
+      await writeUsageLog(entry);
+    }
+  },
 });
 const missevanClient = createMissevanClient({
   soundSummary: fetchSoundSummary,
@@ -770,7 +755,6 @@ app.get("/app-config", (req, res) => {
   res.json({
     missevanEnabled: MISSEVAN_ENABLED,
     desktopApp: DESKTOP_APP,
-    hostedDeployment: isHostedDeployment(),
     brandName: MISSEVAN_ENABLED ? "MMTOOLKIT.APP" : "Manbo Toolkit",
     titleZh: MISSEVAN_ENABLED ? "小猫小狐数据分析" : "小狐分析",
     description: MISSEVAN_ENABLED
@@ -1026,19 +1010,13 @@ function isAccessDeniedError(error) {
   return String(error?.message || error).includes("HTTP 418");
 }
 
-function isTruthyEnvValue(value) {
-  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
-}
-
 function isFalsyEnvValue(value) {
   return ["0", "false", "no", "off"].includes(String(value ?? "").trim().toLowerCase());
 }
 
 function isHostedDeploymentEnv(env = process.env) {
   return (
-    isTruthyEnvValue(env.RENDER)
-    || Boolean(env.RENDER_SERVICE_ID)
-    || Boolean(env.RAILWAY_ENVIRONMENT)
+    Boolean(env.RAILWAY_ENVIRONMENT)
     || Boolean(env.RAILWAY_PROJECT_ID)
     || Boolean(env.RAILWAY_SERVICE_ID)
   );
@@ -1100,6 +1078,23 @@ function normalizeMissevanRouteCooldownState(state = {}) {
   };
 }
 
+export function parseMissevanCooldownStatePayload(payload = {}) {
+  return {
+    appVersion: normalizeVersion(payload?.appVersion),
+    direct: normalizeMissevanRouteCooldownState(payload),
+    primary: normalizeMissevanRouteCooldownState({
+      accessUntil: payload?.primaryAccessDeniedUntil,
+      cooldownMode: payload?.primaryAccessDeniedCooldownMode,
+      useShortCooldown: payload?.primaryAccessDeniedUseShortCooldown,
+    }),
+    secondary: normalizeMissevanRouteCooldownState({
+      accessUntil: payload?.secondaryAccessDeniedUntil,
+      cooldownMode: payload?.secondaryAccessDeniedCooldownMode,
+      useShortCooldown: payload?.secondaryAccessDeniedUseShortCooldown,
+    }),
+  };
+}
+
 export function buildMissevanRouteCooldownStateAfterAccessDenied(state = {}, options = {}) {
   const normalizedState = normalizeMissevanRouteCooldownState(state);
   const now = Number(options.now ?? Date.now());
@@ -1132,6 +1127,42 @@ export function getNearestMissevanAccessUntil(states = [], now = Date.now()) {
     .map((state) => Number(state?.accessUntil ?? state?.accessDeniedUntil ?? 0))
     .filter((value) => Number.isFinite(value) && value > now);
   return futureAccessTimes.length ? Math.min(...futureAccessTimes) : 0;
+}
+
+export function selectMissevanRequestRoute({
+  directState = {},
+  fallbackRoutes = [],
+  now = Date.now(),
+} = {}) {
+  const normalizedDirectState = normalizeMissevanRouteCooldownState(directState);
+  if (normalizedDirectState.accessUntil <= now) {
+    return { type: "direct", routeKey: "direct", cooldownUntil: 0 };
+  }
+
+  const enabledRoutes = (Array.isArray(fallbackRoutes) ? fallbackRoutes : [])
+    .filter((route) => route?.enabled !== false);
+  const availableRoute = enabledRoutes.find(
+    (route) => normalizeMissevanRouteCooldownState(route?.state).accessUntil <= now
+  );
+  if (availableRoute) {
+    return {
+      type: "fallback",
+      routeKey: String(availableRoute.key || ""),
+      cooldownUntil: 0,
+    };
+  }
+
+  return {
+    type: "blocked",
+    routeKey: "",
+    cooldownUntil: getNearestMissevanAccessUntil(
+      [
+        normalizedDirectState,
+        ...enabledRoutes.map((route) => normalizeMissevanRouteCooldownState(route?.state)),
+      ],
+      now
+    ),
+  };
 }
 
 function getDirectCooldownState() {
@@ -1190,55 +1221,14 @@ function getCooldownStatePayload() {
 }
 
 function applyLoadedCooldownState(payload) {
-  applyDirectCooldownState(payload);
-  applyFallbackCooldownState("primary", {
-    accessUntil: payload?.primaryAccessDeniedUntil,
-    cooldownMode: payload?.primaryAccessDeniedCooldownMode,
-    useShortCooldown: payload?.primaryAccessDeniedUseShortCooldown,
-  });
-  applyFallbackCooldownState("secondary", {
-    accessUntil: payload?.secondaryAccessDeniedUntil,
-    cooldownMode: payload?.secondaryAccessDeniedCooldownMode,
-    useShortCooldown: payload?.secondaryAccessDeniedUseShortCooldown,
-  });
+  const parsed = parseMissevanCooldownStatePayload(payload);
+  applyDirectCooldownState(parsed.direct);
+  applyFallbackCooldownState("primary", parsed.primary);
+  applyFallbackCooldownState("secondary", parsed.secondary);
 }
 
 function armRepeatCooldownIfNeeded() {
   applyDirectCooldownState(buildMissevanRouteRepeatReadyState(getDirectCooldownState()));
-}
-
-function buildLandingRegionSnapshot(region, raw, fallbackVersion, options = {}) {
-  let payload = null;
-  let statusKnown = options.statusKnown !== false;
-
-  if (typeof raw === "string" && raw) {
-    try {
-      payload = JSON.parse(raw);
-    } catch (_) {
-      payload = null;
-      statusKnown = false;
-    }
-  }
-
-  const resolvedFallbackVersion = normalizeVersion(fallbackVersion);
-  const appVersion = normalizeVersion(payload?.appVersion ?? resolvedFallbackVersion);
-  const cooldownUntil = getNearestMissevanAccessUntil([
-    { accessUntil: payload?.accessDeniedUntil },
-    { accessUntil: payload?.primaryAccessDeniedUntil },
-    { accessUntil: payload?.secondaryAccessDeniedUntil },
-  ]);
-
-  return {
-    key: region.key,
-    label: region.label,
-    version: appVersion === "0.0.0" ? resolvedFallbackVersion : appVersion,
-    cooldownUntil:
-      statusKnown && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()
-        ? cooldownUntil
-        : 0,
-    cooldownHours: MISSEVAN_COOLDOWN_HOURS,
-    statusKnown,
-  };
 }
 
 async function writeCooldownStateToUpstash(payload = null) {
@@ -1256,11 +1246,6 @@ async function writeCooldownStateToUpstash(payload = null) {
   try {
     const serializedState = JSON.stringify(payload ?? getCooldownStatePayload());
     await upstashClient.command(["SET", MISSEVAN_COOLDOWN_KEY, serializedState]);
-    await upstashClient.command([
-      "SET",
-      LANDING_REGION_COOLDOWN_KEYS[0].cooldownKey,
-      serializedState,
-    ]);
   } catch (error) {
     console.error("Failed to persist Missevan cooldown state to Upstash", error);
   }
@@ -1985,6 +1970,29 @@ export function normalizeStatsTaskSource(value) {
   return normalizeTextValue(value).slice(0, 40);
 }
 
+export function buildStatsTaskCompletedUsageLog(snapshot = {}) {
+  if (snapshot?.status !== "completed") {
+    return null;
+  }
+  const source = normalizeStatsTaskSource(snapshot.source);
+  const failedCount = Math.max(0, Math.floor(Number(snapshot.failedCount ?? 0) || 0));
+  const accessDenied = Boolean(snapshot.accessDenied);
+  return {
+    action: "calculate",
+    platform: normalizeTextValue(snapshot.platform),
+    taskId: normalizeTextValue(snapshot.taskId),
+    taskType: normalizeTextValue(snapshot.taskType),
+    status: "completed",
+    success: !accessDenied && failedCount === 0,
+    ...(source ? { source } : {}),
+    totalCount: Math.max(0, Math.floor(Number(snapshot.totalCount ?? 0) || 0)),
+    completedCount: Math.max(0, Math.floor(Number(snapshot.completedCount ?? 0) || 0)),
+    failedCount,
+    accessDenied,
+    result: snapshot.result ?? null,
+  };
+}
+
 export function buildFavoriteUsageLog(payload = {}) {
   const platform = normalizeTextValue(payload.platform);
   const action = normalizeTextValue(payload.action);
@@ -2605,40 +2613,16 @@ function getCvTrendRecord(snapshot, cvName) {
   ) || null;
 }
 
-function getCvBaselineDate(snapshot) {
-  const explicitDate = normalizeTextValue(snapshot?.date);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) {
-    return explicitDate;
-  }
-  const generatedAt = normalizeTextValue(snapshot?.generated_at ?? snapshot?.generatedAt);
-  return /^\d{4}-\d{2}-\d{2}/.test(generatedAt) ? generatedAt.slice(0, 10) : "";
-}
-
-function findCvSnapshotRankItem(snapshot, platform, scope, cvName) {
-  const sourceKey = scope === "paid" ? "paidRankings" : "rankings";
-  const rankings = Array.isArray(snapshot?.[sourceKey]?.[platform])
-    ? snapshot[sourceKey][platform]
-    : [];
-  const normalizedCvName = normalizeTextValue(cvName);
-  return rankings.find((rankItem) =>
-    normalizeTextValue(rankItem?.cvName ?? rankItem?.name) === normalizedCvName
-  ) || null;
-}
-
-function buildCvPlaybackDelta({ item, platform, scope, cvTrendSnapshots, cvBaselineSnapshot }) {
+function buildCvPlaybackDelta({
+  item,
+  platform,
+  scope,
+  cvTrendSnapshots,
+  currentSnapshotGeneratedAt,
+}) {
   const cvName = normalizeTextValue(item?.cvName ?? item?.name);
   const metricKey = scope === "paid" ? "paidViewCount" : "totalViewCount";
   const points = [];
-  const baselineDate = getCvBaselineDate(cvBaselineSnapshot);
-  const baselineItem = findCvSnapshotRankItem(cvBaselineSnapshot, platform, scope, cvName);
-  const baselineValue = normalizeRankNumber(baselineItem?.totalViewCount ?? baselineItem?.total_view_count);
-  if (baselineDate && baselineValue != null) {
-    points.push({
-      date: baselineDate,
-      generatedAt: normalizeTextValue(cvBaselineSnapshot?.generated_at ?? cvBaselineSnapshot?.generatedAt),
-      value: baselineValue,
-    });
-  }
 
   const trendSnapshot = cvTrendSnapshots?.[platform];
   const trendRecord = getCvTrendRecord(trendSnapshot, cvName);
@@ -2661,13 +2645,26 @@ function buildCvPlaybackDelta({ item, platform, scope, cvTrendSnapshots, cvBasel
   });
 
   const currentValue = normalizeRankNumber(item?.totalViewCount ?? item?.total_view_count);
-  const currentDate = normalizeTextValue(item?.date) || normalizeTextValue(item?.generated_at ?? item?.generatedAt).slice(0, 10);
-  if (currentValue != null && currentDate && !points.some((point) => point.date === currentDate)) {
-    points.push({
+  const currentGeneratedAt =
+    normalizeTextValue(item?.generated_at ?? item?.generatedAt) ||
+    normalizeTextValue(currentSnapshotGeneratedAt);
+  const currentDate =
+    normalizeTextValue(item?.date) ||
+    (/^\d{4}-\d{2}-\d{2}/.test(currentGeneratedAt)
+      ? currentGeneratedAt.slice(0, 10)
+      : "");
+  if (currentValue != null && currentDate) {
+    const currentPoint = {
       date: currentDate,
-      generatedAt: normalizeTextValue(item?.generated_at ?? item?.generatedAt),
+      generatedAt: currentGeneratedAt,
       value: currentValue,
-    });
+    };
+    const existingPointIndex = points.findIndex((point) => point.date === currentDate);
+    if (existingPointIndex >= 0) {
+      points[existingPointIndex] = currentPoint;
+    } else {
+      points.push(currentPoint);
+    }
   }
 
   const sortedPoints = points
@@ -2718,7 +2715,7 @@ function normalizeCvRankItem(item, index, platform, options = {}) {
       platform,
       scope: options.scope === "paid" ? "paid" : "total",
       cvTrendSnapshots: options.cvTrendSnapshots,
-      cvBaselineSnapshot: options.cvBaselineSnapshot,
+      currentSnapshotGeneratedAt: options.currentSnapshotGeneratedAt,
     }),
   };
 }
@@ -2726,18 +2723,23 @@ function normalizeCvRankItem(item, index, platform, options = {}) {
 function buildNormalizedCvRank(cvSnapshot, platform, options = {}) {
   const scope = options.scope === "paid" ? "paid" : "total";
   const sourceKey = scope === "paid" ? "paidRankings" : "rankings";
+  const fetchedAt = normalizeTextValue(cvSnapshot?.generated_at ?? cvSnapshot?.generatedAt);
   const rankings = Array.isArray(cvSnapshot?.[sourceKey]?.[platform])
     ? cvSnapshot[sourceKey][platform]
     : [];
   const items = rankings
-    .map((item, index) => normalizeCvRankItem(item, index, platform, options))
+    .map((item, index) =>
+      normalizeCvRankItem(item, index, platform, {
+        ...options,
+        currentSnapshotGeneratedAt: fetchedAt,
+      })
+    )
     .filter(Boolean);
 
   if (!items.length) {
     return null;
   }
 
-  const fetchedAt = normalizeTextValue(cvSnapshot?.generated_at ?? cvSnapshot?.generatedAt);
   return {
     key: scope === "paid" ? "cv-paid" : "cv",
     label: scope === "paid" ? "付费榜" : "总榜",
@@ -2906,20 +2908,21 @@ async function readCvRanksBundle(options = {}) {
   const tolerateError = options?.tolerateError === true;
   let cvSnapshot = null;
   let cvTrendSnapshots = null;
-  let cvBaselineSnapshot = null;
   try {
-    const [latestSnapshot, missevanTrendSnapshot, manboTrendSnapshot, baselineSnapshot] = await Promise.all([
+    const [latestSnapshot, missevanTrendSnapshot, manboTrendSnapshot] = await Promise.all([
       readRanksJsonKey(CV_RANKS_KEY),
       readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
       readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
-      readRanksJsonKey(CV_RANK_BASELINE_KEY).catch(() => null),
     ]);
     cvSnapshot = latestSnapshot;
     cvTrendSnapshots = {
-      missevan: missevanTrendSnapshot,
-      manbo: manboTrendSnapshot,
+      missevan: isCvRankTrendAggregateSnapshot(missevanTrendSnapshot, "missevan")
+        ? missevanTrendSnapshot
+        : null,
+      manbo: isCvRankTrendAggregateSnapshot(manboTrendSnapshot, "manbo")
+        ? manboTrendSnapshot
+        : null,
     };
-    cvBaselineSnapshot = baselineSnapshot;
   } catch (error) {
     if (!tolerateError) {
       throw error;
@@ -2929,7 +2932,6 @@ async function readCvRanksBundle(options = {}) {
   return {
     cvSnapshot,
     cvTrendSnapshots,
-    cvBaselineSnapshot,
     updatedAt: getCvSnapshotUpdatedAt(cvSnapshot),
   };
 }
@@ -2941,7 +2943,6 @@ function updateCombinedRanksResponseCache() {
     ranksCache.cvSnapshot,
     {
       cvTrendSnapshots: ranksCache.cvTrendSnapshots,
-      cvBaselineSnapshot: ranksCache.cvBaselineSnapshot,
       meta: ranksCache.meta,
     }
   );
@@ -3054,7 +3055,6 @@ async function loadInitialRanksResponse() {
   ranksCache.normalUpdatedAt = normalBundle.updatedAt;
   ranksCache.cvSnapshot = cvBundle.cvSnapshot;
   ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
-  ranksCache.cvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
   ranksCache.cvUpdatedAt = cvBundle.updatedAt;
   return updateCombinedRanksResponseCache();
 }
@@ -3112,7 +3112,6 @@ export async function getCachedRanksResponse(options = {}) {
         ranksCache.normalUpdatedAt = normalBundle.updatedAt;
         ranksCache.cvSnapshot = cvBundle.cvSnapshot;
         ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
-        ranksCache.cvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
         ranksCache.cvUpdatedAt = cvBundle.updatedAt;
         const response = updateCombinedRanksResponseCache();
         return { response, cacheStatus: "cold-refresh", probePhase: "" };
@@ -3171,7 +3170,6 @@ export async function getCachedRanksResponse(options = {}) {
           const cvBundle = await readCvBundle();
           ranksCache.cvSnapshot = cvBundle.cvSnapshot;
           ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
-          ranksCache.cvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
           ranksCache.cvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
           recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
           refreshStatuses.push("cv-refresh");
@@ -3247,7 +3245,6 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   let nextPeakTrendSnapshot = ranksCache.peakTrendSnapshot;
   let nextCvSnapshot = ranksCache.cvSnapshot;
   let nextCvTrendSnapshots = ranksCache.cvTrendSnapshots;
-  let nextCvBaselineSnapshot = ranksCache.cvBaselineSnapshot;
   let nextNormalUpdatedAt = ranksCache.normalUpdatedAt;
   let nextCvUpdatedAt = ranksCache.cvUpdatedAt;
   const cacheIsCold =
@@ -3270,7 +3267,6 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
       const cvBundle = await readCvBundle();
       nextCvSnapshot = cvBundle.cvSnapshot;
       nextCvTrendSnapshots = cvBundle.cvTrendSnapshots;
-      nextCvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
       nextCvUpdatedAt = cvBundle.updatedAt || nextCvUpdatedAt;
       statuses.push("cv-refresh");
     }
@@ -3294,7 +3290,6 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
       const cvBundle = await readCvBundle();
       nextCvSnapshot = cvBundle.cvSnapshot;
       nextCvTrendSnapshots = cvBundle.cvTrendSnapshots;
-      nextCvBaselineSnapshot = cvBundle.cvBaselineSnapshot;
       nextCvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
       statuses.push("cv-refresh");
     }
@@ -3307,7 +3302,6 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   ranksCache.peakTrendSnapshot = nextPeakTrendSnapshot;
   ranksCache.cvSnapshot = nextCvSnapshot;
   ranksCache.cvTrendSnapshots = nextCvTrendSnapshots;
-  ranksCache.cvBaselineSnapshot = nextCvBaselineSnapshot;
   ranksCache.normalUpdatedAt = nextNormalUpdatedAt;
   ranksCache.cvUpdatedAt = nextCvUpdatedAt;
 
@@ -3530,6 +3524,11 @@ async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
 
   const loadPromise = (async () => {
     const snapshot = await readRankTrendAggregateSnapshot(normalizedPlatform);
+    if (!isRankTrendAggregateSnapshot(snapshot, normalizedPlatform)) {
+      const error = new Error("Rank trend aggregate is unavailable");
+      error.status = 503;
+      throw error;
+    }
     rankTrendAggregateCache.set(cacheKey, {
       snapshot,
       loadedAt: Date.now(),
@@ -3556,25 +3555,6 @@ function getOngoingCacheKey(platform) {
   return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${platform}`;
 }
 
-async function getLegacyOngoingMetricSnapshots(platform) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
-  const dates = normalizeRankTrendDates(indexSnapshot);
-  const metricEntries = await Promise.all(
-    dates.map(async (date) => [
-      date,
-      await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
-    ])
-  );
-
-  return {
-    indexSnapshot,
-    metricSnapshotsByDate: Object.fromEntries(
-      metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
-    ),
-  };
-}
-
 async function getCachedOngoingResponse(platform, options = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const forceRefresh = options?.force === true;
@@ -3595,17 +3575,15 @@ async function getCachedOngoingResponse(platform, options = {}) {
   const loadPromise = (async () => {
     const [ongoingIds, aggregateSnapshot] = await Promise.all([
       readOngoingIds(normalizedPlatform),
-      getCachedRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh }).catch((error) => {
-        console.warn("Failed to read ongoing rank trend aggregate; falling back to legacy metrics", error);
-        return null;
-      }),
+      getCachedRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh }),
     ]);
-    const { indexSnapshot, metricSnapshotsByDate } = isRankTrendAggregateSnapshot(
-      aggregateSnapshot,
-      normalizedPlatform
-    )
-      ? buildMetricSnapshotsFromRankTrendAggregate(aggregateSnapshot, normalizedPlatform)
-      : await getLegacyOngoingMetricSnapshots(normalizedPlatform);
+    if (!isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform)) {
+      const error = new Error("Ongoing rank trend aggregate is unavailable");
+      error.status = 503;
+      throw error;
+    }
+    const { indexSnapshot, metricSnapshotsByDate } =
+      buildMetricSnapshotsFromRankTrendAggregate(aggregateSnapshot, normalizedPlatform);
     const response = buildOngoingResponse({
       platform: normalizedPlatform,
       ongoingIds,
@@ -3645,60 +3623,6 @@ async function getCachedOngoingResponse(platform, options = {}) {
   }
 }
 
-async function getLegacyRankTrendResponse(platform, dramaId) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const normalizedDramaId = String(dramaId ?? "").trim();
-  const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
-  const dates = normalizeRankTrendDates(indexSnapshot);
-
-  const [metricEntries, listEntries] = await Promise.all([
-    dates.map(async (date) => [
-      date,
-      await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
-    ]),
-    dates.map(async (date) => [
-      date,
-      await readRanksJsonKey(`ranks:list:${date}:${normalizedPlatform}`),
-    ]),
-  ].map((commands) => Promise.all(commands)));
-  const metricSnapshotsByDate = Object.fromEntries(
-    metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
-  );
-  const listSnapshotsByDate = Object.fromEntries(
-    listEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
-  );
-
-  return buildRankTrendResponse({
-    platform: normalizedPlatform,
-    id: normalizedDramaId,
-    indexSnapshot,
-    metricSnapshotsByDate,
-    listSnapshotsByDate,
-  });
-}
-
-async function getLegacyRankTrendAvailabilityResponse(platform, ids) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const indexSnapshot = await readRanksJsonKey(RANKS_INDEX_KEY);
-  const dates = normalizeRankTrendDates(indexSnapshot);
-  const metricEntries = await Promise.all(
-    dates.map(async (date) => [
-      date,
-      await readRanksJsonKey(`ranks:metrics:${date}:${normalizedPlatform}`),
-    ])
-  );
-  const metricSnapshotsByDate = Object.fromEntries(
-    metricEntries.filter(([, snapshot]) => snapshot && typeof snapshot === "object")
-  );
-
-  return buildRankTrendAvailabilityResponse({
-    platform: normalizedPlatform,
-    ids,
-    indexSnapshot,
-    metricSnapshotsByDate,
-  });
-}
-
 async function getCachedCvRankTrendResponse(cvName) {
   const normalizedCvName = normalizeTextValue(cvName);
   const cacheKey = getRankTrendCacheKey("cv", normalizedCvName, "", CV_RANK_TREND_AGGREGATE_KEYS.missevan);
@@ -3712,10 +3636,9 @@ async function getCachedCvRankTrendResponse(cvName) {
   }
 
   const loadPromise = (async () => {
-    const [missevanTrendSnapshot, manboTrendSnapshot, baselineSnapshot] = await Promise.all([
+    const [missevanTrendSnapshot, manboTrendSnapshot] = await Promise.all([
       readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
       readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
-      readRanksJsonKey(CV_RANK_BASELINE_KEY).catch(() => null),
     ]);
     const response = buildCvTrendResponse({
       id: normalizedCvName,
@@ -3723,17 +3646,20 @@ async function getCachedCvRankTrendResponse(cvName) {
         missevan: missevanTrendSnapshot,
         manbo: manboTrendSnapshot,
       },
-      baselineSnapshot,
     });
     if (response && typeof response === "object") {
       response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
     }
     if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
-      rankTrendsCache.set(cacheKey, {
-        response,
-        loadedAt: Date.now(),
-        loadPromise: null,
-      });
+      if (response.status === 503) {
+        rankTrendsCache.delete(cacheKey);
+      } else {
+        rankTrendsCache.set(cacheKey, {
+          response,
+          loadedAt: Date.now(),
+          loadPromise: null,
+        });
+      }
     }
     return response;
   })();
@@ -3807,19 +3733,14 @@ async function getCachedRankTrendResponse(platform, dramaId) {
     }
   }
 
-  let aggregateSnapshot = null;
-  try {
-    aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform);
-  } catch (error) {
-    console.warn("Failed to read rank trend aggregate; falling back to legacy shards", error);
-  }
+  const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform);
 
   const hasUsableAggregate = isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform);
   const aggregateDates = hasUsableAggregate ? normalizeRankTrendDates(aggregateSnapshot) : [];
   const latestIndexDate = aggregateDates.at(-1) || "";
   const aggregateSourceVersion = hasUsableAggregate
     ? String(aggregateSnapshot?.updated_at ?? aggregateSnapshot?.updatedAt ?? "").trim()
-    : "legacy";
+    : "unavailable";
   const cacheKey = getRankTrendCacheKey(
     normalizedPlatform,
     normalizedDramaId,
@@ -3836,13 +3757,11 @@ async function getCachedRankTrendResponse(platform, dramaId) {
   }
 
   const loadPromise = (async () => {
-    const response = hasUsableAggregate
-      ? buildAggregatedRankTrendResponse({
-          platform: normalizedPlatform,
-          id: normalizedDramaId,
-          aggregateSnapshot,
-        })
-      : await getLegacyRankTrendResponse(normalizedPlatform, normalizedDramaId);
+    const response = buildAggregatedRankTrendResponse({
+      platform: normalizedPlatform,
+      id: normalizedDramaId,
+      aggregateSnapshot,
+    });
     if (response && typeof response === "object") {
       response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
     }
@@ -6202,25 +6121,28 @@ function hasEnabledMissevanFallbackRoutes() {
 }
 
 function getMissevanAccessDeniedCooldownUntil() {
-  const directInCooldown = isInAccessDeniedCooldown();
-  if (!directInCooldown) {
+  if (!isInAccessDeniedCooldown()) {
     return 0;
   }
 
   const routes = getEnabledMissevanFallbackRoutes();
-  if (!routes.length) {
-    return accessDeniedUntil;
+  const fallbackRoutes = [];
+  for (const route of routes) {
+    const routeInCooldown = isMissevanFallbackRouteInCooldown(route);
+    fallbackRoutes.push({
+      key: route.key,
+      enabled: true,
+      state: getFallbackCooldownState(route.key),
+    });
+    if (!routeInCooldown) {
+      break;
+    }
   }
-
-  const allFallbackRoutesInCooldown = routes.every((route) => isMissevanFallbackRouteInCooldown(route));
-  if (!allFallbackRoutesInCooldown) {
-    return 0;
-  }
-
-  return getNearestMissevanAccessUntil([
-    getDirectCooldownState(),
-    ...routes.map((route) => getFallbackCooldownState(route.key)),
-  ]);
+  const selection = selectMissevanRequestRoute({
+    directState: getDirectCooldownState(),
+    fallbackRoutes,
+  });
+  return selection.type === "blocked" ? selection.cooldownUntil : 0;
 }
 
 function shouldBlockMissevanAccessForCooldown() {
@@ -9809,23 +9731,21 @@ app.get("/ranks/trends/availability", async (req, res) => {
   }
 
   try {
-    let response = null;
-    try {
-      const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform);
-      if (isRankTrendAggregateSnapshot(aggregateSnapshot, platform)) {
-        response = buildRankTrendAvailabilityResponse({
-          platform,
-          ids,
-          aggregateSnapshot,
-        });
-      }
-    } catch (error) {
-      console.warn("Failed to read rank trend availability aggregate; falling back to legacy shards", error);
+    const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform);
+    if (!isRankTrendAggregateSnapshot(aggregateSnapshot, platform)) {
+      return res.status(503).json({
+        success: false,
+        platform,
+        latestDate: "",
+        availability: {},
+        message: "Rank trend aggregate is unavailable",
+      });
     }
-
-    if (!response) {
-      response = await getLegacyRankTrendAvailabilityResponse(platform, ids);
-    }
+    const response = buildRankTrendAvailabilityResponse({
+      platform,
+      ids,
+      aggregateSnapshot,
+    });
     if (response && typeof response === "object") {
       response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
     }
@@ -11389,38 +11309,6 @@ function setNoStoreHeaders(res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
 }
-
-app.get("/landing/regions", async (req, res) => {
-  setNoStoreHeaders(res);
-  const frontendVersion = getFrontendVersionFromRequest(req);
-
-  if (!upstashClient.enabled) {
-    return res.json({
-      regions: LANDING_REGION_COOLDOWN_KEYS.map((region) =>
-        buildLandingRegionSnapshot(region, null, frontendVersion, { statusKnown: false })
-      ),
-    });
-  }
-
-  try {
-    const snapshots = await Promise.all(
-      LANDING_REGION_COOLDOWN_KEYS.map(async (region) => {
-        const raw = await upstashClient.command(["GET", region.cooldownKey]);
-        return buildLandingRegionSnapshot(region, raw, frontendVersion);
-      })
-    );
-
-    return res.json({ regions: snapshots });
-  } catch (error) {
-    console.error("Failed to read landing region snapshots from Upstash", error);
-    return res.status(500).json({
-      error: "Failed to read landing region snapshots",
-      regions: LANDING_REGION_COOLDOWN_KEYS.map((region) =>
-        buildLandingRegionSnapshot(region, null, frontendVersion, { statusKnown: false })
-      ),
-    });
-  }
-});
 
 app.get("/stat-tasks/:taskId", async (req, res) => {
   await statsTaskEngine.whenReady();

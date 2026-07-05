@@ -128,10 +128,24 @@ export function isRankTrendAggregateSnapshot(snapshot, platform) {
     normalizedPlatform &&
       snapshot &&
       typeof snapshot === "object" &&
-      (!snapshot.platform || String(snapshot.platform).trim() === normalizedPlatform) &&
+      String(snapshot.platform ?? "").trim() === normalizedPlatform &&
       Array.isArray(snapshot.dates) &&
       snapshot.dramas &&
-      typeof snapshot.dramas === "object"
+      typeof snapshot.dramas === "object" &&
+      !Array.isArray(snapshot.dramas)
+  );
+}
+
+export function isCvRankTrendAggregateSnapshot(snapshot, platform) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  return Boolean(
+    normalizedPlatform &&
+      snapshot &&
+      typeof snapshot === "object" &&
+      String(snapshot.platform ?? "").trim() === normalizedPlatform &&
+      snapshot.cvs &&
+      typeof snapshot.cvs === "object" &&
+      !Array.isArray(snapshot.cvs)
   );
 }
 
@@ -426,25 +440,6 @@ function buildRankHistory(dates, listSnapshotsByDate, id) {
     .filter(Boolean);
 }
 
-function getCvBaselineDate(baselineSnapshot) {
-  const explicitDate = normalizeDateKey(baselineSnapshot?.date);
-  if (explicitDate) {
-    return explicitDate;
-  }
-  return normalizeDateKey(normalizeGeneratedAt(baselineSnapshot).slice(0, 10));
-}
-
-function findCvRankingItem(snapshot, platform, scope, cvName) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const normalizedScope = scope === "paid" ? "paid" : "total";
-  const normalizedCvName = normalizeCvName(cvName);
-  const sourceKey = normalizedScope === "paid" ? "paidRankings" : "rankings";
-  const rankings = Array.isArray(snapshot?.[sourceKey]?.[normalizedPlatform])
-    ? snapshot[sourceKey][normalizedPlatform]
-    : [];
-  return rankings.find((item) => normalizeCvName(item?.cvName ?? item?.name) === normalizedCvName) || null;
-}
-
 function findCvTrendRecord(snapshot, cvName) {
   const normalizedCvName = normalizeCvName(cvName);
   const cvs = snapshot?.cvs && typeof snapshot.cvs === "object" ? snapshot.cvs : {};
@@ -464,12 +459,8 @@ function getCvTrendSample(snapshot, cvName, date) {
   return samples && typeof samples === "object" ? samples[date] || null : null;
 }
 
-function getCvTrendDates(trendSnapshots, baselineSnapshot, cvName) {
+function getCvTrendDates(trendSnapshots, cvName) {
   const dates = new Set();
-  const baselineDate = getCvBaselineDate(baselineSnapshot);
-  if (baselineDate) {
-    dates.add(baselineDate);
-  }
   ["missevan", "manbo"].forEach((platform) => {
     const snapshot = trendSnapshots?.[platform];
     const record = findCvTrendRecord(snapshot, cvName);
@@ -486,26 +477,7 @@ function getCvTrendDates(trendSnapshots, baselineSnapshot, cvName) {
   return Array.from(dates).sort();
 }
 
-function getCvMetricPoint({ date, config, trendSnapshots, baselineSnapshot, cvName }) {
-  const baselineDate = getCvBaselineDate(baselineSnapshot);
-  if (date === baselineDate) {
-    const baselineItem = findCvRankingItem(baselineSnapshot, config.platform, config.scope, cvName);
-    if (!baselineItem) {
-      return {
-        date,
-        value: null,
-        position: null,
-        generatedAt: normalizeGeneratedAt(baselineSnapshot),
-      };
-    }
-    return {
-      date,
-      value: normalizeFiniteNumber(baselineItem.totalViewCount ?? baselineItem.total_view_count),
-      position: normalizeFiniteNumber(baselineItem.rank),
-      generatedAt: normalizeGeneratedAt(baselineSnapshot),
-    };
-  }
-
+function getCvMetricPoint({ date, config, trendSnapshots, cvName }) {
   const sample = getCvTrendSample(trendSnapshots?.[config.platform], cvName, date);
   const metrics = sample?.metrics && typeof sample.metrics === "object" ? sample.metrics : {};
   const ranks = sample?.ranks && typeof sample.ranks === "object" ? sample.ranks : {};
@@ -622,7 +594,6 @@ function buildCvRankHistory(dates, metricPointsByKey) {
 export function buildCvTrendResponse({
   id,
   trendSnapshots,
-  baselineSnapshot,
 } = {}) {
   const cvName = normalizeCvName(id);
   if (!cvName) {
@@ -633,14 +604,28 @@ export function buildCvTrendResponse({
     };
   }
 
-  const dates = getCvTrendDates(trendSnapshots, baselineSnapshot, cvName);
+  if (
+    !["missevan", "manbo"].every((platform) =>
+      isCvRankTrendAggregateSnapshot(trendSnapshots?.[platform], platform)
+    )
+  ) {
+    return {
+      success: false,
+      status: 503,
+      kind: "cv",
+      id: cvName,
+      message: "CV rank trend aggregate is unavailable",
+    };
+  }
+
+  const dates = getCvTrendDates(trendSnapshots, cvName);
   const metricPointsByKey = Object.fromEntries(
     CV_TREND_METRICS.map((config) => [
       config.key,
       Object.fromEntries(
         dates.map((date) => [
           date,
-          getCvMetricPoint({ date, config, trendSnapshots, baselineSnapshot, cvName }),
+          getCvMetricPoint({ date, config, trendSnapshots, cvName }),
         ])
       ),
     ])
@@ -731,8 +716,6 @@ export function buildRankTrendAvailabilityResponse({
   platform,
   ids,
   aggregateSnapshot,
-  indexSnapshot,
-  metricSnapshotsByDate,
 } = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const idList = normalizeStringIdList(ids);
@@ -760,21 +743,6 @@ export function buildRankTrendAvailabilityResponse({
       }),
       latestDate: dates.at(-1) || "",
       updatedAt: normalizeGeneratedAt(aggregateSnapshot),
-    };
-  }
-
-  const legacyDates = normalizeRankTrendDates(indexSnapshot).filter((date) =>
-    metricSnapshotsByDate?.[date]
-  );
-  if (legacyDates.length) {
-    return {
-      success: true,
-      platform: normalizedPlatform,
-      ids: idList.filter((id) =>
-        legacyDates.some((date) => getDramaMetrics(metricSnapshotsByDate[date], id))
-      ),
-      latestDate: legacyDates.at(-1) || "",
-      updatedAt: normalizeGeneratedAt(indexSnapshot),
     };
   }
 

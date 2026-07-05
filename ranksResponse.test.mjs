@@ -125,36 +125,30 @@ test("rank response exposes CV total and paid ranks with playback deltas", async
       ],
     },
   };
-  const cvBaselineSnapshot = {
-    generated_at: "2026-06-13T02:38:36+00:00",
-    rankings: {
-      missevan: [
-        {
-          cvName: "路知行",
-          totalViewCount: 1189097577,
-          rank: 1,
-          works: [{ dramaId: "22602", title: "魔道祖师 第三季", viewCount: 295837591 }],
-        },
-      ],
-    },
-  };
   const cvTrendSnapshots = {
     missevan: {
       platform: "missevan",
-      dates: ["2026-06-19"],
+      dates: ["2026-06-13"],
       cvs: {
         "路知行": {
           cvName: "路知行",
           samples: {
-            "2026-06-19": {
-              generated_at: "2026-06-19T04:04:53+00:00",
+            "2026-06-13": {
+              generated_at: "2026-06-13T02:38:36+00:00",
               metrics: {
-                totalViewCount: 1190603800,
-                paidViewCount: 1183878183,
+                totalViewCount: 1189097577,
               },
               ranks: {
                 total: 1,
-                paid: 1,
+              },
+            },
+            "2026-06-19": {
+              generated_at: "2026-06-19T01:00:00+00:00",
+              metrics: {
+                totalViewCount: 1190000000,
+              },
+              ranks: {
+                total: 1,
               },
             },
           },
@@ -165,7 +159,6 @@ test("rank response exposes CV total and paid ranks with playback deltas", async
 
   const response = buildNormalizedRanksResponse(snapshot, null, cvSnapshot, {
     cvTrendSnapshots,
-    cvBaselineSnapshot,
   });
   const cvCategory = response.platforms.missevan.categories.find((category) => category.key === "cv");
 

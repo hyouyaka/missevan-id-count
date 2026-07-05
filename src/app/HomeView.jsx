@@ -27,6 +27,13 @@ import {
 } from "@/app/rankTrendData";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+} from "@/components/ui/carousel";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { sortOngoingItemsByWindowDelta } from "../../shared/ongoingUtils.js";
@@ -496,16 +503,16 @@ function RankDramaItem({
             {item?.name || "未命名剧集"}
           </div>
         )}
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground">
-          <MicIcon aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="truncate">{getMainCvText(item)}</span>
+        <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground">
+          <MicIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">{getMainCvText(item)}</span>
         </div>
         <div
-          className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground"
+          className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground"
           title={`${isMissevanPeak ? "系列总播放量" : "播放量"}：${playCountText}`}
         >
-          <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="whitespace-nowrap tabular-nums">{playCountText}</span>
+          <PlayCircleIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 break-words tabular-nums">{playCountText}</span>
         </div>
       </div>
     </div>
@@ -527,17 +534,18 @@ function RankCvItem({ item }) {
         )}
       </div>
       <div className="min-w-0">
-        <div className="inline-flex max-w-full min-w-0 items-center gap-2">
-          <div className={homeRankItemTitleClassName}>
-            {item?.cvName || "未命名CV"}
-          </div>
-          <span
-            className="inline-flex flex-none items-center gap-1 whitespace-nowrap text-xs leading-5 text-muted-foreground"
-            title={`播放量：${playCountText}`}
-          >
-            <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
-            <span className="tabular-nums">{playCountText}</span>
-          </span>
+        <div
+          className="min-w-0 break-words text-base! font-semibold! leading-6! text-foreground"
+          title={item?.cvName || "未命名CV"}
+        >
+          {item?.cvName || "未命名CV"}
+        </div>
+        <div
+          className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground"
+          title={`播放量：${playCountText}`}
+        >
+          <PlayCircleIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 break-words tabular-nums">{playCountText}</span>
         </div>
         <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground" title={topWorksText}>
           {topWorksText}
@@ -562,7 +570,7 @@ function HomeRankCard({
   return (
     <div className="home-editorial-rank-card">
       <div className="home-editorial-rank-header">
-          <h3 className="line-clamp-1 min-w-0">
+          <h3 className="line-clamp-1 min-w-0" title={rankConfig.displayTitle || rankConfig.title}>
             {rankConfig.displayTitle || rankConfig.title}
           </h3>
           {formatHomeUpdatedLabel(publishedAt) ? (
@@ -917,13 +925,16 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
           />
           <PlatformTabs value={selectedRankPlatform} onValueChange={setSelectedRankPlatform} ariaLabel="选择榜单平台" />
         </div>
-        <div className="home-editorial-ranks-viewport">
-          <div className="home-editorial-ranks-grid">
-            {activeRankConfigs.map((rankConfig, index) => (
-              <div
+        <Carousel
+          className="home-editorial-ranks-carousel"
+          opts={{ align: "start", loop: false }}
+          aria-label={`${platformMeta[selectedRankPlatform].label}榜单速览`}
+        >
+          <CarouselContent className="-ml-3">
+            {activeRankConfigs.map((rankConfig) => (
+              <CarouselItem
                 key={`${selectedRankPlatform}-${rankConfig.categoryKey}-${rankConfig.rankKey}`}
-                className="home-editorial-rank-slot"
-                data-featured={index < 2 ? "true" : "false"}
+                className="flex basis-full pl-3 sm:basis-1/2 lg:basis-1/3"
               >
                 <HomeRankCard
                   platform={selectedRankPlatform}
@@ -939,10 +950,12 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
                   canOpenTrend={canOpenHomeTrend}
                   onOpenTrend={openHomeTrend}
                 />
-              </div>
+              </CarouselItem>
             ))}
-          </div>
-        </div>
+          </CarouselContent>
+          <CarouselPrevious className="left-2" />
+          <CarouselNext className="right-2" />
+        </Carousel>
       </section>
         </>
       ) : null}

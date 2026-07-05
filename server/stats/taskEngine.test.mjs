@@ -246,6 +246,206 @@ test("cancelling terminal tasks is idempotent", async () => {
   assert.equal(engine.getSnapshot(task.taskId).status, "completed");
 });
 
+test("task engine calls onCompleted once with the final completed snapshot", async () => {
+  const completedSnapshots = [];
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 1, maxQueuedPerClient: 1 },
+    },
+    onCompleted(snapshot) {
+      completedSnapshots.push(snapshot);
+    },
+    async execute() {
+      return {
+        status: "completed",
+        patch: {
+          completedCount: 2,
+          result: { totalUsers: 8 },
+        },
+      };
+    },
+  });
+  const task = {
+    taskId: "completion-hook",
+    platform: "missevan",
+    taskType: "id",
+    clientKey: "ip-hook",
+    status: "queued",
+    completedCount: 0,
+  };
+
+  engine.enqueue(task);
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(completedSnapshots.length, 1);
+  assert.equal(completedSnapshots[0].status, "completed");
+  assert.equal(completedSnapshots[0].completedCount, 2);
+  assert.deepEqual(completedSnapshots[0].result, { totalUsers: 8 });
+});
+
+test("task engine runs onCompleted after final task persistence finishes", async () => {
+  const finalSaveStarted = deferred();
+  const releaseFinalSave = deferred();
+  const events = [];
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 1, maxQueuedPerClient: 1 },
+    },
+    store: {
+      async save(task) {
+        if (task.status !== "completed") {
+          return;
+        }
+        events.push("save-started");
+        finalSaveStarted.resolve();
+        await releaseFinalSave.promise;
+        events.push("save-finished");
+      },
+    },
+    onCompleted() {
+      events.push("on-completed");
+    },
+    async execute() {
+      return { status: "completed", patch: { result: { ok: true } } };
+    },
+  });
+
+  engine.enqueue({
+    taskId: "completion-after-persist",
+    platform: "missevan",
+    taskType: "id",
+    clientKey: "ip-persist-order",
+    status: "queued",
+  });
+  await finalSaveStarted.promise;
+  assert.deepEqual(events, ["save-started"]);
+
+  releaseFinalSave.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["save-started", "save-finished", "on-completed"]);
+});
+
+test("final persistence does not hold the scheduler active slot", async () => {
+  const firstFinalSaveStarted = deferred();
+  const releaseFirstFinalSave = deferred();
+  const completionLogged = deferred();
+  let secondTaskStarted = false;
+  let completionLogCalls = 0;
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 2, maxQueuedPerClient: 2 },
+    },
+    store: {
+      async save(task) {
+        if (task.taskId === "first-task" && task.status === "completed") {
+          firstFinalSaveStarted.resolve();
+          await releaseFirstFinalSave.promise;
+        }
+      },
+    },
+    onCompleted(snapshot) {
+      if (snapshot.taskId === "first-task") {
+        completionLogCalls += 1;
+        completionLogged.resolve();
+      }
+    },
+    async execute(task) {
+      if (task.taskId === "second-task") {
+        secondTaskStarted = true;
+      }
+      return { status: "completed", patch: { result: { taskId: task.taskId } } };
+    },
+  });
+
+  engine.enqueue({
+    taskId: "first-task",
+    platform: "missevan",
+    taskType: "id",
+    clientKey: "same-client",
+    status: "queued",
+  });
+  engine.enqueue({
+    taskId: "second-task",
+    platform: "missevan",
+    taskType: "id",
+    clientKey: "same-client",
+    status: "queued",
+  });
+
+  await firstFinalSaveStarted.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(secondTaskStarted, true);
+  assert.equal(completionLogCalls, 0);
+
+  releaseFirstFinalSave.resolve();
+  await completionLogged.promise;
+  assert.equal(completionLogCalls, 1);
+});
+
+test("task engine skips onCompleted for failed, cancelled, and restored terminal tasks", async () => {
+  const completedSnapshots = [];
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 3, maxQueuedPerClient: 3 },
+    },
+    store: {
+      async loadTasks() {
+        return [{ taskId: "restored-complete", platform: "missevan", clientKey: "ip-restored", status: "completed" }];
+      },
+      async save() {},
+    },
+    onCompleted(snapshot) {
+      completedSnapshots.push(snapshot);
+    },
+    async execute(task) {
+      if (task.taskId === "failed-task") {
+        throw new Error("failed");
+      }
+      return { status: "cancelled" };
+    },
+  });
+
+  await engine.restore();
+  engine.enqueue({ taskId: "failed-task", platform: "missevan", clientKey: "ip-failed", status: "queued" });
+  engine.enqueue({ taskId: "cancelled-task", platform: "missevan", clientKey: "ip-cancelled", status: "queued" });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(completedSnapshots, []);
+});
+
+test("onCompleted errors do not change the completed task status", async () => {
+  let callbackCalls = 0;
+  const engine = createStatsTaskEngine({
+    limits: {
+      manbo: { maxActive: 1, maxActivePerClient: 1, maxQueued: 1, maxQueuedPerClient: 1 },
+    },
+    onCompleted() {
+      callbackCalls += 1;
+      throw new Error("log unavailable");
+    },
+    async execute() {
+      return { status: "completed", patch: { result: { ok: true } } };
+    },
+  });
+  const task = {
+    taskId: "completion-hook-error",
+    platform: "manbo",
+    taskType: "revenue",
+    clientKey: "ip-hook-error",
+    status: "queued",
+  };
+
+  engine.enqueue(task);
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(callbackCalls, 1);
+  assert.equal(engine.getSnapshot(task.taskId).status, "completed");
+  assert.deepEqual(engine.getSnapshot(task.taskId).result, { ok: true });
+});
+
 test("task engine restores nonterminal tasks with the same id and a clean attempt", async () => {
   const recovered = {
     taskId: "task-2",

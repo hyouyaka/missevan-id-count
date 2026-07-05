@@ -36,6 +36,16 @@ npm run dev
 
 Vite 开发服务器会自动将 API 请求代理到 `http://localhost:3000`。
 
+### Railway 部署
+
+网页主站仅部署在 Railway。仓库中的 `railway.json` 已配置：
+
+- Build Command：`npm install && npm run build`
+- Start Command：`npm start`
+- Healthcheck Path：`/health`
+
+Railway 环境应使用 `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:v1` 持久化猫耳直连及两级备用代理的 cooldown 状态。
+
 ### 桌面版
 
 ```bash
@@ -49,7 +59,7 @@ npm run desktop
 ## 猫耳访问受限说明
 
 云端部署的节点遇到猫耳访问受限时，需要等待冷却时间自动恢复，无法手动解锁。
-如果配置了 Render 备用代理，主站命中猫耳 418 后会在 cooldown 期间改走备用代理，cooldown 结束后恢复主站本体直连。
+Railway 主站命中猫耳 418 后会在 cooldown 期间依次尝试 Render、Deno 备用代理，主站 cooldown 结束后恢复直连。
 
 桌面版或本地运行版可以自行解锁：
 
@@ -67,7 +77,7 @@ Windows 桌面版会直接在界面中提示这一步。
 |------|------|--------|
 | `ENABLE_MISSEVAN` | 是否启用 Missevan 功能 | `true` |
 | `MISSEVAN_COOLDOWN_HOURS` | 命中 418 后的冷却小时数 | `4` |
-| `MISSEVAN_PERSISTENT_COOLDOWN` | 是否持久化 cooldown | 本地不启用；Render/Railway 自动启用 |
+| `MISSEVAN_PERSISTENT_COOLDOWN` | 是否持久化 cooldown | 本地不启用；Railway 自动启用 |
 | `MISSEVAN_COOLDOWN_KEY` | 当前部署的 cooldown key | `missevan:cooldown:v1` |
 | `MISSEVAN_DESKTOP_APP_URL` | 网页版提示下载桌面版的地址 | — |
 | `FEATURE_SUGGESTION_URL` | 功能建议收集链接 | — |
@@ -84,7 +94,7 @@ Windows 桌面版会直接在界面中提示这一步。
 | `MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS` | 二级备用代理请求超时毫秒数 | `15000` |
 | `MISSEVAN_FORCE_FALLBACK` | 本地/灰度强制猫耳 JSON/XML 请求出口：`0` 直连优先，`1` 一级 Render，`2` 二级 Deno | `0` |
 
-备用代理只用于猫耳 JSON/XML 请求，不用于图片、音频、视频或漫播请求。触发备用代理时，`logs/usage.log` 会写入 `fallbackUsed=true`、`fallbackRoute=render/deno` 和 `fallbackReason`。Render 免费实例冷启动可能需要几十秒；Render 失败后会再尝试 Deno 二级备用。
+Render 不承载本项目网页主站，只作为猫耳 418 时的一级备用代理；Deno 是二级备用代理。两者只代理猫耳 JSON/XML 请求，不用于图片、音频、视频或漫播请求。触发备用代理时，`logs/usage.log` 会写入 `fallbackUsed=true`、`fallbackRoute=render/deno` 和 `fallbackReason`。Render 免费实例冷启动可能需要几十秒；Render 失败后会再尝试 Deno。
 
 本地强制测试链路：
 
@@ -144,15 +154,15 @@ MISSEVAN_FORCE_FALLBACK=0
 | `MANBO_DANMAKU_PAGE_CONCURRENCY` | 弹幕分页抓取并发数 | `12` |
 | `MANBO_STATS_EPISODE_CONCURRENCY` | 统计任务分集并发数 | `4` |
 | `MANBO_FETCH_TIMEOUT_MS` | 请求超时毫秒数 | `10000` |
-| `MANBO_DANMAKU_CACHE_MAX_ENTRIES` | 弹幕用户缓存最大条目数，托管部署默认更小以降低内存占用 | Render/Railway `20`，本地 `200` |
-| `MANBO_STATS_TASK_TTL_MS` | 统计任务结果保留时间，托管部署默认更短以降低内存占用 | Render/Railway `900000`，本地 `3600000` |
+| `MANBO_DANMAKU_CACHE_MAX_ENTRIES` | 弹幕用户缓存最大条目数，托管部署默认更小以降低内存占用 | Railway `20`，本地 `200` |
+| `MANBO_STATS_TASK_TTL_MS` | 统计任务结果保留时间，托管部署默认更短以降低内存占用 | Railway `900000`，本地 `3600000` |
 
 ### 资源保护
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CACHE_MAX_ENTRIES` | 普通详情、摘要、搜索和趋势缓存最大条目数 | Render/Railway `500`，本地 `1000` |
-| `MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES` | 猫耳弹幕用户缓存最大条目数 | Render/Railway `20`，本地 `200` |
+| `CACHE_MAX_ENTRIES` | 普通详情、摘要、搜索和趋势缓存最大条目数 | Railway `500`，本地 `1000` |
+| `MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES` | 猫耳弹幕用户缓存最大条目数 | Railway `20`，本地 `200` |
 | `STATS_TASK_MAX_ITEMS` | 单个统计任务允许的最大作品或分集数 | `1000` |
 | `MISSEVAN_STATS_MAX_CONCURRENCY` | 同时运行的猫耳统计任务数 | `2` |
 | `MANBO_STATS_MAX_CONCURRENCY` | 同时运行的漫播统计任务数 | `3` |
@@ -170,17 +180,9 @@ MISSEVAN_FORCE_FALLBACK=0
 
 图片代理根据文件内容识别 JPEG、PNG、WebP、GIF 和 AVIF，不依赖上游 `Content-Type`；重定向的每一跳都会重新验证 HTTPS 与 CDN 主机白名单。响应超过限制时返回 `413 IMAGE_TOO_LARGE`，类型不受支持时返回 `415 IMAGE_TYPE_UNSUPPORTED`。
 
-### 节点路由
-
-| 变量 | 说明 |
-|------|------|
-| `VITE_REGION_AREA1_URL` | 节点1工具页地址 |
-| `VITE_REGION_AREA2_URL` | 节点2工具页地址 |
-| `VITE_REGION_AREA3_URL` | 节点3工具页地址 |
-
 ### 运行时变量
 
-`PORT`、`RENDER_*`、`RAILWAY_*`、`DESKTOP_APP`、`APP_DATA_DIR` 属于平台或运行时注入变量，部署时通常不需要手动设置。本地调试可直接访问 `/tool`，不需要额外配置节点变量。
+`PORT`、`RAILWAY_*`、`DESKTOP_APP`、`APP_DATA_DIR` 属于平台或运行时注入变量，部署时通常不需要手动设置。
 
 ## 本地 `.env`
 
@@ -194,9 +196,6 @@ UPSTASH_REDIS_REST_TOKEN=your-upstash-token
 MISSEVAN_PERSISTENT_COOLDOWN=false
 MISSEVAN_COOLDOWN_KEY=missevan:cooldown:v1
 FEATURE_SUGGESTION_URL=https://your-feedback-form.example.com
-VITE_REGION_AREA1_URL=https://your-area1-service.onrender.com
-VITE_REGION_AREA2_URL=https://your-area2-service.onrender.com
-VITE_REGION_AREA3_URL=https://your-area3-service.onrender.com
 ```
 
 桌面版 `.env` 读取优先顺序：

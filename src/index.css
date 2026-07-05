@@ -645,34 +645,15 @@ textarea {
   color: var(--home-warm) !important;
 }
 
-.home-editorial-ranks-viewport {
+.home-editorial-ranks-carousel {
   min-width: 0;
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 0.5rem;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  scroll-snap-type: x mandatory;
-}
-
-.home-editorial-ranks-grid {
-  display: grid;
-  width: max-content;
-  min-width: 100%;
-  grid-auto-columns: minmax(16.5rem, 84vw);
-  grid-auto-flow: column;
-  gap: 0.875rem;
-}
-
-.home-editorial-rank-slot {
-  min-width: 0;
-  scroll-snap-align: start;
 }
 
 .home-editorial-rank-card {
   display: flex;
   min-width: 0;
+  width: 100%;
   min-height: 17.5rem;
   height: 100%;
   flex-direction: column;
@@ -802,41 +783,10 @@ textarea {
   }
 }
 
-@media (min-width: 640px) {
-  .home-editorial-ranks-grid {
-    width: 100%;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-flow: row;
-  }
-
-  .home-editorial-rank-slot:last-child:nth-child(odd) {
-    grid-column: span 2;
-  }
-}
-
 @media (min-width: 768px) {
   .home-editorial-updates-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-
-@media (min-width: 1024px) {
-  .home-editorial-ranks-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
-
-  .home-editorial-rank-slot[data-featured="true"] {
-    grid-column: span 3;
-  }
-
-  .home-editorial-rank-slot[data-featured="false"] {
-    grid-column: span 2;
-  }
-
-  .home-editorial-rank-slot:last-child:nth-child(odd) {
-    grid-column: span 2;
-  }
-
 }
 
 @media (max-width: 639.98px) {

@@ -1178,7 +1178,10 @@ export function SearchResults({
                           variant="secondary"
                           className={resultActionButtonClass}
                           disabled={statisticsActionsDisabled}
-                          onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
+                          onClick={() => onStartDramaPaidIdStatistics?.(
+                            getResultDramaId(item),
+                            { source: `${getResultDramaId(item)}payID` }
+                          )}
                         >
                           <UserSearchIcon data-icon="inline-start" />
                           付费ID
@@ -1188,7 +1191,10 @@ export function SearchResults({
                           variant="secondary"
                           className={resultActionButtonClass}
                           disabled={statisticsActionsDisabled}
-                          onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
+                          onClick={() => onStartRevenueEstimate?.(
+                            [getResultDramaId(item)],
+                            { source: `${getResultDramaId(item)}earn` }
+                          )}
                         >
                           <HandCoinsIcon data-icon="inline-start" />
                           收益
@@ -1265,7 +1271,10 @@ export function SearchResults({
                         data-touch="compact"
                         className={mobileResultActionButtonClass}
                         disabled={statisticsActionsDisabled}
-                        onClick={() => onStartDramaPaidIdStatistics?.(getResultDramaId(item))}
+                        onClick={() => onStartDramaPaidIdStatistics?.(
+                          getResultDramaId(item),
+                          { source: `${getResultDramaId(item)}payID` }
+                        )}
                       >
                         <UserSearchIcon data-icon="inline-start" />
                         付费ID
@@ -1276,7 +1285,10 @@ export function SearchResults({
                         data-touch="compact"
                         className={mobileResultActionButtonClass}
                         disabled={statisticsActionsDisabled}
-                        onClick={() => onStartRevenueEstimate?.([getResultDramaId(item)])}
+                        onClick={() => onStartRevenueEstimate?.(
+                          [getResultDramaId(item)],
+                          { source: `${getResultDramaId(item)}earn` }
+                        )}
                       >
                         <HandCoinsIcon data-icon="inline-start" />
                         收益

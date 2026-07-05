@@ -1,10 +1,10 @@
 # M&M Toolkit Architecture
 
-Last updated: 2026-05-06
+Last updated: 2026-07-04
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.5.1
+- **Version**: 1.7.0
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
   - `server.js` for backend routing, cache orchestration, Upstash access, cooldown state, and task execution
@@ -19,9 +19,7 @@ This document describes the current implementation, not the historical evolution
 
 ### Browser and SPA Boot Flow
 1. `src/main.jsx` mounts the React application and the global toast layer.
-2. `src/app/RootApp.jsx` fetches `/app-config`, compares frontend/backend versions, and decides whether to show:
-   - `LandingView` for the public landing page
-   - `ToolView` for the actual toolbox UI
+2. `src/app/RootApp.jsx` fetches `/app-config`, compares frontend/backend versions, and opens `ToolView`.
 3. `src/app/ToolView.jsx` is the main workspace shell. It hosts the active tabs for:
    - Missevan search and analysis
    - Manbo search and analysis
@@ -33,6 +31,11 @@ This document describes the current implementation, not the historical evolution
 2. It initializes Express, CORS, JSON body parsing, runtime directories, caches, Upstash clients, and store objects.
 3. It exposes all JSON APIs plus the static SPA build from `dist/`.
 4. It sets `X-Backend-Version` on every response and uses frontend version input to compute version mismatch state.
+
+### Hosted Deployment
+- The browser application is deployed as one Railway web service.
+- Render is not an application host; it is the primary Missevan fallback proxy used after a direct HTTP 418.
+- Deno is the secondary Missevan fallback proxy.
 
 ### Electron Desktop Flow
 1. `electron/main.mjs` creates the desktop window.
@@ -48,7 +51,7 @@ This document describes the current implementation, not the historical evolution
 ### Core Runtime Modules
 - `server.js`: single backend entrypoint and service composition root
 - `src/main.jsx`: frontend entrypoint
-- `src/app/RootApp.jsx`: landing/tool bootstrap
+- `src/app/RootApp.jsx`: application configuration and ToolView bootstrap
 - `src/app/ToolView.jsx`: primary interaction shell
 - `src/app/RanksPanel.jsx`: ranks UI
 - `src/app/OngoingPanel.jsx`: ongoing titles UI
@@ -70,10 +73,9 @@ This document describes the current implementation, not the historical evolution
 
 The backend currently exposes these route families.
 
-### Configuration, Health, and Landing
+### Configuration and Health
 - `GET /app-config`: frontend feature flags, brand text, desktop metadata, cooldown info, version mismatch state
 - `GET /health`: backend liveness
-- `GET /landing/regions`: multi-region cooldown status snapshots for landing nodes
 
 ### Missevan Search and Content APIs
 - `GET /search`: library-backed search with fallback to Missevan public search API when needed
@@ -156,16 +158,13 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | `manboInfoStore` | Upstash `manbo:info:v1` | `runtime/manbo-drama-info.json` | Searchable Manbo title metadata |
 | `missevanInfoStore` | Upstash `missevan:info:v1` | `runtime/missevan-drama-info.json` | Searchable Missevan title metadata |
 | `newDramaIdsStore` | Upstash `new:dramaIDs` | `runtime/new-drama-ids.json` | Captured new IDs |
-| cooldown state | Upstash `missevan:cooldown:v1` and region keys | in-memory only when persistence disabled | Access-denial recovery state |
-| ranks and ongoing snapshots | Upstash `ranks:latest`, `ranks:index`, `ranks:metrics:*`, `ranks:list:*`, `ongoing:*` | none | Rank, trend, and ongoing APIs |
+| cooldown state | Upstash `missevan:cooldown:v1` | in-memory only when persistence disabled | Direct, Render fallback, and Deno fallback access-denial recovery state |
+| ranks and ongoing snapshots | Upstash `ranks:latest`, `ranks:cv:latest`, `ranks:trend:{platform}`, `ranks:trend:cv:{platform}`, `ranks:trend:peak:missevan`, `ongoing:{platform}`, `ranks:meta` | none | Rank, trend, and ongoing APIs |
 
-### Multi-Region Cooldown State
-- The landing page exposes three region snapshots: `area1`, `area2`, and `area3`.
-- Their persistent keys are:
-  - `missevan:cooldown:render:area1`
-  - `missevan:cooldown:render:area2`
-  - `missevan:cooldown:render:area3`
-- This state is advisory for routing users toward healthier nodes and is separate from the main Missevan cooldown key.
+### Missevan Cooldown State
+- Railway stores the direct, Render fallback, and Deno fallback cooldown fields in one `missevan:cooldown:v1` JSON value.
+- Requests prefer direct Missevan access, then Render, then Deno.
+- When all enabled routes are cooling down, the API returns the nearest retry time.
 
 ## In-Memory Caches and Runtime Limits
 
@@ -219,17 +218,17 @@ This subsystem is backed by shared domain utilities and Upstash snapshot keys.
 
 ### Rank System
 - `GET /ranks` returns normalized categories for both platforms.
-- The backend tags the response with schema version `3`.
+- The backend tags the response with schema version `5`.
 - The frontend renders this data in `src/app/RanksPanel.jsx`.
 
 ### Trend System
-- `GET /ranks/trends` reads per-date metric and list snapshots from `ranks:metrics:*` and `ranks:list:*` keys.
+- `GET /ranks/trends` reads ordinary, CV, or peak history from the corresponding `ranks:trend:*` aggregate key.
 - The backend tags the trend response with schema version `4`.
 - Shared shaping logic lives in `shared/ranksTrendUtils.js`.
 - The dialog and visualization layer lives in `src/app/rankTrendUi.jsx`.
 
 ### Ongoing System
-- `GET /ongoing` reads configured ongoing IDs plus rank metric snapshots and computes 3-day, 7-day, and 30-day windows.
+- `GET /ongoing` reads `ongoing:{platform}` IDs plus `ranks:trend:{platform}` and computes 3-day, 7-day, and 30-day windows.
 - The backend tags the response with schema version `3`.
 - Shared shaping logic lives in `shared/ongoingUtils.js`.
 - The frontend renders this data in `src/app/OngoingPanel.jsx`.

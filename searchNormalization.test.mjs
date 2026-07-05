@@ -966,6 +966,46 @@ test("stats task source is normalized for favorite refresh logs", async () => {
   assert.equal(normalizeStatsTaskSource(""), "");
 });
 
+test("completed stats task usage logs preserve the full result and optional source", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildStatsTaskCompletedUsageLog } = await import("./server.js");
+  const result = {
+    idResults: [{ dramaId: "12345", users: 8 }],
+    totalUsers: 8,
+  };
+
+  assert.deepEqual(
+    buildStatsTaskCompletedUsageLog({
+      platform: "missevan",
+      taskId: "task-result-1",
+      taskType: "id",
+      status: "completed",
+      source: "12345payID",
+      totalCount: 3,
+      completedCount: 2,
+      failedCount: 1,
+      accessDenied: false,
+      result,
+    }),
+    {
+      action: "calculate",
+      platform: "missevan",
+      taskId: "task-result-1",
+      taskType: "id",
+      status: "completed",
+      success: false,
+      source: "12345payID",
+      totalCount: 3,
+      completedCount: 2,
+      failedCount: 1,
+      accessDenied: false,
+      result,
+    }
+  );
+  assert.equal(buildStatsTaskCompletedUsageLog({ status: "failed", result }), null);
+  assert.equal(buildStatsTaskCompletedUsageLog({ status: "cancelled", result }), null);
+});
+
 test("desktop favorites read errors keep a JSON response payload with file path", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildDesktopFavoritesReadErrorPayload } = await import("./server.js");

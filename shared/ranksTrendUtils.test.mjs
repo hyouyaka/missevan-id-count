@@ -280,11 +280,22 @@ test("buildCvTrendResponse combines cross-platform weekly playback metrics", () 
       missevan: {
         platform: "missevan",
         updated_at: "2026-06-19T04:04:53+00:00",
-        dates: ["2026-06-19"],
+        dates: ["2026-06-13", "2026-06-19"],
         cvs: {
           "路知行": {
             cvName: "路知行",
             samples: {
+              "2026-06-13": {
+                generated_at: "2026-06-13T02:38:36+00:00",
+                metrics: {
+                  totalViewCount: 1189097577,
+                  paidViewCount: null,
+                },
+                ranks: {
+                  total: 1,
+                  paid: null,
+                },
+              },
               "2026-06-19": {
                 generated_at: "2026-06-19T04:04:53+00:00",
                 metrics: {
@@ -303,11 +314,22 @@ test("buildCvTrendResponse combines cross-platform weekly playback metrics", () 
       manbo: {
         platform: "manbo",
         updated_at: "2026-06-19T04:04:53+00:00",
-        dates: ["2026-06-19"],
+        dates: ["2026-06-13", "2026-06-19"],
         cvs: {
           "路知行": {
             cvName: "路知行",
             samples: {
+              "2026-06-13": {
+                generated_at: "2026-06-13T02:38:36+00:00",
+                metrics: {
+                  totalViewCount: 1000,
+                  paidViewCount: null,
+                },
+                ranks: {
+                  total: 5,
+                  paid: null,
+                },
+              },
               "2026-06-19": {
                 generated_at: "2026-06-19T04:04:53+00:00",
                 metrics: {
@@ -322,25 +344,6 @@ test("buildCvTrendResponse combines cross-platform weekly playback metrics", () 
             },
           },
         },
-      },
-    },
-    baselineSnapshot: {
-      generated_at: "2026-06-13T02:38:36+00:00",
-      rankings: {
-        missevan: [
-          {
-            cvName: "路知行",
-            totalViewCount: 1189097577,
-            rank: 1,
-          },
-        ],
-        manbo: [
-          {
-            cvName: "路知行",
-            totalViewCount: 1000,
-            rank: 5,
-          },
-        ],
       },
     },
   });
@@ -381,6 +384,50 @@ test("buildCvTrendResponse combines cross-platform weekly playback metrics", () 
       ],
     },
   ]);
+});
+
+test("buildCvTrendResponse rejects an incomplete cross-platform aggregate pair", () => {
+  const response = buildCvTrendResponse({
+    id: "路知行",
+    trendSnapshots: {
+      missevan: {
+        platform: "missevan",
+        dates: ["2026-06-19"],
+        cvs: {
+          "路知行": {
+            samples: {
+              "2026-06-19": {
+                metrics: { totalViewCount: 100 },
+                ranks: { total: 1 },
+              },
+            },
+          },
+        },
+      },
+      manbo: null,
+    },
+  });
+
+  assert.deepEqual(response, {
+    success: false,
+    status: 503,
+    kind: "cv",
+    id: "路知行",
+    message: "CV rank trend aggregate is unavailable",
+  });
+});
+
+test("buildCvTrendResponse returns not found only after both CV aggregates validate", () => {
+  const response = buildCvTrendResponse({
+    id: "不存在",
+    trendSnapshots: {
+      missevan: { platform: "missevan", cvs: {} },
+      manbo: { platform: "manbo", cvs: {} },
+    },
+  });
+
+  assert.equal(response.success, false);
+  assert.equal(response.status, 404);
 });
 
 test("buildRankTrendResponse keeps one pre-window history point for increment charts without changing window deltas", () => {
@@ -868,6 +915,50 @@ test("buildRankTrendAvailabilityResponse preserves Manbo big integer ids", () =>
   });
 
   assert.deepEqual(response.ids, ["1467142227078676553"]);
+});
+
+test("ordinary trend and availability reject missing or mismatched aggregates", () => {
+  const trendResponse = buildAggregatedRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    aggregateSnapshot: null,
+  });
+  assert.equal(trendResponse.success, false);
+  assert.equal(trendResponse.status, 503);
+
+  const availabilityResponse = buildRankTrendAvailabilityResponse({
+    platform: "missevan",
+    ids: ["93038"],
+    aggregateSnapshot: {
+      platform: "manbo",
+      dates: ["2026-05-17"],
+      dramas: {},
+    },
+  });
+  assert.equal(availabilityResponse.success, false);
+  assert.equal(availabilityResponse.status, 503);
+});
+
+test("aggregate validators reject array-shaped drama and CV maps", () => {
+  const ordinaryResponse = buildAggregatedRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    aggregateSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-17"],
+      dramas: [],
+    },
+  });
+  assert.equal(ordinaryResponse.status, 503);
+
+  const cvResponse = buildCvTrendResponse({
+    id: "路知行",
+    trendSnapshots: {
+      missevan: { platform: "missevan", cvs: [] },
+      manbo: { platform: "manbo", cvs: {} },
+    },
+  });
+  assert.equal(cvResponse.status, 503);
 });
 
 test("buildAggregatedRankTrendResponse anchors all windows to the drama latest metric sample", () => {

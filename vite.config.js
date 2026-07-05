@@ -70,7 +70,6 @@ export default defineConfig({
       "/ongoing": backendTarget,
       "/ranks/trends": backendTarget,
       "/ranks": backendTarget,
-      "/landing": backendTarget,
       "/manbo": backendTarget,
     },
   },

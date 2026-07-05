@@ -18,6 +18,8 @@ const {
   getNearestMissevanAccessUntil,
   getStatsTaskItemCounts,
   isStatsTaskItemLimitExceeded,
+  parseMissevanCooldownStatePayload,
+  selectMissevanRequestRoute,
   shouldPersistAccessDeniedCooldownForEnv,
 } = await import("./server.js");
 
@@ -307,6 +309,107 @@ test("Missevan all-node retry time uses the nearest active route cooldown", () =
       now
     ),
     0
+  );
+});
+
+test("Missevan request route priority is direct, Render, Deno, then blocked", () => {
+  const now = 1_000_000;
+  const activeUntil = now + 60_000;
+  const route = (key, accessUntil, enabled = true) => ({
+    key,
+    enabled,
+    state: { accessUntil },
+  });
+
+  assert.deepEqual(
+    selectMissevanRequestRoute({
+      now,
+      directState: { accessUntil: 0 },
+      fallbackRoutes: [
+        route("primary", activeUntil),
+        route("secondary", activeUntil),
+      ],
+    }),
+    { type: "direct", routeKey: "direct", cooldownUntil: 0 }
+  );
+  assert.deepEqual(
+    selectMissevanRequestRoute({
+      now,
+      directState: { accessUntil: activeUntil },
+      fallbackRoutes: [
+        route("primary", 0),
+        route("secondary", 0),
+      ],
+    }),
+    { type: "fallback", routeKey: "primary", cooldownUntil: 0 }
+  );
+  assert.deepEqual(
+    selectMissevanRequestRoute({
+      now,
+      directState: { accessUntil: activeUntil },
+      fallbackRoutes: [
+        route("primary", now + 30_000),
+        route("secondary", 0),
+      ],
+    }),
+    { type: "fallback", routeKey: "secondary", cooldownUntil: 0 }
+  );
+  assert.deepEqual(
+    selectMissevanRequestRoute({
+      now,
+      directState: { accessUntil: activeUntil },
+      fallbackRoutes: [
+        route("primary", now + 30_000),
+        route("secondary", now + 90_000),
+      ],
+    }),
+    { type: "blocked", routeKey: "", cooldownUntil: now + 30_000 }
+  );
+  assert.deepEqual(
+    selectMissevanRequestRoute({
+      now,
+      directState: { accessUntil: 0 },
+      fallbackRoutes: [
+        route("primary", activeUntil),
+        route("secondary", activeUntil),
+      ],
+    }),
+    { type: "direct", routeKey: "direct", cooldownUntil: 0 }
+  );
+});
+
+test("Missevan cooldown payload restores direct, Render, and Deno states", () => {
+  assert.deepEqual(
+    parseMissevanCooldownStatePayload({
+      appVersion: "1.7.0",
+      accessDeniedUntil: 11,
+      accessDeniedCooldownMode: "base",
+      accessDeniedUseShortCooldown: false,
+      primaryAccessDeniedUntil: 22,
+      primaryAccessDeniedCooldownMode: "repeat",
+      primaryAccessDeniedUseShortCooldown: true,
+      secondaryAccessDeniedUntil: 33,
+      secondaryAccessDeniedCooldownMode: "repeat_ready",
+      secondaryAccessDeniedUseShortCooldown: true,
+    }),
+    {
+      appVersion: "1.7.0",
+      direct: {
+        accessUntil: 11,
+        cooldownMode: "base",
+        useShortCooldown: false,
+      },
+      primary: {
+        accessUntil: 22,
+        cooldownMode: "repeat",
+        useShortCooldown: true,
+      },
+      secondary: {
+        accessUntil: 33,
+        cooldownMode: "repeat_ready",
+        useShortCooldown: true,
+      },
+    }
   );
 });
 

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { LandingView } from "@/app/LandingView";
 import { ToolView } from "@/app/ToolView";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -11,26 +10,8 @@ import {
   normalizeVersion,
 } from "@/app/app-utils";
 
-function getCurrentPath() {
-  if (typeof window === "undefined") {
-    return "/";
-  }
-  return String(window.location.pathname || "/").replace(/\/+$/, "") || "/";
-}
-
-function isNodesPath() {
-  return getCurrentPath() === "/nodes";
-}
-
-function isProbablyDesktopShell() {
-  if (typeof navigator === "undefined") {
-    return false;
-  }
-  return /Electron/i.test(String(navigator.userAgent || ""));
-}
-
 export function RootApp() {
-  const [resolvedView, setResolvedView] = useState("");
+  const [configReady, setConfigReady] = useState(false);
   const [appConfig, setAppConfig] = useState(getDefaultAppConfig());
 
   useEffect(() => {
@@ -54,7 +35,7 @@ export function RootApp() {
       } catch (_) {
       } finally {
         if (!cancelled) {
-          setResolvedView(isNodesPath() && !isProbablyDesktopShell() ? "landing" : "tool");
+          setConfigReady(true);
         }
       }
     }
@@ -73,12 +54,8 @@ export function RootApp() {
     [appConfig]
   );
 
-  if (resolvedView === "tool") {
+  if (configReady) {
     return <ToolView initialAppConfig={versionedConfig} />;
-  }
-
-  if (resolvedView === "landing") {
-    return <LandingView appConfig={versionedConfig} />;
   }
 
   return (
