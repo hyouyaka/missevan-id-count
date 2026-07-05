@@ -6,9 +6,16 @@ import { createUpstashRestClient } from "./upstashRestClient.js";
 test("task-scoped Upstash commands abort after their requested timeout", async () => {
   const fetchImpl = (_url, options) =>
     new Promise((_resolve, reject) => {
+      const watchdog = setTimeout(
+        () => reject(new Error("abort signal did not fire")),
+        1_000
+      );
       options.signal.addEventListener(
         "abort",
-        () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+        () => {
+          clearTimeout(watchdog);
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        },
         { once: true }
       );
     });
