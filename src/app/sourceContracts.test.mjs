@@ -1333,7 +1333,7 @@ test("ongoing mobile filter tabs use compact borderless pills", () => {
 
 test("web ongoing and ranks filters use shared lightweight capsules", () => {
   assert.match(ongoingPanelSource, /const desktopOngoingTextTabsListClassName =\s*\n\s*"inline-flex h-9 min-h-9 w-fit justify-start"/);
-  assert.match(ongoingPanelSource, /const desktopOngoingTabClassName =\s*\n\s*"h-7 min-h-7 min-w-0 px-3 text-sm!"/);
+  assert.match(ongoingPanelSource, /const desktopOngoingTabClassName =\s*\n\s*"h-7 min-h-7 min-w-max px-3 text-sm!"/);
   assert.match(ongoingPanelSource, /platform === selectedPlatform \? desktopOngoingSelectedPlatformTabClassName : ""/);
   assert.match(ongoingPanelSource, /key === activeWindow \? desktopOngoingSelectedTabClassName : ""/);
   assert.match(ongoingPanelSource, /sm:gap-10[\s\S]*lg:gap-12/);

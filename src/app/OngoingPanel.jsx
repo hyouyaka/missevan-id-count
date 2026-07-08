@@ -53,7 +53,7 @@ const mobileOngoingSelectedPlatformTabClassName = "";
 const desktopOngoingTextTabsListClassName =
   "inline-flex h-9 min-h-9 w-fit justify-start";
 const desktopOngoingTabClassName =
-  "h-7 min-h-7 min-w-0 px-3 text-sm!";
+  "h-7 min-h-7 min-w-max px-3 text-sm!";
 const desktopOngoingSelectedTabClassName = mobileOngoingSelectedTabClassName;
 const desktopOngoingSelectedPlatformTabClassName =
   `${desktopOngoingSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
