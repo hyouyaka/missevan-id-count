@@ -49,6 +49,7 @@ export function SearchPanel({
   onSearchPendingChange,
   placeholder = "请输入关键词、ID、分享链接。",
 }) {
+  const searchGenerationRef = useRef(0);
   const [isSearchPending, setIsSearchPending] = useState(false);
   const [searchHelpOpen, setSearchHelpOpen] = useState(false);
   const searchPendingRef = useRef(false);
@@ -208,9 +209,15 @@ export function SearchPanel({
     }
   }
 
-  function publishUnifiedSearchResults(resultsByPlatform, source = "search") {
-    onUpdatePlatformResults?.("missevan", resultsByPlatform.missevan?.results || [], source, resultsByPlatform.missevan?.meta || {});
-    onUpdatePlatformResults?.("manbo", resultsByPlatform.manbo?.results || [], source, resultsByPlatform.manbo?.meta || {});
+  function publishUnifiedSearchResults(resultsByPlatform, source = "search", searchGeneration = 0) {
+    onUpdatePlatformResults?.("missevan", resultsByPlatform.missevan?.results || [], source, {
+      ...(resultsByPlatform.missevan?.meta || {}),
+      searchGeneration,
+    });
+    onUpdatePlatformResults?.("manbo", resultsByPlatform.manbo?.results || [], source, {
+      ...(resultsByPlatform.manbo?.meta || {}),
+      searchGeneration,
+    });
   }
 
   function selectFirstPlatformWithResults(resultsByPlatform) {
@@ -231,11 +238,12 @@ export function SearchPanel({
     onResetPlatformState?.("missevan");
     onResetPlatformState?.("manbo");
     setSearchPending(true);
+    const searchGeneration = ++searchGenerationRef.current;
 
     try {
       const finalResults = await queryBackendUnifiedSearch(keyword);
 
-      publishUnifiedSearchResults(finalResults);
+      publishUnifiedSearchResults(finalResults, "search", searchGeneration);
       selectFirstPlatformWithResults(finalResults);
 
       if (finalResults.missevan?.accessDenied) {

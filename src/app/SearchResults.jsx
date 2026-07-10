@@ -87,9 +87,17 @@ const metricIconMap = {
   收听人数: ShoppingCartIcon,
 };
 
-function MetricIcon({ label, className = "size-3.5" }) {
+function getMetricLoadingMotionClass(label) {
+  if (label === "总播放量") return "metric-motion-play";
+  if (label === "追剧人数" || label === "收藏人数" || label === "收藏数") return "metric-motion-heart";
+  if (label === "打赏人数") return "metric-motion-reward";
+  if (label === "投喂总数") return "metric-motion-feed";
+  return "metric-motion-count";
+}
+
+function MetricIcon({ label, className = "size-3.5", loading = false }) {
   const Icon = metricIconMap[label] || PlayCircleIcon;
-  return <Icon aria-hidden="true" className={className} />;
+  return <Icon aria-hidden="true" className={`${className} ${loading ? getMetricLoadingMotionClass(label) : ""}`.trim()} />;
 }
 
 export function MetricLegend({ className = "" }) {
@@ -183,6 +191,9 @@ const searchResultTagVariants = {
 };
 
 function getFallbackPaymentLabel(item) {
+  if (item?.is_member == null && item?.price == null && item?.member_price == null && !item?.revenue_type) {
+    return "";
+  }
   if (item?.is_member) {
     return "会员";
   }
@@ -245,6 +256,7 @@ export function SearchResults({
   statisticsActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  onRetryMetrics,
 }) {
   const idLabel = "作品ID";
   const episodeIdLabel = platform === "manbo" ? "Set ID" : "Sound ID";
@@ -748,6 +760,21 @@ export function SearchResults({
   }
 
   function getResultMetrics(item) {
+    const metricsStatus = String(item?.metrics_status || "ready");
+    if (metricsStatus !== "ready") {
+      const value = metricsStatus === "loading" || metricsStatus === "pending"
+        ? "正在获取"
+        : metricsStatus === "access_denied"
+          ? "暂不可用"
+          : "获取失败";
+      return [
+        { label: "总播放量", value, loading: metricsStatus === "loading" || metricsStatus === "pending" },
+        { label: extraMetaLabel, value, loading: metricsStatus === "loading" || metricsStatus === "pending" },
+        platform === "missevan"
+          ? { label: "打赏人数", value, loading: metricsStatus === "loading" || metricsStatus === "pending" }
+          : { label: "投喂总数", value, loading: metricsStatus === "loading" || metricsStatus === "pending" },
+      ];
+    }
     return [
       {
         label: "总播放量",
@@ -1036,6 +1063,8 @@ export function SearchResults({
               const paymentTag = getSearchResultPaymentTag(item);
               const titleTags = getSearchResultTitleTags(item);
               const metrics = getResultMetrics(item);
+              const metricsStatus = String(item?.metrics_status || "ready");
+              const metricsFailed = metricsStatus === "error" || metricsStatus === "access_denied";
               const canShowTrend = canShowSearchTrend(item);
 
               return (
@@ -1127,11 +1156,16 @@ export function SearchResults({
                                 className="max-w-full text-foreground"
                               >
                                 <span className="inline-flex w-fit max-w-full items-center gap-1">
-                                  <MetricIcon label={metric.label} className="size-3.5 shrink-0 text-muted-foreground" />
-                                  <span className="min-w-0 break-all text-[0.74rem] font-medium tabular-nums sm:text-sm">{metric.value}</span>
+                                  <MetricIcon label={metric.label} loading={metric.loading} className="size-3.5 shrink-0 text-muted-foreground" />
+                                  <span className={`min-w-0 break-all text-[0.74rem] font-medium tabular-nums sm:text-sm ${metricsStatus === "ready" ? "metric-value-ready" : ""}`}>{metric.value}</span>
                                 </span>
                               </div>
                             ))}
+                            {metricsFailed ? (
+                              <Button type="button" variant="ghost" size="xs" className="h-6 px-1.5 text-xs" onClick={() => onRetryMetrics?.(item)}>
+                                重试
+                              </Button>
+                            ) : null}
                             {canShowTrend ? (
                               <>
                                 <RankTrendButton
@@ -1211,11 +1245,16 @@ export function SearchResults({
                             className="max-w-full text-foreground"
                           >
                             <span className="inline-flex w-fit max-w-full items-center gap-1">
-                              <MetricIcon label={metric.label} className="size-3.5 shrink-0 text-muted-foreground" />
-                              <span className="min-w-0 break-all text-[0.74rem] font-medium tabular-nums sm:text-sm">{metric.value}</span>
+                              <MetricIcon label={metric.label} loading={metric.loading} className="size-3.5 shrink-0 text-muted-foreground" />
+                              <span className={`min-w-0 break-all text-[0.74rem] font-medium tabular-nums sm:text-sm ${metricsStatus === "ready" ? "metric-value-ready" : ""}`}>{metric.value}</span>
                             </span>
                           </div>
                         ))}
+                      {metricsFailed ? (
+                        <Button type="button" variant="ghost" size="xs" data-touch="compact" className="h-7 px-1.5 text-xs" onClick={() => onRetryMetrics?.(item)}>
+                          重试
+                        </Button>
+                      ) : null}
                       {canShowTrend ? (
                         <>
                           <RankTrendButton

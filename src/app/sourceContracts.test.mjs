@@ -35,6 +35,7 @@ const taskEngineSource = readFileSync(new URL("../../server/stats/taskEngine.js"
 const taskStateSource = readFileSync(new URL("../../server/stats/taskState.js", import.meta.url), "utf8");
 const envConfigSource = readFileSync(new URL("../../envConfig.js", import.meta.url), "utf8");
 const packageSource = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
+const railwaySource = readFileSync(new URL("../../railway.json", import.meta.url), "utf8");
 const indexCssSource = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 const buttonSource = readFileSync(new URL("../components/ui/button.jsx", import.meta.url), "utf8");
 const alertDialogSource = readFileSync(new URL("../components/ui/alert-dialog.jsx", import.meta.url), "utf8");
@@ -1180,15 +1181,16 @@ test("merged search import branch is protected by pending state", () => {
   assert.match(submitSource, /finally \{\s*setSearchPending\(false\);\s*\}/);
 });
 
-test("backend unified search route aggregates libraries before API fallback", () => {
+test("backend unified search uses coupled API fallback and library card details", () => {
   const routeStart = serverSource.indexOf('app.get("/unified-search"');
   assert.notEqual(routeStart, -1, "unified search route should exist");
   const routeEnd = serverSource.indexOf('app.get("/search"', routeStart);
   assert.notEqual(routeEnd, -1, "unified search route should sit before the legacy Missevan search route");
   const routeSource = serverSource.slice(routeStart, routeEnd);
 
-  assert.match(routeSource, /Promise\.all\(\[\s*ensureInfoStoreLoaded\(missevanInfoStore\),\s*ensureInfoStoreLoaded\(manboInfoStore\),\s*\]\)/);
-  assert.equal(routeSource.match(/refreshMissevanCooldownState/g)?.length ?? 0, 1);
+  assert.match(routeSource, /Promise\.all\(\[\s*ensureInfoStoreReadyForSearch\(missevanInfoStore\),\s*ensureInfoStoreReadyForSearch\(manboInfoStore\),\s*\]\)/);
+  assert.match(serverSource, /async function ensureInfoStoreReadyForSearch\(store\)[\s\S]*if \(!store\.loaded\)[\s\S]*void ensureInfoStoreLoaded\(store\)/);
+  assert.equal(routeSource.match(/refreshMissevanCooldownState/g)?.length ?? 0, 0);
   assert.match(routeSource, /runMissevanLibraryUnifiedSearch/);
   assert.match(routeSource, /runManboLibraryUnifiedSearch/);
   assert.match(routeSource, /runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "strict"\)/);
@@ -1198,25 +1200,71 @@ test("backend unified search route aggregates libraries before API fallback", ()
   assert.match(routeSource, /const shouldRunCompatibilitySearch = !hasUnifiedSearchMatches\(missevanLibraryResult\) &&\s*!hasUnifiedSearchMatches\(manboLibraryResult\)/);
   const strictSearchIndex = routeSource.indexOf('runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "strict")');
   const compatibleSearchIndex = routeSource.indexOf('runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "compatible")');
-  const apiFallbackIndex = routeSource.indexOf("const fallbackPlan = buildUnifiedSearchFallbackPlan");
   assert.ok(strictSearchIndex >= 0 && strictSearchIndex < compatibleSearchIndex);
-  assert.ok(compatibleSearchIndex < apiFallbackIndex);
-  assert.match(routeSource, /if \(shouldRunCompatibilitySearch\) \{\s*void writeUsageLog\(buildCompatibilitySearchUsageLog\("unified", normalizedKeyword\)\)/);
-  assert.match(routeSource, /const fallbackPlan = buildUnifiedSearchFallbackPlan\(\s*missevanLibraryResult,\s*manboLibraryResult\s*\)/);
-  assert.match(routeSource, /if \(!fallbackPlan\.usedApiFallback\)/);
+  assert.match(routeSource, /if \(shouldRunCompatibilitySearch\) \{/);
   assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "strict"\),\s*runManboLibraryUnifiedSearch\(normalizedKeyword, offset, limit, "strict"\),\s*\]\)/);
-  assert.match(routeSource, /fallbackPlan\.missevan[\s\S]*runMissevanApiUnifiedSearch\(normalizedKeyword, offset, limit\)[\s\S]*Promise\.resolve\(missevanLibraryResult\)/);
-  assert.match(routeSource, /fallbackPlan\.manbo[\s\S]*runManboApiUnifiedSearch\(normalizedKeyword, offset, limit\)[\s\S]*Promise\.resolve\(manboLibraryResult\)/);
-  assert.match(serverSource, /async function runManboApiUnifiedSearch\(keyword, offset, limit\)[\s\S]*const pagedResults = apiResults\.slice\(offset, offset \+ limit\)[\s\S]*results: pagedResults[\s\S]*buildSearchPageMeta\(keyword, apiResults\.length, offset, limit\)/);
-  assert.match(routeSource, /normalizeSettledUnifiedSearchResult\("missevan"/);
-  assert.match(routeSource, /normalizeSettledUnifiedSearchResult\("manbo"/);
+  assert.doesNotMatch(routeSource, /buildUnifiedSearchFallbackPlan/);
+  assert.match(routeSource, /const shouldRunApiFallback = !hasUnifiedSearchMatches\(missevanLibraryResult\) &&\s*!hasUnifiedSearchMatches\(manboLibraryResult\)/);
+  assert.match(routeSource, /if \(!shouldRunApiFallback\)[\s\S]*usedApiFallback/);
+  assert.match(routeSource, /Promise\.allSettled\(\[\s*runMissevanApiUnifiedSearch[\s\S]*runManboApiUnifiedSearch/);
+  assert.match(serverSource, /async function hydrateMissevanApiSearchBaseRecord\(record\)[\s\S]*payment_label: getMissevanPaymentLabel\(card\)/);
+  assert.match(serverSource, /runMissevanApiUnifiedSearch\(keyword, offset, limit\)[\s\S]*hydrateMissevanApiSearchBaseRecord/);
+  assert.match(serverSource, /search_access_denied: true/);
+  assert.match(serverSource, /resolvedResults\.some\(\(item\) => item\?\.search_access_denied === true\)/);
+  assert.match(serverSource, /\.\.\.\(accessDenied \? \{ accessDenied: true \} : \{\}\)/);
+  assert.doesNotMatch(routeSource, /hydrateMissevanSearchRecord/);
+  assert.doesNotMatch(routeSource, /hydrateManboSearchRecord/);
   assert.match(routeSource, /results:\s*\{\s*missevan:[\s\S]*manbo:/);
   assert.match(routeSource, /usedApiFallback/);
+  assert.match(serverSource, /results = pagedRecords\.map\(buildMissevanSearchFallbackCard\)/);
+  assert.match(serverSource, /const hydratedResults = pagedRecords\.map\(buildManboSearchFallbackCard\)/);
+  assert.match(serverSource, /metrics_status: "pending"/);
+  assert.match(routeSource, /app\.post\("\/search-card-metrics", searchCardMetricsLimiter/);
+  assert.match(routeSource, /SEARCH_CARD_METRICS_TIMEOUT_MS/);
+  assert.match(routeSource, /METRICS_BUSY/);
+  assert.doesNotMatch(routeSource, /card_patch/);
+  assert.match(serverSource, /let rewardNum = null;[\s\S]*fetchRewardDetailMeta\(id, \{ signal \}\)[\s\S]*if \(signal\?\.aborted \|\| isMissevanAccessDenied\(error\)\)[\s\S]*reward_num: rewardNum/);
+  assert.match(serverSource, /needpay: Boolean\(record\?\.needpay\)/);
+  assert.match(serverSource, /vipFree: Number\(record\?\.vipFree/);
+  assert.match(serverSource, /is_member: Boolean\(node\?\.is_member\)/);
+  assert.match(serverSource, /cover: normalizeTextValue\(node\?\.cover\)/);
   assert.match(serverSource, /function parseLibrarySearchExpression\(keyword\)/);
   assert.match(serverSource, /const QUERY_COMMA_SEPARATOR_PATTERN = \/\[,，\]\+\/u/);
   assert.match(serverSource, /function tokenizeSearchAndTerms\(value\)/);
   assert.match(serverSource, /function buildCompoundScoredMatches\(records, keyword, buildTermMatches\)/);
   assert.match(serverSource, /isPureSeasonQueryTerm/);
+});
+
+test("search cards refresh active-platform metrics without blocking actions", () => {
+  assert.match(searchPanelSource, /searchGenerationRef/);
+  assert.match(toolViewSource, /refreshSearchMetricItems/);
+  assert.match(toolViewSource, /const concurrency = platform === "manbo" \? 2 : 1/);
+  assert.match(appUtilsSource, /\["pending", "loading", "error", "access_denied"\]/);
+  assert.match(toolViewSource, /String\(item\?\.metrics_status\) === "loading"[\s\S]*metrics_status: "pending"/);
+  assert.doesNotMatch(toolViewSource, /payload\.card_patch/);
+  assert.match(toolViewSource, /const queue = selectSearchMetricQueue\(items, resultSource\)/);
+  assert.match(appUtilsSource, /return resultSource === "manual" \? candidates : candidates\.slice\(0, 5\)/);
+  assert.match(toolViewSource, /code === "METRICS_RATE_LIMITED" && resultSource === "manual"/);
+  assert.match(toolViewSource, /response\.headers\.get\("Retry-After"\)/);
+  assert.match(toolViewSource, /await waitForTaskPoll\(controller\.signal, retryAfterSeconds \* 1000 \+ 250\)/);
+  assert.match(toolViewSource, /\/search-card-metrics/);
+  assert.match(viteConfigSource, /"\/unified-search": backendTarget/);
+  assert.match(viteConfigSource, /"\/search-card-metrics": backendTarget/);
+  assert.match(toolViewSource, /onRetryMetrics=\{retrySearchCardMetrics\}/);
+  assert.match(searchResultsSource, /metrics_status/);
+  assert.match(searchResultsSource, /正在获取/);
+  assert.match(searchResultsSource, /获取失败/);
+  assert.match(searchResultsSource, /onRetryMetrics/);
+  assert.match(indexCssSource, /metric-motion-play/);
+  assert.match(indexCssSource, /metric-motion-heart/);
+  assert.match(indexCssSource, /metric-motion-reward/);
+  assert.match(serverSource, /const localRecord = item\.type === "drama"[\s\S]*buildMissevanSearchFallbackCard\(localRecord\)/);
+  assert.match(serverSource, /manboInfoStore\.byDramaId\.get\(String\(item\.raw\)\)[\s\S]*buildManboSearchFallbackCard\(localRecord\)/);
+});
+
+test("Railway uses deterministic install and direct server startup", () => {
+  assert.match(railwaySource, /"buildCommand": "npm ci && npm run build"/);
+  assert.match(railwaySource, /"startCommand": "node server\.js"/);
 });
 
 test("unified search panels are unframed", () => {
@@ -1483,14 +1531,14 @@ test("rank and ongoing panels render cached data before background refresh", () 
   assert.match(ongoingPanelSource, /setIsLoading\(!cachedPayload\)/);
 });
 
-test("external drama title jump uses Missevan access-denied copy for cooldown failures", () => {
+test("external drama title jump permits library hits and handles backend cooldown failures", () => {
   const openStart = toolViewSource.indexOf("async function openDramaInSearch");
   assert.notEqual(openStart, -1, "openDramaInSearch should exist");
   const openEnd = toolViewSource.indexOf("function beginRun", openStart);
   assert.notEqual(openEnd, -1, "openDramaInSearch should end before stats run helpers");
   const openSource = toolViewSource.slice(openStart, openEnd);
   const precheckStart = openSource.indexOf("Number(appConfigRef.current.cooldownUntil");
-  assert.notEqual(precheckStart, -1, "openDramaInSearch should precheck local Missevan cooldown");
+  assert.equal(precheckStart, -1, "openDramaInSearch should allow a local library hit during cooldown");
   const accessDeniedStart = openSource.indexOf("data?.accessDenied");
   assert.notEqual(accessDeniedStart, -1, "openDramaInSearch should handle backend access-denied responses");
   const genericFailureStart = openSource.indexOf('toast.error("打开搜索结果失败，请稍后重试。")', accessDeniedStart);
@@ -3382,6 +3430,12 @@ test("Missevan request-slot waiting follows task cancellation", () => {
     serverSource,
     /beforeAttempt: \(\) => waitForMissevanRequestSlot\(options\.signal\)/
   );
+  assert.match(serverSource, /Cancelled Missevan danmaku/);
+  assert.match(serverSource, /Cancelled Manbo danmaku/);
+  assert.match(serverSource, /status: "cancelled"/);
+  assert.match(serverSource, /result\.cancelled \|\| task\.cancelled \|\| task\.abortSignal\?\.aborted/);
+  assert.match(serverSource, /get timedOut\(\)/);
+  assert.match(serverSource, /error\.requestTimedOut = true/);
 });
 
 test("resource protection environment keys are loaded from local env files", () => {

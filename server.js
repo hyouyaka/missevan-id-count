@@ -183,6 +183,8 @@ const manboDanmakuCache = new TtlLruCache({
   maxEntries: MANBO_DANMAKU_CACHE_MAX_ENTRIES,
 });
 const manboDanmakuRequests = createSharedRequestRegistry();
+const searchCardMetricRequests = createSharedRequestRegistry();
+let activeSearchCardMetricRequests = 0;
 const upstashClient = createUpstashRestClient();
 const manboInfoStore = {
   platform: "manbo",
@@ -299,6 +301,8 @@ const MANBO_FETCH_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.MANBO_FETCH_TIMEOUT_MS ?? 10000) || 10000
 );
+const SEARCH_CARD_METRICS_TIMEOUT_MS = 12_000;
+const SEARCH_CARD_METRICS_MAX_ACTIVE = 20;
 const MISSEVAN_GETDM_MIN_INTERVAL_MS = 200;
 const MISSEVAN_GETDM_MAX_INTERVAL_MS = 400;
 const MISSEVAN_HOSTED_REQUEST_MIN_INTERVAL_MS = 800;
@@ -454,6 +458,17 @@ const expensiveDataLimiter = rateLimit({
   handler: createJsonRateLimitHandler(
     "DATA_RATE_LIMITED",
     "数据请求过于频繁，请稍后重试。",
+    60
+  ),
+});
+const searchCardMetricsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: createJsonRateLimitHandler(
+    "METRICS_RATE_LIMITED",
+    "动态指标请求过于频繁，请稍后重试。",
     60
   ),
 });
@@ -2270,6 +2285,8 @@ function normalizeManboLibraryRecord(record) {
     normalizedName: normalizeSearchText(record?.normalizedName || name),
     aliases,
     cover: normalizeTextValue(record?.cover),
+    needpay: Boolean(record?.needpay),
+    vipFree: Number(record?.vipFree ?? 0) === 1,
     mainCvNicknames,
     mainCvNames,
     catalog: normalizeOptionalFiniteNumber(record?.catalog),
@@ -3815,6 +3832,8 @@ function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey
     author,
     seriesTitle,
     needpay: Boolean(node?.needpay),
+    is_member: Boolean(node?.is_member),
+    cover: normalizeTextValue(node?.cover),
     seasonKey: normalizeTextValue(seasonKey),
     searchPinyinTokens: buildCombinedPinyinSearchTokens([
       title,
@@ -3983,6 +4002,18 @@ async function ensureInfoStoreLoaded(store, forceRefresh = false) {
   })();
 
   await store.loadPromise;
+  return store;
+}
+
+async function ensureInfoStoreReadyForSearch(store) {
+  if (!store.loaded) {
+    return ensureInfoStoreLoaded(store);
+  }
+  if (Date.now() - store.lastLoadedAt >= INFO_STORE_SYNC_INTERVAL_MS && !store.loadPromise) {
+    void ensureInfoStoreLoaded(store).catch((error) => {
+      console.warn(`Info store background refresh failed platform=${store.platform}: ${formatImageProxyError(error)}`);
+    });
+  }
   return store;
 }
 
@@ -5088,59 +5119,59 @@ async function buildFavoriteMetaFromInfoStore(platform, dramaId) {
 
 function buildManboSearchFallbackCard(record) {
   const mainCvs = getManboMainCvNames(record);
+  const isMember = Boolean(record?.vipFree);
+  const paymentLabel = isMember ? "会员" : record?.needpay ? "付费" : "免费";
   const card = {
     id: String(record?.dramaId ?? ""),
     name: record?.name || "",
     cover: record?.cover || "",
-    view_count: 0,
-    playCountWan: "0",
-    price: 0,
+    view_count: null,
+    playCountWan: "",
+    price: null,
     sound_id: null,
     subscription_num: null,
     pay_count: null,
-    diamond_value: 0,
-    is_member: false,
+    diamond_value: null,
+    is_member: isMember,
     checked: false,
     platform: "manbo",
+    metrics_status: "pending",
     content_type_label: getManboContentTypeLabel(record),
     main_cvs: mainCvs,
     main_cv_text: buildMainCvText(mainCvs),
     author: normalizeTextValue(record?.author),
   };
-  return {
-    ...card,
-    payment_label: getManboPaymentLabel(card),
-  };
+  return { ...card, payment_label: paymentLabel };
 }
 
 function buildMissevanSearchFallbackCard(record) {
   const mainCvs = getMissevanMainCvNames(record);
   const primarySoundId = normalizeStringIdArray(record?.soundIds, 1)[0] || null;
+  const isMember = Boolean(record?.is_member);
+  const paymentLabel = isMember ? "会员" : record?.needpay ? "付费" : "免费";
   const card = {
     id: Number(record?.dramaId ?? 0),
     name: record?.title || "",
-    cover: "",
-    view_count: 0,
-    playCountWan: "0",
-    vip: 0,
-    price: 0,
-    member_price: 0,
-    is_member: false,
+    cover: record?.cover || "",
+    view_count: null,
+    playCountWan: "",
+    vip: null,
+    price: null,
+    member_price: null,
+    is_member: isMember,
     sound_id: primarySoundId ? Number(primarySoundId) : null,
     subscription_num: null,
     reward_num: null,
     checked: false,
     platform: "missevan",
+    metrics_status: "pending",
     search_source: "library",
     content_type_label: getMissevanContentTypeLabel(record),
     main_cvs: mainCvs,
     main_cv_text: buildMainCvText(mainCvs),
     author: normalizeTextValue(record?.author),
   };
-  return {
-    ...card,
-    payment_label: getMissevanPaymentLabel(card),
-  };
+  return { ...card, payment_label: paymentLabel };
 }
 
 function getMissevanPrimarySoundIdFromRecord(record) {
@@ -5536,27 +5567,63 @@ function buildMissevanApiSearchFallbackCard(record, mainCvs = []) {
     id: Number(record?.dramaId ?? 0),
     name: record?.title || "",
     cover: record?.cover || "",
-    view_count: 0,
-    playCountWan: "0",
-    vip: 0,
-    price: 0,
-    member_price: 0,
-    is_member: false,
+    view_count: null,
+    playCountWan: "",
+    vip: null,
+    price: null,
+    member_price: null,
+    is_member: null,
     sound_id: Number(record?.soundId ?? 0) || null,
     subscription_num: null,
     reward_num: null,
     checked: false,
     platform: "missevan",
+    metrics_status: "pending",
     search_source: "missevan_api",
     content_type_label: "",
     main_cvs: mainCvs,
     main_cv_text: buildMainCvText(mainCvs),
     author: normalizeTextValue(record?.author),
   };
-  return {
-    ...card,
-    payment_label: getMissevanPaymentLabel(card),
-  };
+  return { ...card, payment_label: "" };
+}
+
+async function hydrateMissevanApiSearchBaseRecord(record) {
+  const fallbackCard = buildMissevanApiSearchFallbackCard(record);
+  try {
+    const info = await fetchDramaInfo(record.dramaId, fallbackCard.sound_id);
+    if (!info?.drama) {
+      return fallbackCard;
+    }
+    const mainCvs = getMissevanApiCvNames(info, 2);
+    const card = {
+      ...fallbackCard,
+      cover: info.drama.cover || fallbackCard.cover,
+      vip: Number(info.drama.vip ?? 0),
+      price: Number(info.drama.price ?? 0),
+      member_price: Number(info.drama.member_price ?? 0),
+      is_member: Boolean(info.drama.is_member),
+      sound_id: Number(fallbackCard.sound_id ?? info?.episodes?.episode?.[0]?.sound_id ?? 0) || null,
+      content_type_label: getMissevanContentTypeLabel(info.drama),
+      main_cvs: mainCvs,
+      main_cv_text: buildMainCvText(mainCvs),
+      author: fallbackCard.author || normalizeTextValue(info.drama.author),
+    };
+    return { ...card, payment_label: getMissevanPaymentLabel(card) };
+  } catch (error) {
+    if (isMissevanAccessDenied(error)) {
+      return {
+        ...fallbackCard,
+        metrics_status: "access_denied",
+        metrics_error_code: "ACCESS_DENIED",
+        search_access_denied: true,
+      };
+    }
+    console.warn(
+      `Failed to resolve Missevan API search base card drama_id=${record.dramaId}: ${formatImageProxyError(error)}`
+    );
+    return fallbackCard;
+  }
 }
 
 function buildSearchPageMeta(keyword, totalMatched, offset, limit) {
@@ -5777,11 +5844,7 @@ async function runMissevanLibraryUnifiedSearch(keyword, offset, limit, matchMode
 
     if (matchedRecords.length > 0) {
       const pagedRecords = matchedRecords.slice(offset, offset + limit);
-      results = await mapWithConcurrency(
-        pagedRecords,
-        4,
-        hydrateMissevanSearchRecord
-      );
+      results = pagedRecords.map(buildMissevanSearchFallbackCard);
     }
   }
 
@@ -5810,11 +5873,7 @@ async function runManboLibraryUnifiedSearch(keyword, offset, limit, matchMode = 
   }
 
   const pagedRecords = matchedRecords.slice(offset, offset + limit);
-  const hydratedResults = await mapWithConcurrency(
-    pagedRecords,
-    4,
-    hydrateManboSearchRecord
-  );
+  const hydratedResults = pagedRecords.map(buildManboSearchFallbackCard);
 
   return {
     success: true,
@@ -5835,15 +5894,18 @@ async function runMissevanApiUnifiedSearch(keyword, offset, limit) {
       { logApiCall: true }
     );
     const pagedRecords = apiRecords.slice(offset, offset + limit);
-    const results = await mapWithConcurrency(
+    const resolvedResults = await mapWithConcurrency(
       pagedRecords,
       4,
-      hydrateMissevanApiSearchRecord
+      hydrateMissevanApiSearchBaseRecord
     );
+    const accessDenied = resolvedResults.some((item) => item?.search_access_denied === true);
+    const results = resolvedResults.map(({ search_access_denied: _ignored, ...item }) => item);
 
     return {
       success: apiRecords.length > 0,
       results,
+      ...(accessDenied ? { accessDenied: true } : {}),
       meta: {
         ...buildSearchPageMeta(keyword, apiRecords.length, offset, limit),
         source: "missevan_api",
@@ -6043,6 +6105,7 @@ export function createTimeoutSignal(timeoutMs, externalSignal) {
   }
 
   const controller = new AbortController();
+  let timedOut = false;
   const onExternalAbort = () => {
     controller.abort(externalSignal.reason);
   };
@@ -6053,12 +6116,16 @@ export function createTimeoutSignal(timeoutMs, externalSignal) {
   }
   const timer = hasTimeout
     ? setTimeout(() => {
+        timedOut = true;
         controller.abort(new Error(`Request timeout after ${normalizedTimeout}ms`));
       }, normalizedTimeout)
     : null;
 
   return {
     signal: controller.signal,
+    get timedOut() {
+      return timedOut;
+    },
     cleanup: () => {
       if (timer) {
         clearTimeout(timer);
@@ -6424,6 +6491,7 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     let cleanup = () => {};
+    let timeoutState = null;
     let requestStartedAt = 0;
     let responseStatus = "";
     let requestLogged = false;
@@ -6448,9 +6516,9 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
         throw createCooldownError();
       }
 
-      const timeout = createTimeoutSignal(options.timeoutMs, options.signal);
-      const signal = timeout.signal;
-      cleanup = timeout.cleanup;
+      timeoutState = createTimeoutSignal(options.timeoutMs, options.signal);
+      const signal = timeoutState.signal;
+      cleanup = timeoutState.cleanup;
       requestStartedAt = Date.now();
       const response = await fetch(
         url,
@@ -6496,6 +6564,9 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
       }
       return data;
     } catch (error) {
+      if (timeoutState?.timedOut) {
+        error.requestTimedOut = true;
+      }
       if (isCooldownError(error)) {
         throw error;
       }
@@ -6521,7 +6592,7 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
       if (options.missevan && !requestLogged) {
         writeMissevanRequestUsageLog(url, {
           attempt: attempt + 1,
-          status: responseStatus || "error",
+          status: responseStatus || (options.signal?.aborted ? "cancelled" : timeoutState?.timedOut ? "timeout" : "error"),
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
           accessDenied: false,
@@ -6575,6 +6646,7 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     let cleanup = () => {};
+    let timeoutState = null;
     let requestStartedAt = 0;
     let responseStatus = "";
     let requestLogged = false;
@@ -6599,9 +6671,9 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
         throw createCooldownError();
       }
 
-      const timeout = createTimeoutSignal(options.timeoutMs, options.signal);
-      const signal = timeout.signal;
-      cleanup = timeout.cleanup;
+      timeoutState = createTimeoutSignal(options.timeoutMs, options.signal);
+      const signal = timeoutState.signal;
+      cleanup = timeoutState.cleanup;
 
       requestStartedAt = Date.now();
       const response = await fetch(
@@ -6648,6 +6720,9 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       }
       return text;
     } catch (error) {
+      if (timeoutState?.timedOut) {
+        error.requestTimedOut = true;
+      }
       if (isCooldownError(error)) {
         throw error;
       }
@@ -6673,7 +6748,7 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       if (options.missevan && !requestLogged) {
         writeMissevanRequestUsageLog(url, {
           attempt: attempt + 1,
-          status: responseStatus || "error",
+          status: responseStatus || (options.signal?.aborted ? "cancelled" : timeoutState?.timedOut ? "timeout" : "error"),
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
           accessDenied: false,
@@ -7268,7 +7343,37 @@ async function fetchDanmakuSummary(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Failed to fetch Missevan danmaku sound_id=${soundId}: ${message}`);
+    if (options.signal?.aborted) {
+      console.info(`Cancelled Missevan danmaku sound_id=${soundId}`);
+      void writeUsageLog({
+        platform: "missevan",
+        action: "danmaku_summary",
+        status: "cancelled",
+        soundId: Number(soundId),
+        dramaTitle,
+        episodeTitle,
+        success: false,
+        cancelled: true,
+        cached: false,
+        ...(source ? { source } : {}),
+      });
+      return {
+        success: false,
+        cancelled: true,
+        sound_id: Number(soundId),
+        drama_title: dramaTitle,
+        episode_title: episodeTitle,
+        danmaku: 0,
+        users: [],
+        accessDenied: false,
+        error: message,
+      };
+    }
+    if (error?.requestTimedOut) {
+      console.warn(`Timed out fetching Missevan danmaku sound_id=${soundId}: ${message}`);
+    } else {
+      console.error(`Failed to fetch Missevan danmaku sound_id=${soundId}: ${message}`);
+    }
     const accessDenied =
       isAccessDeniedError(error) ||
       String(message).startsWith("ACCESS_DENIED_COOLDOWN:");
@@ -7419,6 +7524,7 @@ function normalizeManboCardFromDramaInfo(info) {
     revenue_type: revenueType,
     checked: true,
     platform: "manbo",
+    metrics_status: "pending",
     author: normalizeTextValue(drama.author),
   };
   return {
@@ -8111,7 +8217,39 @@ async function fetchManboDanmakuSummary(
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Failed to fetch Manbo danmaku set_id=${setId}: ${message}`);
+        if (sharedSignal.aborted) {
+          console.info(`Cancelled Manbo danmaku set_id=${setId}`);
+          void writeUsageLog({
+            platform: "manbo",
+            action: "danmaku_summary",
+            status: "cancelled",
+            soundId: String(setId),
+            dramaTitle,
+            episodeTitle: resolvedEpisodeTitle,
+            success: false,
+            cancelled: true,
+            cached: false,
+            ...(source ? { source } : {}),
+            pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
+            durationMs: Date.now() - startedAt,
+          });
+          return {
+            success: false,
+            cancelled: true,
+            sound_id: String(setId),
+            drama_title: dramaTitle,
+            episode_title: resolvedEpisodeTitle,
+            danmaku: 0,
+            users: [],
+            accessDenied: false,
+            error: message,
+          };
+        }
+        if (error?.requestTimedOut) {
+          console.warn(`Timed out fetching Manbo danmaku set_id=${setId}: ${message}`);
+        } else {
+          console.error(`Failed to fetch Manbo danmaku set_id=${setId}: ${message}`);
+        }
         const accessDenied =
           isAccessDeniedError(error) ||
           String(message).startsWith("ACCESS_DENIED_COOLDOWN:");
@@ -8725,6 +8863,9 @@ async function executeMissevanIdTask(task) {
         task.source,
         { signal: task.abortSignal }
       );
+      if (result.cancelled || task.cancelled || task.abortSignal?.aborted) {
+        return;
+      }
       if (result.success) {
         const drama = dramaMap.get(dramaId || dramaTitle);
         if (drama) {
@@ -8751,6 +8892,9 @@ async function executeMissevanIdTask(task) {
         }
       }
     } catch (error) {
+      if (task.cancelled || task.abortSignal?.aborted) {
+        return;
+      }
       task.failedCount += 1;
       if (isMissevanAccessDenied(error)) {
         task.accessDenied = true;
@@ -8831,6 +8975,9 @@ async function executeManboIdTask(task) {
           task.source,
           { signal: task.abortSignal }
         );
+        if (result.cancelled || task.cancelled || task.abortSignal?.aborted) {
+          return;
+        }
         if (result.success) {
           const drama = dramaMap.get(dramaId || dramaTitle);
           if (drama) {
@@ -8853,6 +9000,9 @@ async function executeManboIdTask(task) {
           }
         }
       } catch (error) {
+        if (task.cancelled || task.abortSignal?.aborted) {
+          return;
+        }
         task.failedCount += 1;
         if (isAccessDeniedError(error)) {
           task.accessDenied = true;
@@ -9997,6 +10147,85 @@ app.get("/image-proxy", imageProxyLimiter, async (req, res) => {
   }
 });
 
+function createRequestAbortContext(req, res) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted && !res.writableEnded) {
+      controller.abort(new DOMException("Client disconnected", "AbortError"));
+    }
+  };
+  req.once("aborted", abort);
+  res.once("close", abort);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      req.removeListener("aborted", abort);
+      res.removeListener("close", abort);
+    },
+  };
+}
+
+function getSearchCardMetricsCacheState(platform, id, soundId = null) {
+  if (platform === "missevan") {
+    const infoKey = soundId ? `sound:${soundId}` : `drama:${id}`;
+    return Boolean(
+      getCachedValue(dramaCache, infoKey, DRAMA_CACHE_TTL_MS) &&
+      getCachedValue(rewardDetailCache, id, REWARD_DETAIL_CACHE_TTL_MS)
+    );
+  }
+  return Boolean(getCachedValue(manboDramaCache, String(id), MANBO_DRAMA_CACHE_TTL_MS));
+}
+
+async function fetchSearchCardMetrics(platform, id, soundId, signal) {
+  const cached = getSearchCardMetricsCacheState(platform, id, soundId);
+  if (platform === "missevan") {
+    await refreshMissevanCooldownState();
+    if (shouldBlockMissevanAccessForCooldown()) {
+      throw createCooldownError();
+    }
+    const info = await fetchDramaInfo(id, soundId, { signal });
+    if (!info?.drama) {
+      throw new Error("Missevan drama metrics are unavailable");
+    }
+    let rewardNum = null;
+    try {
+      const reward = await fetchRewardDetailMeta(id, { signal });
+      rewardNum = normalizeOptionalFiniteNumber(reward?.reward_num);
+    } catch (error) {
+      if (signal?.aborted || isMissevanAccessDenied(error)) {
+        throw error;
+      }
+      console.warn(
+        `Failed to fetch Missevan search reward metric drama_id=${id}: ${formatImageProxyError(error)}`
+      );
+    }
+    return {
+      cached,
+      metrics: {
+        view_count: Number(info.drama.view_count ?? 0),
+        subscription_num: normalizeOptionalFiniteNumber(info.drama.subscription_num),
+        reward_num: rewardNum,
+      },
+    };
+  }
+
+  const info = await fetchManboDramaDetail(id, { signal });
+  const card = normalizeManboCardFromDramaInfo(info);
+  if (!card) {
+    throw new Error("Manbo drama metrics are unavailable");
+  }
+  return {
+    cached,
+    metrics: {
+      view_count: normalizeOptionalFiniteNumber(card.view_count),
+      subscription_num: normalizeOptionalFiniteNumber(card.subscription_num),
+      diamond_value: normalizeOptionalFiniteNumber(card.diamond_value),
+      pay_count: normalizeOptionalFiniteNumber(card.pay_count),
+      member_listen_count: normalizeOptionalFiniteNumber(card.member_listen_count),
+    },
+  };
+}
+
 app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
   const normalizedKeyword = normalizeKeyword(req.query.keyword);
   const offset = normalizeSearchOffset(req.query.offset);
@@ -10055,10 +10284,9 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
 
   try {
     await Promise.all([
-      ensureInfoStoreLoaded(missevanInfoStore),
-      ensureInfoStoreLoaded(manboInfoStore),
+      ensureInfoStoreReadyForSearch(missevanInfoStore),
+      ensureInfoStoreReadyForSearch(manboInfoStore),
     ]);
-    await refreshMissevanCooldownState();
 
     const [missevanLibrarySettled, manboLibrarySettled] = await Promise.allSettled([
       runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "strict"),
@@ -10086,52 +10314,25 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
         runManboLibraryUnifiedSearch(normalizedKeyword, offset, limit, "compatible"),
       ]);
       missevanLibraryResult = normalizeSettledUnifiedSearchResult("missevan",
-        missevanCompatibleSettled,
-        missevanLibraryResult,
-        "compatibility"
-      );
+        missevanCompatibleSettled, missevanLibraryResult, "compatibility");
       manboLibraryResult = normalizeSettledUnifiedSearchResult("manbo",
-        manboCompatibleSettled,
-        manboLibraryResult,
-        "compatibility"
-      );
+        manboCompatibleSettled, manboLibraryResult, "compatibility");
     }
 
-    const fallbackPlan = buildUnifiedSearchFallbackPlan(
-      missevanLibraryResult,
-      manboLibraryResult
-    );
-
-    if (!fallbackPlan.usedApiFallback) {
-      return res.json(buildUnifiedResponse(missevanLibraryResult, manboLibraryResult));
+    const shouldRunApiFallback = !hasUnifiedSearchMatches(missevanLibraryResult) &&
+      !hasUnifiedSearchMatches(manboLibraryResult);
+    if (!shouldRunApiFallback) {
+      return res.json(buildUnifiedResponse(missevanLibraryResult, manboLibraryResult, false));
     }
-
-    const [missevanApiSettled, manboApiSettled] = await Promise.allSettled([
-      fallbackPlan.missevan
-        ? runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit)
-        : Promise.resolve(missevanLibraryResult),
-      fallbackPlan.manbo
-        ? runManboApiUnifiedSearch(normalizedKeyword, offset, limit)
-        : Promise.resolve(manboLibraryResult),
+    const [missevanFinalSettled, manboFinalSettled] = await Promise.allSettled([
+      runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit),
+      runManboApiUnifiedSearch(normalizedKeyword, offset, limit),
     ]);
-    const missevanApiResult = normalizeSettledUnifiedSearchResult("missevan",
-      missevanApiSettled,
-      buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "api_error"),
-      "api"
-    );
-    const manboApiResult = normalizeSettledUnifiedSearchResult("manbo",
-      manboApiSettled,
-      buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit, "api_error", {
-        hydratedCount: 0,
-      }),
-      "api"
-    );
-
-    return res.json(buildUnifiedResponse(
-      missevanApiResult,
-      manboApiResult,
-      fallbackPlan.usedApiFallback
-    ));
+    const missevanFinal = normalizeSettledUnifiedSearchResult("missevan",
+      missevanFinalSettled, missevanLibraryResult, "api");
+    const manboFinal = normalizeSettledUnifiedSearchResult("manbo",
+      manboFinalSettled, manboLibraryResult, "api");
+    return res.json(buildUnifiedResponse(missevanFinal, manboFinal, true));
   } catch (error) {
     console.error(`Failed to run unified search keyword=${normalizedKeyword}`, error);
     return res.status(500).json({
@@ -10146,6 +10347,85 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
       },
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+});
+
+app.post("/search-card-metrics", searchCardMetricsLimiter, async (req, res) => {
+  const platform = req.body?.platform === "manbo"
+    ? "manbo"
+    : req.body?.platform === "missevan"
+      ? "missevan"
+      : "";
+  const rawId = String(req.body?.id ?? "").trim();
+  const id = platform === "missevan" ? Number(rawId) : rawId;
+  const soundId = platform === "missevan" ? Number(req.body?.soundId ?? 0) || null : null;
+  if (!platform || !isNumericId(rawId)) {
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_METRICS_REQUEST",
+      message: "动态指标请求无效。",
+    });
+  }
+  if (activeSearchCardMetricRequests >= SEARCH_CARD_METRICS_MAX_ACTIVE) {
+    res.setHeader("Retry-After", "3");
+    return res.status(503).json({
+      success: false,
+      code: "METRICS_BUSY",
+      message: "动态指标队列繁忙，请稍后重试。",
+      retryAfterSeconds: 3,
+    });
+  }
+
+  const requestAbort = createRequestAbortContext(req, res);
+  activeSearchCardMetricRequests += 1;
+  try {
+    const result = await searchCardMetricRequests.run(
+      `${platform}:${rawId}`,
+      requestAbort.signal,
+      async (sharedSignal) => {
+        const timeout = createTimeoutSignal(SEARCH_CARD_METRICS_TIMEOUT_MS, sharedSignal);
+        try {
+          return await fetchSearchCardMetrics(platform, id, soundId, timeout.signal);
+        } catch (error) {
+          if (timeout.timedOut) {
+            error.searchMetricsTimeout = true;
+          }
+          throw error;
+        } finally {
+          timeout.cleanup();
+        }
+      }
+    );
+    return res.json({
+      success: true,
+      id: platform === "missevan" ? Number(id) : String(id),
+      cached: Boolean(result.cached),
+      metrics: result.metrics,
+    });
+  } catch (error) {
+    if (requestAbort.signal.aborted) {
+      return;
+    }
+    const timeout = error?.searchMetricsTimeout === true;
+    const accessDenied = isCooldownError(error) || isAccessDeniedError(error);
+    const code = timeout
+      ? "METRICS_TIMEOUT"
+      : accessDenied
+        ? "ACCESS_DENIED"
+        : "UPSTREAM_ERROR";
+    const status = timeout ? 504 : accessDenied ? 503 : 502;
+    return res.status(status).json({
+      success: false,
+      code,
+      message: timeout
+        ? "动态指标获取超时。"
+        : accessDenied
+          ? "动态指标暂时不可用。"
+          : "动态指标获取失败。",
+    });
+  } finally {
+    activeSearchCardMetricRequests = Math.max(0, activeSearchCardMetricRequests - 1);
+    requestAbort.cleanup();
   }
 });
 
@@ -10544,6 +10824,17 @@ app.post("/getdramacards", expensiveDataLimiter, async (req, res) => {
       continue;
     }
 
+    const localRecord = item.type === "drama"
+      ? missevanInfoStore.byDramaId.get(String(item.id))
+      : null;
+    if (localRecord) {
+      results.push({
+        ...buildMissevanSearchFallbackCard(localRecord),
+        checked: true,
+      });
+      continue;
+    }
+
     try {
       const resolved = await buildMissevanDramaCardFromInput(item);
 
@@ -10798,6 +11089,16 @@ app.post("/manbo/resolve-input", expensiveDataLimiter, async (req, res) => {
 
   for (const item of items) {
     try {
+      const localRecord = /^\d+$/.test(String(item.raw ?? ""))
+        ? manboInfoStore.byDramaId.get(String(item.raw))
+        : null;
+      if (localRecord) {
+        results.push({
+          ...buildManboSearchFallbackCard(localRecord),
+          checked: true,
+        });
+        continue;
+      }
       const resolved = await resolveManboItem(item);
       results.push({
         raw: item.raw,
@@ -11388,6 +11689,12 @@ export async function startServer(port = defaultPort) {
 
   const actualPort = serverInstance.address()?.port ?? port;
   console.log(`server running on ${actualPort}`);
+  void Promise.all([
+    ensureInfoStoreLoaded(missevanInfoStore),
+    ensureInfoStoreLoaded(manboInfoStore),
+  ]).catch((error) => {
+    console.warn(`Info store prewarm failed: ${formatImageProxyError(error)}`);
+  });
   void statsTaskEngine.restore().catch((error) => {
     console.warn(`Stats task recovery failed: ${formatImageProxyError(error)}`);
     return [];

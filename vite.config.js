@@ -58,6 +58,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      "/unified-search": backendTarget,
+      "/search-card-metrics": backendTarget,
       "/search": backendTarget,
       "/getdramacards": backendTarget,
       "/getdramas": backendTarget,

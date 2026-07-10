@@ -30,6 +30,7 @@ import {
   readToolViewFromLocation,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
+  selectSearchMetricQueue,
   selectDramaEpisodesByMode,
   hasSearchKeywordInResultTitles,
   shouldUseManboLibraryFallbackForMissevanSearch,
@@ -38,6 +39,18 @@ import {
 
 const appUtilsModule = await import("./app-utils.js");
 const { readJsonResponse } = appUtilsModule;
+
+test("search metric queue limits keyword pages but keeps every manual import", () => {
+  for (const count of [6, 10, 21]) {
+    const items = Array.from({ length: count }, (_, index) => ({
+      id: index + 1,
+      metrics_status: "pending",
+    }));
+    assert.equal(selectSearchMetricQueue(items, "search").length, 5);
+    assert.equal(selectSearchMetricQueue(items, "manual").length, count);
+    assert.equal(selectSearchMetricQueue(items, "manual").at(-1)?.id, count);
+  }
+});
 
 test("resolveIdStatisticsSource marks only one drama's complete paid episode set as payID", () => {
   const resolveSource = appUtilsModule.resolveIdStatisticsSource;

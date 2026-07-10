@@ -1876,3 +1876,12 @@ export function classifyUnifiedSearchInput(rawValue) {
     rawItems: [],
   };
 }
+
+export function selectSearchMetricQueue(items, resultSource = "search") {
+  const candidates = (Array.isArray(items) ? items : []).filter((item) =>
+    ["pending", "loading", "error", "access_denied"].includes(
+      String(item?.metrics_status || "pending")
+    )
+  );
+  return resultSource === "manual" ? candidates : candidates.slice(0, 5);
+}

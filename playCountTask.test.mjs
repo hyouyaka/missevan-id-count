@@ -29,6 +29,15 @@ test("request timeout signal also follows task cancellation", () => {
 
   taskController.abort();
   assert.equal(timeout.signal.aborted, true);
+  assert.equal(timeout.timedOut, false);
+  timeout.cleanup();
+});
+
+test("request timeout signal distinguishes its own deadline", async () => {
+  const timeout = createTimeoutSignal(10);
+  await new Promise((resolve) => timeout.signal.addEventListener("abort", resolve, { once: true }));
+  assert.equal(timeout.signal.aborted, true);
+  assert.equal(timeout.timedOut, true);
   timeout.cleanup();
 });
 

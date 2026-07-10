@@ -72,6 +72,7 @@ import {
   resolveIdStatisticsSource,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
+  selectSearchMetricQueue,
   selectDramaEpisodesByMode,
   STATS_HISTORY_LIMIT,
 } from "@/app/app-utils";
@@ -1553,6 +1554,7 @@ export function ToolView({ initialAppConfig }) {
   });
   const resultsPanelRef = useRef(null);
   const outputPanelRef = useRef(null);
+  const searchMetricControllersRef = useRef(new Set());
 
   function addDramaToCompareBasket(rawItem) {
     const compareKind = String(rawItem?.compareKind ?? "drama").trim() || "drama";
@@ -2255,6 +2257,7 @@ export function ToolView({ initialAppConfig }) {
       searchCurrentPage: page,
       searchPageSize: Math.max(1, pageSize),
       searchTotalMatched: totalMatched,
+      searchGeneration: Number(meta?.searchGeneration ?? Date.now()) || Date.now(),
       searchPageCache: source === "search" ? { [page]: normalizedResults } : {},
       isLoadingMoreResults: false,
       searchResults: normalizedResults,
@@ -2275,6 +2278,7 @@ export function ToolView({ initialAppConfig }) {
       searchCurrentPage: 1,
       searchPageSize: Math.max(1, Number(meta?.limit ?? normalizedResults.length ?? 1) || 1),
       searchTotalMatched: 0,
+      searchGeneration: Number(meta?.searchGeneration ?? Date.now()) || Date.now(),
       searchPageCache: {},
       isLoadingMoreResults: false,
       searchResults: normalizedResults,
@@ -2416,6 +2420,159 @@ export function ToolView({ initialAppConfig }) {
     setSharedOutputPlatform(platform);
     sharedOutputPlatformRef.current = platform;
   }
+
+  function patchSearchMetricItem(platform, itemId, patch, searchGeneration) {
+    const normalizedId = String(itemId ?? "");
+    updatePlatformState(platform, (state) => {
+      if (Number(state.searchGeneration ?? 0) !== Number(searchGeneration ?? 0)) {
+        return state;
+      }
+      const patchItems = (items = []) => items.map((item) =>
+        String(item?.id ?? "") === normalizedId ? { ...item, ...patch } : item
+      );
+      return {
+        ...state,
+        searchResults: patchItems(state.searchResults),
+        searchPageCache: Object.fromEntries(
+          Object.entries(state.searchPageCache || {}).map(([page, items]) => [page, patchItems(items)])
+        ),
+      };
+    });
+  }
+
+  async function refreshSearchMetricItems(platform, items, searchGeneration, controller, resultSource = "search") {
+    const queue = selectSearchMetricQueue(items, resultSource);
+    if (!queue.length) {
+      return;
+    }
+    let nextIndex = 0;
+    const concurrency = platform === "manbo" ? 2 : 1;
+    const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+      while (nextIndex < queue.length && !controller.signal.aborted) {
+        const item = queue[nextIndex];
+        nextIndex += 1;
+        try {
+          patchSearchMetricItem(platform, item.id, {
+            metrics_status: "loading",
+            metrics_error_code: "",
+          }, searchGeneration);
+          let payload = null;
+          while (!controller.signal.aborted) {
+            const response = await fetch(buildVersionedUrl("/search-card-metrics", appConfigRef.current.frontendVersion), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                platform,
+                id: item.id,
+                ...(platform === "missevan" && item.sound_id ? { soundId: item.sound_id } : {}),
+              }),
+              signal: controller.signal,
+            });
+            payload = await readJsonResponse(response);
+            if (response.ok && payload?.success) {
+              break;
+            }
+            const code = payload?.code || "UPSTREAM_ERROR";
+            if (code === "METRICS_RATE_LIMITED" && resultSource === "manual") {
+              const headerSeconds = Number(response.headers.get("Retry-After") ?? 0);
+              const retryAfterSeconds = Math.max(
+                1,
+                Number(payload?.retryAfterSeconds ?? headerSeconds ?? 60) || 60
+              );
+              patchSearchMetricItem(platform, item.id, {
+                metrics_status: "pending",
+                metrics_error_code: code,
+              }, searchGeneration);
+              await waitForTaskPoll(controller.signal, retryAfterSeconds * 1000 + 250);
+              patchSearchMetricItem(platform, item.id, {
+                metrics_status: "loading",
+                metrics_error_code: "",
+              }, searchGeneration);
+              continue;
+            }
+            const error = new Error(payload?.message || "动态指标获取失败。");
+            error.code = code;
+            throw error;
+          }
+          if (controller.signal.aborted || !payload?.success) {
+            throw new DOMException("Aborted", "AbortError");
+          }
+          patchSearchMetricItem(platform, item.id, {
+            ...(payload.metrics || {}),
+            metrics_status: "ready",
+            metrics_error_code: "",
+          }, searchGeneration);
+        } catch (error) {
+          if (isAbortError(error) || controller.signal.aborted) {
+            patchSearchMetricItem(platform, item.id, { metrics_status: "pending" }, searchGeneration);
+            continue;
+          }
+          patchSearchMetricItem(platform, item.id, {
+            metrics_status: error?.code === "ACCESS_DENIED" ? "access_denied" : "error",
+            metrics_error_code: error?.code || "UPSTREAM_ERROR",
+          }, searchGeneration);
+        }
+      }
+    });
+    await Promise.all(workers);
+  }
+
+  function retrySearchCardMetrics(item) {
+    const platform = activeBrowsePlatform;
+    const state = platformStatesRef.current[platform];
+    const searchGeneration = Number(state?.searchGeneration ?? 0);
+    if (!item?.id || !searchGeneration) {
+      return;
+    }
+    const controller = new AbortController();
+    searchMetricControllersRef.current.add(controller);
+    void refreshSearchMetricItems(platform, [{ ...item, metrics_status: "pending" }], searchGeneration, controller, state?.searchResultSource)
+      .finally(() => searchMetricControllersRef.current.delete(controller));
+  }
+
+  useEffect(() => {
+    if (currentPlatform !== "search") {
+      return undefined;
+    }
+    const state = platformStatesRef.current[activeBrowsePlatform];
+    const searchGeneration = Number(state?.searchGeneration ?? 0);
+    const pendingItems = (state?.searchResults || []).filter((item) =>
+      ["pending", "loading"].includes(String(item?.metrics_status || "pending"))
+    );
+    if (!searchGeneration || !pendingItems.length) {
+      return undefined;
+    }
+    const controller = new AbortController();
+    searchMetricControllersRef.current.add(controller);
+    void refreshSearchMetricItems(activeBrowsePlatform, pendingItems, searchGeneration, controller, state?.searchResultSource)
+      .finally(() => searchMetricControllersRef.current.delete(controller));
+    return () => {
+      controller.abort();
+      updatePlatformState(activeBrowsePlatform, (currentState) => {
+        if (Number(currentState.searchGeneration ?? 0) !== searchGeneration) {
+          return currentState;
+        }
+        const resetLoading = (items = []) => items.map((item) =>
+          String(item?.metrics_status) === "loading"
+            ? { ...item, metrics_status: "pending", metrics_error_code: "" }
+            : item
+        );
+        return {
+          ...currentState,
+          searchResults: resetLoading(currentState.searchResults),
+          searchPageCache: Object.fromEntries(
+            Object.entries(currentState.searchPageCache || {}).map(([page, items]) => [page, resetLoading(items)])
+          ),
+        };
+      });
+      searchMetricControllersRef.current.delete(controller);
+    };
+  }, [activeBrowsePlatform, currentPlatform, currentBrowseState?.searchGeneration, currentBrowseState?.searchResults?.length]);
+
+  useEffect(() => () => {
+    searchMetricControllersRef.current.forEach((controller) => controller.abort());
+    searchMetricControllersRef.current.clear();
+  }, []);
 
   function isAnyBackgroundTaskRunning() {
     return Boolean(
@@ -2572,16 +2729,6 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
 
-    if (
-      normalizedPlatform === "missevan" &&
-      !appConfigRef.current.desktopApp &&
-      Number(appConfigRef.current.cooldownUntil ?? 0) > Date.now()
-    ) {
-      await refreshCooldownState();
-      toast.error("猫耳当前受限，暂时无法导入。");
-      return;
-    }
-
     setSearchJumpStatus({
       platform: normalizedPlatform,
       name: "",
@@ -2674,18 +2821,6 @@ export function ToolView({ initialAppConfig }) {
     const normalizedUsageSource = String(usageSource ?? "").trim().slice(0, 40);
     if (!dramaIds.length) {
       toast.error("打开搜索结果失败，请稍后重试。");
-      return;
-    }
-
-    if (targetPlatform === "missevan" && !appConfigRef.current.desktopApp && Number(appConfigRef.current.cooldownUntil ?? 0) > Date.now()) {
-      updatePlatformState("missevan", (state) => ({
-        ...state,
-        stats: {
-          ...state.stats,
-          currentAction: getMissevanAccessDeniedMessage(appConfigRef.current),
-        },
-      }));
-      toast.error(renderMissevanAccessDeniedMessage(appConfigRef.current));
       return;
     }
 
@@ -3350,14 +3485,12 @@ export function ToolView({ initialAppConfig }) {
     }));
 
     try {
-      const endpoint =
-        platform === "manbo"
-          ? `/manbo/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`
-          : `/search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`;
+      const endpoint = `/unified-search?keyword=${encodeURIComponent(keyword)}&offset=${offset}&limit=${pageSize}`;
       const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
         cache: "no-store",
       });
-      const data = await parseVersionedJsonResponse(response);
+      const unifiedData = await parseVersionedJsonResponse(response);
+      const data = unifiedData?.results?.[platform];
 
       if (!data?.success) {
         if (platform === "missevan" && data?.accessDenied) {
@@ -3886,6 +4019,7 @@ export function ToolView({ initialAppConfig }) {
               onStartRevenueEstimate={startRevenueEstimate}
               onToggleFavorite={toggleFavorite}
               onAddCompareItem={addDramaToCompareBasket}
+              onRetryMetrics={retrySearchCardMetrics}
               onLoadMoreResults={() => loadMoreSearchResults(activeBrowsePlatform)}
               allResults={getAllSearchResults(currentBrowseState)}
               hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
