@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { BeanIcon, ChevronDownIcon, ChevronUpIcon, CoinsIcon, GemIcon, HandCoinsIcon, MessagesSquareIcon, PauseCircleIcon, PlayCircleIcon, ShoppingCartIcon, Trash2Icon, UsersRoundIcon, XIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
 import {
   buildRevenueSummary,
   buildRevenuePaidMetricSegments,
+  calculateResultMetricGridLayout,
+  formatCompactMetricValue,
   formatElapsed,
   formatPlainNumber,
   formatPlayCountDisplay,
@@ -17,92 +20,151 @@ import {
   formatRevenueDisplayValue,
 } from "@/app/app-utils";
 
-function getMetricToneClass(index) {
-  const variants = [
-    "border-border bg-background text-foreground shadow-[var(--shadow-card)]",
-    "border-secondary/20 bg-secondary/12 text-foreground",
-    "border-primary/20 bg-accent text-accent-foreground",
-  ];
-  return variants[index % variants.length];
-}
-
-function getMetricLabelClass(index) {
-  return index % 3 === 0 ? "text-foreground/72" : "opacity-72";
-}
-
-function trimTrailingZero(value) {
-  return value.replace(/\.?0+$/, "");
-}
-
 function formatUnitlessMetricValue(value) {
-  const amount = Number(value ?? 0);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return "0";
-  }
-  if (amount >= 100000000) {
-    return `${trimTrailingZero((amount / 100000000).toFixed(2))}亿`;
-  }
-  if (amount >= 10000) {
-    return `${trimTrailingZero((amount / 10000).toFixed(1))}万`;
-  }
-  if (Number.isInteger(amount)) {
-    return `${amount}`;
-  }
-  return trimTrailingZero(amount.toFixed(2));
+  return formatCompactMetricValue(value);
 }
 
 function formatUnitlessMetricRange(minValue, maxValue) {
   return `${formatUnitlessMetricValue(minValue)} - ${formatUnitlessMetricValue(maxValue)}`;
 }
 
-function ResultStrip({ metrics, inverted = false }) {
+function ResultStrip({ metrics, compact = false }) {
+  const containerRef = useRef(null);
+  const [layout, setLayout] = useState(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+
+    const updateLayout = (width) => {
+      setLayout(calculateResultMetricGridLayout(width, metrics.length));
+    };
+    const observer = new ResizeObserver(([entry]) => updateLayout(entry.contentRect.width));
+    updateLayout(container.getBoundingClientRect().width);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [metrics.length]);
+
+  if (compact && metrics.length === 1) {
+    const metric = metrics[0];
+    return (
+      <dl className="min-w-0">
+        <div className="flex min-w-0 items-baseline gap-2 sm:justify-end">
+          <dt className="shrink-0 text-[0.68rem] text-muted-foreground sm:text-xs">{metric.label}</dt>
+          <dd className="min-w-0 break-words text-base font-semibold leading-tight text-foreground tabular-nums sm:text-lg">
+            {metric.value}
+          </dd>
+        </div>
+      </dl>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-      {metrics.map((metric, index) => {
-        const toneIndex = inverted ? index + 2 : index;
-        return (
+    <div ref={containerRef} className="min-w-0 w-full">
+      <dl
+        className="grid overflow-hidden rounded-md"
+        style={{
+          gridTemplateColumns: layout
+            ? `repeat(${layout.columns}, ${layout.columnWidth}px)`
+            : "minmax(0, 1fr)",
+          width: layout ? `${layout.gridWidth}px` : "100%",
+          maxWidth: "100%",
+        }}
+      >
+        {metrics.map((metric, index) => {
+          const columns = layout?.columns || 1;
+          const columnIndex = index % columns;
+          const rowIndex = Math.floor(index / columns);
+          return (
           <div
             key={`${metric.label}-${index}`}
-            className={`min-w-0 rounded-[calc(var(--radius)-0.12rem)] border px-2 py-2.5 text-center sm:px-3 ${getMetricToneClass(toneIndex)}`}
+            className="min-w-0 border border-border/70 bg-muted/35 px-2.5 py-2 text-center"
+            style={{
+              marginLeft: columnIndex > 0 ? "-1px" : 0,
+              marginTop: rowIndex > 0 ? "-1px" : 0,
+            }}
           >
-            <div className={`text-[10px] sm:text-xs ${getMetricLabelClass(toneIndex)}`}>{metric.label}</div>
-            <div className="mt-1 break-words text-sm font-semibold leading-tight sm:text-lg">{metric.value}</div>
+            <dt className="text-[0.65rem] leading-4 text-muted-foreground sm:text-xs">{metric.label}</dt>
+            <dd className="mt-0.5 break-words text-sm font-semibold leading-tight text-foreground tabular-nums sm:text-base">
+              {metric.value}
+            </dd>
           </div>
-        );
-      })}
+          );
+        })}
+      </dl>
     </div>
   );
 }
 
-function ResultCard({ title, metrics, insetInverted = false, footer = null }) {
+function ResultCard({ title, metrics, emphasized = false, footer = null }) {
+  const compact = metrics?.length === 1 && !footer;
+
   return (
-    <div className="w-full min-w-0 rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)] sm:p-4">
-      <div className="break-words text-[11px] font-medium leading-5 text-foreground/78 sm:text-xs">{title}</div>
-      {metrics?.length ? (
-        <div className="mt-3">
-          <ResultStrip metrics={metrics} inverted={insetInverted} />
-        </div>
+    <Card
+      size="sm"
+      className={cn(
+        "w-full min-w-0 gap-0 py-0 shadow-none hover:bg-card",
+        emphasized && "border-primary/20 bg-accent/45 hover:bg-accent/45"
+      )}
+    >
+      <CardHeader
+        className={cn(
+          "px-3 py-2 sm:px-4",
+          compact && "flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
+        )}
+      >
+        <CardTitle className="min-w-0 break-words text-xs font-medium leading-5 text-foreground/80">
+          {title}
+        </CardTitle>
+        {compact ? <ResultStrip metrics={metrics} compact /> : null}
+      </CardHeader>
+      {!compact && (metrics?.length || footer) ? (
+        <CardContent className="grid gap-2 px-3 pb-3 sm:px-4">
+          {metrics?.length ? <ResultStrip metrics={metrics} /> : null}
+          {footer}
+        </CardContent>
       ) : null}
-      {footer ? <div className="mt-3">{footer}</div> : null}
-    </div>
+    </Card>
   );
 }
 
 function OverflowEpisodeList({ titles = [] }) {
+  const [expanded, setExpanded] = useState(false);
+  const regionId = useId();
+
   if (!titles?.length) {
     return null;
   }
 
   return (
-    <div className="grid gap-2 rounded-[calc(var(--radius)-0.08rem)] border border-border/80 bg-background/96 p-3 text-foreground">
-      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-        疑似弹幕溢出分集
-      </div>
-      {titles.map((item) => (
-        <div key={item.key} className="text-sm">
-          {item.title}
+    <div className="rounded-md border border-border/75 bg-background/75 px-2.5 py-1.5 text-foreground">
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        className="h-7 max-w-full px-1.5"
+        aria-expanded={expanded}
+        aria-controls={regionId}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span className="truncate">疑似弹幕溢出 {titles.length} 集</span>
+        <ChevronDownIcon
+          data-icon="inline-end"
+          aria-hidden="true"
+          className={cn("transition-transform", expanded && "rotate-180")}
+        />
+      </Button>
+      {expanded ? (
+        <div id={regionId} role="list" className="grid gap-1 border-t border-border/65 px-1.5 pb-1 pt-2">
+          {titles.map((item) => (
+            <div key={item.key} role="listitem" className="break-words text-xs leading-5 text-foreground/80">
+              {item.title}
+            </div>
+          ))}
         </div>
-      ))}
+      ) : null}
     </div>
   );
 }
@@ -166,32 +228,37 @@ function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
   }
 
   return (
-    <div className="grid gap-3 rounded-lg border border-border/80 bg-background/55 p-3 sm:p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">查询历史</div>
+    <div className="grid gap-2 rounded-lg border border-border/80 bg-background/55 p-2.5 sm:px-3">
+      <div className="flex min-h-7 items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <div className="shrink-0 text-xs font-semibold text-foreground/80">查询历史</div>
+          <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[0.62rem] tabular-nums">
+            {entries.length}
+          </Badge>
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-[11px] text-muted-foreground"
+            className="h-7 px-1.5 text-[10px] text-muted-foreground"
+            aria-expanded={!collapsed}
+            aria-controls="stats-result-history"
             onClick={() => setCollapsed((current) => !current)}
           >
-            {collapsed ? <ChevronDownIcon className="size-3.5" /> : <ChevronUpIcon className="size-3.5" />}
+            {collapsed ? <ChevronDownIcon data-icon="inline-start" /> : <ChevronUpIcon data-icon="inline-start" />}
             {collapsed ? "展开" : "收起"}
           </Button>
         </div>
-        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-muted-foreground" onClick={onClearHistory}>
-          <Trash2Icon className="size-3.5" />
+        <Button type="button" variant="ghost" size="sm" className="h-7 px-1.5 text-[10px] text-muted-foreground" onClick={onClearHistory}>
+          <Trash2Icon data-icon="inline-start" />
           清空
         </Button>
       </div>
 
-      {!collapsed ? <div className="grid gap-3">
+      {!collapsed ? <div id="stats-result-history" className="grid gap-2 border-t border-border/70 pt-2">
         {entries.map((entry, index) => (
           <div
             key={entry.id}
-            className={`${index > 0 ? "border-t border-border/70 pt-3" : ""} grid gap-2`}
+            className={cn("grid gap-1.5", index > 0 && "border-t border-border/70 pt-2")}
           >
             <div className="flex items-start justify-between gap-2">
               <div className="text-[11px] font-medium text-foreground/78">{entry.createdAtLabel} {getHistoryPlatformLabel(entry)}</div>
@@ -203,7 +270,7 @@ function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
                 onClick={() => onDeleteHistoryEntry?.(entry)}
                 aria-label={`删除 ${entry.createdAtLabel} ${getHistoryPlatformLabel(entry)} 这条历史`}
               >
-                <XIcon className="size-3.5" />
+                <XIcon />
               </Button>
             </div>
 
@@ -307,42 +374,49 @@ export function OutputPanel({
   }
 
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-5 p-4 sm:p-5">
-        {isRunning || hasAnyResults ? (
-          <div className="grid gap-3 rounded-lg border border-border/80 bg-background/70 p-3 sm:p-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-              <div className="flex min-w-0 flex-col gap-1">
-                <div className="text-base font-semibold text-foreground sm:text-lg">{currentAction || "等待执行操作"}</div>
-                <div className="text-[11px] text-muted-foreground sm:text-xs">
-                  <div>处理用时：{formatElapsed(elapsedMs)}</div>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center justify-end gap-2 text-right">
-                <div className="text-lg font-semibold text-foreground sm:text-xl">{progress}%</div>
-                {isRunning ? (
-                  <Badge className="px-3 py-1 text-[11px] sm:text-xs">进行中</Badge>
-                ) : (
-                  <Badge variant="secondary" className="px-3 py-1 text-[11px] sm:text-xs">空闲</Badge>
-                )}
-                {isRunning ? (
-                  <Button variant="secondary" size="sm" data-touch="compact" className="relative overflow-visible text-[11px] after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-[''] sm:text-xs" onClick={onCancelStatistics}>
-                    <PauseCircleIcon data-icon="inline-start" />
-                    取消
-                  </Button>
-                ) : null}
-              </div>
+    <div className="grid gap-3">
+      {isRunning ? (
+        <div role="status" aria-live="polite" className="grid gap-2 rounded-lg border border-border/80 bg-card p-3 shadow-[var(--shadow-card)]">
+          <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
+            <div className="min-w-0 break-words text-sm font-semibold leading-5 text-foreground">
+              {currentAction || "等待执行操作"}
             </div>
-            <Progress value={progress} className="h-3 rounded-full bg-muted" indicatorClassName="bg-primary" />
+            <div className="flex min-w-0 items-center justify-between gap-2 sm:justify-end">
+              <span className="mr-auto shrink-0 text-[11px] text-muted-foreground sm:mr-0">处理用时：{formatElapsed(elapsedMs)}</span>
+              <span className="text-sm font-semibold text-foreground tabular-nums">{progress}%</span>
+              <Badge>进行中</Badge>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-touch="compact"
+                className="relative overflow-visible after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-['']"
+                onClick={onCancelStatistics}
+              >
+                <PauseCircleIcon data-icon="inline-start" />
+                取消
+              </Button>
+            </div>
           </div>
-        ) : null}
+          <Progress value={progress} aria-label="统计进度" className="h-2 rounded-full bg-muted" indicatorClassName="bg-primary" />
+        </div>
+      ) : null}
 
-        {playCountResults?.length ? (
-          <div className="grid gap-3">
+      {!isRunning && hasAnyResults ? (
+        <div role="status" aria-live="polite" className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border/80 bg-card px-3 py-2">
+          <div className="min-w-0 truncate text-sm font-semibold text-foreground">
+            {currentAction || "统计完成"}
+            <span className="ml-2 font-normal text-muted-foreground">· 用时 {formatElapsed(elapsedMs)}</span>
+          </div>
+          <Badge variant="secondary" className="shrink-0">已完成</Badge>
+        </div>
+      ) : null}
+
+      {playCountResults?.length ? (
+          <div className="grid gap-2">
             {playCountResults.length > 1 ? (
               <ResultCard
                 title={`汇总 / 已选 ${playCountSelectedEpisodeCount} 集`}
-                insetInverted
+                emphasized
                 metrics={[
                   {
                     label: "总播放量",
@@ -367,62 +441,40 @@ export function OutputPanel({
           </div>
         ) : null}
 
-        {idResults?.length ? (
-          <div className="grid gap-3">
+      {idResults?.length ? (
+          <div className="grid gap-2">
             {idResults.length > 1 ? (
               <ResultCard
                 title={`汇总 / 已选 ${idSelectedEpisodeCount} 集`}
-                metrics={[]}
-                footer={
-                  <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                    {[
-                      { label: "总弹幕数", value: formatPlainNumber(totalDanmaku) },
-                      { label: "总去重", value: formatPlainNumber(totalUsers) },
-                    ].map((metric, metricIndex) => (
-                      <div key={`summary-${metric.label}`} className={`min-w-0 rounded-[calc(var(--radius)-0.12rem)] border px-2 py-2 text-center sm:px-3 ${getMetricToneClass(metricIndex + idResults.length)}`}>
-                        <div className={`text-[10px] sm:text-xs ${getMetricLabelClass(metricIndex + idResults.length)}`}>{metric.label}</div>
-                        <div className="mt-1 break-words text-sm font-semibold leading-tight sm:text-lg">{metric.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                }
+                emphasized
+                metrics={[
+                  { label: "总弹幕数", value: formatPlainNumber(totalDanmaku) },
+                  { label: "总去重", value: formatPlainNumber(totalUsers) },
+                ]}
               />
             ) : null}
             {idResults.map((drama) => (
               <ResultCard
                 key={`id-${drama.dramaId || drama.title}`}
                 title={`${drama.title} / 已选 ${drama.selectedEpisodeCount} 集`}
-                metrics={[]}
+                metrics={[
+                  { label: "总弹幕数", value: formatPlainNumber(drama.danmaku) },
+                  { label: "去重 ID 数", value: formatPlainNumber(drama.users) },
+                ]}
                 footer={
-                  <div className="grid gap-3">
-                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                      {[
-                        { label: "总弹幕数", value: formatPlainNumber(drama.danmaku) },
-                        { label: "去重 ID 数", value: formatPlainNumber(drama.users) },
-                      ].map((metric, metricIndex) => (
-                        <div
-                          key={`${drama.dramaId || drama.title}-${metric.label}`}
-                          className={`min-w-0 rounded-md border px-2 py-2 text-center sm:px-3 ${getMetricToneClass(metricIndex)}`}
-                        >
-                          <div className={`text-[10px] sm:text-xs ${getMetricLabelClass(metricIndex)}`}>{metric.label}</div>
-                          <div className="mt-1 break-words text-sm font-semibold leading-tight sm:text-lg">{metric.value}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <OverflowEpisodeList titles={getOverflowEpisodesForDrama(drama.dramaId, suspectedOverflowEpisodes)} />
-                  </div>
+                  <OverflowEpisodeList titles={getOverflowEpisodesForDrama(drama.dramaId, suspectedOverflowEpisodes)} />
                 }
               />
             ))}
           </div>
         ) : null}
 
-        {revenueResults?.length ? (
-          <div className="grid gap-3">
+      {revenueResults?.length ? (
+          <div className="grid gap-2">
             {resolvedRevenueSummary && revenueResults.length > 1 ? (
               <ResultCard
                 title={resolvedRevenueSummary.summaryTitle || `汇总 / 已选 ${resolvedRevenueSummary.selectedDramaCount} 部`}
-                insetInverted={false}
+                emphasized
                 metrics={[
                   ...(resolvedRevenueSummary.paidCountSourceSummary === "mixed"
                     ? [
@@ -469,7 +521,6 @@ export function OutputPanel({
                 <ResultCard
                   key={`revenue-${drama.dramaId}`}
                   title={drama.subtitle || `${drama.title} / 单价 ${drama.price || 0} 钻石`}
-                  insetInverted={false}
                   metrics={[
                     ...buildRevenuePaidMetricSegments(drama).map((segment) => ({
                       label: segment.label,
@@ -500,8 +551,7 @@ export function OutputPanel({
           </div>
         ) : null}
 
-        <ResultHistory entries={visibleHistoryEntries} onDeleteHistoryEntry={onDeleteHistoryEntry} onClearHistory={onClearHistory} />
-      </CardContent>
-    </Card>
+      <ResultHistory entries={visibleHistoryEntries} onDeleteHistoryEntry={onDeleteHistoryEntry} onClearHistory={onClearHistory} />
+    </div>
   );
 }

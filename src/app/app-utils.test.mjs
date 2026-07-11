@@ -40,6 +40,52 @@ import {
 const appUtilsModule = await import("./app-utils.js");
 const { readJsonResponse } = appUtilsModule;
 
+test("result metric grid keeps columns between 130px and 180px", () => {
+  const calculate = appUtilsModule.calculateResultMetricGridLayout;
+
+  assert.deepEqual(calculate(330, 3), { columns: 2, columnWidth: 165, gridWidth: 330 });
+  assert.deepEqual(calculate(750, 3), { columns: 3, columnWidth: 180, gridWidth: 540 });
+  assert.deepEqual(calculate(750, 5), { columns: 5, columnWidth: 150, gridWidth: 750 });
+  assert.deepEqual(calculate(100, 3), { columns: 1, columnWidth: 100, gridWidth: 100 });
+});
+
+test("compact statistics use fixed two-decimal wan and yi units", () => {
+  const format = appUtilsModule.formatCompactMetricValue;
+
+  assert.equal(format(9999), "9999");
+  assert.equal(format(10000), "1.00万");
+  assert.equal(format(1133000), "113.30万");
+  assert.equal(format(99999999), "10000.00万");
+  assert.equal(format(100000000), "1.00亿");
+  assert.equal(format(123456789), "1.23亿");
+  assert.equal(format(Number.NaN), "0");
+  assert.equal(appUtilsModule.formatPlayCountDisplay(1133000, false), "113.30万");
+  assert.equal(appUtilsModule.formatPlayCountWanFixed(9999), "9999");
+  assert.equal(
+    appUtilsModule.formatRevenueDisplayValue(
+      { minRevenueYuan: 768000, maxRevenueYuan: 942000 },
+      format,
+      (minValue, maxValue) => `${format(minValue)} - ${format(maxValue)}`
+    ),
+    "76.80万 - 94.20万"
+  );
+});
+
+test("statistics history keeps danmaku and every ID metric unabridged", () => {
+  const entry = appUtilsModule.createStatsHistoryEntry("manbo", {
+    activeTaskType: "id",
+    totalDanmaku: 123456789,
+    totalUsers: 1133000,
+    idResults: [
+      { dramaId: 1, title: "作品甲", danmaku: 123456789, users: 1133000 },
+      { dramaId: 2, title: "作品乙", danmaku: 20000, users: 10000 },
+    ],
+  }, { createdAt: 1, taskType: "id" });
+
+  assert.deepEqual(entry.summaryMetrics.map((metric) => metric.value), ["123456789", "1133000"]);
+  assert.deepEqual(entry.items[0].segments.map((metric) => metric.value), ["123456789", "1133000"]);
+});
+
 test("search metric queue limits keyword pages but keeps every manual import", () => {
   for (const count of [6, 10, 21]) {
     const items = Array.from({ length: count }, (_, index) => ({
@@ -1124,8 +1170,8 @@ test("formatDeviceDateTime treats numeric strings as browser-local second timest
 
 test("formatSignedCompactMetricValue preserves negative compact deltas", () => {
   assert.equal(formatSignedCompactMetricValue(-5), "-5");
-  assert.equal(formatSignedCompactMetricValue(-12345), "-1.2万");
-  assert.equal(formatSignedCompactMetricValue(12345), "+1.2万");
+  assert.equal(formatSignedCompactMetricValue(-12345), "-1.23万");
+  assert.equal(formatSignedCompactMetricValue(12345), "+1.23万");
   assert.equal(formatSignedCompactMetricValue(0), "0");
 });
 

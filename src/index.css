@@ -177,12 +177,6 @@ body {
   background: var(--background);
 }
 
-button,
-input,
-textarea {
-  font: inherit;
-}
-
 #app {
   min-height: 100vh;
 }

@@ -89,6 +89,41 @@ export function isMissevanLikelyDanmakuOverflow({ durationMs, danmaku }) {
   return expectedCap > 0 && Number(danmaku ?? 0) === expectedCap;
 }
 
+export function orderDetectedOverflowEpisodeKeys(detectedKeys = [], orderedKeys = []) {
+  const detected = Array.from(
+    new Set(
+      (Array.isArray(detectedKeys) ? detectedKeys : [])
+        .map((key) => String(key ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (detected.length < 2) {
+    return detected;
+  }
+
+  const detectedSet = new Set(detected);
+  const emitted = new Set();
+  const ordered = [];
+
+  (Array.isArray(orderedKeys) ? orderedKeys : []).forEach((key) => {
+    const normalizedKey = String(key ?? "").trim();
+    if (!normalizedKey || !detectedSet.has(normalizedKey) || emitted.has(normalizedKey)) {
+      return;
+    }
+    emitted.add(normalizedKey);
+    ordered.push(normalizedKey);
+  });
+
+  detected.forEach((key) => {
+    if (!emitted.has(key)) {
+      emitted.add(key);
+      ordered.push(key);
+    }
+  });
+
+  return ordered;
+}
+
 export function isPaidEpisode(platform, episode) {
   if (platform === "manbo") {
     return Number(episode?.pay_type ?? 0) === 1 || Number(episode?.price ?? 0) > 0;

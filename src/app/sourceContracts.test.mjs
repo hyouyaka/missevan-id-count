@@ -1034,7 +1034,7 @@ test("mobile touch targets use real layout space instead of overlapping hit over
 test("running statistics cancel keeps compact visuals with a 44px touch target", () => {
   assert.match(
     outputPanelSource,
-    /<Button variant="secondary" size="sm" data-touch="compact" className="relative overflow-visible text-\[11px\] after:absolute after:inset-x-0 after:-inset-y-1\.5 after:rounded-md after:content-\[''\] sm:text-xs" onClick=\{onCancelStatistics\}>/
+    /<Button[\s\S]*variant="secondary"[\s\S]*size="sm"[\s\S]*data-touch="compact"[\s\S]*after:-inset-y-1\.5[\s\S]*onClick=\{onCancelStatistics\}/
   );
   assert.match(buttonSource, /sm: "h-8 /);
 });
@@ -1663,6 +1663,73 @@ test("output stats and history are shared across platform tab switching", () => 
   assert.doesNotMatch(outputProps, /currentStatsState/);
   assert.match(outputProps, /onClearHistory=\{clearAllHistoryEntries\}/);
   assert.match(outputProps, /onDeleteHistoryEntry=\{\(entry\) => deleteHistoryEntry\(entry\.platform, entry\.id\)\}/);
+});
+
+test("statistics output uses a compact completed state and semantic metric grid", () => {
+  assert.match(outputPanelSource, /!isRunning && hasAnyResults/);
+  assert.match(outputPanelSource, /role="status" aria-live="polite"/);
+  assert.match(outputPanelSource, /<dl className=/);
+  assert.match(outputPanelSource, /<dt className=/);
+  assert.match(outputPanelSource, /<dd className=/);
+  assert.match(outputPanelSource, /new ResizeObserver/);
+  assert.match(outputPanelSource, /calculateResultMetricGridLayout\(width, metrics\.length\)/);
+  assert.match(outputPanelSource, /gridTemplateColumns:[\s\S]*repeat\(\$\{layout\.columns\}, \$\{layout\.columnWidth\}px\)/);
+  assert.match(outputPanelSource, /border border-border\/70 bg-muted\/35/);
+  assert.doesNotMatch(outputPanelSource, /grid-cols-2/);
+  assert.doesNotMatch(outputPanelSource, /lg:grid-cols-4/);
+  assert.doesNotMatch(outputPanelSource, /lg:w-1\/2|lg:w-3\/4/);
+  assert.doesNotMatch(outputPanelSource, />空闲</);
+});
+
+test("running statistics keep long mobile progress copy visible", () => {
+  const runningStart = outputPanelSource.indexOf("{isRunning ? (");
+  const runningEnd = outputPanelSource.indexOf("{!isRunning && hasAnyResults", runningStart);
+  const runningSource = outputPanelSource.slice(runningStart, runningEnd);
+
+  assert.match(runningSource, /break-words text-sm font-semibold leading-5/);
+  assert.match(runningSource, /sm:grid-cols-\[minmax\(0,1fr\)_auto\]/);
+  assert.doesNotMatch(runningSource, /truncate/);
+  assert.match(runningSource, /处理用时：\{formatElapsed\(elapsedMs\)\}/);
+  assert.match(runningSource, /\{progress\}%/);
+});
+
+test("history toolbar uses compact labels without shrinking button height", () => {
+  assert.match(
+    outputPanelSource,
+    /className="h-7 px-1\.5 text-\[10px\] text-muted-foreground"[\s\S]*\{collapsed \? "展开" : "收起"\}/
+  );
+  assert.match(
+    outputPanelSource,
+    /className="h-7 px-1\.5 text-\[10px\] text-muted-foreground" onClick=\{onClearHistory\}/
+  );
+  assert.doesNotMatch(
+    indexCssSource,
+    /button,\s*input,\s*textarea\s*\{\s*font:\s*inherit;/
+  );
+});
+
+test("overflow episodes preserve server order and use an accessible disclosure", () => {
+  const helperStart = outputPanelSource.indexOf("function getOverflowEpisodesForDrama");
+  const helperEnd = outputPanelSource.indexOf("const HISTORY_METRIC_ICON_MAP", helperStart);
+  const helperSource = outputPanelSource.slice(helperStart, helperEnd);
+
+  assert.match(outputPanelSource, /aria-controls=\{regionId\}/);
+  assert.match(outputPanelSource, /aria-expanded=\{expanded\}/);
+  assert.match(outputPanelSource, /role="list"/);
+  assert.match(helperSource, /keys\.flatMap/);
+  assert.doesNotMatch(helperSource, /\.sort\(/);
+});
+
+test("completed background tasks collapse and dismiss after opening results", () => {
+  const taskCenterStart = toolViewSource.indexOf("function BackgroundTaskCenter");
+  const taskCenterEnd = toolViewSource.indexOf("const MAX_COMPARE_ITEMS", taskCenterStart);
+  const taskCenterSource = toolViewSource.slice(taskCenterStart, taskCenterEnd);
+  const openResultStart = toolViewSource.indexOf("function openBackgroundTaskResult");
+  const openResultEnd = toolViewSource.indexOf("function getAllSearchResults", openResultStart);
+  const openResultSource = toolViewSource.slice(openResultStart, openResultEnd);
+
+  assert.match(taskCenterSource, /!task\?\.isRunning && wasRunningRef\.current[\s\S]*setDesktopCollapsed\(true\)/);
+  assert.match(openResultSource, /scrollToPanel\(outputPanelRef\)[\s\S]*setBackgroundTask\(createIdleBackgroundTask\(\)\)/);
 });
 
 test("history timestamps include platform label", () => {

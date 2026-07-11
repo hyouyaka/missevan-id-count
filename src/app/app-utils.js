@@ -1168,17 +1168,7 @@ export function resolveRevenueSummaryForHistory(results, currentPlatform, incomi
 }
 
 function formatPlayCount(value) {
-  const count = Number(value ?? 0);
-  if (!Number.isFinite(count) || count <= 0) {
-    return "0";
-  }
-  if (count < 10000) {
-    return `${count}`;
-  }
-  if (count < 100000000) {
-    return `${(count / 10000).toFixed(1)}万`;
-  }
-  return `${(count / 100000000).toFixed(2)}亿`;
+  return formatCompactMetricValue(value);
 }
 
 export function formatPlainNumber(value) {
@@ -1208,11 +1198,7 @@ export function formatPlayCountDisplay(value, failed) {
 }
 
 export function formatPlayCountWanFixed(value) {
-  const count = Number(value ?? 0);
-  if (!Number.isFinite(count) || count <= 0) {
-    return "0.0万";
-  }
-  return `${(count / 10000).toFixed(1)}万`;
+  return formatCompactMetricValue(value);
 }
 
 function formatRevenue(value) {
@@ -1328,15 +1314,36 @@ export function formatCompactMetricValue(value) {
     return "0";
   }
   if (amount >= 100000000) {
-    return `${trimTrailingZero((amount / 100000000).toFixed(2))}亿`;
+    return `${(amount / 100000000).toFixed(2)}亿`;
   }
   if (amount >= 10000) {
-    return `${trimTrailingZero((amount / 10000).toFixed(1))}万`;
+    return `${(amount / 10000).toFixed(2)}万`;
   }
   if (Number.isInteger(amount)) {
     return `${amount}`;
   }
   return trimTrailingZero(amount.toFixed(2));
+}
+
+export function calculateResultMetricGridLayout(containerWidth, metricCount, options = {}) {
+  const width = Math.max(0, Number(containerWidth) || 0);
+  const count = Math.max(1, Math.trunc(Number(metricCount) || 0));
+  const minColumnWidth = Math.max(1, Number(options.minColumnWidth) || 130);
+  const maxColumnWidth = Math.max(minColumnWidth, Number(options.maxColumnWidth) || 180);
+
+  if (width === 0) {
+    return { columns: 1, columnWidth: 0, gridWidth: 0 };
+  }
+
+  const capacity = Math.max(1, Math.floor(width / minColumnWidth));
+  const columns = Math.min(count, capacity);
+  const columnWidth = Math.min(maxColumnWidth, width / columns);
+
+  return {
+    columns,
+    columnWidth,
+    gridWidth: columnWidth * columns,
+  };
 }
 
 export function formatSignedCompactMetricValue(value) {
@@ -1489,7 +1496,7 @@ function buildIdHistoryEntry(platform, stats, createdAt) {
           {
             key: "uniqueUsers",
             label: "去重 ID",
-            value: formatCompactMetricValue(stats.totalUsers),
+            value: formatPlainNumber(stats.totalUsers),
           },
         ]
       : [],

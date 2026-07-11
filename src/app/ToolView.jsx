@@ -739,6 +739,10 @@ function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) 
     if (task?.isRunning && !wasRunningRef.current) {
       setDesktopCollapsed(false);
     }
+    if (!task?.isRunning && wasRunningRef.current) {
+      setDesktopCollapsed(true);
+      setMobileOpen(false);
+    }
     wasRunningRef.current = Boolean(task?.isRunning);
   }, [task?.isRunning]);
 
@@ -2591,14 +2595,21 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function openBackgroundTaskResult() {
-    const target = backgroundTaskRef.current?.resultTarget;
+    const activeTask = backgroundTaskRef.current;
+    const target = activeTask?.resultTarget;
     if (target === "favorites") {
       navigateCurrentPlatform("favorites");
+      if (!activeTask?.isRunning) {
+        setBackgroundTask(createIdleBackgroundTask());
+      }
       return;
     }
     if (target === "stats") {
       navigateCurrentPlatform("search");
       scrollToPanel(outputPanelRef);
+      if (!activeTask?.isRunning) {
+        setBackgroundTask(createIdleBackgroundTask());
+      }
     }
   }
 

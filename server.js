@@ -26,7 +26,10 @@ import {
 import { canonicalizeCompatibleSearchText } from "./shared/searchCompatibility.js";
 import { createUpstashRestClient } from "./shared/upstashRestClient.js";
 import { loadLocalEnv } from "./envConfig.js";
-import { isMissevanLikelyDanmakuOverflow } from "./shared/episodeRules.js";
+import {
+  isMissevanLikelyDanmakuOverflow,
+  orderDetectedOverflowEpisodeKeys,
+} from "./shared/episodeRules.js";
 import {
   buildOngoingResponse,
   normalizeOngoingIdList,
@@ -8947,6 +8950,10 @@ async function executeManboIdTask(task) {
   const dramaMap = buildIdDramaMap(episodes);
   const allUsers = new Set();
   const suspectedOverflowEpisodes = new Set();
+  const overflowEpisodeOrder = episodes.map((episode) => buildOverflowEpisodeKey(
+    episode?.drama_id,
+    episode?.episode_title ?? episode?.name
+  ));
 
   reportStatsTask(task, {
     status: "running",
@@ -9022,6 +9029,22 @@ async function executeManboIdTask(task) {
   if (task.cancelled) {
     return finalizeCancelledTask(task, {
       totalUsers: allUsers.size,
+      result: {
+        idResults: Array.from(dramaMap.values()).map((drama) => ({
+          dramaId: drama.dramaId,
+          title: drama.title,
+          selectedEpisodeCount: drama.selectedEpisodeCount,
+          danmaku: drama.danmaku,
+          users: drama.userSet.size,
+        })),
+        suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
+          Array.from(suspectedOverflowEpisodes),
+          overflowEpisodeOrder
+        ),
+        totalDanmaku: task.totalDanmaku,
+        totalUsers: allUsers.size,
+        idSelectedEpisodeCount: task.totalCount,
+      },
     });
   }
 
@@ -9042,7 +9065,10 @@ async function executeManboIdTask(task) {
         danmaku: drama.danmaku,
         users: drama.userSet.size,
       })),
-      suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
+      suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
+        Array.from(suspectedOverflowEpisodes),
+        overflowEpisodeOrder
+      ),
       totalDanmaku: task.totalDanmaku,
       totalUsers: allUsers.size,
       idSelectedEpisodeCount: task.totalCount,
@@ -9528,6 +9554,7 @@ async function executeManboRevenueTask(task) {
   const dramaIds = Array.isArray(task.dramaIds) ? task.dramaIds : [];
   const results = [];
   const suspectedOverflowEpisodes = new Set();
+  const overflowEpisodeOrder = [];
   initializeRevenueProgress(task, dramaIds);
 
   reportStatsTask(task, {
@@ -9552,6 +9579,11 @@ async function executeManboRevenueTask(task) {
       const diamondValue = Number(dramaInfo?.drama?.diamond_value ?? 0);
       const revenueType = getManboRevenueType(dramaInfo);
       const revenueEpisodes = getManboRevenueEpisodes(dramaInfo, revenueType);
+      revenueEpisodes.forEach((episode) => {
+        overflowEpisodeOrder.push(
+          buildOverflowEpisodeKey(dramaId, String(episode?.name ?? "").trim())
+        );
+      });
       const seasonPricing = revenueType === "season" ? resolveManboSeasonPricing(dramaInfo) : null;
       const payCount = getManboPayCount(dramaInfo);
       const subtitle = getManboRevenueSubtitle(title, dramaInfo, revenueType, revenueEpisodes);
@@ -9813,7 +9845,10 @@ async function executeManboRevenueTask(task) {
         revenueResults: compactRevenueResults(results),
         revenueSummary: {
           ...revenueSummary,
-          suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
+          suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
+            Array.from(suspectedOverflowEpisodes),
+            overflowEpisodeOrder
+          ),
         },
       },
     });
@@ -9830,7 +9865,10 @@ async function executeManboRevenueTask(task) {
       revenueResults: compactRevenueResults(results),
       revenueSummary: {
         ...revenueSummary,
-        suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
+        suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
+          Array.from(suspectedOverflowEpisodes),
+          overflowEpisodeOrder
+        ),
       },
     },
   });
