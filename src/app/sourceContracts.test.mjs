@@ -1264,8 +1264,9 @@ test("search cards refresh active-platform metrics without blocking actions", ()
   assert.match(serverSource, /manboInfoStore\.byDramaId\.get\(String\(item\.raw\)\)[\s\S]*buildManboSearchFallbackCard\(localRecord\)/);
 });
 
-test("Railway uses deterministic install and direct server startup", () => {
-  assert.match(railwaySource, /"buildCommand": "npm ci && npm run build"/);
+test("Railway leaves dependency installation to the builder and starts the server directly", () => {
+  assert.match(railwaySource, /"buildCommand": "npm run build"/);
+  assert.doesNotMatch(railwaySource, /"buildCommand": "npm ci/);
   assert.match(railwaySource, /"startCommand": "node server\.js"/);
 });
 
