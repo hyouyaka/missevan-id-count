@@ -1222,7 +1222,7 @@ test("backend unified search uses coupled API fallback and library card details"
   assert.match(routeSource, /app\.post\("\/search-card-metrics", searchCardMetricsLimiter/);
   assert.match(routeSource, /SEARCH_CARD_METRICS_TIMEOUT_MS/);
   assert.match(routeSource, /METRICS_BUSY/);
-  assert.doesNotMatch(routeSource, /card_patch/);
+  assert.match(routeSource, /card_patch: result\.cardPatch/);
   assert.match(serverSource, /let rewardNum = null;[\s\S]*fetchRewardDetailMeta\(id, \{ signal \}\)[\s\S]*if \(signal\?\.aborted \|\| isMissevanAccessDenied\(error\)\)[\s\S]*reward_num: rewardNum/);
   assert.match(serverSource, /needpay: Boolean\(record\?\.needpay\)/);
   assert.match(serverSource, /vipFree: Number\(record\?\.vipFree/);
@@ -1241,7 +1241,9 @@ test("search cards refresh active-platform metrics without blocking actions", ()
   assert.match(toolViewSource, /const concurrency = platform === "manbo" \? 2 : 1/);
   assert.match(appUtilsSource, /\["pending", "loading", "error", "access_denied"\]/);
   assert.match(toolViewSource, /String\(item\?\.metrics_status\) === "loading"[\s\S]*metrics_status: "pending"/);
-  assert.doesNotMatch(toolViewSource, /payload\.card_patch/);
+  assert.match(toolViewSource, /mergeMissingSearchCardFields,/);
+  assert.match(toolViewSource, /typeof patch === "function" \? patch\(item\) : patch/);
+  assert.match(toolViewSource, /\.\.\.mergeMissingSearchCardFields\(currentItem, payload\.card_patch\)/);
   assert.match(toolViewSource, /const queue = selectSearchMetricQueue\(items, resultSource\)/);
   assert.match(appUtilsSource, /return resultSource === "manual" \? candidates : candidates\.slice\(0, 5\)/);
   assert.match(toolViewSource, /code === "METRICS_RATE_LIMITED" && resultSource === "manual"/);
@@ -1330,9 +1332,19 @@ test("global search input area supports header layout and compact controls", () 
   assert.doesNotMatch(searchPanelSource, /event\.key === "Enter"/);
 });
 
-test("mobile batch action menu uses compact buttons", () => {
-  assert.match(searchResultsSource, /const mobileActionButtonClass = `h-8 min-w-fit gap-1 px-2 \$\{mobileBatchTextClass\}`/);
+test("mobile batch action menu separates 44px hit areas from compact visuals", () => {
+  assert.match(searchResultsSource, /const mobileActionHitAreaClass = "relative h-11 min-h-11 w-full min-w-0/);
+  assert.match(searchResultsSource, /const mobileActionVisualClass = `pointer-events-none absolute -inset-x-px top-1\/2 h-9 w-auto min-w-0 -translate-y-1\/2/);
+  assert.match(searchResultsSource, /const batchSwitchHitAreaClass = "relative block h-11 min-h-11 w-full min-w-0/);
+  assert.match(searchResultsSource, /const batchSwitchVisualClass = "absolute inset-x-0 top-1\/2 flex h-9 w-full min-w-0 -translate-y-1\/2/);
+  assert.match(searchResultsSource, /const mobileManagementVisualClass = "border-border\/70 bg-background\/84/);
   assert.match(searchResultsSource, /const mobileBatchTextClass = "text-xs! font-medium"/);
+  assert.match(searchResultsSource, /function MobileBatchButton\(\{ variant = "outline", visualClassName = "", children, \.\.\.props \}\)/);
+  assert.match(searchResultsSource, /data-touch="compact"[\s\S]*cn\(buttonVariants\(\{ variant, size: "sm" \}\), mobileActionVisualClass, visualClassName\)/);
+  assert.match(searchResultsSource, /grid gap-0 rounded-lg/);
+  assert.match(searchResultsSource, /className="grid grid-cols-4 gap-1"/);
+  assert.match(searchResultsSource, /className="grid grid-cols-3 gap-1"/);
+  assert.equal(searchResultsSource.match(/visualClassName=\{mobileManagementVisualClass\}/g)?.length ?? 0, 2);
   assert.match(searchResultsSource, /function ActionPanel\(\{ variant = "desktop" \}\)/);
 });
 
@@ -1407,8 +1419,8 @@ test("web ongoing and ranks filters use shared lightweight capsules", () => {
 test("batch action counters remain scoped to the active result platform", () => {
   assert.match(searchResultsSource, /const actionResults = allResults\.length \? allResults : results/);
   assert.match(searchResultsSource, /const selectedDramaCount = actionResults\.filter/);
-  assert.match(searchResultsSource, /const importedDramaCount = dramas\.length/);
   assert.match(searchResultsSource, /const selectedEpisodeCount = selectedEpisodes\.length/);
+  assert.doesNotMatch(searchResultsSource, /const importedDramaCount/);
 
   const searchResultsStart = toolViewSource.indexOf("<SearchResults");
   const outputPanelStart = toolViewSource.indexOf("<OutputPanel");
@@ -1516,6 +1528,23 @@ test("external drama title jump includes titles in import usage logs", () => {
   assert.match(manboRouteSource, /\.\.\.\(usageSource \? \{ source: usageSource \} : \{\}\)/);
 });
 
+test("Manbo drama card imports use the info store before external detail hydration", () => {
+  const routeStart = serverSource.indexOf('app.post("/manbo/getdramacards"');
+  const routeEnd = serverSource.indexOf('app.post("/manbo/getdramas"', routeStart);
+  assert.notEqual(routeStart, -1, "Manbo dramacards route should exist");
+  assert.notEqual(routeEnd, -1, "Manbo dramacards route should have an end marker");
+
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+  const localLookupIndex = routeSource.indexOf("manboInfoStore.byDramaId.get(String(item.raw))");
+  const externalResolveIndex = routeSource.indexOf("resolveManboItem(item)");
+  const externalDetailIndex = routeSource.indexOf("dramaService.getManboDrama(resolved.dramaId)");
+
+  assert.ok(localLookupIndex >= 0, "Manbo dramacards should check the info store");
+  assert.ok(externalResolveIndex > localLookupIndex, "local lookup should happen before input resolution");
+  assert.ok(externalDetailIndex > externalResolveIndex, "external detail hydration should remain the fallback");
+  assert.match(routeSource, /if \(localRecord\) \{[\s\S]*buildManboSearchFallbackCard\(localRecord\)[\s\S]*checked: true,[\s\S]*continue;/);
+});
+
 test("rank and ongoing panels render cached data before background refresh", () => {
   assert.match(ranksDataSource, /export function getCachedRanksData\(frontendVersion\)/);
   assert.match(ranksPanelSource, /getCachedRanksData\(frontendVersion\)/);
@@ -1569,9 +1598,18 @@ test("addDramas imports missing dramas with one batch request for the active pla
 test("SearchResults keeps only page layout after dialog rollback", () => {
   assert.doesNotMatch(searchResultsSource, /variant = "page"/);
   assert.doesNotMatch(searchResultsSource, /isDialogVariant/);
-  assert.match(searchResultsSource, /<div className="grid gap-4 lg:grid-cols-\[minmax\(0,1fr\)_11rem\] lg:items-start">/);
+  assert.match(searchResultsSource, /<div className="grid gap-4 lg:grid-cols-\[minmax\(0,1fr\)_150px\] lg:items-start">/);
   assert.match(searchResultsSource, /results\.length \? \(/);
   assert.match(searchResultsSource, /className="fixed inset-x-3 mobile-fixed-bottom z-40 lg:hidden"/);
+});
+
+test("batch summaries omit imported count and both import actions share ImportIcon", () => {
+  assert.match(searchResultsSource, /grid grid-cols-2 gap-2 lg:grid-cols-1/);
+  assert.match(searchResultsSource, /grid-cols-\[repeat\(2,minmax\(0,1fr\)\)_auto\]/);
+  assert.match(searchResultsSource, /flex h-11 min-w-0 items-center justify-center gap-1/);
+  assert.equal(searchResultsSource.match(/<ImportIcon data-icon="inline-start" \/>/g)?.length ?? 0, 2);
+  assert.doesNotMatch(searchResultsSource, /<ListChecksIcon/);
+  assert.match(searchResultsSource, /<ImportIcon data-icon="inline-start" \/>\s*导入/);
 });
 
 test("platform id icon is globally reusable", () => {

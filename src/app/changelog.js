@@ -4,6 +4,14 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.2",
+    changes: [
+      "优化搜索结果显示逻辑",
+      "优化统计结果显示，节省页面空间",
+      "优化批量操作工具栏",
+    ],
+  },
+  {
     version: "1.7.1",
     changes: [
       "功能建议页面更新为匿名留言板模式方便交流",

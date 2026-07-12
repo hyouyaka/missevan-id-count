@@ -64,6 +64,7 @@ import {
   isAbortError,
   loadPersistedHistoryEntries,
   mergeAppConfig,
+  mergeMissingSearchCardFields,
   MISSEVAN_DESKTOP_ACCESS_HINT,
   normalizeToolRouteState,
   normalizeVersion,
@@ -2431,9 +2432,13 @@ export function ToolView({ initialAppConfig }) {
       if (Number(state.searchGeneration ?? 0) !== Number(searchGeneration ?? 0)) {
         return state;
       }
-      const patchItems = (items = []) => items.map((item) =>
-        String(item?.id ?? "") === normalizedId ? { ...item, ...patch } : item
-      );
+      const patchItems = (items = []) => items.map((item) => {
+        if (String(item?.id ?? "") !== normalizedId) {
+          return item;
+        }
+        const resolvedPatch = typeof patch === "function" ? patch(item) : patch;
+        return { ...item, ...resolvedPatch };
+      });
       return {
         ...state,
         searchResults: patchItems(state.searchResults),
@@ -2501,11 +2506,12 @@ export function ToolView({ initialAppConfig }) {
           if (controller.signal.aborted || !payload?.success) {
             throw new DOMException("Aborted", "AbortError");
           }
-          patchSearchMetricItem(platform, item.id, {
+          patchSearchMetricItem(platform, item.id, (currentItem) => ({
             ...(payload.metrics || {}),
+            ...mergeMissingSearchCardFields(currentItem, payload.card_patch),
             metrics_status: "ready",
             metrics_error_code: "",
-          }, searchGeneration);
+          }), searchGeneration);
         } catch (error) {
           if (isAbortError(error) || controller.signal.aborted) {
             patchSearchMetricItem(platform, item.id, { metrics_status: "pending" }, searchGeneration);

@@ -135,7 +135,7 @@
   --shadow-secondary-control: 0 14px 28px -20px oklch(0.48 0.13 38 / 0.28);
   --shadow-selected: 0 8px 20px -14px oklch(0.26 0.035 255 / 0.34);
   --mobile-fixed-bottom-offset: max(0.75rem, env(safe-area-inset-bottom));
-  --mobile-bottom-action-height: 4.75rem;
+  --mobile-bottom-action-height: 3.5rem;
   --mobile-floating-control-size: 2.75rem;
   --mobile-floating-control-gap: 0.5rem;
   --mobile-compare-basket-bottom: calc(

@@ -24,6 +24,7 @@ import {
   getInlineTaggedTitleDisplayText,
   getRevenuePaidCountLabel,
   loadPersistedHistoryEntries,
+  mergeMissingSearchCardFields,
   normalizeOngoingWindow,
   parseRawItems,
   readToolRouteStateFromLocation,
@@ -39,6 +40,44 @@ import {
 
 const appUtilsModule = await import("./app-utils.js");
 const { readJsonResponse } = appUtilsModule;
+
+test("search card detail patches fill only missing base fields", () => {
+  assert.deepEqual(
+    mergeMissingSearchCardFields(
+      {
+        cover: "",
+        name: "信息库名称",
+        price: 0,
+        is_member: false,
+        main_cvs: [],
+        main_cv_text: "",
+      },
+      {
+        cover: "https://example.com/cover.jpg",
+        name: "详情接口名称",
+        price: 99,
+        is_member: true,
+        main_cvs: ["甲", "乙"],
+        main_cv_text: "甲、乙",
+      }
+    ),
+    {
+      cover: "https://example.com/cover.jpg",
+      main_cvs: ["甲", "乙"],
+      main_cv_text: "甲、乙",
+    }
+  );
+});
+
+test("search card detail patches keep existing CV fields as one source", () => {
+  assert.deepEqual(
+    mergeMissingSearchCardFields(
+      { main_cvs: ["信息库主役"], main_cv_text: "" },
+      { main_cvs: ["详情主役"], main_cv_text: "详情主役" }
+    ),
+    {}
+  );
+});
 
 test("result metric grid keeps columns between 130px and 180px", () => {
   const calculate = appUtilsModule.calculateResultMetricGridLayout;

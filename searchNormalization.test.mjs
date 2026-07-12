@@ -1516,6 +1516,75 @@ test("info store read failure preserves an already loaded snapshot", async () =>
   assert.equal(store.snapshot.records[0].name, "已加载作品");
 });
 
+test("search metric detail patches expose normalized base card fields", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const {
+    buildManboSearchCardPatch,
+    buildMissevanSearchCardPatch,
+  } = await import("./server.js");
+
+  assert.deepEqual(
+    buildMissevanSearchCardPatch({
+      drama: {
+        name: "猫耳作品",
+        cover: " https://example.com/missevan.jpg ",
+        author: "作者甲",
+        vip: 0,
+        price: 0,
+        member_price: 0,
+        is_member: false,
+      },
+      cvs: [{ displayName: "主役甲" }],
+      episodes: { episode: [{ sound_id: 12345 }] },
+    }),
+    {
+      cover: "https://example.com/missevan.jpg",
+      name: "猫耳作品",
+      author: "作者甲",
+      main_cvs: ["主役甲"],
+      main_cv_text: "主要CV：主役甲",
+      content_type_label: "",
+      payment_label: "免费",
+      sound_id: 12345,
+      vip: 0,
+      price: 0,
+      member_price: 0,
+      is_member: false,
+    }
+  );
+
+  assert.deepEqual(
+    buildManboSearchCardPatch({
+      drama: {
+        id: "2174449355623235622",
+        name: "忏悔地",
+        cover: "https://img.kilamanbo.com/cover.jpg",
+        author: "作者乙",
+        main_cvs: ["主役乙"],
+        catalogName: "广播剧",
+        price: 0,
+        view_count: 10,
+        subscription_num: 2,
+        diamond_value: 3,
+        is_member: false,
+      },
+      episodes: { episode: [{ sound_id: "2190000000000000000" }] },
+    }),
+    {
+      cover: "https://img.kilamanbo.com/cover.jpg",
+      name: "忏悔地",
+      author: "作者乙",
+      main_cvs: ["主役乙"],
+      main_cv_text: "主要CV：主役乙",
+      content_type_label: "广播剧",
+      payment_label: "免费",
+      sound_id: "2190000000000000000",
+      price: 0,
+      is_member: false,
+    }
+  );
+});
+
 test("ranks cache policy supports the Beijing morning update window", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { getRanksCachePolicyForConfig } = await import("./server.js");

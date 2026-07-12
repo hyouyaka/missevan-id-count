@@ -7489,6 +7489,12 @@ export function normalizeManboDramaInfo(raw) {
           raw.originalAuthor ??
           raw.originalAuthorName
       ),
+      main_cvs: splitManboApiCvNames(raw.cvNameStr),
+      catalogName: normalizeTextValue(
+        raw.catalogName ?? raw.radioDramaCategoryResp?.name
+      ),
+      genre: normalizeTextValue(raw.genre),
+      seriesTitle: normalizeTextValue(raw.seriesTitle),
       member_listen_count: normalizeOptionalFiniteNumber(
         pickFirstDefined(raw.memberListenCount, raw.member_listen_count)
       ),
@@ -10214,6 +10220,66 @@ function getSearchCardMetricsCacheState(platform, id, soundId = null) {
   return Boolean(getCachedValue(manboDramaCache, String(id), MANBO_DRAMA_CACHE_TTL_MS));
 }
 
+const SEARCH_CARD_PATCH_FIELDS = [
+  "cover",
+  "name",
+  "author",
+  "main_cvs",
+  "main_cv_text",
+  "content_type_label",
+  "payment_label",
+  "sound_id",
+  "vip",
+  "price",
+  "member_price",
+  "is_member",
+];
+
+function pickSearchCardPatchFields(card = {}) {
+  return Object.fromEntries(
+    SEARCH_CARD_PATCH_FIELDS
+      .filter((field) => Object.prototype.hasOwnProperty.call(card, field))
+      .map((field) => [field, card[field]])
+  );
+}
+
+export function buildMissevanSearchCardPatch(info) {
+  const drama = info?.drama;
+  if (!drama) {
+    return {};
+  }
+  const mainCvs = getMissevanApiCvNames(info, 20);
+  const soundId = Number(info?.episodes?.episode?.[0]?.sound_id ?? 0) || null;
+  const card = {
+    cover: normalizeTextValue(drama.cover),
+    name: normalizeTextValue(drama.name),
+    author: normalizeTextValue(drama.author),
+    main_cvs: mainCvs,
+    main_cv_text: buildMainCvText(mainCvs),
+    content_type_label: getMissevanContentTypeLabel(drama),
+    sound_id: soundId,
+    vip: Number(drama.vip ?? 0),
+    price: Number(drama.price ?? 0),
+    member_price: Number(drama.member_price ?? 0),
+    is_member: Boolean(drama.is_member),
+  };
+  card.payment_label = getMissevanPaymentLabel(card);
+  return pickSearchCardPatchFields(card);
+}
+
+export function buildManboSearchCardPatch(info) {
+  const card = normalizeManboCardFromDramaInfo(info);
+  if (!card) {
+    return {};
+  }
+  const mainCvs = normalizeStringArray(info?.drama?.main_cvs, 20);
+  return pickSearchCardPatchFields({
+    ...card,
+    main_cvs: mainCvs,
+    main_cv_text: buildMainCvText(mainCvs),
+  });
+}
+
 async function fetchSearchCardMetrics(platform, id, soundId, signal) {
   const cached = getSearchCardMetricsCacheState(platform, id, soundId);
   if (platform === "missevan") {
@@ -10244,6 +10310,7 @@ async function fetchSearchCardMetrics(platform, id, soundId, signal) {
         subscription_num: normalizeOptionalFiniteNumber(info.drama.subscription_num),
         reward_num: rewardNum,
       },
+      cardPatch: buildMissevanSearchCardPatch(info),
     };
   }
 
@@ -10261,6 +10328,7 @@ async function fetchSearchCardMetrics(platform, id, soundId, signal) {
       pay_count: normalizeOptionalFiniteNumber(card.pay_count),
       member_listen_count: normalizeOptionalFiniteNumber(card.member_listen_count),
     },
+    cardPatch: buildManboSearchCardPatch(info),
   };
 }
 
@@ -10439,6 +10507,7 @@ app.post("/search-card-metrics", searchCardMetricsLimiter, async (req, res) => {
       id: platform === "missevan" ? Number(id) : String(id),
       cached: Boolean(result.cached),
       metrics: result.metrics,
+      card_patch: result.cardPatch,
     });
   } catch (error) {
     if (requestAbort.signal.aborted) {
@@ -11299,6 +11368,17 @@ app.post("/manbo/getdramacards", expensiveDataLimiter, async (req, res) => {
   await ensureInfoStoreLoaded(manboInfoStore);
   const newDramaIds = [];
   for (const item of items) {
+    const localRecord = /^\d+$/.test(String(item.raw ?? ""))
+      ? manboInfoStore.byDramaId.get(String(item.raw))
+      : null;
+    if (localRecord) {
+      results.push({
+        ...buildManboSearchFallbackCard(localRecord),
+        checked: true,
+      });
+      continue;
+    }
+
     try {
       const resolved = await resolveManboItem(item);
       if (!resolved?.dramaId) {

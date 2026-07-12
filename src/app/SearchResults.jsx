@@ -13,7 +13,6 @@ import {
   HashIcon,
   HeartIcon,
   ImportIcon,
-  ListChecksIcon,
   LoaderCircleIcon,
   MicIcon,
   PlayCircleIcon,
@@ -25,12 +24,13 @@ import {
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import { formatPlainNumber, getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
 import {
   fetchRankTrendAvailabilityData,
@@ -263,7 +263,6 @@ export function SearchResults({
   const extraMetaLabel = platform === "manbo" ? "收藏数" : "追剧人数";
   const actionResults = allResults.length ? allResults : results;
   const selectedDramaCount = actionResults.filter((result) => result.checked).length;
-  const importedDramaCount = dramas.length;
   const selectedEpisodeCount = selectedEpisodes.length;
   const visibleResults = results;
   const showLoadMore = resultSource === "search" && Boolean(hasMoreResults);
@@ -815,8 +814,11 @@ export function SearchResults({
 
   const actionButtonBaseClass = "h-9 w-full justify-start px-2.5 text-[14px]!";
   const mobileBatchTextClass = "text-xs! font-medium";
-  const mobileActionButtonClass = `h-8 min-w-fit gap-1 px-2 ${mobileBatchTextClass}`;
-  const batchSwitchControlClass = "flex h-8 min-w-fit items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
+  const mobileActionHitAreaClass = "relative h-11 min-h-11 w-full min-w-0 bg-transparent! p-0 shadow-none! hover:bg-transparent! active:translate-y-0";
+  const mobileActionVisualClass = `pointer-events-none absolute -inset-x-px top-1/2 h-9 w-auto min-w-0 -translate-y-1/2 gap-1 px-1 sm:px-2 ${mobileBatchTextClass}`;
+  const mobileManagementVisualClass = "border-border/70 bg-background/84 dark:border-border/70 dark:bg-background/84";
+  const batchSwitchHitAreaClass = "relative block h-11 min-h-11 w-full min-w-0";
+  const batchSwitchVisualClass = "absolute inset-x-0 top-1/2 flex h-9 w-full min-w-0 -translate-y-1/2 items-center justify-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2 sm:text-xs";
   const desktopBatchControlClass = "flex h-9 w-full items-center justify-start gap-2 rounded-md border border-border/75 bg-background px-2.5 text-[14px]! font-medium";
   const resultActionControlClass = "flex h-8 items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
   const resultActionButtonClass = "h-8 gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-[0.7rem] sm:gap-1.5 sm:px-2.5 sm:text-xs";
@@ -832,76 +834,88 @@ export function SearchResults({
     callback?.();
   }
 
+  function MobileBatchButton({ variant = "outline", visualClassName = "", children, ...props }) {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        data-touch="compact"
+        className={mobileActionHitAreaClass}
+        {...props}
+      >
+        <span className={cn(buttonVariants({ variant, size: "sm" }), mobileActionVisualClass, visualClassName)}>
+          {children}
+        </span>
+      </Button>
+    );
+  }
+
   function ActionPanel({ variant = "desktop" }) {
     if (variant === "mobile") {
       return (
-        <div className="grid gap-2 rounded-lg border border-border/80 bg-surface-floating p-2 shadow-[var(--shadow-panel)] backdrop-blur-xl">
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <label className={batchSwitchControlClass}>
-              <Switch
-                aria-label="切换全选作品"
-                size="sm"
-                checked={areAllResultsSelected()}
-                onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
-                className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
-              />
-              <span>作品</span>
+        <div className="grid gap-0 rounded-lg border border-border/80 bg-surface-floating p-2 shadow-[var(--shadow-panel)] backdrop-blur-xl">
+          <div className="grid grid-cols-4 gap-1">
+            <label className={batchSwitchHitAreaClass}>
+              <span className={batchSwitchVisualClass}>
+                <Switch
+                  aria-label="切换全选作品"
+                  size="sm"
+                  checked={areAllResultsSelected()}
+                  onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
+                  className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                />
+                <span>作品</span>
+              </span>
             </label>
-            <label className={batchSwitchControlClass}>
-              <Switch
-                aria-label="切换全选付费"
-                size="sm"
-                checked={areSelectedDramaPaidEpisodesSelected()}
-                onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked), { preserveViewport: true })}
-                className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
-              />
-              <span>付费</span>
+            <label className={batchSwitchHitAreaClass}>
+              <span className={batchSwitchVisualClass}>
+                <Switch
+                  aria-label="切换全选付费"
+                  size="sm"
+                  checked={areSelectedDramaPaidEpisodesSelected()}
+                  onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked), { preserveViewport: true })}
+                  className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                />
+                <span>付费</span>
+              </span>
             </label>
-            <Button
-              variant="outline"
-              className={mobileActionButtonClass}
-              onClick={clearAllSelections}
-            >
+            <MobileBatchButton visualClassName={mobileManagementVisualClass} onClick={clearAllSelections}>
               <EraserIcon data-icon="inline-start" />
               清空
-            </Button>
-            <Button
-              variant="outline"
-              className={mobileActionButtonClass}
+            </MobileBatchButton>
+            <MobileBatchButton
+              visualClassName={mobileManagementVisualClass}
               onClick={() => runMobileAction(() => onAddDramas?.(getSelectedDramaIds(), { scrollToDramaId: getFirstSelectedDramaId() }))}
             >
-              <ListChecksIcon data-icon="inline-start" />
-              批量导入
-            </Button>
+              <ImportIcon data-icon="inline-start" />
+              导入
+            </MobileBatchButton>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button
+          <div className="grid grid-cols-3 gap-1">
+            <MobileBatchButton
               variant="secondary"
-              className={mobileActionButtonClass}
               disabled={statisticsActionsDisabled}
               onClick={() => runMobileAction(() => onStartRevenueEstimate?.(getSelectedDramaIds()))}
             >
               <HandCoinsIcon data-icon="inline-start" />
               收益预估
-            </Button>
-            <Button
+            </MobileBatchButton>
+            <MobileBatchButton
               variant="secondary"
-              className={mobileActionButtonClass}
               disabled={statisticsActionsDisabled}
               onClick={() => runMobileAction(() => onStartPlayCountStatistics?.(getSelectedEpisodeIds()))}
             >
               <PlayCircleIcon data-icon="inline-start" />
               统计播放量
-            </Button>
-            <Button
+            </MobileBatchButton>
+            <MobileBatchButton
               variant="secondary"
-              className={mobileActionButtonClass}
               disabled={statisticsActionsDisabled}
               onClick={() => runMobileAction(() => onStartIdStatistics?.(getSelectedEpisodeIds()))}
             >
               <UserSearchIcon data-icon="inline-start" />
               统计弹幕ID
-            </Button>
+            </MobileBatchButton>
           </div>
         </div>
       );
@@ -911,10 +925,9 @@ export function SearchResults({
 
     return (
       <div className="grid gap-3">
-        <div className="grid grid-cols-3 gap-2 lg:grid-cols-1">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
           {[
             { label: "作品", value: selectedDramaCount },
-            { label: "导入", value: importedDramaCount },
             { label: "分集", value: selectedEpisodeCount },
           ].map((item) => (
             <div key={item.label} className={statClass}>
@@ -965,7 +978,7 @@ export function SearchResults({
               onAddDramas?.(getSelectedDramaIds());
             }}
           >
-            <ListChecksIcon data-icon="inline-start" />
+            <ImportIcon data-icon="inline-start" />
             批量导入
           </Button>
         </div>
@@ -1013,7 +1026,7 @@ export function SearchResults({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_11rem] lg:items-start">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_150px] lg:items-start">
       <Card className="min-w-0 py-0 pt-2.5 pb-4">
         <CardContent className="pt-0">
         {showResultsHeader ? (
@@ -1434,19 +1447,18 @@ export function SearchResults({
                 <ActionPanel variant="mobile" />
               </div>
             ) : null}
-            <div className="rounded-lg border border-border/80 bg-surface-floating p-2 shadow-[var(--shadow-panel)] backdrop-blur-xl">
-            <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_auto] items-center gap-2">
+            <div className="rounded-lg border border-border/80 bg-surface-floating p-1.5 shadow-[var(--shadow-panel)] backdrop-blur-xl">
+            <div className="grid grid-cols-[repeat(2,minmax(0,1fr))_auto] items-center gap-1.5">
               {[
                 { label: "作品", value: selectedDramaCount },
-                { label: "导入", value: importedDramaCount },
                 { label: "分集", value: selectedEpisodeCount },
               ].map((item) => (
-                <div key={item.label} className="min-w-0 rounded-md bg-muted/55 px-2 py-1 text-center">
-                  <div className="truncate text-[0.62rem] text-muted-foreground">{item.label}</div>
-                  <div className="text-sm font-semibold">{item.value}</div>
+                <div key={item.label} className="flex h-11 min-w-0 items-center justify-center gap-1 rounded-md bg-muted/55 px-2 text-center">
+                  <span className="truncate text-xs text-muted-foreground">{item.label}</span>
+                  <span className="text-sm font-semibold">{item.value}</span>
                 </div>
               ))}
-              <Button size="sm" className="h-10 px-3 text-[14px]!" onClick={() => setMobileActionsOpen((current) => !current)}>
+              <Button size="sm" className="h-11 px-3 text-[14px]!" onClick={() => setMobileActionsOpen((current) => !current)}>
                 批量
                 <ChevronUpIcon className={mobileActionsOpen ? "rotate-180 transition-transform" : "transition-transform"} data-icon="inline-end" />
               </Button>

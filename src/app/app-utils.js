@@ -1892,3 +1892,41 @@ export function selectSearchMetricQueue(items, resultSource = "search") {
   );
   return resultSource === "manual" ? candidates : candidates.slice(0, 5);
 }
+
+function isMissingSearchCardValue(value) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value === "string") {
+    return value.trim() === "";
+  }
+  return Array.isArray(value) && value.length === 0;
+}
+
+export function mergeMissingSearchCardFields(item = {}, cardPatch) {
+  if (!cardPatch || typeof cardPatch !== "object") {
+    return {};
+  }
+  const patch = {};
+  const mainCvFields = new Set(["main_cvs", "main_cv_text"]);
+  Object.entries(cardPatch).forEach(([field, value]) => {
+    if (
+      !mainCvFields.has(field) &&
+      isMissingSearchCardValue(item[field]) &&
+      !isMissingSearchCardValue(value)
+    ) {
+      patch[field] = value;
+    }
+  });
+  const currentMainCvsMissing = isMissingSearchCardValue(item.main_cvs);
+  const currentMainCvTextMissing = isMissingSearchCardValue(item.main_cv_text);
+  if (currentMainCvsMissing && currentMainCvTextMissing) {
+    if (!isMissingSearchCardValue(cardPatch.main_cvs)) {
+      patch.main_cvs = cardPatch.main_cvs;
+    }
+    if (!isMissingSearchCardValue(cardPatch.main_cv_text)) {
+      patch.main_cv_text = cardPatch.main_cv_text;
+    }
+  }
+  return patch;
+}

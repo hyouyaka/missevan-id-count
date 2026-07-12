@@ -54,8 +54,21 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.1", () => {
-  assert.equal(packageJson.version, "1.7.1");
+test("package version is 1.7.2", () => {
+  assert.equal(packageJson.version, "1.7.2");
+});
+
+test("changelog contains 1.7.2 search, statistics, and batch toolbar updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.2");
+
+  assert.deepEqual(entry, {
+    version: "1.7.2",
+    changes: [
+      "优化搜索结果显示逻辑",
+      "优化统计结果显示，节省页面空间",
+      "优化批量操作工具栏",
+    ],
+  });
 });
 
 test("changelog contains 1.7.1 anonymous feedback board update", () => {
