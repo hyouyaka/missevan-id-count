@@ -43,6 +43,18 @@ const badgeSource = readFileSync(new URL("../components/ui/badge.jsx", import.me
 const cardSource = readFileSync(new URL("../components/ui/card.jsx", import.meta.url), "utf8");
 const carouselSource = readSourceIfExists("../components/ui/carousel.jsx");
 const tabsSource = readFileSync(new URL("../components/ui/tabs.jsx", import.meta.url), "utf8");
+
+test("Manbo new ID registration preserves string identifiers", () => {
+  assert.match(
+    toolViewSource,
+    /normalizedPlatform === "manbo" \? String\(item\.id\) : item\.id/
+  );
+  const routeStart = serverSource.indexOf('app.post("/register-new-drama-ids"');
+  const routeEnd = serverSource.indexOf('app.post("/usage-log"', routeStart);
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+  assert.match(routeSource, /normalizeNewDramaIdsForPlatform\(platform, req\.body\?\.drama_ids \|\| \[\]\)/);
+  assert.doesNotMatch(routeSource, /normalizeDramaIds\(req\.body\?\.drama_ids/);
+});
 const lazyImageSource = readFileSync(new URL("../components/ui/lazy-image.jsx", import.meta.url), "utf8");
 const indexHtmlSource = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
 const electronMainSource = readFileSync(new URL("../../electron/main.mjs", import.meta.url), "utf8");

@@ -45,7 +45,8 @@ export function canParseShareUrl(url) {
     return (
       (
         /(^|\.)hongdoulive\.com$/i.test(parsed.hostname) ||
-        /(^|\.)kilamanbo\.(com|world)$/i.test(parsed.hostname)
+        /(^|\.)kilamanbo\.(com|world)$/i.test(parsed.hostname) ||
+        /(^|\.)kilaaudio\.com$/i.test(parsed.hostname)
       ) &&
       parsed.searchParams.has("_specific_parameter")
     );

@@ -1855,6 +1855,16 @@ function normalizeDramaIds(ids) {
   return normalizeIds(ids, 200);
 }
 
+export function normalizeNewDramaIdsForPlatform(platform, ids) {
+  if (platform === "manbo") {
+    return normalizeStringIds(ids, 200);
+  }
+  if (platform === "missevan") {
+    return normalizeDramaIds(ids).map((id) => String(id));
+  }
+  return [];
+}
+
 export function normalizeMissevanDramaCardItems(input = {}) {
   const normalizedItems = [];
   const seenResolvedItems = new Set();
@@ -7740,7 +7750,10 @@ async function resolveManboDramaIdFromSetId(setId) {
 function isLikelyManboUrl(raw) {
   try {
     const url = new URL(raw);
-    return /(^|\.)kilamanbo\.(com|world)$/i.test(url.hostname);
+    return (
+      /(^|\.)kilamanbo\.(com|world)$/i.test(url.hostname) ||
+      /(^|\.)kilaaudio\.com$/i.test(url.hostname)
+    );
   } catch (error) {
     return false;
   }
@@ -7752,7 +7765,8 @@ function isLikelyManboShareUrl(raw) {
     return (
       (
         /(^|\.)hongdoulive\.com$/i.test(url.hostname) ||
-        /(^|\.)kilamanbo\.(com|world)$/i.test(url.hostname)
+        /(^|\.)kilamanbo\.(com|world)$/i.test(url.hostname) ||
+        /(^|\.)kilaaudio\.com$/i.test(url.hostname)
       ) &&
       url.searchParams.has("_specific_parameter")
     );
@@ -7765,7 +7779,10 @@ function parseManboUrl(raw) {
   try {
     const url = new URL(raw);
 
-    if (!/(^|\.)kilamanbo\.(com|world)$/i.test(url.hostname)) {
+    if (
+      !/(^|\.)kilamanbo\.(com|world)$/i.test(url.hostname) &&
+      !/(^|\.)kilaaudio\.com$/i.test(url.hostname)
+    ) {
       return null;
     }
 
@@ -10662,7 +10679,6 @@ app.get("/search", expensiveDataLimiter, async (req, res) => {
 
 app.post("/register-new-drama-ids", async (req, res) => {
   const platform = req.body?.platform;
-  const dramaIds = normalizeDramaIds(req.body?.drama_ids || []).map((id) => String(id));
 
   if (!["missevan", "manbo"].includes(platform)) {
     return res.status(400).json({
@@ -10670,6 +10686,8 @@ app.post("/register-new-drama-ids", async (req, res) => {
       message: "Invalid platform",
     });
   }
+
+  const dramaIds = normalizeNewDramaIdsForPlatform(platform, req.body?.drama_ids || []);
 
   if (!dramaIds.length) {
     return res.json({

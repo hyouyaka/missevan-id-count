@@ -3370,7 +3370,7 @@ export function ToolView({ initialAppConfig }) {
     const expectedSource = normalizedPlatform === "manbo" ? "manbo_api" : "missevan_api";
     const fallbackIds = getSearchResultsByIds(normalizedPlatform, ids)
       .filter((item) => item?.search_source === expectedSource)
-      .map((item) => item.id);
+      .map((item) => normalizedPlatform === "manbo" ? String(item.id) : item.id);
     if (!fallbackIds.length) {
       return;
     }

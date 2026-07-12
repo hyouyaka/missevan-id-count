@@ -1,6 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+test("new drama id normalization preserves long Manbo ids as strings", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeNewDramaIdsForPlatform } = await import("./server.js");
+  const ids = ["2235647356781461610", "2235627191910006844"];
+
+  assert.deepEqual(
+    normalizeNewDramaIdsForPlatform("manbo", [ids[0], ids[1], ids[0], "invalid", ""]),
+    ids
+  );
+  assert.ok(normalizeNewDramaIdsForPlatform("manbo", ids).every((id) => typeof id === "string"));
+  assert.deepEqual(normalizeNewDramaIdsForPlatform("missevan", [123, "123", "456"]), ["123", "456"]);
+  assert.deepEqual(normalizeNewDramaIdsForPlatform("invalid", ids), []);
+});
+
 function buildMissevanSearchRecord(title, dramaId) {
   return {
     dramaId,
