@@ -1,0 +1,69 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "twikoo-guard",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "vars": {
+    "UPSTREAM_ORIGIN": ""
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "ratelimits": [
+    {
+      "name": "TWIKOO_RATE_LIMITER",
+      "namespace_id": "728319",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "twikoo-guard-staging",
+      "workers_dev": true,
+      "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+      "vars": {
+        "UPSTREAM_ORIGIN": "https://twikoo.mmtoolkit.app"
+      },
+      "ratelimits": [
+        {
+          "name": "TWIKOO_RATE_LIMITER",
+          "namespace_id": "728320",
+          "simple": {
+            "limit": 60,
+            "period": 60
+          }
+        }
+      ]
+    },
+    "production": {
+      "name": "twikoo-guard-production",
+      "workers_dev": false,
+      "compatibility_flags": ["nodejs_compat"],
+      "vars": {
+        "UPSTREAM_ORIGIN": ""
+      },
+      "routes": [
+        {
+          "pattern": "twikoo.mmtoolkit.app/*",
+          "zone_name": "mmtoolkit.app"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "TWIKOO_RATE_LIMITER",
+          "namespace_id": "728319",
+          "simple": {
+            "limit": 60,
+            "period": 60
+          }
+        }
+      ]
+    }
+  }
+}
