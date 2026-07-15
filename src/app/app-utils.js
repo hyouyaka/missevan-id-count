@@ -5,6 +5,11 @@ import {
   parseMissevanInputToken,
 } from "../../shared/searchUtils.js";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
+import {
+  aggregateRevenueFinancials,
+  getSummaryRevenueMode as getSharedSummaryRevenueMode,
+  hasRevenueRange as hasSharedRevenueRange,
+} from "../../shared/revenueSummaryUtils.js";
 
 export { normalizeVersion };
 
@@ -945,96 +950,19 @@ export function getRevenueDisplayLabel(result) {
 }
 
 function hasRevenueRange(result) {
-  if (!result || result.summaryRevenueMode === "single" || result.summaryRevenueMode === "member_reward") {
-    return false;
-  }
-  return Number.isFinite(Number(result?.minRevenueYuan)) && Number.isFinite(Number(result?.maxRevenueYuan));
+  return hasSharedRevenueRange(result);
 }
 
 export function getSummaryRevenueMode(result, platform) {
-  if (!result) {
-    return "single";
-  }
-  if (result.summaryRevenueMode) {
-    return result.summaryRevenueMode;
-  }
-  if (platform === "missevan" && result.vipOnlyReward) {
-    return "member_reward";
-  }
-  if (
-    platform === "manbo" &&
-    (result.revenueType === "member" ||
-      (Number(result?.diamondValue ?? 0) > 0 &&
-        Number(result?.titlePrice ?? 0) <= 0 &&
-        !hasRevenueRange({ ...result, summaryRevenueMode: "single" })))
-  ) {
-    return "member_reward";
-  }
-  if (hasRevenueRange(result)) {
-    return "range";
-  }
-  return "single";
+  return getSharedSummaryRevenueMode(result, platform);
 }
 
 export function getSummaryRevenueTotals(results, platform) {
-  let estimatedRevenueYuan = 0;
-  let minRevenueYuan = null;
-  let maxRevenueYuan = null;
-  let hasRevenueRangeValue = false;
-  let hasMemberReward = false;
-
-  results.forEach((item) => {
-    const mode = getSummaryRevenueMode(item, platform);
-    if (mode === "member_reward") {
-      hasMemberReward = true;
-      const amount = platform === "manbo" ? Number(item?.diamondValue ?? 0) / 100 : Number(item?.rewardCoinTotal ?? 0) / 10;
-      estimatedRevenueYuan += amount;
-      if (hasRevenueRangeValue) {
-        minRevenueYuan = Number(minRevenueYuan ?? 0) + amount;
-        maxRevenueYuan = Number(maxRevenueYuan ?? 0) + amount;
-      }
-      return;
-    }
-
-    if (mode === "range" && hasRevenueRange(item)) {
-      if (!hasRevenueRangeValue) {
-        minRevenueYuan = estimatedRevenueYuan;
-        maxRevenueYuan = estimatedRevenueYuan;
-        hasRevenueRangeValue = true;
-      }
-      minRevenueYuan += Number(item?.minRevenueYuan ?? 0);
-      maxRevenueYuan += Number(item?.maxRevenueYuan ?? 0);
-      estimatedRevenueYuan += Number(item?.estimatedRevenueYuan ?? 0);
-      return;
-    }
-
-    const amount = Number(item?.estimatedRevenueYuan ?? 0);
-    estimatedRevenueYuan += amount;
-    if (hasRevenueRangeValue) {
-      minRevenueYuan = Number(minRevenueYuan ?? 0) + amount;
-      maxRevenueYuan = Number(maxRevenueYuan ?? 0) + amount;
-    }
-  });
-
-  if (estimatedRevenueYuan <= 0 && hasMemberReward) {
-    const rewardTotal = results.reduce((sum, item) => {
-      const mode = getSummaryRevenueMode(item, platform);
-      if (mode !== "member_reward") {
-        return sum;
-      }
-      return sum + (platform === "manbo" ? Number(item?.diamondValue ?? 0) / 100 : Number(item?.rewardCoinTotal ?? 0) / 10);
-    }, 0);
-    estimatedRevenueYuan = rewardTotal;
-    if (hasRevenueRangeValue) {
-      minRevenueYuan = Number(minRevenueYuan ?? 0) + rewardTotal;
-      maxRevenueYuan = Number(maxRevenueYuan ?? 0) + rewardTotal;
-    }
-  }
-
+  const financials = aggregateRevenueFinancials(results, platform);
   return {
-    estimatedRevenueYuan,
-    minRevenueYuan,
-    maxRevenueYuan,
+    estimatedRevenueYuan: financials.estimatedRevenueYuan,
+    minRevenueYuan: financials.minRevenueYuan,
+    maxRevenueYuan: financials.maxRevenueYuan,
   };
 }
 
@@ -1088,22 +1016,7 @@ export function buildRevenueSummary(results, currentPlatform) {
       ? results.map((item) => normalizeOptionalNumber(item?.rewardNum)).filter((value) => value != null)
       : [];
   const rewardNumTotal = platform === "missevan" ? (rewardNumValues.length ? rewardNumValues.reduce((sum, value) => sum + value, 0) : null) : null;
-  const revenueTotals = getSummaryRevenueTotals(results, platform);
-  const summaryRevenueModes = results.map((item) => getSummaryRevenueMode(item, platform));
-  const summaryRevenueMode =
-    summaryRevenueModes.length > 0 && summaryRevenueModes.every((mode) => mode === "member_reward")
-      ? "member_reward"
-      : summaryRevenueModes.some((mode) => mode === "range")
-        ? "range"
-        : "single";
-  const priceItems = results.filter((item) => item?.includeInSummaryPrice);
-  const hasSummaryPrice = !failed && priceItems.length > 0;
-  const titlePriceTotal = hasSummaryPrice ? priceItems.reduce((sum, item) => sum + Number(item?.titlePrice ?? 0), 0) : null;
-  const memberPriceItems = priceItems.filter((item) => Number.isFinite(Number(item?.titleMemberPrice)) && Number(item?.titleMemberPrice) > 0);
-  const titleMemberPriceTotal =
-    hasSummaryPrice && memberPriceItems.length > 0
-      ? memberPriceItems.reduce((sum, item) => sum + Number(item?.titleMemberPrice ?? 0), 0)
-      : null;
+  const financials = aggregateRevenueFinancials(results, platform);
 
   const summary = {
     platform,
@@ -1118,13 +1031,13 @@ export function buildRevenueSummary(results, currentPlatform) {
     totalViewCount,
     rewardTotal,
     rewardNum: rewardNumTotal,
-    hasSummaryPrice,
-    titlePriceTotal,
-    titleMemberPriceTotal,
-    summaryRevenueMode,
-    estimatedRevenueYuan: revenueTotals.estimatedRevenueYuan,
-    minRevenueYuan: revenueTotals.minRevenueYuan,
-    maxRevenueYuan: revenueTotals.maxRevenueYuan,
+    hasSummaryPrice: financials.hasSummaryPrice,
+    titlePriceTotal: financials.titlePriceTotal,
+    titleMemberPriceTotal: financials.titleMemberPriceTotal,
+    summaryRevenueMode: financials.summaryRevenueMode,
+    estimatedRevenueYuan: financials.estimatedRevenueYuan,
+    minRevenueYuan: financials.minRevenueYuan,
+    maxRevenueYuan: financials.maxRevenueYuan,
     failed,
     summaryTitle: "",
   };
@@ -1141,6 +1054,33 @@ function summaryShowsPositiveRevenue(summary) {
     Number(summary?.minRevenueYuan ?? 0) > 0 ||
     Number(summary?.maxRevenueYuan ?? 0) > 0
   );
+}
+
+function mergeRevenueSummaryFinancials(incomingSummary, rebuiltSummary) {
+  const reconciledSummary = {
+    ...incomingSummary,
+    hasSummaryPrice: rebuiltSummary.hasSummaryPrice,
+    titlePriceTotal: rebuiltSummary.titlePriceTotal,
+    titleMemberPriceTotal: rebuiltSummary.titleMemberPriceTotal,
+    summaryRevenueMode: rebuiltSummary.summaryRevenueMode,
+    estimatedRevenueYuan: rebuiltSummary.estimatedRevenueYuan,
+    minRevenueYuan: rebuiltSummary.minRevenueYuan,
+    maxRevenueYuan: rebuiltSummary.maxRevenueYuan,
+  };
+  reconciledSummary.summaryTitle = buildRevenueSummaryTitle(reconciledSummary);
+  return reconciledSummary;
+}
+
+export function resolveRevenueSummaryForDisplay(results, currentPlatform, incomingSummary = null) {
+  if (!Array.isArray(results) || results.length === 0) {
+    return null;
+  }
+
+  const rebuiltSummary = buildRevenueSummary(results, currentPlatform);
+  if (!incomingSummary) {
+    return rebuiltSummary;
+  }
+  return mergeRevenueSummaryFinancials(incomingSummary, rebuiltSummary);
 }
 
 export function resolveRevenueSummaryForHistory(results, currentPlatform, incomingSummary = null) {
@@ -1164,7 +1104,7 @@ export function resolveRevenueSummaryForHistory(results, currentPlatform, incomi
     return rebuiltSummary;
   }
 
-  return incomingSummary;
+  return mergeRevenueSummaryFinancials(incomingSummary, rebuiltSummary);
 }
 
 function formatPlayCount(value) {

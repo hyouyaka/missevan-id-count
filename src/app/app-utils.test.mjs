@@ -29,6 +29,7 @@ import {
   parseRawItems,
   readToolRouteStateFromLocation,
   readToolViewFromLocation,
+  resolveRevenueSummaryForDisplay,
   resolveRevenueSummaryForHistory,
   savePersistedHistoryEntries,
   selectSearchMetricQueue,
@@ -1323,6 +1324,156 @@ test("Missevan pay_type=1 revenue summary and display use range values", () => {
   assert.equal(summary.minRevenueYuan, 20);
   assert.equal(summary.maxRevenueYuan, 26);
   assert.equal(formatRevenueDisplayValue(drama), "20-26");
+});
+
+test("Missevan mixed payment summary combines season revenue and paid episode prices", () => {
+  const seasonDrama = createRevenueDrama({
+    payType: 2,
+    revenueType: "season",
+    summaryRevenueMode: "single",
+    price: 200,
+    memberPrice: 180,
+    titlePrice: 200,
+    titleMemberPrice: 180,
+    estimatedRevenueYuan: 1000,
+    minRevenueYuan: null,
+    maxRevenueYuan: null,
+  });
+  const episodeDrama = createRevenueDrama({
+    payType: 1,
+    revenueType: "episode",
+    summaryRevenueMode: "range",
+    price: 20,
+    memberPrice: 15,
+    paidEpisodeCount: 4,
+    titlePrice: 20,
+    titleMemberPrice: 15,
+    estimatedRevenueYuan: 300,
+    minRevenueYuan: 300,
+    maxRevenueYuan: 500,
+  });
+
+  const summary = buildRevenueSummary([seasonDrama, episodeDrama], "missevan");
+
+  assert.equal(summary.estimatedRevenueYuan, 1300);
+  assert.equal(summary.minRevenueYuan, 1300);
+  assert.equal(summary.maxRevenueYuan, 1500);
+  assert.equal(summary.titlePriceTotal, 280);
+  assert.equal(summary.titleMemberPriceTotal, 240);
+  assert.equal(summary.summaryTitle, "汇总 / 已选 2 部，总价 280（会员 240）钻石");
+});
+
+test("revenue summary reconciliation repairs financials and preserves server aggregate metrics", () => {
+  const seasonDrama = createRevenueDrama({
+    paidUserIds: [],
+    payType: 2,
+    revenueType: "season",
+    summaryRevenueMode: "single",
+    price: 200,
+    memberPrice: 180,
+    titlePrice: 200,
+    titleMemberPrice: 180,
+    estimatedRevenueYuan: 1000,
+    minRevenueYuan: null,
+    maxRevenueYuan: null,
+  });
+  const episodeDrama = createRevenueDrama({
+    paidUserIds: [],
+    payType: 1,
+    revenueType: "episode",
+    summaryRevenueMode: "range",
+    price: 20,
+    memberPrice: 15,
+    paidEpisodeCount: 4,
+    titlePrice: 20,
+    titleMemberPrice: 15,
+    estimatedRevenueYuan: 300,
+    minRevenueYuan: 300,
+    maxRevenueYuan: 500,
+  });
+  const incomingSummary = {
+    platform: "missevan",
+    currencyUnit: "钻石",
+    selectedDramaCount: 2,
+    totalPaidUserCount: 99,
+    totalViewCount: 123456,
+    rewardTotal: 789,
+    rewardNum: 12,
+    paidCountSourceSummary: "danmaku_ids",
+    hasSummaryPrice: true,
+    titlePriceTotal: 220,
+    titleMemberPriceTotal: 195,
+    estimatedRevenueYuan: 300,
+    minRevenueYuan: 300,
+    maxRevenueYuan: 500,
+    failed: false,
+    summaryTitle: "汇总 / 已选 2 部，总价 220（会员 195）钻石",
+  };
+
+  const summary = resolveRevenueSummaryForHistory(
+    [seasonDrama, episodeDrama],
+    "missevan",
+    incomingSummary
+  );
+
+  assert.equal(summary.totalPaidUserCount, 99);
+  assert.equal(summary.totalViewCount, 123456);
+  assert.equal(summary.rewardTotal, 789);
+  assert.equal(summary.rewardNum, 12);
+  assert.equal(summary.estimatedRevenueYuan, 1300);
+  assert.equal(summary.minRevenueYuan, 1300);
+  assert.equal(summary.maxRevenueYuan, 1500);
+  assert.equal(summary.titlePriceTotal, 280);
+  assert.equal(summary.titleMemberPriceTotal, 240);
+  assert.equal(summary.summaryTitle, "汇总 / 已选 2 部，总价 280（会员 240）钻石");
+});
+
+test("display revenue reconciliation preserves partial failure aggregate metrics", () => {
+  const successfulDrama = createRevenueDrama({
+    paidUserIds: [],
+    estimatedRevenueYuan: 88,
+    failed: false,
+  });
+  const failedDrama = createRevenueDrama({
+    paidUserIds: [],
+    estimatedRevenueYuan: 0,
+    includeInSummaryPrice: false,
+    titlePrice: null,
+    failed: true,
+  });
+  const incomingSummary = {
+    platform: "missevan",
+    currencyUnit: "钻石",
+    selectedDramaCount: 2,
+    totalPaidUserCount: 12,
+    totalViewCount: 56000,
+    rewardTotal: 180,
+    rewardNum: 3,
+    paidCountSourceSummary: "danmaku_ids",
+    hasSummaryPrice: false,
+    titlePriceTotal: null,
+    titleMemberPriceTotal: null,
+    estimatedRevenueYuan: 88,
+    minRevenueYuan: null,
+    maxRevenueYuan: null,
+    failed: true,
+    summaryTitle: "汇总 / 已选 2 部",
+  };
+
+  const summary = resolveRevenueSummaryForDisplay(
+    [successfulDrama, failedDrama],
+    "missevan",
+    incomingSummary
+  );
+
+  assert.equal(summary.selectedDramaCount, 2);
+  assert.equal(summary.totalPaidUserCount, 12);
+  assert.equal(summary.totalViewCount, 56000);
+  assert.equal(summary.rewardTotal, 180);
+  assert.equal(summary.rewardNum, 3);
+  assert.equal(summary.estimatedRevenueYuan, 88);
+  assert.equal(summary.failed, true);
+  assert.equal(summary.summaryTitle, "汇总 / 已选 2 部");
 });
 
 test("Missevan pay_type=1 paid metrics include summed and deduped paid episode IDs", () => {

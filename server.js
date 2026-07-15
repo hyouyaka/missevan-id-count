@@ -39,6 +39,7 @@ import {
   normalizeMissevanPayType,
   resolveMissevanRevenueType,
 } from "./shared/missevanRevenueUtils.js";
+import { aggregateRevenueFinancials } from "./shared/revenueSummaryUtils.js";
 import {
   buildAggregatedRankTrendResponse,
   buildCvTrendResponse,
@@ -8568,10 +8569,6 @@ function createRevenueSummary(results) {
   let rewardTotal = 0;
   let rewardNum = 0;
   let hasRewardNum = false;
-  let estimatedRevenueYuan = 0;
-  let minRevenueYuan = null;
-  let maxRevenueYuan = null;
-  let hasRange = false;
   let failed = false;
   let platform = safeResults[0]?.platform || "";
   let currencyUnit = platform === "manbo" ? "红豆" : "钻石";
@@ -8605,38 +8602,17 @@ function createRevenueSummary(results) {
       hasRewardNum = true;
     }
     failed = failed || Boolean(item?.failed);
-    const estimatedAmount = Number(item?.estimatedRevenueYuan ?? 0);
-    estimatedRevenueYuan += estimatedAmount;
-
-    const itemHasRange =
-      Number.isFinite(Number(item?.minRevenueYuan)) &&
-      Number.isFinite(Number(item?.maxRevenueYuan));
-    if (itemHasRange) {
-      if (!hasRange) {
-        minRevenueYuan = estimatedRevenueYuan - estimatedAmount;
-        maxRevenueYuan = estimatedRevenueYuan - estimatedAmount;
-      }
-      hasRange = true;
-      minRevenueYuan = Number(minRevenueYuan ?? 0) + Number(item.minRevenueYuan ?? 0);
-      maxRevenueYuan = Number(maxRevenueYuan ?? 0) + Number(item.maxRevenueYuan ?? 0);
-    } else if (hasRange) {
-      minRevenueYuan = Number(minRevenueYuan ?? 0) + estimatedAmount;
-      maxRevenueYuan = Number(maxRevenueYuan ?? 0) + estimatedAmount;
-    }
   });
 
-  const priceItems = safeResults.filter((item) => item?.includeInSummaryPrice);
-  const hasSummaryPrice = !failed && priceItems.length > 0;
-  const titlePriceTotal = hasSummaryPrice
-    ? priceItems.reduce((sum, item) => sum + Number(item?.titlePrice ?? 0), 0)
-    : null;
-  const memberPriceItems = priceItems.filter((item) => {
-    return Number.isFinite(Number(item?.titleMemberPrice))
-      && Number(item?.titleMemberPrice) > 0;
-  });
-  const titleMemberPriceTotal = hasSummaryPrice && memberPriceItems.length > 0
-    ? memberPriceItems.reduce((sum, item) => sum + Number(item?.titleMemberPrice ?? 0), 0)
-    : null;
+  const financials = aggregateRevenueFinancials(safeResults, platform);
+  const {
+    estimatedRevenueYuan,
+    minRevenueYuan,
+    maxRevenueYuan,
+    hasSummaryPrice,
+    titlePriceTotal,
+    titleMemberPriceTotal,
+  } = financials;
 
   const baseTitle = `汇总 / 已选 ${safeResults.length} 部`;
   let summaryTitle = baseTitle;
@@ -8672,8 +8648,8 @@ function createRevenueSummary(results) {
     titlePriceTotal,
     titleMemberPriceTotal,
     estimatedRevenueYuan,
-    minRevenueYuan: hasRange ? minRevenueYuan : null,
-    maxRevenueYuan: hasRange ? maxRevenueYuan : null,
+    minRevenueYuan,
+    maxRevenueYuan,
     failed,
     summaryTitle,
   };
@@ -9454,6 +9430,9 @@ async function executeMissevanRevenueTask(task) {
         episodePaidUserCountTotal,
         paidEpisodeCount: paidEpisodes.length,
       });
+      const summaryPriceMultiplier = revenueMetrics.revenueType === "episode"
+        ? revenueMetrics.paidEpisodeCount
+        : 1;
 
       results.push({
         dramaId,
@@ -9469,8 +9448,8 @@ async function executeMissevanRevenueTask(task) {
         viewCount,
         price,
         memberPrice,
-        titlePrice: price > 0 ? price : null,
-        titleMemberPrice: memberPrice > 0 ? memberPrice : null,
+        titlePrice: price > 0 ? price * summaryPriceMultiplier : null,
+        titleMemberPrice: memberPrice > 0 ? memberPrice * summaryPriceMultiplier : null,
         includeInSummaryPrice: price > 0 && revenueMetrics.revenueType !== "reward_only",
         currencyUnit: "钻石",
         summaryRevenueMode: revenueMetrics.summaryRevenueMode,

@@ -18,6 +18,7 @@ import {
   getHistoryMetricIconKey,
   getRevenueDisplayLabel,
   formatRevenueDisplayValue,
+  resolveRevenueSummaryForDisplay,
 } from "@/app/app-utils";
 
 function formatUnitlessMetricValue(value) {
@@ -329,7 +330,11 @@ export function OutputPanel({
   onDeleteHistoryEntry,
   onClearHistory,
 }) {
-  const resolvedRevenueSummary = revenueSummary || buildRevenueSummary(revenueResults, platform);
+  const resolvedRevenueSummary = resolveRevenueSummaryForDisplay(
+    revenueResults,
+    platform,
+    revenueSummary || null
+  ) || buildRevenueSummary(revenueResults, platform);
 
   function getSummaryPaidCountLabel(summary) {
     if (summary?.platform === "manbo" && summary?.paidCountSourceSummary === "pay_count") {
