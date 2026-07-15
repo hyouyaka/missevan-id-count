@@ -1,13 +1,13 @@
 # M&M Toolkit Architecture
 
-Last updated: 2026-07-04
+Last updated: 2026-07-15
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.7.0
+- **Version**: 1.7.2
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
-  - `server.js` for backend routing, cache orchestration, Upstash access, cooldown state, and task execution
+  - `server.js` as the stable backend facade, with `server/application.js` providing composition and `server/routes/` holding extracted route groups
   - `src/` for the browser UI
   - `shared/` for code shared across backend and frontend feature domains
   - `electron/` for the desktop shell
@@ -27,8 +27,8 @@ This document describes the current implementation, not the historical evolution
    - Ranks and trends
 
 ### Backend Boot Flow
-1. `server.js` loads environment values through `loadLocalEnv()`.
-2. It initializes Express, CORS, JSON body parsing, runtime directories, caches, Upstash clients, and store objects.
+1. `server/application.js` loads environment values through `loadLocalEnv()`; `server.js` re-exports its public entrypoint for hosted and desktop callers.
+2. It initializes Express, local request security, JSON body parsing, runtime directories, caches, Upstash clients, and store objects.
 3. It exposes all JSON APIs plus the static SPA build from `dist/`.
 4. It sets `X-Backend-Version` on every response and uses frontend version input to compute version mismatch state.
 
@@ -38,8 +38,8 @@ This document describes the current implementation, not the historical evolution
 - Deno is the secondary Missevan fallback proxy.
 
 ### Electron Desktop Flow
-1. `electron/main.mjs` creates the desktop window.
-2. It starts the Express backend through `startServer(0)` on an ephemeral localhost port.
+1. `electron/main.mjs` creates the desktop window with sandboxing and isolated context enabled.
+2. It starts the Express backend through `startServer(0, { host: "127.0.0.1" })` on an ephemeral localhost port.
 3. It waits for `/health` to respond, then opens `/tool` in the browser window.
 
 ### Development Flow
@@ -49,10 +49,17 @@ This document describes the current implementation, not the historical evolution
 ## Repository Layout
 
 ### Core Runtime Modules
-- `server.js`: single backend entrypoint and service composition root
+- `server.js`: stable backend facade
+- `server/application.js`: backend service composition root and remaining route implementation
+- `server/routes/systemRoutes.js`: extracted app-config and desktop/system routes
+- `server/routes/statsRoutes.js`: extracted ranks, ongoing, admin metrics, health, and statistics-task routes
+- `server/routes/missevanRoutes.js`: extracted Missevan content lookup, play-count, reward, and danmaku routes
+- `server/routes/manboRoutes.js`: extracted Manbo input, search, content lookup, play-count, and danmaku routes
+- `server/stats/taskExecution.js`: injected Missevan/Manbo statistics task execution and revenue aggregation
 - `src/main.jsx`: frontend entrypoint
 - `src/app/RootApp.jsx`: application configuration and ToolView bootstrap
 - `src/app/ToolView.jsx`: primary interaction shell
+- `src/app/navigation.jsx`: desktop navigation and mobile drawer components
 - `src/app/RanksPanel.jsx`: ranks UI
 - `src/app/OngoingPanel.jsx`: ongoing titles UI
 - `src/app/rankTrendUi.jsx`: reusable trend dialog and charting UI
@@ -269,8 +276,8 @@ This pass records confirmed redundancy or low-value leftovers, but does not remo
 | Finding | Current state | Risk if simplified later |
 | --- | --- | --- |
 | `src/utils/episodeRules.js` | Pure re-export wrapper over `shared/episodeRules.js` with no added logic | Low |
-| duplicate CV text helpers in `server.js` | `buildRankMainCvText()` and `buildMainCvText()` perform the same string-assembly job in different regions | Low |
-| duplicated version normalizer | `server.js` and `src/app/app-utils.js` both implement the same `normalizeVersion()` rule | Medium |
+| duplicate CV text helpers in `server/application.js` | `buildRankMainCvText()` and `buildMainCvText()` perform the same string-assembly job in different regions | Low |
+| duplicated version normalizer | `server/application.js` and `src/app/app-utils.js` both implement the same `normalizeVersion()` rule | Medium |
 | `release/` committed artifacts | Packaging outputs live next to source even though they are not part of the application architecture | Low |
 | `tmp-manbo-json-method-note.md` | Historical experiment note kept in repo root but not used by runtime code | Low |
 

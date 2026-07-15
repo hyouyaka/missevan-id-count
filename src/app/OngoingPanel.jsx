@@ -452,6 +452,11 @@ export function OngoingPanel({
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const loggedOngoingRef = useRef(new Set());
+  const handleVersionResponseRef = useRef(handleVersionResponse);
+
+  useEffect(() => {
+    handleVersionResponseRef.current = handleVersionResponse;
+  }, [handleVersionResponse]);
 
   useEffect(() => {
     if (routeState?.view !== "ongoing") {
@@ -484,7 +489,7 @@ export function OngoingPanel({
           frontendVersion,
           revalidate: true,
         });
-        handleVersionResponse?.({
+        handleVersionResponseRef.current?.({
           ...data,
           backendVersion: getBackendVersionFromResponse(response, data),
           frontendVersion,

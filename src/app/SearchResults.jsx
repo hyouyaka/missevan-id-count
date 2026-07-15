@@ -352,7 +352,7 @@ export function SearchResults({
     return () => {
       cancelled = true;
     };
-  }, [frontendVersion, platform, trendLookupKey]);
+  }, [frontendVersion, platform, trendLookupIds, trendLookupKey]);
 
   function getTitleClassName(title) {
     const length = String(title ?? "").trim().length;
@@ -816,7 +816,7 @@ export function SearchResults({
   const mobileBatchTextClass = "text-xs! font-medium";
   const mobileActionHitAreaClass = "relative h-11 min-h-11 w-full min-w-0 bg-transparent! p-0 shadow-none! hover:bg-transparent! active:translate-y-0";
   const mobileActionVisualClass = `pointer-events-none absolute -inset-x-px top-1/2 h-9 w-auto min-w-0 -translate-y-1/2 gap-1 px-1 sm:px-2 ${mobileBatchTextClass}`;
-  const mobileManagementVisualClass = "border-border/70 bg-background/84 dark:border-border/70 dark:bg-background/84";
+  const mobileManagementVisualClass = "border-border/70 bg-background/84";
   const batchSwitchHitAreaClass = "relative block h-11 min-h-11 w-full min-w-0";
   const batchSwitchVisualClass = "absolute inset-x-0 top-1/2 flex h-9 w-full min-w-0 -translate-y-1/2 items-center justify-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2 sm:text-xs";
   const desktopBatchControlClass = "flex h-9 w-full items-center justify-start gap-2 rounded-md border border-border/75 bg-background px-2.5 text-[14px]! font-medium";
@@ -862,7 +862,7 @@ export function SearchResults({
                   size="sm"
                   checked={areAllResultsSelected()}
                   onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
-                  className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                  className="data-checked:bg-primary data-unchecked:bg-muted"
                 />
                 <span>作品</span>
               </span>
@@ -874,7 +874,7 @@ export function SearchResults({
                   size="sm"
                   checked={areSelectedDramaPaidEpisodesSelected()}
                   onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked), { preserveViewport: true })}
-                  className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                  className="data-checked:bg-primary data-unchecked:bg-muted"
                 />
                 <span>付费</span>
               </span>
@@ -943,7 +943,7 @@ export function SearchResults({
               aria-label="切换全选作品"
               checked={areAllResultsSelected()}
               onCheckedChange={(checked) => setAllResultsChecked(Boolean(checked))}
-              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+              className="data-checked:bg-primary data-unchecked:bg-muted"
             />
             <span>作品全选</span>
           </label>
@@ -952,7 +952,7 @@ export function SearchResults({
               aria-label="切换全选付费"
               checked={areSelectedDramaPaidEpisodesSelected()}
               onCheckedChange={(checked) => setSelectedDramaPaidEpisodesSelected(Boolean(checked))}
-              className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+              className="data-checked:bg-primary data-unchecked:bg-muted"
             />
             <span>付费全选</span>
           </label>
@@ -1206,7 +1206,7 @@ export function SearchResults({
                             size="sm"
                             checked={areAllEpisodesSelected(item.id)}
                             onCheckedChange={(checked) => setResultAllEpisodesSelected(item, Boolean(checked))}
-                            className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                            className="data-checked:bg-primary data-unchecked:bg-muted"
                           />
                           <span>全选</span>
                         </div>
@@ -1216,7 +1216,7 @@ export function SearchResults({
                             size="sm"
                             checked={arePaidEpisodesSelected(item.id)}
                             onCheckedChange={(checked) => setResultPaidEpisodesSelected(item, Boolean(checked))}
-                            className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                            className="data-checked:bg-primary data-unchecked:bg-muted"
                           />
                           <span>付费</span>
                         </div>
@@ -1303,7 +1303,7 @@ export function SearchResults({
                           size="sm"
                           checked={areAllEpisodesSelected(item.id)}
                           onCheckedChange={(checked) => setResultAllEpisodesSelected(item, Boolean(checked))}
-                          className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                          className="data-checked:bg-primary data-unchecked:bg-muted"
                         />
                         <span>全选</span>
                       </div>
@@ -1313,7 +1313,7 @@ export function SearchResults({
                           size="sm"
                           checked={arePaidEpisodesSelected(item.id)}
                           onCheckedChange={(checked) => setResultPaidEpisodesSelected(item, Boolean(checked))}
-                          className="data-checked:bg-primary data-unchecked:bg-muted dark:data-unchecked:bg-muted"
+                          className="data-checked:bg-primary data-unchecked:bg-muted"
                         />
                         <span>付费</span>
                       </div>

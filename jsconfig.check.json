@@ -1,0 +1,14 @@
+{
+  "extends": "./jsconfig.json",
+  "compilerOptions": {
+    "checkJs": true,
+    "maxNodeModuleJsDepth": 0,
+    "noImplicitAny": false,
+    "types": ["node"]
+  },
+  "include": [
+    "server/httpSecurity.js",
+    "server/logger.js"
+  ],
+  "exclude": ["node_modules"]
+}

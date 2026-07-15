@@ -1056,6 +1056,11 @@ export function RanksPanel({
   const [selectedCategory, setSelectedCategory] = useState(() => String(routeState?.category || "").trim());
   const [selectedRank, setSelectedRank] = useState(() => String(routeState?.rank || "").trim());
   const loggedRanksRef = useRef(new Set());
+  const handleVersionResponseRef = useRef(handleVersionResponse);
+
+  useEffect(() => {
+    handleVersionResponseRef.current = handleVersionResponse;
+  }, [handleVersionResponse]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1069,7 +1074,7 @@ export function RanksPanel({
       setErrorMessage("");
       try {
         const { response, data } = await fetchRanksData(frontendVersion, { revalidate: true });
-        handleVersionResponse?.({
+        handleVersionResponseRef.current?.({
           ...data,
           backendVersion: getBackendVersionFromResponse(response, data),
           frontendVersion,

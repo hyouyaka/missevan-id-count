@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ToolView } from "@/app/ToolView";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,18 +13,20 @@ import {
 export function RootApp() {
   const [configReady, setConfigReady] = useState(false);
   const [appConfig, setAppConfig] = useState(getDefaultAppConfig());
+  const initialAppConfigRef = useRef(appConfig);
 
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrap() {
       try {
-        const response = await fetch(buildVersionedUrl("/app-config", appConfig.frontendVersion), {
+        const initialAppConfig = initialAppConfigRef.current;
+        const response = await fetch(buildVersionedUrl("/app-config", initialAppConfig.frontendVersion), {
           cache: "no-store",
         });
         if (response.ok) {
           const config = await response.json();
-          const nextConfig = mergeAppConfig(appConfig, {
+          const nextConfig = mergeAppConfig(initialAppConfig, {
             ...config,
             backendVersion: getBackendVersionFromResponse(response, config),
           });

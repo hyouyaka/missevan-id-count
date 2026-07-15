@@ -728,7 +728,10 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
     manbo: ongoingByPlatform.manbo?.items?.length || 0,
   }), [ongoingByPlatform.missevan?.items, ongoingByPlatform.manbo?.items]);
 
-  const activeRankConfigs = HOME_RANK_CONFIG[selectedRankPlatform] || [];
+  const activeRankConfigs = useMemo(
+    () => HOME_RANK_CONFIG[selectedRankPlatform] || [],
+    [selectedRankPlatform]
+  );
   const trendIdsByPlatform = useMemo(() => {
     const ids = {
       missevan: new Set(ongoingItems.missevan.map((item) => String(item?.id ?? "").trim()).filter(Boolean)),
@@ -757,8 +760,8 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
   useEffect(() => {
     let cancelled = false;
     const requests = [
-      ["missevan", trendIdsByPlatform.missevan],
-      ["manbo", trendIdsByPlatform.manbo],
+      ["missevan", missevanTrendLookupKey.split("|").filter(Boolean)],
+      ["manbo", manboTrendLookupKey.split("|").filter(Boolean)],
     ];
 
     requests.forEach(([platform, ids]) => {

@@ -44,7 +44,7 @@ if (!(manifest[entryKey].dynamicImports || []).includes(trendDialogEntry[0])) {
 }
 
 const twikooEntry = Object.entries(manifest).find(
-  ([, value]) => value?.name === "twikoo" && value?.isDynamicEntry
+  ([, value]) => value?.name === "twikoo" && !value?.isEntry
 );
 if (!twikooEntry) {
   throw new Error("Twikoo must be emitted as a dynamic entry");

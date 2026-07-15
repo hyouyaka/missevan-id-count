@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { loadLocalEnv } from "../envConfig.js";
@@ -44,7 +44,7 @@ async function startEmbeddedServer() {
   });
 
   const serverModule = await import(pathToFileURL(path.join(projectRoot, "server.js")).href);
-  const listener = await serverModule.startServer(0);
+  const listener = await serverModule.startServer(0, { host: "127.0.0.1" });
   const port = listener.address()?.port;
   desktopUrl = `http://127.0.0.1:${port}`;
   await waitForServer(`${desktopUrl}/health`);
@@ -61,28 +61,59 @@ async function createMainWindow() {
     title: "MMTOOLKIT.APP",
     icon: appIconPath,
     webPreferences: {
+      sandbox: true,
+      webSecurity: true,
       contextIsolation: true,
       nodeIntegration: false,
       preload: preloadPath,
     },
   });
 
+  const embeddedOrigin = () => {
+    try {
+      return new URL(desktopUrl).origin;
+    } catch (_) {
+      return "";
+    }
+  };
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    try {
+      if (url === pathToFileURL(path.join(__dirname, "error.html")).href) {
+        return;
+      }
+      if (new URL(url).origin !== embeddedOrigin()) {
+        event.preventDefault();
+      }
+    } catch (_) {
+      event.preventDefault();
+    }
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.protocol === "https:" && parsedUrl.origin !== embeddedOrigin()) {
+        void shell.openExternal(url);
+      }
+    } catch (_) {
+      // Invalid and unsupported protocols are rejected without opening a window.
+    }
+    return { action: "deny" };
+  });
+
+  const rejectPermission = (_webContents, _permission, callback) => callback(false);
+  mainWindow.webContents.session.setPermissionRequestHandler(rejectPermission);
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false);
+
   try {
     await startEmbeddedServer();
     await mainWindow.loadURL(`${desktopUrl}/tool`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await mainWindow.loadURL(
-      `data:text/html,${encodeURIComponent(`
-        <html>
-          <body style="font-family: Segoe UI, sans-serif; background:#f6f1e8; color:#1f2a37; padding:32px;">
-            <h2>Desktop app failed to start</h2>
-            <p>${message}</p>
-            <p>Please close the app and try again.</p>
-          </body>
-        </html>
-      `)}`
-    );
+    await mainWindow.loadFile(path.join(__dirname, "error.html"), {
+      query: { message },
+    });
   }
 }
 

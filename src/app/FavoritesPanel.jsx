@@ -270,22 +270,19 @@ function SnapshotDetailsDisclosure({ favorite, snapshots, deltaMetric, expanded,
 
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border border-border/70 bg-background/82">
+      <button
+        type="button"
+        className="flex min-h-9 w-full cursor-pointer items-center justify-between gap-2 border-b border-border/70 px-2.5 py-2 text-left text-[0.78rem] font-medium text-foreground transition-colors hover:bg-muted/35"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <span>收起数据明细</span>
+        <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 rotate-180 text-muted-foreground" />
+      </button>
       <div className="max-h-44 overflow-x-auto overflow-y-auto">
         <table className={`${SNAPSHOT_HISTORY_TABLE_MIN_WIDTH} w-full table-fixed border-collapse text-[0.68rem]`}>
           <thead className="sticky top-0 z-10 bg-background/95 text-muted-foreground">
-            <tr
-              className="cursor-pointer border-b border-border/70 transition-colors hover:bg-muted/35"
-              role="button"
-              tabIndex={0}
-              aria-expanded={expanded}
-              onClick={onToggle}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onToggle();
-                }
-              }}
-            >
+            <tr className="border-b border-border/70">
               {columns.map((column, index) => (
                 <th
                   key={`header-${column.type}-${column.key}`}

@@ -1,9 +1,11 @@
 @import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
-
-@custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --font-sans: 'Geist Variable', sans-serif;
@@ -181,92 +183,6 @@ body {
   min-height: 100vh;
 }
 
-.dark {
-  color-scheme: dark;
-  --background: oklch(0.205 0.018 255);
-  --foreground: oklch(0.93 0.012 255);
-  --card: oklch(0.25 0.022 255);
-  --card-foreground: oklch(0.93 0.012 255);
-  --popover: oklch(0.26 0.022 255);
-  --popover-foreground: oklch(0.93 0.012 255);
-  --primary: oklch(0.72 0.13 255);
-  --primary-hover: oklch(0.77 0.11 255);
-  --primary-active: oklch(0.67 0.14 255);
-  --primary-foreground: oklch(0.2 0.025 255);
-  --secondary: oklch(0.72 0.12 38);
-  --secondary-foreground: oklch(0.21 0.02 38);
-  --muted: oklch(0.31 0.025 255);
-  --muted-foreground: oklch(0.72 0.025 255);
-  --accent: oklch(0.32 0.055 255);
-  --accent-foreground: oklch(0.88 0.055 255);
-  --destructive: oklch(0.72 0.12 38);
-  --border: oklch(0.39 0.025 255);
-  --input: oklch(0.36 0.025 255);
-  --ring: oklch(0.72 0.13 255 / 0.38);
-  --chart-1: oklch(0.72 0.13 255);
-  --chart-2: oklch(0.72 0.12 38);
-  --chart-3: oklch(0.72 0.1 165);
-  --chart-4: oklch(0.74 0.13 295);
-  --chart-5: oklch(0.88 0.012 255);
-  --contrast-cool: oklch(0.72 0.13 255);
-  --contrast-cool-soft: oklch(0.32 0.055 255);
-  --contrast-warm: oklch(0.72 0.12 38);
-  --contrast-warm-soft: oklch(0.32 0.045 38);
-  --accent-cool: oklch(0.72 0.13 255);
-  --accent-cool-foreground: oklch(0.2 0.025 255);
-  --accent-warm: oklch(0.72 0.12 38);
-  --accent-warm-foreground: oklch(0.21 0.02 38);
-  --accent-success: oklch(0.72 0.1 165);
-  --accent-success-foreground: oklch(0.2 0.02 165);
-  --accent-compare: oklch(0.72 0.1 215);
-  --accent-compare-hover: oklch(0.78 0.08 215);
-  --accent-compare-foreground: oklch(0.2 0.02 215);
-  --accent-purple: oklch(0.74 0.13 295);
-  --accent-purple-foreground: oklch(0.21 0.025 295);
-  --accent-rose: oklch(0.73 0.12 345);
-  --accent-rose-foreground: oklch(0.21 0.02 345);
-  --accent-neutral: oklch(0.72 0.02 255);
-  --accent-neutral-foreground: oklch(0.2 0.02 255);
-  --accent-gold: oklch(0.82 0.11 83);
-  --accent-gold-foreground: oklch(0.25 0.05 65);
-  --platform-manbo: oklch(0.76 0.13 295);
-  --platform-manbo-hover: oklch(0.82 0.1 295);
-  --platform-manbo-soft: oklch(0.4 0.07 295);
-  --platform-missevan: oklch(0.82 0.012 255);
-  --platform-missevan-hover: oklch(0.9 0.008 255);
-  --platform-missevan-soft: oklch(0.42 0.025 255);
-  --rank-gold: oklch(0.82 0.12 78);
-  --rank-silver: oklch(0.76 0.025 255);
-  --rank-bronze: oklch(0.72 0.1 55);
-  --surface-hover: oklch(0.29 0.025 255);
-  --surface-hover-strong: oklch(0.33 0.03 255);
-  --surface-selected: oklch(0.34 0.055 255);
-  --surface-selected-border: oklch(0.58 0.08 255);
-  --surface-panel: oklch(0.24 0.02 255);
-  --surface-floating: oklch(0.26 0.022 255);
-  --surface-subtle: oklch(0.3 0.02 255);
-  --surface-alert: oklch(0.28 0.025 255);
-  --surface-destructive: oklch(0.31 0.045 38);
-  --card-hover: oklch(0.285 0.025 255);
-  --control-track: oklch(0.29 0.02 255);
-  --control-selected: oklch(0.37 0.025 255);
-  --border-soft: oklch(0.36 0.022 255);
-  --border-warm: oklch(0.55 0.075 38);
-  --shadow-card: 0 18px 42px -30px oklch(0.08 0.02 255 / 0.62);
-  --shadow-panel: 0 24px 64px -32px oklch(0.06 0.02 255 / 0.76);
-  --shadow-control: 0 14px 30px -20px oklch(0.08 0.03 255 / 0.7);
-  --shadow-secondary-control: 0 14px 28px -20px oklch(0.08 0.03 38 / 0.68);
-  --shadow-selected: 0 8px 20px -12px oklch(0.08 0.02 255 / 0.72);
-  --sidebar: oklch(0.24 0.02 255);
-  --sidebar-foreground: oklch(0.93 0.012 255);
-  --sidebar-primary: oklch(0.72 0.13 255);
-  --sidebar-primary-foreground: oklch(0.2 0.025 255);
-  --sidebar-accent: oklch(0.32 0.055 255);
-  --sidebar-accent-foreground: oklch(0.88 0.055 255);
-  --sidebar-border: oklch(0.39 0.025 255);
-  --sidebar-ring: oklch(0.72 0.13 255 / 0.38);
-}
-
 [data-platform="manbo"] {
   --platform-current: var(--platform-manbo);
 }
@@ -332,16 +248,6 @@ body {
   min-width: 0;
   gap: clamp(2.25rem, 5vw, 4.5rem);
   color: var(--home-ink);
-}
-
-.dark .home-editorial {
-  --home-paper: var(--surface-subtle);
-  --home-paper-strong: var(--card);
-  --home-ink: var(--foreground);
-  --home-muted: var(--muted-foreground);
-  --home-accent: var(--primary);
-  --home-warm: var(--accent-warm);
-  --home-success: var(--accent-success);
 }
 
 .home-editorial .text-foreground {

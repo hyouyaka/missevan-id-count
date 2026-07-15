@@ -334,7 +334,7 @@ export function SearchPanel({
               <SearchIcon className="size-5" />
             </button>
             <input
-              className="h-12 w-full rounded-lg border border-border/80 bg-white pl-11 pr-11 text-sm! text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-background"
+              className="h-12 w-full rounded-lg border border-border/80 bg-white pl-11 pr-11 text-sm! text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
               placeholder={placeholder}
               value={keywordValue}
               onFocus={openSearchHelp}

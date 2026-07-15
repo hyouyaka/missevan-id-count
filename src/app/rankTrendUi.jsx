@@ -471,7 +471,15 @@ function RankTrendLineChart({ metrics, legendMetrics = metrics, selectedMetricKe
       />
       <div
         className="relative h-48 w-full overflow-visible rounded-md bg-card sm:h-52"
+        role="group"
+        tabIndex={0}
+        aria-label="趋势图交互区域"
         onClick={() => setSelectedPoint(null)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setSelectedPoint(null);
+          }
+        }}
         onPointerLeave={() => setHoveredPoint(null)}
       >
         <svg aria-label="趋势折线图" className="size-full" preserveAspectRatio="none" viewBox="0 0 320 170">

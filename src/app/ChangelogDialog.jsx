@@ -74,6 +74,9 @@ export function ChangelogDialog({ open, onOpenChange }) {
         <AlertDialogDescription asChild>
           <div
             data-changelog-scroll-region="true"
+            role="region"
+            aria-label="更新日志内容"
+            tabIndex={0}
             className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 text-left [-webkit-overflow-scrolling:touch]"
           >
             <div className="grid gap-4">

@@ -29,8 +29,21 @@ const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
+const navigationSource = readFileSync(new URL("./navigation.jsx", import.meta.url), "utf8");
 const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
-const serverSource = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+const serverSource = [
+  readFileSync(new URL("../../server/application.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../../server/routes/systemRoutes.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../../server/routes/statsRoutes.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../../server/routes/missevanRoutes.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../../server/routes/manboRoutes.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../../server/stats/taskExecution.js", import.meta.url), "utf8"),
+].join("\n");
+const httpSecuritySource = readFileSync(new URL("../../server/httpSecurity.js", import.meta.url), "utf8");
+const statsRoutesSource = readFileSync(new URL("../../server/routes/statsRoutes.js", import.meta.url), "utf8");
+const missevanRoutesSource = readFileSync(new URL("../../server/routes/missevanRoutes.js", import.meta.url), "utf8");
+const manboRoutesSource = readFileSync(new URL("../../server/routes/manboRoutes.js", import.meta.url), "utf8");
+const statsTaskExecutionSource = readFileSync(new URL("../../server/stats/taskExecution.js", import.meta.url), "utf8");
 const taskEngineSource = readFileSync(new URL("../../server/stats/taskEngine.js", import.meta.url), "utf8");
 const taskStateSource = readFileSync(new URL("../../server/stats/taskState.js", import.meta.url), "utf8");
 const envConfigSource = readFileSync(new URL("../../envConfig.js", import.meta.url), "utf8");
@@ -80,13 +93,38 @@ test("project palette uses shared OKLCH semantic colors", () => {
   assert.match(cardSource, /bg-card[\s\S]*shadow-\[var\(--shadow-card\)\]/);
 });
 
+test("project keeps a light-only theme and semantic table headers", () => {
+  assert.match(indexCssSource, /color-scheme:\s*light/);
+  assert.match(indexHtmlSource, /color-scheme:\s*light/);
+  assert.doesNotMatch(indexCssSource, /\.dark|dark:/);
+  assert.doesNotMatch(favoritesPanelSource, /<tr[\s\S]*role=\"button\"/);
+  assert.match(favoritesPanelSource, /<button[\s\S]*收起数据明细[\s\S]*<\/button>[\s\S]*<div className=\"max-h-44/);
+  assert.match(favoritesPanelSource, /<thead[\s\S]*<tr className=\"border-b/);
+  assert.match(
+    changelogDialogSource,
+    /data-changelog-scroll-region=\"true\"[\s\S]*role=\"region\"[\s\S]*tabIndex=\{0\}/
+  );
+});
+
+test("desktop and local HTTP entrypoints keep security boundaries", () => {
+  assert.match(electronMainSource, /startServer\(0, \{ host: "127\.0\.0\.1" \}\)/);
+  assert.match(electronMainSource, /sandbox:\s*true/);
+  assert.match(electronMainSource, /contextIsolation:\s*true/);
+  assert.match(electronMainSource, /nodeIntegration:\s*false/);
+  assert.match(electronMainSource, /setWindowOpenHandler/);
+  assert.match(electronMainSource, /parsedUrl\.protocol === "https:"/);
+  assert.doesNotMatch(electronMainSource, /data:text\/html/);
+
+  assert.match(serverSource, /createRequestSecurityMiddleware/);
+  assert.match(httpSecuritySource, /CROSS_ORIGIN_REQUEST_REJECTED/);
+  assert.match(serverSource, /app\.use\(createRequestSecurityMiddleware/);
+  assert.doesNotMatch(serverSource, /from "cors"/);
+});
+
 test("semantic role colors keep the requested labels and actions distinct", () => {
   assert.match(indexCssSource, /--accent-compare: oklch\(0\.54 0\.09 215\)/);
   assert.match(indexCssSource, /--accent-compare-hover: oklch\(0\.48 0\.09 215\)/);
   assert.match(indexCssSource, /--accent-compare-foreground: oklch\(0\.99 0\.004 215\)/);
-  assert.match(indexCssSource, /\.dark \{[\s\S]*--accent-compare: oklch\(0\.72 0\.1 215\)/);
-  assert.match(indexCssSource, /\.dark \{[\s\S]*--accent-compare-hover: oklch\(0\.78 0\.08 215\)/);
-  assert.match(indexCssSource, /\.dark \{[\s\S]*--accent-compare-foreground: oklch\(0\.2 0\.02 215\)/);
 
   const audioDramaStart = badgeSource.indexOf("audioDrama:");
   const audioDramaEnd = badgeSource.indexOf("audioComic:", audioDramaStart);
@@ -121,9 +159,6 @@ test("platform pills use globally distinct selected surfaces", () => {
   assert.match(indexCssSource, /--control-track: oklch\(0\.945 0\.01 255\)/);
   assert.match(indexCssSource, /--platform-missevan-soft: oklch\(0\.875 0\.02 255\)/);
   assert.match(indexCssSource, /--platform-manbo-soft: oklch\(0\.91 0\.055 295\)/);
-  assert.match(indexCssSource, /\.dark \{[\s\S]*--control-track: oklch\(0\.29 0\.02 255\)/);
-  assert.match(indexCssSource, /\.dark \{[\s\S]*--platform-missevan-soft: oklch\(0\.42 0\.025 255\)/);
-  assert.match(indexCssSource, /\.dark \{[\s\S]*--platform-manbo-soft: oklch\(0\.4 0\.07 295\)/);
   assert.match(tabsSource, /data-\[platform=missevan\]:data-\[state=active\]:bg-\[var\(--platform-missevan-soft\)\]/);
   assert.match(tabsSource, /data-\[platform=manbo\]:data-\[state=active\]:bg-\[var\(--platform-manbo-soft\)\]/);
 });
@@ -289,11 +324,14 @@ test("Missevan play count writes regular watch_count usage logs", () => {
 });
 
 test("Manbo search supports local-only fallback mode", () => {
-  const routeStart = serverSource.indexOf('app.get("/manbo/search"');
+  const routeStart = serverSource.indexOf('router.get("/manbo/search"');
   assert.notEqual(routeStart, -1, "Manbo search route should exist");
-  const routeEnd = serverSource.indexOf('app.post("/manbo/getdramacards"', routeStart);
+  const routeEnd = serverSource.indexOf('router.post("/manbo/getdramacards"', routeStart);
   assert.notEqual(routeEnd, -1, "Manbo search route end marker should exist");
-  const routeSource = serverSource.slice(routeStart, routeEnd);
+  const routeSource = manboRoutesSource.slice(
+    manboRoutesSource.indexOf('router.get("/manbo/search"'),
+    manboRoutesSource.indexOf('router.post("/manbo/getdramacards"')
+  );
   const localOnlyIndex = routeSource.indexOf('source: "library_only"');
   const apiCallIndex = routeSource.indexOf("fetchManboSearchApiRecords");
 
@@ -309,7 +347,7 @@ test("Manbo search supports local-only fallback mode", () => {
 test("Missevan search logs compatibility fallback before API fallback", () => {
   const routeStart = serverSource.indexOf('app.get("/search"');
   assert.notEqual(routeStart, -1, "Missevan search route should exist");
-  const routeEnd = serverSource.indexOf('app.post("/getdramacards"', routeStart);
+  const routeEnd = serverSource.indexOf('router.post("/getdramacards"', routeStart);
   assert.notEqual(routeEnd, -1, "Missevan search route end marker should exist");
   const routeSource = serverSource.slice(routeStart, routeEnd);
 
@@ -465,9 +503,9 @@ test("web navigation keeps platform drawer roots and favorites with statistics l
   assert.notEqual(platformEnd, -1, "web platform list should end before semicolon");
   const platformSource = toolViewSource.slice(platformStart, platformEnd);
 
-  assert.match(toolViewSource, /CalculatorIcon/);
-  assert.match(toolViewSource, /search: CalculatorIcon/);
-  assert.match(toolViewSource, /favorites: StarIcon/);
+  assert.match(navigationSource, /CalculatorIcon/);
+  assert.match(navigationSource, /search: CalculatorIcon/);
+  assert.match(navigationSource, /favorites: StarIcon/);
   assert.match(platformSource, /\{ key: "search", label: "统计" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "search", label: "搜索" \}/);
   assert.match(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
@@ -495,8 +533,8 @@ test("home navigation appears before statistics on web only and uses the House i
   const webSource = toolViewSource.slice(webStart, webEnd);
   const desktopSource = toolViewSource.slice(desktopStart, desktopEnd);
 
-  assert.match(toolViewSource, /HouseIcon/);
-  assert.match(toolViewSource, /home: HouseIcon/);
+  assert.match(navigationSource, /HouseIcon/);
+  assert.match(navigationSource, /home: HouseIcon/);
   assert.ok(webSource.indexOf('{ key: "home", label: "首页" }') < webSource.indexOf('{ key: "search", label: "统计" }'));
   assert.doesNotMatch(desktopSource, /\{ key: "home", label: "首页" \}/);
   assert.match(toolViewSource, /<HomeView[\s\S]*onNavigateRoute=\{navigateHomeRoute\}/);
@@ -833,7 +871,7 @@ test("desktop navigation keeps statistics and favorites", () => {
 
 test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /MenuIcon/);
-  assert.match(toolViewSource, /MonitorIcon/);
+  assert.match(navigationSource, /MonitorIcon/);
   assert.match(toolViewSource, /const \[mainDrawerOpen, setMainDrawerOpen\] = useState\(false\)/);
   assert.match(toolViewSource, /function closeMainDrawer\(\)/);
   assert.match(toolViewSource, /function openDrawerChangelog\(\)/);
@@ -852,48 +890,49 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /top-\[max\(0\.75rem,env\(safe-area-inset-top\)\)\]/);
   assert.match(toolViewSource, /className="hidden shrink-0 sm:inline-flex/);
   assert.match(toolViewSource, /<MenuIcon aria-hidden="true"/);
-  assert.match(toolViewSource, /id="main-navigation-drawer"/);
+  assert.match(navigationSource, /id="main-navigation-drawer"/);
   assert.match(toolViewSource, /<MainNavigationDrawer/);
   assert.match(toolViewSource, /defaultExpandedRootKeys/);
   assert.match(toolViewSource, /isDesktopBrowser/);
-  assert.match(toolViewSource, /getInitialDrawerExpandedRootKeys/);
-  assert.match(toolViewSource, /const \[expandedRootKeys, setExpandedRootKeys\] = useState/);
+  assert.match(navigationSource, /getInitialDrawerExpandedRootKeys/);
+  assert.match(navigationSource, /const \[expandedRootKeys, setExpandedRootKeys\] = useState/);
   assert.doesNotMatch(toolViewSource, /expandedMobileRootKey/);
   assert.doesNotMatch(toolViewSource, /defaultExpandedRootKeys\.join\("\|"\)/);
   assert.doesNotMatch(toolViewSource, /setExpandedRootKeys\(new Set\(defaultExpandedRootKeys\)\)/);
-  assert.match(toolViewSource, /const didRequestInitialDrawerRanksRef = useRef\(false\)/);
-  assert.match(toolViewSource, /if \(!didRequestInitialDrawerRanksRef\.current && defaultExpandedRootKeys\.some/);
-  assert.match(toolViewSource, /didRequestInitialDrawerRanksRef\.current = true/);
+  assert.match(navigationSource, /const didRequestInitialDrawerRanksRef = useRef\(false\)/);
+  assert.match(navigationSource, /const initialRanksRequestRef = useRef\(\{/);
+  assert.match(navigationSource, /if \(!didRequestInitialDrawerRanksRef\.current && initialRequest\.defaultExpandedRootKeys\.some/);
+  assert.match(navigationSource, /didRequestInitialDrawerRanksRef\.current = true/);
   assert.doesNotMatch(toolViewSource, /<DesktopMainNavigationMenu/);
   assert.doesNotMatch(toolViewSource, /<MobileMainNavigationMenu/);
   assert.doesNotMatch(toolViewSource, /buildMobileRankNavigationItems/);
-  assert.match(toolViewSource, /const routePatch = item\?\.routePatch \|\| item\?\.leafPatch \|\| null/);
-  assert.match(toolViewSource, /item=\{\{ \.\.\.item, routePatch \}\}/);
-  assert.match(toolViewSource, /function buildDrawerPlatformItem/);
-  assert.match(toolViewSource, /key: "missevan"[\s\S]*label: "猫耳"/);
-  assert.match(toolViewSource, /key: "manbo"[\s\S]*label: "漫播"/);
+  assert.match(navigationSource, /const routePatch = item\?\.routePatch \|\| item\?\.leafPatch \|\| null/);
+  assert.match(navigationSource, /item=\{\{ \.\.\.item, routePatch \}\}/);
+  assert.match(navigationSource, /function buildDrawerPlatformItem/);
+  assert.match(navigationSource, /platform\.key === "missevan"[\s\S]*label: platform\.label/);
+  assert.match(navigationSource, /platform\.key === "manbo"[\s\S]*label: platform\.label/);
   assert.doesNotMatch(toolViewSource, /expandedMobileRootKey === "ranks"/);
   assert.doesNotMatch(toolViewSource, /rankItems\.map/);
   assert.match(toolViewSource, /openDrawerChangelog/);
-  assert.match(toolViewSource, /更新日志/);
-  assert.match(toolViewSource, /桌面版/);
-  assert.match(toolViewSource, /<MonitorIcon aria-hidden="true"/);
-  assert.match(toolViewSource, /!desktopApp && featureSuggestionUrl \? \(/);
-  assert.match(toolViewSource, /建议反馈/);
+  assert.match(navigationSource, /更新日志/);
+  assert.match(navigationSource, /桌面版/);
+  assert.match(navigationSource, /<MonitorIcon aria-hidden="true"/);
+  assert.match(navigationSource, /!desktopApp && featureSuggestionUrl \? \(/);
+  assert.match(navigationSource, /建议反馈/);
   assert.doesNotMatch(toolViewSource, /功能建议/);
   assert.match(toolViewSource, /const drawerRootItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /const drawerChildItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /const drawerUtilityItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /fixed inset-0 z-40 bg-black\/20 backdrop-blur-\[2px\]/);
-  assert.match(toolViewSource, /fixed right-0 top-0 z-50 h-dvh w-\[230px\]/);
-  assert.match(toolViewSource, /sm:w-\[260px\]/);
-  assert.match(toolViewSource, /border-l border-border bg-background p-3 shadow-\[var\(--shadow-panel\)\]/);
+  assert.match(navigationSource, /fixed right-0 top-0 z-50 h-dvh w-\[230px\]/);
+  assert.match(navigationSource, /sm:w-\[260px\]/);
+  assert.match(navigationSource, /border-l border-border bg-background p-3 shadow-\[var\(--shadow-panel\)\]/);
 });
 
 test("web feedback route initializes the npm Twikoo client inside its own view", () => {
-  assert.match(packageSource, /"twikoo": "\^1\.7\.13"/);
+  assert.match(packageSource, /"twikoo": "\^1\.7\.14"/);
   assert.match(toolViewSource, /import \{ FeedbackView \} from "@\/app\/FeedbackView"/);
-  assert.match(toolViewSource, /feedback: MessageSquarePlusIcon/);
+  assert.match(navigationSource, /feedback: MessageSquarePlusIcon/);
   assert.match(
     toolViewSource,
     /currentPlatform === "feedback" \? \([\s\S]*<FeedbackView featureSuggestionUrl=\{appConfig\.featureSuggestionUrl\} \/>/
@@ -972,7 +1011,7 @@ test("app icon appears in page titles and browser chrome", () => {
   assert.match(indexHtmlSource, /<title>小猫小狐数据分析<\/title>/);
   assert.match(appUtilsSource, /brandName: "MMTOOLKIT\.APP"/);
   assert.match(appUtilsSource, /brandName && brandName !== "M&M Toolkit" \? brandName : defaults\.brandName/);
-  assert.match(serverSource, /brandName: MISSEVAN_ENABLED \? "MMTOOLKIT\.APP" : "Manbo Toolkit"/);
+  assert.match(serverSource, /brandName: (?:MISSEVAN_ENABLED|missevanEnabled) \? "MMTOOLKIT\.APP" : "Manbo Toolkit"/);
   assert.match(electronMainSource, /title: "MMTOOLKIT\.APP"/);
   assert.match(appIconSource, /src="\/app-icon\.png"/);
   assert.doesNotMatch(appIconSource, /src="\/icon\.png"/);
@@ -1117,10 +1156,10 @@ test("main navigation keeps discovery pages route-driven", () => {
   assert.match(toolViewSource, /buildToolRouteUrl/);
   assert.match(toolViewSource, /<RanksPanel[\s\S]*routeState=\{toolRouteState\}[\s\S]*onRouteStateChange=\{navigateToolRoute\}/);
   assert.match(toolViewSource, /<OngoingPanel[\s\S]*routeState=\{toolRouteState\}[\s\S]*onRouteStateChange=\{navigateToolRoute\}/);
-  assert.match(toolViewSource, /const activeRoutePatch = item\?\.activeRoutePatch \|\| item\?\.routePatch/);
-  assert.match(toolViewSource, /isRoutePatchActive\(activeRoutePatch, currentRoute\)/);
-  assert.match(toolViewSource, /activeRoutePatch: platformOngoingItem\?\.activeRoutePatch/);
-  assert.match(toolViewSource, /activeRoutePatch: category\.activeRoutePatch/);
+  assert.match(navigationSource, /const activeRoutePatch = item\?\.activeRoutePatch \|\| item\?\.routePatch/);
+  assert.match(navigationSource, /isRoutePatchActive\(activeRoutePatch, currentRoute\)/);
+  assert.match(navigationSource, /activeRoutePatch: platformOngoingItem\?\.activeRoutePatch/);
+  assert.match(navigationSource, /activeRoutePatch: category\.activeRoutePatch/);
 });
 
 test("search page owns compact platform result tabs", () => {
@@ -1509,18 +1548,18 @@ test("external drama title jump includes titles in import usage logs", () => {
   const openEnd = toolViewSource.indexOf("function beginRun", openStart);
   assert.notEqual(openEnd, -1, "openDramaInSearch should end before stats run helpers");
   const openSource = toolViewSource.slice(openStart, openEnd);
-  const missevanRouteStart = serverSource.indexOf('app.post("/getdramacards"');
-  const missevanRouteEnd = serverSource.indexOf('app.post("/getdramas"', missevanRouteStart);
-  const manboRouteStart = serverSource.indexOf('app.post("/manbo/getdramacards"');
-  const manboRouteEnd = serverSource.indexOf('app.post("/manbo/getdramas"', manboRouteStart);
+  const missevanRouteStart = missevanRoutesSource.indexOf('router.post("/getdramacards"');
+  const missevanRouteEnd = missevanRoutesSource.indexOf('router.post("/getdramas"', missevanRouteStart);
+  const manboRouteStart = manboRoutesSource.indexOf('router.post("/manbo/getdramacards"');
+  const manboRouteEnd = manboRoutesSource.indexOf('router.post("/manbo/getdramas"', manboRouteStart);
 
   assert.notEqual(missevanRouteStart, -1, "Missevan dramacards route should exist");
   assert.notEqual(missevanRouteEnd, -1, "Missevan dramacards route end marker should exist");
   assert.notEqual(manboRouteStart, -1, "Manbo dramacards route should exist");
   assert.notEqual(manboRouteEnd, -1, "Manbo dramacards route end marker should exist");
 
-  const missevanRouteSource = serverSource.slice(missevanRouteStart, missevanRouteEnd);
-  const manboRouteSource = serverSource.slice(manboRouteStart, manboRouteEnd);
+  const missevanRouteSource = missevanRoutesSource.slice(missevanRouteStart, missevanRouteEnd);
+  const manboRouteSource = manboRoutesSource.slice(manboRouteStart, manboRouteEnd);
 
   assert.match(openSource, /titles,/);
   assert.match(openSource, /usageSource/);
@@ -1542,12 +1581,12 @@ test("external drama title jump includes titles in import usage logs", () => {
 });
 
 test("Manbo drama card imports use the info store before external detail hydration", () => {
-  const routeStart = serverSource.indexOf('app.post("/manbo/getdramacards"');
-  const routeEnd = serverSource.indexOf('app.post("/manbo/getdramas"', routeStart);
+  const routeStart = manboRoutesSource.indexOf('router.post("/manbo/getdramacards"');
+  const routeEnd = manboRoutesSource.indexOf('router.post("/manbo/getdramas"', routeStart);
   assert.notEqual(routeStart, -1, "Manbo dramacards route should exist");
   assert.notEqual(routeEnd, -1, "Manbo dramacards route should have an end marker");
 
-  const routeSource = serverSource.slice(routeStart, routeEnd);
+  const routeSource = manboRoutesSource.slice(routeStart, routeEnd);
   const localLookupIndex = routeSource.indexOf("manboInfoStore.byDramaId.get(String(item.raw))");
   const externalResolveIndex = routeSource.indexOf("resolveManboItem(item)");
   const externalDetailIndex = routeSource.indexOf("dramaService.getManboDrama(resolved.dramaId)");
@@ -1829,8 +1868,8 @@ test("desktop favorites JSON endpoints are desktop-only and use exe directory", 
   assert.match(serverSource, /DESKTOP_FAVORITES_FILE_NAME = "mm-toolkit-favorites\.json"/);
   assert.match(serverSource, /function getDesktopFavoritesFilePath/);
   assert.match(serverSource, /DESKTOP_EXE_DIR/);
-  assert.match(serverSource, /app\.get\("\/desktop\/favorites-data"/);
-  assert.match(serverSource, /app\.put\("\/desktop\/favorites-data"/);
+  assert.match(serverSource, /router\.get\("\/desktop\/favorites-data"/);
+  assert.match(serverSource, /router\.put\("\/desktop\/favorites-data"/);
   assert.match(serverSource, /if \(!DESKTOP_APP\)/);
 });
 
@@ -1882,7 +1921,7 @@ test("favorites panel backfills missing main CV text from the info store", () =>
   assert.match(favoritesPanelSource, /MicIcon/);
   assert.match(favoritesPanelSource, /aria-label="主役CV"/);
   assert.match(favoritesPanelSource, /formatFavoriteMainCvText\(favorite\.mainCvText\)/);
-  assert.match(serverSource, /app\.get\("\/favorites\/meta"/);
+  assert.match(serverSource, /router\.get\("\/favorites\/meta"/);
   assert.match(serverSource, /buildFavoriteMetaFromInfoStore/);
 });
 
@@ -3221,7 +3260,7 @@ test("compare dialog filters metrics, avoids loading loops, and fits mobile widt
 
   assert.match(dialogSource, /const handleVersionResponseRef = useRef\(handleVersionResponse\)/);
   assert.match(dialogSource, /const compareItemsKey = items\.map/);
-  assert.match(dialogSource, /\}, \[open, compareItemsKey, frontendVersion\]\)/);
+  assert.match(dialogSource, /\}, \[open, compareItemsKey, frontendVersion, items\]\)/);
   assert.doesNotMatch(dialogSource, /\}, \[open, items, frontendVersion, handleVersionResponse\]\)/);
   assert.match(dialogSource, /const availableMetricOptions = COMPARE_METRICS\.filter/);
   assert.match(dialogSource, /availableMetricOptions\.map/);
@@ -3349,11 +3388,11 @@ test("rank trend backend reads ordinary trends from aggregate platform keys", ()
     "ordinary aggregate trend load should yield once before comparing the loadPromise closure"
   );
 
-  const routeStart = serverSource.indexOf('app.get("/ranks/trends"');
+  const routeStart = statsRoutesSource.indexOf('router.get("/ranks/trends"');
   assert.notEqual(routeStart, -1, "rank trend route should exist");
-  const routeEnd = serverSource.indexOf('app.get("/ongoing"', routeStart);
+  const routeEnd = statsRoutesSource.indexOf('router.get("/ongoing"', routeStart);
   assert.notEqual(routeEnd, -1, "rank trend route should end before ongoing route");
-  const routeSource = serverSource.slice(routeStart, routeEnd);
+  const routeSource = statsRoutesSource.slice(routeStart, routeEnd);
 
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
 });
@@ -3399,11 +3438,11 @@ test("rank trend availability route reads historical aggregate samples", () => {
   assert.match(serverSource, /buildRankTrendAvailabilityResponse/);
   assert.doesNotMatch(serverSource, /getLegacyRankTrendAvailabilityResponse/);
 
-  const routeStart = serverSource.indexOf('app.get("/ranks/trends/availability"');
+  const routeStart = statsRoutesSource.indexOf('router.get("/ranks/trends/availability"');
   assert.notEqual(routeStart, -1, "rank trend availability route should exist");
-  const routeEnd = serverSource.indexOf('app.get("/ranks/trends"', routeStart);
+  const routeEnd = statsRoutesSource.indexOf('router.get("/ranks/trends"', routeStart);
   assert.notEqual(routeEnd, -1, "availability route should be defined before detail trend route");
-  const routeSource = serverSource.slice(routeStart, routeEnd);
+  const routeSource = statsRoutesSource.slice(routeStart, routeEnd);
 
   assert.match(routeSource, /getCachedRankTrendAggregateSnapshot\(platform\)/);
   assert.match(routeSource, /buildRankTrendAvailabilityResponse/);
@@ -3492,28 +3531,28 @@ test("server applies tiered rate limits and queues stats tasks by platform", () 
   assert.match(serverSource, /statsTaskEngine\.enqueue\(task\)/);
   assert.match(serverSource, /statsTaskEngine\.cancel\(req\.params\.taskId\)/);
   assert.match(serverSource, /statsTaskEngine\.restore\(\)/);
-  assert.match(serverSource, /app\.get\("\/admin\/task-metrics"/);
-  assert.match(serverSource, /app\.post\("\/stat-tasks", statsTaskCreationLimiter/);
-  assert.match(serverSource, /app\.post\("\/manbo\/stat-tasks", statsTaskCreationLimiter/);
+  assert.match(statsRoutesSource, /router\.get\("\/admin\/task-metrics"/);
+  assert.match(statsRoutesSource, /router\.post\("\/stat-tasks", statsTaskCreationLimiter/);
+  assert.match(statsRoutesSource, /router\.post\("\/manbo\/stat-tasks", statsTaskCreationLimiter/);
 });
 
 test("all stats task routes wait for asynchronous task recovery", () => {
   assert.match(serverSource, /void statsTaskEngine\.restore\(\)\.catch/);
   [
-    'app.post("/stat-tasks"',
-    'app.get("/stat-tasks/:taskId"',
-    'app.post("/stat-tasks/:taskId/cancel"',
-    'app.post("/manbo/stat-tasks"',
-    'app.get("/manbo/stat-tasks/:taskId"',
-    'app.post("/manbo/stat-tasks/:taskId/cancel"',
+    'router.post("/stat-tasks"',
+    'router.get("/stat-tasks/:taskId"',
+    'router.post("/stat-tasks/:taskId/cancel"',
+    'router.post("/manbo/stat-tasks"',
+    'router.get("/manbo/stat-tasks/:taskId"',
+    'router.post("/manbo/stat-tasks/:taskId/cancel"',
   ].forEach((route, index, routes) => {
-    const start = serverSource.indexOf(route);
+    const start = statsRoutesSource.indexOf(route);
     const end = index + 1 < routes.length
-      ? serverSource.indexOf(routes[index + 1], start)
-      : serverSource.indexOf('app.use(express.static', start);
+      ? statsRoutesSource.indexOf(routes[index + 1], start)
+      : statsRoutesSource.length;
     assert.notEqual(start, -1, `${route} should exist`);
     assert.match(
-      serverSource.slice(start, end),
+      statsRoutesSource.slice(start, end),
       /await statsTaskEngine\.whenReady\(\)/,
       `${route} should wait for recovery`
     );

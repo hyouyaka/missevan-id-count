@@ -15,6 +15,8 @@ dist-ssr
 *.env
 upstash.env
 release
+playwright-report/
+test-results/
 logs
 data/
 tmp-manbo-crypto.js
