@@ -3,6 +3,7 @@ import {
   hasWeeklyPlaybackRecord,
   normalizeWeeklyPlaybackDate,
 } from "./weeklyPlaybackUtils.js";
+import { isSkippedDanmakuMetricValue } from "./rankMetricUtils.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -239,6 +240,7 @@ function getRepeatedTrendSampleDateSet({ dates, snapshotsByDate, platform, id })
   const metricConfigs = getRankTrendMetricConfigs(platform);
   const staleDateSet = new Set();
   let previousValues = null;
+  let previousDanmakuCaptureSkipped = null;
 
   dates.forEach((date) => {
     const drama = getDramaMetrics(snapshotsByDate[date], id);
@@ -246,10 +248,20 @@ function getRepeatedTrendSampleDateSet({ dates, snapshotsByDate, platform, id })
       return;
     }
     const currentValues = getTrendMetricValues(drama, metricConfigs);
-    if (previousValues && areTrendMetricValuesEqual(currentValues, previousValues)) {
+    const currentDanmakuCaptureSkipped = isSkippedDanmakuMetricValue(
+      drama?.danmaku_uid_count
+    );
+    const captureStatusChanged = previousValues &&
+      currentDanmakuCaptureSkipped !== previousDanmakuCaptureSkipped;
+    if (
+      previousValues &&
+      !captureStatusChanged &&
+      areTrendMetricValuesEqual(currentValues, previousValues)
+    ) {
       staleDateSet.add(date);
     }
     previousValues = currentValues;
+    previousDanmakuCaptureSkipped = currentDanmakuCaptureSkipped;
   });
 
   return staleDateSet;
@@ -886,9 +898,12 @@ function buildMetric(config, history, rangeHistory = history) {
   const range = getMetricHistoryRange(rangeHistory, (point) =>
     normalizeFiniteNumber(point.drama?.[config.key])
   );
+  const latestMetricValue = rangeHistory.at(-1)?.drama?.[config.key];
+  const currentCaptureSkipped =
+    config.key === "danmaku_uid_count" && isSkippedDanmakuMetricValue(latestMetricValue);
   const fromValue = range.fromValue;
-  const toValue = range.toValue;
-  const available = range.hasComparableRange;
+  const toValue = currentCaptureSkipped ? null : range.toValue;
+  const available = !currentCaptureSkipped && range.hasComparableRange;
   const delta = available ? toValue - fromValue : null;
   const deltaPercent = available && fromValue !== 0 ? delta / fromValue : null;
 
@@ -1108,6 +1123,16 @@ export function buildPeakSeriesTrendResponse({
   const latestSample =
     [...samples].reverse().find((sample) => !staleDateSet.has(sample.date)) ||
     samples.at(-1);
+  const rankHistory = buildPeakSeriesRankHistory(samples);
+  const lastRank = matchedSeries.record?.lastRank;
+  if (
+    /^\d{4}-\d{2}-\d{2}$/.test(String(lastRank?.date ?? "")) &&
+    Array.isArray(lastRank?.ranks) &&
+    !rankHistory.some((entry) => entry.date === lastRank.date)
+  ) {
+    rankHistory.push({ date: lastRank.date, ranks: lastRank.ranks });
+    rankHistory.sort((left, right) => left.date.localeCompare(right.date));
+  }
 
   return {
     success: true,
@@ -1118,7 +1143,7 @@ export function buildPeakSeriesTrendResponse({
     latestDate: latestSample.date,
     rankHistoryLatestDate: dates.at(-1) || "",
     dailyViewDelta: getPeakSeriesDailyViewDelta(matchedSeries.record),
-    rankHistory: buildPeakSeriesRankHistory(samples),
+    rankHistory,
     windows: Object.fromEntries(
       TREND_WINDOWS.map((windowConfig) => [
         windowConfig.key,

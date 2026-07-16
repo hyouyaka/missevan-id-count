@@ -4,6 +4,15 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.3",
+    changes: [
+      "修复多部作品汇总收益显示异常的问题。",
+      "猫耳畅销和人气榜扩展到50项。但因资源有限，31-50位的付费ID不会抓取，仅展示播放量，追剧数，打赏人数和打赏榜总和。",
+      "趋势扩展为每日趋势与每周趋势。每日趋势统计榜单（除巅峰榜）前50位和7日内更新的作品，包含多个维度（猫耳：播放量&追剧&付费ID，漫播：播放量&付费ID&付费/收听人数）；每周趋势统计全部作品，仅包含播放量一个维度。",
+      "请保存本工具新地址https://mmtoolkit.app/，旧地址https://mandm-toolkit.onrender.com随时可能失效。",
+    ],
+  },
+  {
     version: "1.7.2",
     changes: [
       "优化搜索结果显示逻辑",

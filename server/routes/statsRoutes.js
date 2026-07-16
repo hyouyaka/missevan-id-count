@@ -44,7 +44,7 @@ export function registerStatsRoutes(router, {
     try {
       let aggregateSnapshot = null;
       try {
-        aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform);
+        aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform, { ids });
       } catch (_) {
         aggregateSnapshot = null;
       }
@@ -56,7 +56,7 @@ export function registerStatsRoutes(router, {
       if (!response.success || response.ids.length < ids.length) {
         let weeklyPlaybackSnapshot = null;
         try {
-          weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(platform);
+          weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(platform, { ids });
         } catch (_) {
           weeklyPlaybackSnapshot = null;
         }

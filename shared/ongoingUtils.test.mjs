@@ -316,6 +316,30 @@ test("isOngoingEmptyPaidDanmakuMetric detects unpaid windows for display", () =>
   );
 });
 
+test("buildOngoingResponse hides only explicitly skipped danmaku metrics", () => {
+  const buildResponse = (danmakuValue) => buildOngoingResponse({
+    platform: "missevan",
+    ongoingIds: ["93038"],
+    indexSnapshot: { dates: ["2026-07-16"] },
+    metricSnapshotsByDate: {
+      "2026-07-16": {
+        dramas: {
+          93038: {
+            name: "一屋暗灯",
+            view_count: 100,
+            subscription_num: 10,
+            danmaku_uid_count: danmakuValue,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(buildResponse("  无需抓取  ").items[0].metrics.danmaku_uid_count.visible, false);
+  assert.equal(buildResponse(null).items[0].metrics.danmaku_uid_count.visible, undefined);
+  assert.equal(buildResponse(0).items[0].metrics.danmaku_uid_count.visible, undefined);
+});
+
 test("sortOngoingItemsByWindowDelta orders playback growth descending", () => {
   const items = [
     { id: "1", windows: { "7d": { metrics: { view_count: { delta: 10 } } } } },

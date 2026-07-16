@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BeanIcon,
   CheckIcon,
@@ -7,6 +7,7 @@ import {
   GemIcon,
   ArrowLeftRightIcon,
   HeartIcon,
+  InfoIcon,
   PlayCircleIcon,
   RefreshCwIcon,
   ShoppingCartIcon,
@@ -16,8 +17,14 @@ import {
   UsersRoundIcon,
   XIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 
-import { formatDeviceDateTime, formatPlainNumber, formatRankCompactCount } from "@/app/app-utils";
+import {
+  formatDeviceDateTime,
+  formatPlainNumber,
+  formatRankCompactCount,
+  getBackendVersionFromResponse,
+} from "@/app/app-utils";
 import {
   buildTrendChartLines as buildSingleAxisTrendChartLines,
   getTrendAxisLabelMarkers,
@@ -35,13 +42,27 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  fetchRankTrendAvailabilityData,
+  fetchRankTrendData,
+  getRankTrendModePreference,
+  isRankTrendWeeklyUnavailable,
+  logRankTrendOpen,
+  mapRankTrendWindowKey,
+  markRankTrendWeeklyUnavailable,
+  RANK_TREND_CLIENT_SCHEMA_VERSION,
+  setRankTrendModePreference,
+} from "@/app/rankTrendData";
+
 export {
   fetchRankTrendAvailabilityData,
   fetchRankTrendData,
   logRankTrendOpen,
   RANK_TREND_CLIENT_SCHEMA_VERSION,
-} from "@/app/rankTrendData";
+};
 
 export const trendActionButtonClassName =
   "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]";
@@ -96,6 +117,39 @@ function MetricIcon({ label, className = "size-3.5" }) {
   return <Icon aria-hidden="true" className={className} />;
 }
 
+function TrendDataInfoPopover() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="inline-flex text-muted-foreground hover:text-primary"
+          aria-label="查看趋势数据说明"
+        >
+          <InfoIcon aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="right"
+        sideOffset={8}
+        avoidCollisions
+        collisionPadding={12}
+        sticky="always"
+        className="max-h-[min(16rem,calc(100vh-2rem))] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md bg-popover p-3 text-xs leading-5 shadow-[var(--shadow-panel)]"
+        style={{
+          width: "min(clamp(12rem,60vw,18rem),calc(100vw - 2rem))",
+          maxWidth: "calc(100vw - 2rem)",
+        }}
+      >
+        <p className="text-muted-foreground">每日数据统计榜单前50名及7日内更新剧集（资源有限会跳过31-50名的付费ID抓取），每周数据统计全部剧集</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function formatTrendDate(value) {
   const normalized = String(value ?? "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
@@ -140,11 +194,11 @@ function formatSignedTrendValue(value) {
 }
 
 function formatTrendSnapshotValue(value) {
-  return value == null ? "无数据" : formatTrendValue(value);
+  return value == null ? "暂无数据" : formatTrendValue(value);
 }
 
 function formatTrendSnapshotDeltaValue(value) {
-  return value == null ? "无数据" : formatSignedTrendValue(value);
+  return value == null ? "暂无数据" : formatSignedTrendValue(value);
 }
 
 function parseTrendDate(value) {
@@ -894,14 +948,50 @@ export function CompareActionButton({ className = "", density = "default", ...pr
   );
 }
 
-export function RankTrendDialog({ open, onOpenChange, item, platform, trendState }) {
+export function RankTrendDialog({
+  open,
+  onOpenChange,
+  item,
+  platform,
+  trendState,
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+}) {
   const [selectedWindow, setSelectedWindow] = useState("7d");
   const [selectedChartMode, setSelectedChartMode] = useState("absolute");
   const [selectedMetricKey, setSelectedMetricKey] = useState("view_count");
-  const data = trendState.data;
+  const [activeTrendKind, setActiveTrendKind] = useState("metric");
+  const [weeklyTrendData, setWeeklyTrendData] = useState(null);
+  const [weeklyLoadState, setWeeklyLoadState] = useState("idle");
+  const [weeklyUnavailable, setWeeklyUnavailable] = useState(false);
+  const [shouldRestoreWeekly, setShouldRestoreWeekly] = useState(false);
+  const dailyMetricKeyRef = useRef("view_count");
+  const weeklyRequestIdRef = useRef(0);
+  const weeklyRequestInFlightRef = useRef(false);
+  const handleVersionResponseRef = useRef(handleVersionResponse);
+  const primaryData = trendState.data;
+  const trendId = String(item?.id ?? primaryData?.id ?? "").trim();
+  const trendSessionKey = `${platform}:${trendId}`;
+  const primaryWindows = primaryData?.windows || {};
+  const primaryHasDailyTrend = Boolean(primaryWindows["3d"] || primaryWindows["7d"] || primaryWindows["30d"]);
+  const primaryHasWeeklyTrend = Boolean(primaryWindows["3w"] || primaryWindows["7w"] || primaryWindows["30w"]);
+  const canSwitchTrendKind = primaryData?.kind === "metric" && Boolean(trendId);
+  const data = canSwitchTrendKind && activeTrendKind === "weekly_playback" && weeklyTrendData
+    ? weeklyTrendData
+    : primaryData;
   const windows = data?.windows || {};
   const isCvTrend = data?.kind === "cv";
   const isWeeklyPlaybackTrend = data?.kind === "weekly_playback";
+  const isWeeklyDataMode = isCvTrend || isWeeklyPlaybackTrend;
+  const isWeeklyLoading = weeklyLoadState === "loading";
+  const showTrendKindSelect = Boolean(
+    primaryData?.success && (
+      canSwitchTrendKind ||
+      primaryData?.kind === "cv" ||
+      primaryData?.kind === "weekly_playback"
+    )
+  );
+  const weeklyTrendOptionDisabled = weeklyUnavailable || (!primaryHasWeeklyTrend && !canSwitchTrendKind);
   const metaTags = getTrendMetaTags(item, platform);
   const latestRankHistory = Array.isArray(data?.rankHistory) ? data.rankHistory.at(-1) : null;
   const latestRankHistoryDate = String(latestRankHistory?.date ?? "").trim();
@@ -935,12 +1025,111 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
       : item?.id ?? data?.id;
 
   useEffect(() => {
-    if (open) {
-      setSelectedWindow(defaultWindowKey);
-      setSelectedChartMode("absolute");
-      setSelectedMetricKey("view_count");
+    handleVersionResponseRef.current = handleVersionResponse;
+  }, [handleVersionResponse]);
+
+  useEffect(() => {
+    weeklyRequestIdRef.current += 1;
+    weeklyRequestInFlightRef.current = false;
+    setWeeklyTrendData(null);
+    setWeeklyLoadState("idle");
+    setShouldRestoreWeekly(false);
+
+    if (!open) {
+      return;
     }
-  }, [open, item?.id, defaultWindowKey]);
+
+    const unavailable = canSwitchTrendKind && isRankTrendWeeklyUnavailable({ platform, id: trendId });
+    const preferredKind = canSwitchTrendKind
+      ? getRankTrendModePreference({ platform, id: trendId })
+      : primaryData?.kind || "metric";
+    setWeeklyUnavailable(unavailable);
+    setActiveTrendKind(primaryData?.kind || "metric");
+    setSelectedWindow(primaryHasWeeklyTrend && !primaryHasDailyTrend ? "7w" : "7d");
+    setSelectedChartMode("absolute");
+    setSelectedMetricKey("view_count");
+    dailyMetricKeyRef.current = "view_count";
+    setShouldRestoreWeekly(preferredKind === "weekly_playback" && !unavailable);
+  }, [
+    open,
+    trendSessionKey,
+    canSwitchTrendKind,
+    platform,
+    trendId,
+    primaryData?.kind,
+    primaryHasDailyTrend,
+    primaryHasWeeklyTrend,
+  ]);
+
+  const loadWeeklyTrend = useCallback(async () => {
+    if (!open || !canSwitchTrendKind || weeklyUnavailable || weeklyRequestInFlightRef.current) {
+      return;
+    }
+
+    weeklyRequestInFlightRef.current = true;
+    const requestId = weeklyRequestIdRef.current + 1;
+    weeklyRequestIdRef.current = requestId;
+    setWeeklyLoadState("loading");
+
+    try {
+      const { response, data: weeklyData } = await fetchRankTrendData({
+        platform,
+        id: trendId,
+        kind: "weekly_playback",
+        frontendVersion,
+      });
+      if (weeklyRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      handleVersionResponseRef.current?.({
+        ...weeklyData,
+        frontendVersion,
+        backendVersion: getBackendVersionFromResponse(response, weeklyData),
+      });
+
+      if (response.ok && weeklyData?.success) {
+        setWeeklyTrendData(weeklyData);
+        setActiveTrendKind("weekly_playback");
+        setSelectedWindow((current) => mapRankTrendWindowKey(current, "weekly_playback"));
+        setSelectedMetricKey("view_count");
+        setRankTrendModePreference({ platform, id: trendId, kind: "weekly_playback" });
+        setWeeklyLoadState("ready");
+        return;
+      }
+
+      if (response.status === 404) {
+        markRankTrendWeeklyUnavailable({ platform, id: trendId });
+        setRankTrendModePreference({ platform, id: trendId, kind: "metric" });
+        setWeeklyUnavailable(true);
+        setWeeklyLoadState("unavailable");
+        toast.info("暂无每周数据，本次访问已停用该选项。");
+        return;
+      }
+
+      setWeeklyLoadState("error");
+      toast.error("每周数据暂不可用，请稍后重试。");
+    } catch (error) {
+      if (weeklyRequestIdRef.current !== requestId) {
+        return;
+      }
+      console.error("Failed to load weekly playback trend", error);
+      setWeeklyLoadState("error");
+      toast.error("每周数据读取失败，请稍后重试。");
+    } finally {
+      if (weeklyRequestIdRef.current === requestId) {
+        weeklyRequestInFlightRef.current = false;
+      }
+    }
+  }, [open, canSwitchTrendKind, weeklyUnavailable, platform, trendId, frontendVersion]);
+
+  useEffect(() => {
+    if (!shouldRestoreWeekly) {
+      return;
+    }
+    setShouldRestoreWeekly(false);
+    void loadWeeklyTrend();
+  }, [shouldRestoreWeekly, loadWeeklyTrend]);
 
   useEffect(() => {
     if (!open) {
@@ -962,7 +1151,38 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
   function selectTrendMetric(metricKey) {
     if (chartMetrics.some((metric) => metric.key === metricKey)) {
       setSelectedMetricKey(metricKey);
+      if (!isWeeklyPlaybackTrend) {
+        dailyMetricKeyRef.current = metricKey;
+      }
     }
+  }
+
+  function selectTrendKind(kind) {
+    if (kind === "metric") {
+      if (!primaryHasDailyTrend) {
+        return;
+      }
+      setActiveTrendKind("metric");
+      setSelectedWindow((current) => mapRankTrendWindowKey(current, "metric"));
+      setSelectedMetricKey(dailyMetricKeyRef.current);
+      setRankTrendModePreference({ platform, id: trendId, kind: "metric" });
+      return;
+    }
+    if (kind !== "weekly_playback" || weeklyTrendOptionDisabled) {
+      return;
+    }
+
+    if (!isWeeklyPlaybackTrend) {
+      dailyMetricKeyRef.current = selectedMetricKey;
+    }
+    if (weeklyTrendData) {
+      setActiveTrendKind("weekly_playback");
+      setSelectedWindow((current) => mapRankTrendWindowKey(current, "weekly_playback"));
+      setSelectedMetricKey("view_count");
+      setRankTrendModePreference({ platform, id: trendId, kind: "weekly_playback" });
+      return;
+    }
+    void loadWeeklyTrend();
   }
 
   return (
@@ -992,9 +1212,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                 {label}
               </Badge>
             ))}
-            {isWeeklyPlaybackTrend ? (
-              <Badge variant="outline" className={metaBadgeClassName}>每周采样 · 仅播放量</Badge>
-            ) : null}
+            <TrendDataInfoPopover />
           </div>
           <AlertDialogDescription
             className="flex w-full max-w-none justify-self-stretch items-start gap-1 text-left text-xs"
@@ -1027,6 +1245,39 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
         {!trendState.isLoading && !trendState.error && data?.success ? (
           <div className="grid min-w-0 gap-2.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {showTrendKindSelect ? (
+                <Select
+                  value={isWeeklyDataMode ? "weekly_playback" : "metric"}
+                  onValueChange={selectTrendKind}
+                  disabled={isWeeklyLoading}
+                >
+                  <SelectTrigger
+                    aria-label="趋势数据模式"
+                    className="h-[34px] w-[7.25rem] px-2.5 text-xs!"
+                  >
+                    {isWeeklyLoading ? (
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <RefreshCwIcon aria-hidden="true" className="size-3 animate-spin" />
+                        <span>读取每周数据</span>
+                      </span>
+                    ) : (
+                      <SelectValue />
+                    )}
+                  </SelectTrigger>
+                  <SelectContent align="start" className="min-w-[12rem]">
+                    <SelectItem value="metric" description="每日统计·多维度" disabled={!primaryHasDailyTrend}>
+                      每日数据
+                    </SelectItem>
+                    <SelectItem
+                      value="weekly_playback"
+                      description={weeklyUnavailable ? "本次访问暂无数据" : "每周统计·仅播放量"}
+                      disabled={weeklyTrendOptionDisabled}
+                    >
+                      {weeklyUnavailable ? "每周数据（暂无数据）" : "每周数据"}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : null}
               <Tabs value={activeWindowKey} onValueChange={setSelectedWindow} className="w-fit">
                 <TabsList className="inline-flex h-[34px] w-fit items-center justify-center text-xs!">
                   {availableWindows.map((key) => (

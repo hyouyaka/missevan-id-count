@@ -1,6 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+test("cold ranks batch parser tolerates malformed optional JSON only when requested", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { parseRanksBatchJson } = await import("./server.js");
+
+  assert.equal(parseRanksBatchJson("{broken", null, { tolerateError: true }), null);
+  assert.throws(() => parseRanksBatchJson("{broken"), SyntaxError);
+});
+
+test("CV v2 reconstruction keeps both aggregate shells when one platform has no matching field", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildCvRankTrendV2Snapshots } = await import("./server.js");
+  const snapshots = buildCvRankTrendV2Snapshots([
+    JSON.stringify({
+      version: 2,
+      kind: "cv",
+      platforms: {
+        missevan: { updated_at: "2026-07-10", dates: ["2026-07-10"] },
+        manbo: { updated_at: "2026-07-10", dates: ["2026-07-10"] },
+      },
+    }),
+    JSON.stringify({ cvName: "路知行", samples: { "2026-07-10": { metrics: { totalViewCount: 10 } } } }),
+    null,
+  ], "路知行");
+
+  assert.deepEqual(Object.keys(snapshots.missevan.cvs), ["路知行"]);
+  assert.deepEqual(snapshots.manbo.cvs, {});
+});
+
 test("rank response appends normalized CV ranks per platform", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildNormalizedRanksResponse } = await import("./server.js");
@@ -201,6 +229,54 @@ test("rank response keeps ordinary ranks when CV snapshot is unavailable", async
   assert.equal(response.cvSummary.updatedAt, "");
   assert.equal(response.platforms.missevan.categories.some((category) => category.key === "cv"), false);
   assert.equal(response.platforms.manbo.categories.some((category) => category.key === "cv"), false);
+});
+
+test("rank response preserves 30-item and 50-item Missevan popular and bestseller ranks", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+  const rankKeys = [
+    "popular_weekly",
+    "popular_monthly",
+    "bestseller_weekly",
+    "bestseller_monthly",
+  ];
+
+  for (const itemCount of [30, 50]) {
+    const ids = Array.from({ length: itemCount }, (_, index) => String(10000 + index));
+    const dramas = Object.fromEntries(ids.map((id, index) => [
+      id,
+      {
+        name: `测试剧集 ${index + 1}`,
+        view_count: 1000 + index,
+        subscription_num: 100 + index,
+        danmaku_uid_count: index >= 30 ? "  无需抓取  " : index,
+      },
+    ]));
+    const ranks = Object.fromEntries(rankKeys.map((key) => [
+      key,
+      { name: key, items: ids },
+    ]));
+
+    const response = buildNormalizedRanksResponse({
+      missevan: { ranks, dramas },
+      manbo: { ranks: {}, dramas: {} },
+    });
+    const ordinaryRanks = response.platforms.missevan.categories
+      .filter((category) => ["popular", "bestseller"].includes(category.key))
+      .flatMap((category) => category.ranks);
+
+    assert.deepEqual(ordinaryRanks.map((rank) => rank.key), rankKeys);
+    ordinaryRanks.forEach((rank) => {
+      assert.equal(rank.items.length, itemCount);
+      assert.equal(rank.items.at(-1).rank, itemCount);
+      assert.equal(rank.items.at(-1).id, 10000 + itemCount - 1);
+      assert.equal(rank.items[29].danmaku_uid_count, 29);
+      if (itemCount === 50) {
+        assert.equal(rank.items[30].danmaku_uid_count, null);
+        assert.equal(rank.items[49].danmaku_uid_count, null);
+      }
+    });
+  }
 });
 
 test("cold ranks response reads and exposes published times from ranks meta", async () => {

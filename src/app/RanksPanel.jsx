@@ -30,6 +30,11 @@ import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { RankBadge } from "@/app/RankBadge";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
 import {
+  fetchRankTrendAvailabilityData,
+  resolveRankTrendAvailabilityIds,
+} from "@/app/rankTrendData";
+import { isSkippedDanmakuMetricValue } from "../../shared/rankMetricUtils.js";
+import {
   canShowRankTrend,
   CompareActionButton,
   fetchRankTrendData as fetchSharedRankTrendData,
@@ -267,7 +272,11 @@ function getRankMetrics(platform, item, rankKey = "") {
     if (item.type !== "peak" && item.reward_total != null) {
       metrics.push({ label: "打赏榜总和", value: formatPlainNumber(item.reward_total) });
     }
-    if (item.type !== "peak" && item.danmaku_uid_count != null) {
+    if (
+      item.type !== "peak" &&
+      item.danmaku_uid_count != null &&
+      !isSkippedDanmakuMetricValue(item.danmaku_uid_count)
+    ) {
       metrics.push({ label: "付费集弹幕ID数", value: formatPlainNumber(item.danmaku_uid_count) });
     }
     return metrics;
@@ -279,7 +288,11 @@ function getRankMetrics(platform, item, rankKey = "") {
   if (item.diamond_value != null) {
     metrics.push({ label: "投喂总数", value: formatPlainNumber(item.diamond_value) });
   }
-  if (rankKey !== "peak" && item.danmaku_uid_count != null) {
+  if (
+    rankKey !== "peak" &&
+    item.danmaku_uid_count != null &&
+    !isSkippedDanmakuMetricValue(item.danmaku_uid_count)
+  ) {
     metrics.push({ label: "付费集弹幕ID数", value: formatPlainNumber(item.danmaku_uid_count) });
   }
   if (Number(item.pay_count) > 0) {
@@ -306,6 +319,7 @@ function RankItemCard({
   favoriteActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  trendAvailable = false,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const metrics = getRankMetrics(platform, item, rankKey);
@@ -349,7 +363,13 @@ function RankItemCard({
       }
     : null;
   const displayMetrics = isMissevanPeak ? [] : metrics;
-  const canShowTrend = canShowRankTrend({ platform, rankKey, item, isMissevanPeak, detailIdText: trendLookupId });
+  const canShowTrend = canShowRankTrend({
+    platform,
+    rankKey,
+    item,
+    isMissevanPeak,
+    detailIdText: trendLookupId,
+  }) && (isMissevanPeak || trendAvailable);
   const [isTrendOpen, setIsTrendOpen] = useState(false);
   const [trendState, setTrendState] = useState({
     isLoading: false,
@@ -637,6 +657,8 @@ function RankItemCard({
             item={trendItem}
             platform={platform}
             trendState={trendState}
+            frontendVersion={frontendVersion}
+            handleVersionResponse={handleVersionResponse}
           />
         ) : null}
       </CardContent>
@@ -909,6 +931,8 @@ function CvRankItemCard({
             item={{ id: item.cvName, name: item.cvName }}
             platform="cv"
             trendState={trendState}
+            frontendVersion={frontendVersion}
+            handleVersionResponse={handleVersionResponse}
           />
         ) : null}
       </CardContent>
@@ -975,6 +999,7 @@ function RankColumn({
   favoriteActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  trendAvailableIds = new Set(),
 }) {
   const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
   return (
@@ -1007,6 +1032,7 @@ function RankColumn({
               favoriteActionsDisabled={favoriteActionsDisabled}
               onToggleFavorite={onToggleFavorite}
               onAddCompareItem={onAddCompareItem}
+              trendAvailable={trendAvailableIds.has(String(item.id))}
             />
           ))}
         </div>
@@ -1050,6 +1076,11 @@ export function RanksPanel({
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [showMetricLegend, setShowMetricLegend] = useState(false);
+  const [trendEligibility, setTrendEligibility] = useState({
+    platform: "",
+    lookupKey: "",
+    ids: new Set(),
+  });
   const [selectedPlatform, setSelectedPlatform] = useState(() =>
     routeState?.platform === "manbo" ? "manbo" : "missevan"
   );
@@ -1119,6 +1150,67 @@ export function RanksPanel({
       .map((platform) => getPlatformData(rankData, platform))
       .filter((platform) => platform?.categories?.length);
   }, [rankData]);
+  const trendLookupIds = useMemo(() => Array.from(new Set(
+    (category?.key === "cv" ? [] : category?.ranks || [])
+      .filter((rank) => rank?.key !== "peak")
+      .flatMap((rank) => rank?.items || [])
+      .filter((item) => item?.type !== "peak")
+      .map((item) => String(item?.id ?? "").trim())
+      .filter(Boolean)
+  )).sort(), [category]);
+  const trendLookupKey = trendLookupIds.join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    setTrendEligibility({
+      platform: selectedPlatform,
+      lookupKey: trendLookupKey,
+      ids: new Set(trendLookupIds),
+    });
+    if (!trendLookupIds.length) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    fetchRankTrendAvailabilityData({
+      platform: selectedPlatform,
+      ids: trendLookupIds,
+      frontendVersion,
+    })
+      .then(({ response, data } = {}) => {
+        if (!cancelled) {
+          setTrendEligibility({
+            platform: selectedPlatform,
+            lookupKey: trendLookupKey,
+            ids: resolveRankTrendAvailabilityIds({
+              response,
+              data,
+              requestedIds: trendLookupIds,
+            }),
+          });
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load ranks trend eligibility", error);
+          setTrendEligibility({
+            platform: selectedPlatform,
+            lookupKey: trendLookupKey,
+            ids: new Set(trendLookupIds),
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [frontendVersion, selectedPlatform, trendLookupIds, trendLookupKey]);
+
+  const availableTrendIds = trendEligibility.platform === selectedPlatform &&
+    trendEligibility.lookupKey === trendLookupKey
+    ? trendEligibility.ids
+    : new Set(trendLookupIds);
 
   useEffect(() => {
     if (routeState?.view !== "ranks") {
@@ -1458,6 +1550,7 @@ export function RanksPanel({
                   favoriteActionsDisabled={favoriteActionsDisabled}
                   onToggleFavorite={onToggleFavorite}
                   onAddCompareItem={onAddCompareItem}
+                  trendAvailableIds={availableTrendIds}
                 />
               ))
             )}
@@ -1487,6 +1580,7 @@ export function RanksPanel({
                 favoriteActionsDisabled={favoriteActionsDisabled}
                 onToggleFavorite={onToggleFavorite}
                 onAddCompareItem={onAddCompareItem}
+                trendAvailableIds={availableTrendIds}
               />
             ) : null}
           </div>

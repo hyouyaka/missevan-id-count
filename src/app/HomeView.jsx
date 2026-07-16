@@ -66,14 +66,16 @@ const homeRankItemTitleClassName =
   "min-w-0 truncate whitespace-nowrap text-base! font-semibold! leading-6! text-foreground";
 
 function HomeTrendCoverAction({ children, disabled = false, title = "", onClick }) {
+  if (disabled) {
+    return <div className="home-editorial-trend-cover-static">{children}</div>;
+  }
   return (
     <button
       type="button"
       className="home-editorial-trend-cover-action"
-      aria-label={disabled ? "暂无趋势数据" : `查看${title || "剧集"}趋势`}
-      disabled={disabled}
-      title={disabled ? "暂无趋势数据" : "查看趋势"}
-      onClick={disabled ? undefined : onClick}
+      aria-label={`查看${title || "剧集"}趋势`}
+      title="查看趋势"
+      onClick={onClick}
     >
       {children}
       <span aria-hidden="true" className="home-editorial-trend-cue">
@@ -969,6 +971,8 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
           item={trendDialog.item}
           platform={trendDialog.platform}
           trendState={trendState}
+          frontendVersion={frontendVersion}
+          handleVersionResponse={handleVersionResponse}
           fallback={
             <Alert className="border-border/70 bg-card/92">
               <RefreshCwIcon className="size-4 animate-spin" />

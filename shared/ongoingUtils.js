@@ -1,4 +1,5 @@
 import { getRankTrendMetricConfigs, normalizeRankTrendDates } from "./ranksTrendUtils.js";
+import { isSkippedDanmakuMetricValue } from "./rankMetricUtils.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -154,14 +155,20 @@ function buildItemWindows({ platform, id, currentDrama, dates, latestDate, metri
 
 function buildCurrentMetrics(platform, currentDrama) {
   return Object.fromEntries(
-    getRankTrendMetricConfigs(platform).map((config) => [
-      config.key,
-      {
-        key: config.key,
-        label: config.label,
-        value: normalizeFiniteNumber(currentDrama?.[config.key]),
-      },
-    ])
+    getRankTrendMetricConfigs(platform).map((config) => {
+      const rawValue = currentDrama?.[config.key];
+      const captureSkipped =
+        config.key === "danmaku_uid_count" && isSkippedDanmakuMetricValue(rawValue);
+      return [
+        config.key,
+        {
+          key: config.key,
+          label: config.label,
+          value: normalizeFiniteNumber(rawValue),
+          ...(captureSkipped ? { visible: false } : {}),
+        },
+      ];
+    })
   );
 }
 

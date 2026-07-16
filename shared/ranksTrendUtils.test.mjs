@@ -10,6 +10,7 @@ import {
   buildRankTrendResponse,
   getPeakSeriesDailyViewDelta,
 } from "./ranksTrendUtils.js";
+import { isSkippedDanmakuMetricValue } from "./rankMetricUtils.js";
 
 const sampleIndex = {
   version: 1,
@@ -271,6 +272,116 @@ test("buildRankTrendResponse preserves explicit null and zero metric values", ()
   assert.equal(danmakuMetric.available, true);
   assert.equal(danmakuMetric.delta, 10);
   assert.equal(danmakuMetric.deltaPercent, null);
+});
+
+test("skipped danmaku capture keeps history gaps and makes the latest metric unavailable", () => {
+  assert.equal(isSkippedDanmakuMetricValue("无需抓取"), true);
+  assert.equal(isSkippedDanmakuMetricValue("  无需抓取  "), true);
+  assert.equal(isSkippedDanmakuMetricValue(0), false);
+
+  const buildResponse = (latestDanmakuValue) => buildRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    indexSnapshot: { dates: ["2026-07-14", "2026-07-15", "2026-07-16"] },
+    metricSnapshotsByDate: {
+      "2026-07-14": {
+        dramas: {
+          93038: {
+            name: "一屋暗灯",
+            view_count: 100,
+            subscription_num: 10,
+            danmaku_uid_count: 20,
+          },
+        },
+      },
+      "2026-07-15": {
+        dramas: {
+          93038: {
+            name: "一屋暗灯",
+            view_count: 120,
+            subscription_num: 12,
+            danmaku_uid_count: "无需抓取",
+          },
+        },
+      },
+      "2026-07-16": {
+        dramas: {
+          93038: {
+            name: "一屋暗灯",
+            view_count: 150,
+            subscription_num: 15,
+            danmaku_uid_count: latestDanmakuValue,
+          },
+        },
+      },
+    },
+  });
+
+  const recoveredMetric = buildResponse(26).windows["3d"].metrics.find(
+    (metric) => metric.key === "danmaku_uid_count"
+  );
+  assert.deepEqual(recoveredMetric.history.map((point) => point.value), [20, null, 26]);
+  assert.equal(recoveredMetric.available, true);
+  assert.equal(recoveredMetric.toValue, 26);
+  assert.equal(recoveredMetric.delta, 6);
+
+  const skippedLatestMetric = buildResponse("  无需抓取  ").windows["3d"].metrics.find(
+    (metric) => metric.key === "danmaku_uid_count"
+  );
+  assert.deepEqual(skippedLatestMetric.history.map((point) => point.value), [20, null, null]);
+  assert.equal(skippedLatestMetric.fromValue, 20);
+  assert.equal(skippedLatestMetric.toValue, null);
+  assert.equal(skippedLatestMetric.available, false);
+  assert.equal(skippedLatestMetric.delta, null);
+  assert.equal(skippedLatestMetric.deltaPercent, null);
+});
+
+test("skipped danmaku capture remains the latest point when replacing an ordinary null", () => {
+  const response = buildRankTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    indexSnapshot: { dates: ["2026-07-14", "2026-07-15", "2026-07-16"] },
+    metricSnapshotsByDate: {
+      "2026-07-14": {
+        dramas: {
+          93038: {
+            name: "一屋暗灯",
+            view_count: 100,
+            subscription_num: 10,
+            danmaku_uid_count: 20,
+          },
+        },
+      },
+      "2026-07-15": {
+        dramas: {
+          93038: {
+            name: "一屋暗灯",
+            view_count: 120,
+            subscription_num: 12,
+            danmaku_uid_count: null,
+          },
+        },
+      },
+      "2026-07-16": {
+        dramas: {
+          93038: {
+            name: "一屋暗灯",
+            view_count: 120,
+            subscription_num: 12,
+            danmaku_uid_count: "无需抓取",
+          },
+        },
+      },
+    },
+  });
+  const metrics = response.windows["3d"].metrics;
+  const viewMetric = metrics.find((metric) => metric.key === "view_count");
+  const danmakuMetric = metrics.find((metric) => metric.key === "danmaku_uid_count");
+
+  assert.equal(response.latestDate, "2026-07-16");
+  assert.equal(viewMetric.toValue, 120);
+  assert.equal(danmakuMetric.toValue, null);
+  assert.equal(danmakuMetric.available, false);
 });
 
 test("buildCvTrendResponse combines cross-platform weekly playback metrics", () => {
@@ -1013,6 +1124,45 @@ test("buildRankTrendAvailabilityResponse falls back to weekly playback after few
   assert.equal(response.latestDate, "2026-05-17");
 });
 
+test("buildRankTrendAvailabilityResponse hides weekly playback with fewer than two points", () => {
+  const response = buildRankTrendAvailabilityResponse({
+    platform: "missevan",
+    ids: ["93038"],
+    aggregateSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-17"],
+      dramas: { "93038": { samples: { "2026-05-17": { metrics: { view_count: 100 } } } } },
+    },
+    weeklyPlaybackSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-17"],
+      snapshotsByDate: {
+        "2026-05-17": { platform: "missevan", dramas: { "93038": { view_count: 100 } } },
+      },
+    },
+  });
+
+  assert.deepEqual(response.ids, []);
+  assert.deepEqual(response.kinds, {});
+});
+
+test("buildRankTrendAvailabilityResponse does not count a duplicate weekly date twice", () => {
+  const response = buildRankTrendAvailabilityResponse({
+    platform: "missevan",
+    ids: ["93038"],
+    aggregateSnapshot: { platform: "missevan", dates: [], dramas: {} },
+    weeklyPlaybackSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-17", "2026-05-17"],
+      snapshotsByDate: {
+        "2026-05-17": { platform: "missevan", dramas: { "93038": { view_count: 100 } } },
+      },
+    },
+  });
+
+  assert.deepEqual(response.ids, []);
+});
+
 test("buildRankTrendAvailabilityResponse uses weekly playback when five metric samples are older than thirty days", () => {
   const metricDates = [
     "2026-04-01",
@@ -1548,4 +1698,34 @@ test("buildPeakSeriesTrendResponse matches by series display name and reports mi
   });
   assert.equal(missing.success, false);
   assert.equal(missing.status, 404);
+});
+
+test("buildPeakSeriesTrendResponse keeps the v2 last-rank summary", () => {
+  const response = buildPeakSeriesTrendResponse({
+    id: "测试系列",
+    peakSnapshot: {
+      dates: ["2026-06-01", "2026-06-08"],
+      series: {
+        测试系列: {
+          name: "测试系列",
+          lastRank: {
+            date: "2026-05-10",
+            ranks: [{ key: "peak", name: "巅峰榜", position: 3 }],
+          },
+          samples: {
+            "2026-06-01": { view_count: 100 },
+            "2026-06-08": { view_count: 120 },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.success, true);
+  assert.deepEqual(response.rankHistory, [
+    {
+      date: "2026-05-10",
+      ranks: [{ key: "peak", name: "巅峰榜", position: 3 }],
+    },
+  ]);
 });

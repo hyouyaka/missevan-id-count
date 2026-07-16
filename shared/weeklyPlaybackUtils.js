@@ -273,9 +273,14 @@ export function getWeeklyPlaybackRecord(bundle, id, date) {
 }
 
 export function hasWeeklyPlaybackRecord(bundle, id) {
-  return (Array.isArray(bundle?.dates) ? bundle.dates : []).some((date) =>
-    getWeeklyPlaybackRecord(bundle, id, date)?.view_count != null
-  );
+  const dates = Array.from(new Set(
+    (Array.isArray(bundle?.dates) ? bundle.dates : [])
+      .map(normalizeWeeklyPlaybackDate)
+      .filter(Boolean)
+  ));
+  return dates.filter((date) =>
+    normalizeWeeklyPlaybackFiniteNumber(getWeeklyPlaybackRecord(bundle, id, date)?.view_count) != null
+  ).length >= 2;
 }
 
 export function countValidMetricSamples({
@@ -461,7 +466,7 @@ export function buildWeeklyPlaybackTrendResponse({
   });
 
   const availableDates = dates.filter((date) => valuesByDate[date]?.value != null);
-  if (!availableDates.length) {
+  if (availableDates.length < 2) {
     return {
       success: false,
       status: 404,

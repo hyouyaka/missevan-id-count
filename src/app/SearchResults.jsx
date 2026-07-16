@@ -1293,6 +1293,8 @@ export function SearchResults({
                         item={item}
                         platform={platform}
                         trendState={trendState}
+                        frontendVersion={frontendVersion}
+                        handleVersionResponse={handleVersionResponse}
                       />
                     ) : null}
 

@@ -108,8 +108,8 @@
   --accent-neutral-foreground: oklch(0.99 0.004 255);
   --accent-gold: oklch(0.79 0.14 83);
   --accent-gold-foreground: oklch(0.34 0.075 65);
-  --platform-manbo: oklch(0.58 0.18 295);
-  --platform-manbo-hover: oklch(0.52 0.19 295);
+  --platform-manbo: oklch(0.52 0.18 295);
+  --platform-manbo-hover: oklch(0.46 0.18 295);
   --platform-manbo-soft: oklch(0.91 0.055 295);
   --platform-missevan: oklch(0.36 0.018 255);
   --platform-missevan-hover: oklch(0.29 0.018 255);
@@ -365,7 +365,7 @@ body {
   border: 1px solid var(--home-rule-strong);
   border-radius: 999px;
   padding-inline: 0.35rem;
-  color: var(--home-accent);
+  color: color-mix(in oklch, var(--home-accent) 82%, var(--foreground));
   font-size: 0.72rem;
 }
 
@@ -425,7 +425,8 @@ body {
   gap: 0;
 }
 
-.home-editorial-trend-cover-action {
+.home-editorial-trend-cover-action,
+.home-editorial-trend-cover-static {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -436,6 +437,9 @@ body {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+.home-editorial-trend-cover-action {
   cursor: pointer;
 }
 
@@ -472,15 +476,6 @@ body {
   color: color-mix(in oklch, var(--home-success) 78%, var(--foreground));
 }
 
-.home-editorial-trend-cover-action:disabled {
-  cursor: default;
-}
-
-.home-editorial-trend-cover-action:disabled .home-editorial-trend-cue {
-  color: var(--muted-foreground);
-  opacity: 0.5;
-}
-
 .home-editorial-update-item.is-featured .home-editorial-update-cover {
   width: clamp(5.75rem, 13vw, 7.5rem);
 }
@@ -510,7 +505,7 @@ body {
 }
 
 .home-editorial-delta {
-  color: var(--home-success);
+  color: color-mix(in oklch, var(--home-success) 88%, var(--foreground));
   font-weight: 650;
 }
 

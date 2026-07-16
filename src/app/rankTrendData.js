@@ -1,10 +1,65 @@
 import { buildVersionedUrl } from "@/app/app-utils";
 
-export const RANK_TREND_CLIENT_SCHEMA_VERSION = 5;
+export const RANK_TREND_CLIENT_SCHEMA_VERSION = 7;
 
 const rankTrendClientCache = new Map();
 const rankTrendAvailabilityCache = new Map();
+const rankTrendModePreferenceCache = new Map();
+const rankTrendWeeklyUnavailableCache = new Set();
 const RANK_TREND_AVAILABILITY_TTL_MS = 5 * 60 * 1000;
+
+function getRankTrendSessionKey(platform, id) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedId = String(id ?? "").trim();
+  return normalizedPlatform && normalizedId ? `${normalizedPlatform}:${normalizedId}` : "";
+}
+
+export function mapRankTrendWindowKey(windowKey, kind) {
+  const windowSize = String(windowKey ?? "").match(/^(30|7|3)/)?.[1] || "7";
+  return `${windowSize}${kind === "weekly_playback" ? "w" : "d"}`;
+}
+
+export function getRankTrendModePreference({ platform, id } = {}) {
+  const key = getRankTrendSessionKey(platform, id);
+  return key ? rankTrendModePreferenceCache.get(key) || "metric" : "metric";
+}
+
+export function setRankTrendModePreference({ platform, id, kind } = {}) {
+  const key = getRankTrendSessionKey(platform, id);
+  if (!key) {
+    return;
+  }
+  rankTrendModePreferenceCache.set(key, kind === "weekly_playback" ? "weekly_playback" : "metric");
+}
+
+export function isRankTrendWeeklyUnavailable({ platform, id } = {}) {
+  const key = getRankTrendSessionKey(platform, id);
+  return Boolean(key && rankTrendWeeklyUnavailableCache.has(key));
+}
+
+export function markRankTrendWeeklyUnavailable({ platform, id } = {}) {
+  const key = getRankTrendSessionKey(platform, id);
+  if (key) {
+    rankTrendWeeklyUnavailableCache.add(key);
+  }
+}
+
+export function resolveRankTrendAvailabilityIds({ response, data, requestedIds } = {}) {
+  const normalizedRequestedIds = Array.from(new Set(
+    (Array.isArray(requestedIds) ? requestedIds : [])
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean)
+  ));
+  if (!response?.ok || !data?.success) {
+    return new Set(normalizedRequestedIds);
+  }
+  const requestedIdSet = new Set(normalizedRequestedIds);
+  return new Set(
+    (Array.isArray(data.ids) ? data.ids : [])
+      .map((id) => String(id ?? "").trim())
+      .filter((id) => id && requestedIdSet.has(id))
+  );
+}
 
 export async function fetchRankTrendData({ platform, id, kind = "", frontendVersion }) {
   const normalizedPlatform = String(platform ?? "").trim();

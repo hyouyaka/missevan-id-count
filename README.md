@@ -144,6 +144,8 @@ MISSEVAN_FORCE_FALLBACK=0
 |------|------|
 | `UPSTASH_REDIS_REST_URL` | Upstash Redis 地址，用于持久化 Manbo/Missevan 资料库、榜单和 cooldown |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis Token |
+| `UPSTASH_DATA_READ_MODE` | `prefer-v2` 优先读取 v2 并自动回退 v1；`legacy` 固定读取 v1。默认 `prefer-v2` |
+| `INFO_STORE_META_POLL_INTERVAL_MS` | v2 资料库版本探针轮询间隔。默认 `300000`（5 分钟） |
 
 未配置 Upstash 或不可用时，猫耳搜索会直接调用猫耳搜索 API，Manbo 搜索会提示不可用并仅支持通过 ID / 链接导入。
 

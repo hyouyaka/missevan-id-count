@@ -26,6 +26,7 @@ const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url),
 const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils.js", import.meta.url), "utf8");
+const rankMetricUtilsSource = readFileSync(new URL("../../shared/rankMetricUtils.js", import.meta.url), "utf8");
 const weeklyPlaybackUtilsSource = readFileSync(new URL("../../shared/weeklyPlaybackUtils.js", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
@@ -58,6 +59,7 @@ const alertDialogSource = readFileSync(new URL("../components/ui/alert-dialog.js
 const badgeSource = readFileSync(new URL("../components/ui/badge.jsx", import.meta.url), "utf8");
 const cardSource = readFileSync(new URL("../components/ui/card.jsx", import.meta.url), "utf8");
 const carouselSource = readSourceIfExists("../components/ui/carousel.jsx");
+const selectSource = readFileSync(new URL("../components/ui/select.jsx", import.meta.url), "utf8");
 const tabsSource = readFileSync(new URL("../components/ui/tabs.jsx", import.meta.url), "utf8");
 
 test("Manbo new ID registration preserves string identifiers", () => {
@@ -278,9 +280,10 @@ test("home drama covers expose availability-aware shared trend actions", () => {
   assert.match(homeViewSource, /RankTrendDialog/);
   assert.match(homeViewSource, /logRankTrendOpen/);
   assert.match(homeViewSource, /className="home-editorial-trend-cover-action"/);
-  assert.match(homeViewSource, /disabled=\{disabled\}/);
-  assert.match(homeViewSource, /aria-label=\{disabled \? "暂无趋势数据" : `查看\$\{title \|\| "剧集"\}趋势`\}/);
-  assert.match(homeViewSource, /onClick=\{disabled \? undefined : onClick\}/);
+  assert.match(homeViewSource, /if \(disabled\) \{[\s\S]*home-editorial-trend-cover-static/);
+  assert.doesNotMatch(homeViewSource, /disabled=\{disabled\}/);
+  assert.match(homeViewSource, /aria-label=\{`查看\$\{title \|\| "剧集"\}趋势`\}/);
+  assert.match(homeViewSource, /onClick=\{onClick\}/);
   assert.doesNotMatch(homeViewSource, /RankTrendButton/);
 
   const cvItemStart = homeViewSource.indexOf("function RankCvItem");
@@ -2966,7 +2969,7 @@ test("rank trend details use no-data copy while chart skips null points", () => 
   const chartUtilsSource = readFileSync(new URL("./rankTrendChartUtils.js", import.meta.url), "utf8");
 
   assert.match(rankTrendUiSource, /function formatTrendSnapshotValue\(value\)/);
-  assert.match(rankTrendUiSource, /value == null \? "无数据" : formatTrendValue\(value\)/);
+  assert.match(rankTrendUiSource, /value == null \? "暂无数据" : formatTrendValue\(value\)/);
   assert.match(rankTrendUiSource, /formatTrendSnapshotValue\(row\.values\[column\.key\]\)/);
   assert.match(chartUtilsSource, /getTrendNumber\(point\.axisValue\) == null/);
   assert.match(chartUtilsSource, /position: getTrendNumber\(point\.axisValue\) == null/);
@@ -3163,9 +3166,9 @@ test("trend and compare dialogs default to 7-day absolute playback", () => {
   assert.match(trendDialogSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\("view_count"\)/);
   assert.match(trendDialogSource, /const isWeeklyPlaybackTrend = data\?\.kind === "weekly_playback"/);
   assert.match(trendDialogSource, /const defaultWindowKey = isCvTrend \|\| isWeeklyPlaybackTrend \? "7w" : "7d"/);
-  assert.match(trendDialogSource, /每周采样 · 仅播放量/);
+  assert.match(trendDialogSource, /每周统计·仅播放量/);
   assert.match(rankTrendUiSource, /availableLegendMetrics\.length > 1/);
-  assert.match(trendDialogSource, /setSelectedWindow\(defaultWindowKey\)/);
+  assert.match(trendDialogSource, /setSelectedWindow\(primaryHasWeeklyTrend && !primaryHasDailyTrend \? "7w" : "7d"\)/);
   assert.match(trendDialogSource, /setSelectedChartMode\("absolute"\)/);
   assert.match(trendDialogSource, /setSelectedMetricKey\("view_count"\)/);
 
@@ -3184,6 +3187,39 @@ test("trend and compare dialogs default to 7-day absolute playback", () => {
   assert.match(compareDialogSource, /loadTrend\(item, "weekly_playback"\)/);
   assert.match(compareDialogSource, /const isWeeklyPlaybackCompare/);
   assert.match(compareDialogSource, /availableMetricOptions\.length > 1/);
+});
+
+test("metric trend dialog lazily switches to weekly playback without affecting compare", () => {
+  const trendDialogStart = rankTrendUiSource.indexOf("export function RankTrendDialog");
+  assert.notEqual(trendDialogStart, -1, "RankTrendDialog should exist");
+  const trendDialogSource = rankTrendUiSource.slice(trendDialogStart);
+
+  assert.match(selectSource, /SelectPrimitive\.Root/);
+  assert.match(selectSource, /SelectPrimitive\.Trigger/);
+  assert.match(selectSource, /SelectPrimitive\.Item/);
+  assert.match(trendDialogSource, /const canSwitchTrendKind = primaryData\?\.kind === "metric"/);
+  assert.match(trendDialogSource, /aria-label="趋势数据模式"/);
+  assert.match(trendDialogSource, /每日数据/);
+  assert.match(trendDialogSource, /每日统计·多维度/);
+  assert.match(trendDialogSource, /每周数据/);
+  assert.match(trendDialogSource, /每周统计·仅播放量/);
+  assert.match(trendDialogSource, /const showTrendKindSelect = Boolean/);
+  assert.match(trendDialogSource, /disabled=\{!primaryHasDailyTrend\}/);
+  assert.match(trendDialogSource, /disabled=\{weeklyTrendOptionDisabled\}/);
+  assert.match(trendDialogSource, /<TrendDataInfoPopover \/>/);
+  assert.match(rankTrendUiSource, /每日数据统计榜单前50名及7日内更新剧集（资源有限会跳过31-50名的付费ID抓取），每周数据统计全部剧集/);
+  assert.doesNotMatch(rankTrendUiSource, />每周采样 · 仅播放量<\/Badge>/);
+  assert.match(trendDialogSource, /kind: "weekly_playback"/);
+  assert.match(trendDialogSource, /if \(response\.status === 404\)/);
+  assert.match(trendDialogSource, /markRankTrendWeeklyUnavailable/);
+  assert.match(trendDialogSource, /mapRankTrendWindowKey\(current, "weekly_playback"\)/);
+  assert.match(trendDialogSource, /dailyMetricKeyRef\.current/);
+  assert.match(trendDialogSource, /getBackendVersionFromResponse\(response, weeklyData\)/);
+  assert.doesNotMatch(toolViewSource, /getRankTrendModePreference|setRankTrendModePreference/);
+
+  [homeViewSource, searchResultsSource, ongoingPanelSource, ranksPanelSource].forEach((source) => {
+    assert.match(source, /<LazyRankTrendDialog[\s\S]*frontendVersion=\{frontendVersion\}[\s\S]*handleVersionResponse=\{handleVersionResponse\}/);
+  });
 });
 
 test("trend and compare charts position date labels from visible chart markers", () => {
@@ -3444,6 +3480,17 @@ test("transient rank aggregate failures are not retained in daily caches", () =>
   );
 });
 
+test("ranks and ongoing actions hide items rejected by trend availability", () => {
+  assert.match(ranksPanelSource, /fetchRankTrendAvailabilityData\(\{[\s\S]*ids: trendLookupIds/);
+  assert.match(ranksPanelSource, /resolveRankTrendAvailabilityIds\(\{[\s\S]*requestedIds: trendLookupIds/);
+  assert.match(ranksPanelSource, /trendAvailable=\{trendAvailableIds\.has\(String\(item\.id\)\)\}/);
+  assert.match(ranksPanelSource, /\}\) && \(isMissevanPeak \|\| trendAvailable\)/);
+  assert.match(ongoingPanelSource, /fetchRankTrendAvailabilityData\(\{[\s\S]*ids: trendLookupIds/);
+  assert.match(ongoingPanelSource, /resolveRankTrendAvailabilityIds\(\{[\s\S]*requestedIds: trendLookupIds/);
+  assert.match(ongoingPanelSource, /trendAvailable=\{availableTrendIds\.has\(String\(item\.id\)\)\}/);
+  assert.match(ongoingPanelSource, /Boolean\(platform && item\?\.id && trendAvailable\)/);
+});
+
 test("rank trend backend supports five-sample classification and weekly playback fallback", () => {
   assert.match(weeklyPlaybackUtilsSource, /export function countValidMetricSamples/);
   assert.match(weeklyPlaybackUtilsSource, /export function buildWeeklyPlaybackTrendResponse/);
@@ -3455,7 +3502,7 @@ test("rank trend backend supports five-sample classification and weekly playback
   assert.match(serverSource, /createWeeklyPlaybackStore/);
   assert.match(serverSource, /getCachedWeeklyPlaybackSnapshot/);
   assert.match(serverSource, /metricSampleCount < 5/);
-  assert.match(statsRoutesSource, /getCachedWeeklyPlaybackSnapshot\(platform\)/);
+  assert.match(statsRoutesSource, /getCachedWeeklyPlaybackSnapshot\(platform, \{ ids \}\)/);
   assert.match(rankTrendUiSource, /data\?\.kind === "weekly_playback"/);
   assert.match(rankTrendUiSource, /getSnapshotColumns\(metrics, platform, isWeeklyPlayback\)/);
   assert.match(rankTrendUiSource, /isWeeklyPlayback=\{isWeeklyPlaybackTrend\}/);
@@ -3485,10 +3532,28 @@ test("rank trend availability route reads historical aggregate samples", () => {
   assert.notEqual(routeEnd, -1, "availability route should be defined before detail trend route");
   const routeSource = statsRoutesSource.slice(routeStart, routeEnd);
 
-  assert.match(routeSource, /getCachedRankTrendAggregateSnapshot\(platform\)/);
+  assert.match(routeSource, /getCachedRankTrendAggregateSnapshot\(platform, \{ ids \}\)/);
   assert.match(routeSource, /buildRankTrendAvailabilityResponse/);
   assert.match(routeSource, /isRankTrendAggregateSnapshot\(aggregateSnapshot, platform\)/);
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
+});
+
+test("Upstash v2 reads stay entity-scoped with legacy rollback paths", () => {
+  assert.match(serverSource, /UPSTASH_DATA_READ_MODE/);
+  assert.match(serverSource, /process\.env\.UPSTASH_DATA_READ_MODE \|\| "prefer-v2"/);
+  assert.match(serverSource, /INFO_STORE_META_POLL_INTERVAL_MS/);
+  assert.match(serverSource, /"missevan:info:meta:v2"/);
+  assert.match(serverSource, /createHash\("sha1"\)/);
+  assert.match(serverSource, /async function readInitialRanksBatch/);
+  assert.match(serverSource, /"MGET",[\s\S]*RANKS_KEY,[\s\S]*RANKS_META_KEY/);
+  assert.match(serverSource, /"HMGET", key, "__meta__", \.\.\.normalizedIds/);
+  assert.match(serverSource, /"HMGET",[\s\S]*CV_RANK_TREND_V2_KEY/);
+  assert.match(serverSource, /"HMGET",[\s\S]*MISSEVAN_PEAK_SERIES_TREND_V2_KEY/);
+  assert.match(weeklyPlaybackServiceSource, /WATCHCOUNT_HISTORY_KEY_SUFFIX/);
+  assert.match(weeklyPlaybackServiceSource, /"HMGET",[\s\S]*historyKey,[\s\S]*\.\.\.missingIds/);
+  assert.match(weeklyPlaybackServiceSource, /const historyCache = new TtlLruCache/);
+  assert.match(serverSource, /cacheMaxEntries: CACHE_MAX_ENTRIES/);
+  assert.match(serverSource, /if \(raw\) \{[\s\S]*return JSON\.parse\(raw\);[\s\S]*getInfoStoreReadFailureSnapshot\(store\)/);
 });
 
 test("ongoing backend reads metrics only from the rank trend aggregate", () => {
@@ -3497,7 +3562,10 @@ test("ongoing backend reads metrics only from the rank trend aggregate", () => {
 
   const primaryStart = serverSource.indexOf("async function getCachedOngoingResponse");
   const primarySource = serverSource.slice(primaryStart, serverSource.indexOf("async function getCachedCvRankTrendResponse", primaryStart));
-  assert.match(primarySource, /getCachedRankTrendAggregateSnapshot\(normalizedPlatform, \{ force: forceRefresh \}\)/);
+  assert.match(
+    primarySource,
+    /getCachedRankTrendAggregateSnapshot\(normalizedPlatform, \{[\s\S]*force: forceRefresh,[\s\S]*ids: ongoingIds,[\s\S]*\}\)/
+  );
   assert.match(primarySource, /isRankTrendAggregateSnapshot\(aggregateSnapshot, normalizedPlatform\)/);
   assert.match(primarySource, /error\.status = 503/);
   assert.match(primarySource, /buildMetricSnapshotsFromRankTrendAggregate\(aggregateSnapshot, normalizedPlatform\)/);
@@ -3659,4 +3727,15 @@ test("stats task errors parse backend JSON messages before throwing", () => {
   assert.match(toolViewSource, /queuePosition/);
   assert.match(toolViewSource, /function getStatsRequestErrorMessage/);
   assert.match(toolViewSource, /toast\.error\(getStatsRequestErrorMessage\(error\)\)/);
+});
+
+test("rank cards and metric trends handle skipped paid ID capture explicitly", () => {
+  assert.match(rankMetricUtilsSource, /String\(value \?\? ""\)\.trim\(\) === SKIPPED_DANMAKU_METRIC_VALUE/);
+  assert.match(ranksPanelSource, /!isSkippedDanmakuMetricValue\(item\.danmaku_uid_count\)/);
+  assert.match(ranksTrendUtilsSource, /currentCaptureSkipped[\s\S]*?toValue = currentCaptureSkipped \? null : range\.toValue/);
+  assert.match(
+    rankTrendUiSource,
+    /每日数据统计榜单前50名及7日内更新剧集（资源有限会跳过31-50名的付费ID抓取），每周数据统计全部剧集/
+  );
+  assert.match(rankTrendUiSource, /return value == null \? "暂无数据" : formatTrendValue\(value\)/);
 });

@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import { createHash } from "node:crypto";
 import compression from "compression";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
@@ -39,6 +40,7 @@ import {
   resolveMissevanRevenueType,
 } from "../shared/missevanRevenueUtils.js";
 import { aggregateRevenueFinancials } from "../shared/revenueSummaryUtils.js";
+import { isSkippedDanmakuMetricValue } from "../shared/rankMetricUtils.js";
 import {
   buildAggregatedRankTrendResponse,
   buildCvTrendResponse,
@@ -142,6 +144,14 @@ const MANBO_SEARCH_API_BASE = "https://api.kilamanbo.com/api/v530/search/page/co
 const MANBO_API_HOST = "www.kilamanbo.com";
 const MANBO_INFO_KEY = "manbo:info:v1";
 const MISSEVAN_INFO_KEY = "missevan:info:v1";
+const INFO_V2_KEYS = Object.freeze({
+  manbo: "manbo:info:v2",
+  missevan: "missevan:info:v2",
+});
+const INFO_V2_META_KEYS = Object.freeze({
+  manbo: "manbo:info:meta:v2",
+  missevan: "missevan:info:meta:v2",
+});
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
 const CV_RANKS_KEY = "ranks:cv:latest";
@@ -150,6 +160,12 @@ const RANK_TREND_AGGREGATE_KEYS = Object.freeze({
   missevan: "ranks:trend:missevan",
   manbo: "ranks:trend:manbo",
 });
+const RANK_TREND_V2_KEYS = Object.freeze({
+  missevan: "ranks:trend:missevan:v2",
+  manbo: "ranks:trend:manbo:v2",
+});
+const CV_RANK_TREND_V2_KEY = "ranks:trend:cv:v2";
+const MISSEVAN_PEAK_SERIES_TREND_V2_KEY = "ranks:trend:peak:missevan:v2";
 const CV_RANK_TREND_AGGREGATE_KEYS = Object.freeze({
   missevan: "ranks:trend:cv:missevan",
   manbo: "ranks:trend:cv:manbo",
@@ -169,6 +185,13 @@ const CACHE_MAX_ENTRIES = Math.max(
     getFiniteNumberEnv("CACHE_MAX_ENTRIES", isHostedDeployment() ? 500 : 1000)
   )
 );
+const INFO_STORE_META_POLL_INTERVAL_MS = Math.max(
+  60 * 1000,
+  Number(process.env.INFO_STORE_META_POLL_INTERVAL_MS ?? 5 * 60 * 1000) || 5 * 60 * 1000
+);
+const UPSTASH_DATA_READ_MODE = String(
+  process.env.UPSTASH_DATA_READ_MODE || "prefer-v2"
+).trim().toLowerCase() === "legacy" ? "legacy" : "prefer-v2";
 const MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES = Math.max(
   0,
   Math.floor(
@@ -206,6 +229,39 @@ const manboDanmakuRequests = createSharedRequestRegistry();
 const searchCardMetricRequests = createSharedRequestRegistry();
 let activeSearchCardMetricRequests = 0;
 const upstashClient = createUpstashRestClient();
+
+function getStructuredReadBytes(value) {
+  try {
+    if (value == null) {
+      return 0;
+    }
+    if (Array.isArray(value)) {
+      return value.reduce((total, item) => total + getStructuredReadBytes(item), 0);
+    }
+    const encoded = typeof value === "string" ? value : JSON.stringify(value);
+    return Buffer.byteLength(encoded, "utf8");
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function readUpstashData(command, { source, key, fallbackReason = "" }) {
+  const startedAt = Date.now();
+  let result = null;
+  try {
+    result = await upstashClient.command(command);
+    return result;
+  } finally {
+    console.info(JSON.stringify({
+      source,
+      key,
+      bytes: getStructuredReadBytes(result),
+      durationMs: Date.now() - startedAt,
+      fallbackReason,
+    }));
+  }
+}
+
 const manboInfoStore = {
   platform: "manbo",
   key: MANBO_INFO_KEY,
@@ -217,6 +273,8 @@ const manboInfoStore = {
   remoteAvailable: false,
   lastLoadedAt: 0,
   loadPromise: null,
+  contentSha1: "",
+  dataSource: "",
 };
 const missevanInfoStore = {
   platform: "missevan",
@@ -229,7 +287,10 @@ const missevanInfoStore = {
   remoteAvailable: false,
   lastLoadedAt: 0,
   loadPromise: null,
+  contentSha1: "",
+  dataSource: "",
 };
+let infoStoresV2LoadPromise = null;
 const newDramaIdsStore = {
   key: NEW_DRAMA_IDS_KEY,
   fallbackPath: NEW_DRAMA_IDS_FALLBACK_PATH,
@@ -261,7 +322,7 @@ const rankTrendAggregateCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES 
 const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const RANKS_RESPONSE_SCHEMA_VERSION = 5;
-const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 5;
+const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 7;
 const ONGOING_RESPONSE_SCHEMA_VERSION = 3;
 
 function getFiniteNumberEnv(name, fallbackValue) {
@@ -305,6 +366,7 @@ const WEEKLY_PLAYBACK_CACHE_TTL_MS = Math.max(
 const weeklyPlaybackStore = createWeeklyPlaybackStore({
   command: (args, options) => upstashClient.command(args, options),
   cacheTtlMs: WEEKLY_PLAYBACK_CACHE_TTL_MS,
+  cacheMaxEntries: CACHE_MAX_ENTRIES,
   maxWeeks: 32,
 });
 const RANKS_CACHE_TIME_ZONE = String(process.env.RANKS_CACHE_TIME_ZONE ?? "Asia/Shanghai").trim() || "Asia/Shanghai";
@@ -2401,6 +2463,10 @@ function normalizeRankNumber(value) {
   return Number.isFinite(normalized) ? normalized : null;
 }
 
+function normalizeDanmakuRankNumber(value) {
+  return isSkippedDanmakuMetricValue(value) ? null : normalizeRankNumber(value);
+}
+
 function buildRankMainCvText(mainCvs) {
   return buildMainCvText(mainCvs);
 }
@@ -2526,7 +2592,7 @@ function buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot =
     main_cv_text: buildRankMainCvText(mainCvs),
     platform: "missevan",
     type: "drama",
-    danmaku_uid_count: normalizeRankNumber(drama.danmaku_uid_count),
+    danmaku_uid_count: normalizeDanmakuRankNumber(drama.danmaku_uid_count),
   };
 }
 
@@ -2579,7 +2645,7 @@ function buildManboRankCard(rankKey, rank, item, index, dramas) {
     main_cvs: mainCvs,
     main_cv_text: buildRankMainCvText(mainCvs),
     platform: "manbo",
-    ...(rankKey !== "peak" ? { danmaku_uid_count: normalizeRankNumber(drama.danmaku_uid_count) } : {}),
+    ...(rankKey !== "peak" ? { danmaku_uid_count: normalizeDanmakuRankNumber(drama.danmaku_uid_count) } : {}),
   };
 }
 
@@ -2970,6 +3036,69 @@ async function readCvRanksBundle(options = {}) {
   };
 }
 
+export function parseRanksBatchJson(value, fallback = null, options = {}) {
+  try {
+    if (value == null || value === "") {
+      return fallback;
+    }
+    return typeof value === "string" ? JSON.parse(value) : value;
+  } catch (error) {
+    if (options?.tolerateError === true) {
+      return fallback;
+    }
+    throw error;
+  }
+}
+
+async function readInitialRanksBatch() {
+  if (!upstashClient.enabled) {
+    throw new Error("Upstash Redis is not configured");
+  }
+  const values = await readUpstashData([
+    "MGET",
+    RANKS_KEY,
+    MISSEVAN_PEAK_SERIES_TREND_KEY,
+    CV_RANKS_KEY,
+    CV_RANK_TREND_AGGREGATE_KEYS.missevan,
+    CV_RANK_TREND_AGGREGATE_KEYS.manbo,
+    RANKS_META_KEY,
+  ], {
+    source: "ranks_cold_start",
+    key: [
+      RANKS_KEY,
+      MISSEVAN_PEAK_SERIES_TREND_KEY,
+      CV_RANKS_KEY,
+      CV_RANK_TREND_AGGREGATE_KEYS.missevan,
+      CV_RANK_TREND_AGGREGATE_KEYS.manbo,
+      RANKS_META_KEY,
+    ].join(","),
+  });
+  if (!Array.isArray(values) || values.length !== 6) {
+    throw new Error("Invalid initial ranks MGET response");
+  }
+  const snapshot = parseRanksBatchJson(values[0], {});
+  const peakTrendSnapshot = parseRanksBatchJson(values[1], null, { tolerateError: true });
+  const cvSnapshot = parseRanksBatchJson(values[2], null, { tolerateError: true });
+  const missevanCvTrend = parseRanksBatchJson(values[3], null, { tolerateError: true });
+  const manboCvTrend = parseRanksBatchJson(values[4], null, { tolerateError: true });
+  return {
+    normalBundle: {
+      snapshot,
+      peakTrendSnapshot,
+      updatedAt: getRanksSnapshotUpdatedAt(snapshot),
+    },
+    cvBundle: {
+      cvSnapshot,
+      cvTrendSnapshots: {
+        missevan: isCvRankTrendAggregateSnapshot(missevanCvTrend, "missevan") ? missevanCvTrend : null,
+        manbo: isCvRankTrendAggregateSnapshot(manboCvTrend, "manbo") ? manboCvTrend : null,
+      },
+      updatedAt: getCvSnapshotUpdatedAt(cvSnapshot),
+    },
+    meta: normalizeRanksMeta(parseRanksBatchJson(values[5], null, { tolerateError: true })),
+  };
+}
+
 function updateCombinedRanksResponseCache() {
   const response = buildNormalizedRanksResponse(
     ranksCache.normalSnapshot,
@@ -3136,11 +3265,26 @@ export async function getCachedRanksResponse(options = {}) {
   ranksCache.loadPromise = (async () => {
     try {
       if (!ranksCache.response || ranksCache.response.schemaVersion !== RANKS_RESPONSE_SCHEMA_VERSION) {
-        const [normalBundle, cvBundle] = await Promise.all([
-          readNormalBundle(),
-          readCvBundle({ tolerateError: true }),
-          readInitialRanksMeta(readMeta, now),
-        ]);
+        let normalBundle;
+        let cvBundle;
+        if (
+          !options.readNormalRanksBundle &&
+          !options.readCvRanksBundle &&
+          !options.readRanksMeta
+        ) {
+          const batch = await readInitialRanksBatch();
+          normalBundle = batch.normalBundle;
+          cvBundle = batch.cvBundle;
+          ranksCache.meta = batch.meta;
+          ranksCache.metaLoadedAt = now;
+          ranksCache.metaLoadFailedAt = 0;
+        } else {
+          [normalBundle, cvBundle] = await Promise.all([
+            readNormalBundle(),
+            readCvBundle({ tolerateError: true }),
+            readInitialRanksMeta(readMeta, now),
+          ]);
+        }
         ranksCache.normalSnapshot = normalBundle.snapshot;
         ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
         ranksCache.normalUpdatedAt = normalBundle.updatedAt;
@@ -3522,8 +3666,15 @@ function pruneRankTrendCacheEntries(platform, dramaId, activeCacheKey) {
   }
 }
 
-function getRankTrendAggregateCacheKey(platform) {
-  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}`;
+function normalizeRequestedTrendIds(value) {
+  return Array.from(new Set((Array.isArray(value) ? value : value == null ? [] : [value])
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean))).sort();
+}
+
+function getRankTrendAggregateCacheKey(platform, ids = []) {
+  const signature = normalizeRequestedTrendIds(ids).join(",") || "all";
+  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${signature}`;
 }
 
 function getRankTrendAggregateUpstashKey(platform) {
@@ -3538,10 +3689,57 @@ async function readRankTrendAggregateSnapshot(platform) {
   return readRanksJsonKey(key);
 }
 
-async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
+async function readRankTrendV2Snapshot(platform, ids) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedIds = normalizeRequestedTrendIds(ids);
+  const key = RANK_TREND_V2_KEYS[normalizedPlatform];
+  if (!key || !normalizedIds.length) {
+    return null;
+  }
+  const rawValues = await readUpstashData(["HMGET", key, "__meta__", ...normalizedIds], {
+    source: "rank_trend_v2",
+    key,
+  });
+  if (!Array.isArray(rawValues) || rawValues.length !== normalizedIds.length + 1) {
+    return null;
+  }
+  let meta;
+  try {
+    meta = JSON.parse(rawValues[0]);
+  } catch (_) {
+    return null;
+  }
+  if (Number(meta?.version) !== 2 || String(meta?.platform ?? "") !== normalizedPlatform) {
+    return null;
+  }
+  const dramas = {};
+  normalizedIds.forEach((id, index) => {
+    try {
+      const record = JSON.parse(rawValues[index + 1]);
+      if (record && String(record.id ?? id) === id) {
+        dramas[id] = record;
+      }
+    } catch (_) {
+      // Missing or malformed fields trigger the legacy aggregate fallback below.
+    }
+  });
+  if (Object.keys(dramas).length !== normalizedIds.length) {
+    return null;
+  }
+  return {
+    version: 2,
+    platform: normalizedPlatform,
+    updated_at: String(meta.updated_at ?? ""),
+    dates: Array.isArray(meta.dates) ? meta.dates : [],
+    dramas,
+    _dataSource: "v2",
+  };
+}
+
+async function getCachedLegacyRankTrendAggregateSnapshot(platform, options = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const forceRefresh = options?.force === true;
-  const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform);
+  const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform, []);
   const now = Date.now();
   const cached = rankTrendAggregateCache.get(cacheKey);
   if (
@@ -3552,12 +3750,88 @@ async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
   ) {
     return cached.snapshot;
   }
-  if (!forceRefresh && cached?.loadPromise) {
+  if (cached?.loadPromise) {
     return cached.loadPromise;
   }
 
   const loadPromise = (async () => {
+    const startedAt = Date.now();
     const snapshot = await readRankTrendAggregateSnapshot(normalizedPlatform);
+    console.info(JSON.stringify({
+      source: "rank_trend_v1",
+      key: getRankTrendAggregateUpstashKey(normalizedPlatform),
+      bytes: getStructuredReadBytes(snapshot),
+      durationMs: Date.now() - startedAt,
+      fallbackReason: UPSTASH_DATA_READ_MODE === "legacy" ? "legacy_mode" : "v2_unavailable",
+    }));
+    if (!isRankTrendAggregateSnapshot(snapshot, normalizedPlatform)) {
+      const error = new Error("Rank trend aggregate is unavailable");
+      error.status = 503;
+      throw error;
+    }
+    rankTrendAggregateCache.set(cacheKey, {
+      snapshot,
+      loadedAt: Date.now(),
+      loadPromise: null,
+    });
+    return snapshot;
+  })();
+
+  rankTrendAggregateCache.set(cacheKey, {
+    snapshot: cached?.snapshot || null,
+    loadedAt: cached?.loadedAt || 0,
+    loadPromise,
+  });
+
+  try {
+    return await loadPromise;
+  } catch (error) {
+    if (cached?.snapshot) {
+      rankTrendAggregateCache.set(cacheKey, {
+        snapshot: cached.snapshot,
+        loadedAt: cached.loadedAt,
+        loadPromise: null,
+      });
+    } else {
+      rankTrendAggregateCache.delete(cacheKey);
+    }
+    throw error;
+  }
+}
+
+async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const forceRefresh = options?.force === true;
+  const ids = normalizeRequestedTrendIds(options?.ids);
+  if (UPSTASH_DATA_READ_MODE === "legacy" || !ids.length) {
+    return getCachedLegacyRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh });
+  }
+  const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform, ids);
+  const now = Date.now();
+  const cached = rankTrendAggregateCache.get(cacheKey);
+  if (
+    !forceRefresh &&
+    cached &&
+    "snapshot" in cached &&
+    isRankDerivedCacheEntryFresh(cached.loadedAt, now)
+  ) {
+    return cached.snapshot;
+  }
+  if (cached?.loadPromise) {
+    return cached.loadPromise;
+  }
+
+  const loadPromise = (async () => {
+    let snapshot = null;
+    try {
+      snapshot = await readRankTrendV2Snapshot(normalizedPlatform, ids);
+    } catch (error) {
+      console.warn(`Failed to read rank trend v2 platform=${normalizedPlatform}`, error);
+    }
+    if (!snapshot) {
+      rankTrendAggregateCache.delete(cacheKey);
+      return getCachedLegacyRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh });
+    }
     if (!isRankTrendAggregateSnapshot(snapshot, normalizedPlatform)) {
       const error = new Error("Rank trend aggregate is unavailable");
       error.status = 503;
@@ -3593,8 +3867,8 @@ async function getCachedWeeklyRankTrendResponse(platform, dramaId) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedDramaId = String(dramaId ?? "").trim();
   const [weeklyPlaybackSnapshot, aggregateSnapshot] = await Promise.all([
-    getCachedWeeklyPlaybackSnapshot(normalizedPlatform).catch(() => null),
-    getCachedRankTrendAggregateSnapshot(normalizedPlatform).catch(() => null),
+    getCachedWeeklyPlaybackSnapshot(normalizedPlatform, { ids: [normalizedDramaId] }).catch(() => null),
+    getCachedRankTrendAggregateSnapshot(normalizedPlatform, { ids: [normalizedDramaId] }).catch(() => null),
   ]);
   if (!weeklyPlaybackSnapshot) {
     return {
@@ -3688,15 +3962,16 @@ async function getCachedOngoingResponse(platform, options = {}) {
   ) {
     return cached.response;
   }
-  if (!forceRefresh && cached?.loadPromise) {
+  if (cached?.loadPromise) {
     return cached.loadPromise;
   }
 
   const loadPromise = (async () => {
-    const [ongoingIds, aggregateSnapshot] = await Promise.all([
-      readOngoingIds(normalizedPlatform),
-      getCachedRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh }),
-    ]);
+    const ongoingIds = await readOngoingIds(normalizedPlatform);
+    const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform, {
+      force: forceRefresh,
+      ids: ongoingIds,
+    });
     if (!isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform)) {
       const error = new Error("Ongoing rank trend aggregate is unavailable");
       error.status = 503;
@@ -3743,6 +4018,104 @@ async function getCachedOngoingResponse(platform, options = {}) {
   }
 }
 
+function normalizeCvTrendFieldName(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+async function readCvRankTrendV2Snapshots(cvName) {
+  const normalizedName = normalizeCvTrendFieldName(cvName);
+  if (!normalizedName) {
+    return null;
+  }
+  const rawValues = await readUpstashData([
+    "HMGET",
+    CV_RANK_TREND_V2_KEY,
+    "__meta__",
+    `missevan:${normalizedName}`,
+    `manbo:${normalizedName}`,
+  ], {
+    source: "cv_trend_v2",
+    key: CV_RANK_TREND_V2_KEY,
+  });
+  return buildCvRankTrendV2Snapshots(rawValues, normalizedName);
+}
+
+export function buildCvRankTrendV2Snapshots(rawValues, cvName) {
+  const normalizedName = normalizeCvTrendFieldName(cvName);
+  if (!normalizedName) {
+    return null;
+  }
+  if (!Array.isArray(rawValues) || rawValues.length !== 3) {
+    return null;
+  }
+  let meta;
+  try {
+    meta = JSON.parse(rawValues[0]);
+  } catch (_) {
+    return null;
+  }
+  if (Number(meta?.version) !== 2 || meta?.kind !== "cv") {
+    return null;
+  }
+  const snapshots = {};
+  ["missevan", "manbo"].forEach((platform, index) => {
+    try {
+      const record = rawValues[index + 1] ? JSON.parse(rawValues[index + 1]) : null;
+      const platformMeta = meta?.platforms?.[platform];
+      snapshots[platform] = platformMeta
+        ? {
+            version: 2,
+            kind: "cv",
+            platform,
+            updated_at: String(platformMeta.updated_at ?? ""),
+            dates: Array.isArray(platformMeta.dates) ? platformMeta.dates : [],
+            cvs: record ? { [normalizedName]: record } : {},
+          }
+        : null;
+    } catch (_) {
+      snapshots[platform] = null;
+    }
+  });
+  return snapshots.missevan && snapshots.manbo ? snapshots : null;
+}
+
+async function readPeakRankTrendV2Snapshot(seriesName) {
+  const normalizedName = String(seriesName ?? "").trim();
+  if (!normalizedName) {
+    return null;
+  }
+  const rawValues = await readUpstashData([
+    "HMGET",
+    MISSEVAN_PEAK_SERIES_TREND_V2_KEY,
+    "__meta__",
+    normalizedName,
+  ], {
+    source: "peak_trend_v2",
+    key: MISSEVAN_PEAK_SERIES_TREND_V2_KEY,
+  });
+  if (!Array.isArray(rawValues) || rawValues.length !== 2 || !rawValues[1]) {
+    return null;
+  }
+  try {
+    const meta = JSON.parse(rawValues[0]);
+    const record = JSON.parse(rawValues[1]);
+    if (Number(meta?.version) !== 2 || String(meta?.platform ?? "") !== "missevan") {
+      return null;
+    }
+    return {
+      version: 2,
+      platform: "missevan",
+      rank: "peak",
+      metric: "view_count",
+      updated_at: String(meta.updated_at ?? ""),
+      dates: Array.isArray(meta.dates) ? meta.dates : [],
+      series: { [normalizedName]: record },
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function getCachedCvRankTrendResponse(cvName) {
   const normalizedCvName = normalizeTextValue(cvName);
   const cacheKey = getRankTrendCacheKey("cv", normalizedCvName, "", CV_RANK_TREND_AGGREGATE_KEYS.missevan);
@@ -3756,10 +4129,20 @@ async function getCachedCvRankTrendResponse(cvName) {
   }
 
   const loadPromise = (async () => {
-    const [missevanTrendSnapshot, manboTrendSnapshot] = await Promise.all([
-      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
-      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
-    ]);
+    let v2Snapshots = null;
+    if (UPSTASH_DATA_READ_MODE === "prefer-v2") {
+      try {
+        v2Snapshots = await readCvRankTrendV2Snapshots(normalizedCvName);
+      } catch (error) {
+        console.warn(`Failed to read CV trend v2 cv=${normalizedCvName}`, error);
+      }
+    }
+    const [missevanTrendSnapshot, manboTrendSnapshot] = v2Snapshots
+      ? [v2Snapshots.missevan, v2Snapshots.manbo]
+      : await Promise.all([
+          readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
+          readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
+        ]);
     const response = buildCvTrendResponse({
       id: normalizedCvName,
       trendSnapshots: {
@@ -3820,7 +4203,17 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
     }
 
     const loadPromise = (async () => {
-      const peakSnapshot = await readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY);
+      let peakSnapshot = null;
+      if (UPSTASH_DATA_READ_MODE === "prefer-v2") {
+        try {
+          peakSnapshot = await readPeakRankTrendV2Snapshot(normalizedDramaId);
+        } catch (error) {
+          console.warn(`Failed to read peak trend v2 series=${normalizedDramaId}`, error);
+        }
+      }
+      if (!peakSnapshot) {
+        peakSnapshot = await readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY);
+      }
       const response = buildPeakSeriesTrendResponse({
         id: normalizedDramaId,
         peakSnapshot,
@@ -3859,7 +4252,9 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
 
   let aggregateSnapshot = null;
   try {
-    aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform);
+    aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform, {
+      ids: [normalizedDramaId],
+    });
   } catch (_) {
     aggregateSnapshot = null;
   }
@@ -3870,7 +4265,9 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
     id: normalizedDramaId,
   });
   if (metricSampleCount < 5) {
-    const weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(normalizedPlatform).catch(() => null);
+    const weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(normalizedPlatform, {
+      ids: [normalizedDramaId],
+    }).catch(() => null);
     if (weeklyPlaybackSnapshot) {
       const response = buildWeeklyPlaybackTrendResponse({
         platform: normalizedPlatform,
@@ -3930,6 +4327,16 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
       id: normalizedDramaId,
       aggregateSnapshot,
     });
+    const lastRank = aggregateSnapshot?.dramas?.[normalizedDramaId]?.lastRank;
+    if (response?.success && lastRank?.date && Array.isArray(lastRank?.ranks)) {
+      const hasLastRankDate = response.rankHistory?.some((entry) => entry?.date === lastRank.date);
+      if (!hasLastRankDate) {
+        response.rankHistory = [
+          ...(Array.isArray(response.rankHistory) ? response.rankHistory : []),
+          { date: lastRank.date, ranks: lastRank.ranks },
+        ].sort((left, right) => left.date.localeCompare(right.date));
+      }
+    }
     if (response && typeof response === "object") {
       response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
     }
@@ -4094,13 +4501,21 @@ export function getInfoStoreReadFailureSnapshot(store) {
   return null;
 }
 
-async function readInfoStoreSnapshot(store) {
+async function readLegacyInfoStoreSnapshot(store) {
   if (upstashClient.enabled) {
     try {
-      const raw = await upstashClient.command(["GET", store.key]);
+      const raw = await readUpstashData(["GET", store.key], {
+        source: "info_v1",
+        key: store.key,
+        fallbackReason: UPSTASH_DATA_READ_MODE === "legacy" ? "legacy_mode" : "v2_unavailable",
+      });
       store.remoteAvailable = true;
       if (raw) {
         return JSON.parse(raw);
+      }
+      const fallbackSnapshot = getInfoStoreReadFailureSnapshot(store);
+      if (fallbackSnapshot) {
+        return fallbackSnapshot;
       }
     } catch (error) {
       console.error(`Failed to read Upstash info snapshot key=${store.key}`, error);
@@ -4119,11 +4534,116 @@ async function readInfoStoreSnapshot(store) {
     : createEmptyMissevanInfoSnapshot();
 }
 
+function getInfoStores() {
+  return [manboInfoStore, missevanInfoStore];
+}
+
+function parseInfoV2Meta(raw, store) {
+  try {
+    const meta = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const expectedKey = INFO_V2_KEYS[store.platform];
+    if (
+      Number(meta?.schemaVersion) !== 2 ||
+      String(meta?.dataKey ?? "") !== expectedKey ||
+      !/^[a-f0-9]{40}$/i.test(String(meta?.contentSha1 ?? ""))
+    ) {
+      return null;
+    }
+    return meta;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getSha1(value) {
+  return createHash("sha1").update(String(value ?? ""), "utf8").digest("hex");
+}
+
+async function loadInfoStoresV2() {
+  if (infoStoresV2LoadPromise) {
+    return infoStoresV2LoadPromise;
+  }
+  infoStoresV2LoadPromise = (async () => {
+    const stores = getInfoStores();
+    let pendingFallbacks = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const rawMetas = await readUpstashData([
+        "MGET",
+        ...stores.map((store) => INFO_V2_META_KEYS[store.platform]),
+      ], {
+        source: "info_meta_v2",
+        key: stores.map((store) => INFO_V2_META_KEYS[store.platform]).join(","),
+      });
+      const metas = stores.map((store, index) => parseInfoV2Meta(rawMetas?.[index], store));
+      const changedStores = stores.filter((store, index) =>
+        metas[index] && (!store.loaded || store.contentSha1 !== metas[index].contentSha1)
+      );
+      const rawSnapshots = changedStores.length
+        ? await readUpstashData([
+            "MGET",
+            ...changedStores.map((store) => INFO_V2_KEYS[store.platform]),
+          ], {
+            source: "info_body_v2",
+            key: changedStores.map((store) => INFO_V2_KEYS[store.platform]).join(","),
+            fallbackReason: attempt ? "sha_retry" : "",
+          })
+        : [];
+      const prepared = new Map();
+      let shouldRetry = false;
+      changedStores.forEach((store, index) => {
+        const raw = rawSnapshots?.[index];
+        const meta = metas[stores.indexOf(store)];
+        if (typeof raw !== "string" || getSha1(raw) !== meta.contentSha1) {
+          shouldRetry = true;
+          return;
+        }
+        try {
+          prepared.set(store, { snapshot: JSON.parse(raw), meta });
+        } catch (_) {
+          shouldRetry = true;
+        }
+      });
+      if (shouldRetry && attempt === 0) {
+        continue;
+      }
+      pendingFallbacks = [];
+      stores.forEach((store, index) => {
+        const preparedEntry = prepared.get(store);
+        if (preparedEntry) {
+          applyInfoStoreSnapshot(store, preparedEntry.snapshot);
+          store.contentSha1 = preparedEntry.meta.contentSha1;
+          store.dataSource = "v2";
+          store.remoteAvailable = true;
+          return;
+        }
+        if (metas[index] && store.loaded && store.contentSha1 === metas[index].contentSha1) {
+          store.lastLoadedAt = Date.now();
+          return;
+        }
+        pendingFallbacks.push(store);
+      });
+      break;
+    }
+    await Promise.all(pendingFallbacks.map(async (store) => {
+      const snapshot = await readLegacyInfoStoreSnapshot(store);
+      applyInfoStoreSnapshot(store, snapshot);
+      store.contentSha1 = "";
+      store.dataSource = "legacy";
+    }));
+  })().finally(() => {
+    infoStoresV2LoadPromise = null;
+  });
+  return infoStoresV2LoadPromise;
+}
+
 async function ensureInfoStoreLoaded(store, forceRefresh = false) {
+  const refreshIntervalMs = UPSTASH_DATA_READ_MODE === "prefer-v2"
+    ? INFO_STORE_META_POLL_INTERVAL_MS
+    : INFO_STORE_SYNC_INTERVAL_MS;
   if (
     store.loaded &&
     !forceRefresh &&
-    Date.now() - store.lastLoadedAt < INFO_STORE_SYNC_INTERVAL_MS
+    Date.now() - store.lastLoadedAt < refreshIntervalMs
   ) {
     return store;
   }
@@ -4135,8 +4655,21 @@ async function ensureInfoStoreLoaded(store, forceRefresh = false) {
 
   store.loadPromise = (async () => {
     try {
-      const snapshot = await readInfoStoreSnapshot(store);
-      applyInfoStoreSnapshot(store, snapshot);
+      if (UPSTASH_DATA_READ_MODE === "prefer-v2" && upstashClient.enabled) {
+        try {
+          await loadInfoStoresV2();
+        } catch (error) {
+          console.warn(`Failed to load info v2; falling back platform=${store.platform}`, error);
+          const snapshot = await readLegacyInfoStoreSnapshot(store);
+          applyInfoStoreSnapshot(store, snapshot);
+          store.contentSha1 = "";
+          store.dataSource = "legacy";
+        }
+      } else {
+        const snapshot = await readLegacyInfoStoreSnapshot(store);
+        applyInfoStoreSnapshot(store, snapshot);
+        store.dataSource = "legacy";
+      }
     } catch (error) {
       if (!store.loaded) {
         applyInfoStoreSnapshot(
@@ -4160,7 +4693,10 @@ async function ensureInfoStoreReadyForSearch(store) {
   if (!store.loaded) {
     return ensureInfoStoreLoaded(store);
   }
-  if (Date.now() - store.lastLoadedAt >= INFO_STORE_SYNC_INTERVAL_MS && !store.loadPromise) {
+  const refreshIntervalMs = UPSTASH_DATA_READ_MODE === "prefer-v2"
+    ? INFO_STORE_META_POLL_INTERVAL_MS
+    : INFO_STORE_SYNC_INTERVAL_MS;
+  if (Date.now() - store.lastLoadedAt >= refreshIntervalMs && !store.loadPromise) {
     void ensureInfoStoreLoaded(store).catch((error) => {
       console.warn(`Info store background refresh failed platform=${store.platform}: ${formatImageProxyError(error)}`);
     });

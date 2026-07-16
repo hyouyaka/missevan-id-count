@@ -22,6 +22,10 @@ function visitStatic(key) {
 }
 visitStatic(entryKey);
 
+const reachableDynamicImports = new Set(
+  [...visited].flatMap((key) => manifest[key]?.dynamicImports || [])
+);
+
 const forbiddenStaticModules = [
   "src/app/RankTrendDialog.jsx",
   "src/app/rankTrendUi.jsx",
@@ -39,7 +43,7 @@ const trendDialogEntry = Object.entries(manifest).find(
 if (!trendDialogEntry) {
   throw new Error("RankTrendDialog must be emitted as a dynamic entry");
 }
-if (!(manifest[entryKey].dynamicImports || []).includes(trendDialogEntry[0])) {
+if (!reachableDynamicImports.has(trendDialogEntry[0])) {
   throw new Error("Homepage entry must load RankTrendDialog dynamically");
 }
 
@@ -52,7 +56,7 @@ if (!twikooEntry) {
 if (visited.has(twikooEntry[0])) {
   throw new Error("Homepage entry must not statically import Twikoo");
 }
-if (!(manifest[entryKey].dynamicImports || []).includes(twikooEntry[0])) {
+if (!reachableDynamicImports.has(twikooEntry[0])) {
   throw new Error("Feedback view must load Twikoo dynamically");
 }
 

@@ -17,6 +17,10 @@ import {
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
+import {
+  fetchRankTrendAvailabilityData,
+  resolveRankTrendAvailabilityIds,
+} from "@/app/rankTrendData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
@@ -193,6 +197,7 @@ function OngoingCard({
   favoriteActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  trendAvailable = false,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const baseMetricKeys = platform === "missevan"
@@ -210,7 +215,7 @@ function OngoingCard({
   });
   const paymentTag = item.payment_label;
   const metricGridClassName = metricKeys.length >= 3 ? "grid-cols-3" : "grid-cols-2";
-  const canOpenTrend = Boolean(platform && item?.id);
+  const canOpenTrend = Boolean(platform && item?.id && trendAvailable);
   const favoriteKey = `${platform}:${String(item?.id ?? "").trim()}`;
   const isFavorite = Boolean(favoriteKeys?.has?.(favoriteKey));
   const [isTrendOpen, setIsTrendOpen] = useState(false);
@@ -421,6 +426,8 @@ function OngoingCard({
           item={item}
           platform={platform}
           trendState={trendState}
+          frontendVersion={frontendVersion}
+          handleVersionResponse={handleVersionResponse}
         />
       ) : null}
     </>
@@ -451,6 +458,11 @@ export function OngoingPanel({
   });
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [trendEligibility, setTrendEligibility] = useState({
+    platform: "",
+    lookupKey: "",
+    ids: new Set(),
+  });
   const loggedOngoingRef = useRef(new Set());
   const handleVersionResponseRef = useRef(handleVersionResponse);
 
@@ -619,6 +631,67 @@ export function OngoingPanel({
     () => sortOngoingItemsByWindowDelta(ongoingData?.items || [], activeWindow),
     [activeWindow, ongoingData?.items]
   );
+  const trendLookupIds = useMemo(
+    () => Array.from(new Set(
+      (ongoingData?.items || [])
+        .map((item) => String(item?.id ?? "").trim())
+        .filter(Boolean)
+    )).sort(),
+    [ongoingData?.items]
+  );
+  const trendLookupKey = trendLookupIds.join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    setTrendEligibility({
+      platform: selectedPlatform,
+      lookupKey: trendLookupKey,
+      ids: new Set(trendLookupIds),
+    });
+    if (!trendLookupIds.length) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    fetchRankTrendAvailabilityData({
+      platform: selectedPlatform,
+      ids: trendLookupIds,
+      frontendVersion,
+    })
+      .then(({ response, data } = {}) => {
+        if (!cancelled) {
+          setTrendEligibility({
+            platform: selectedPlatform,
+            lookupKey: trendLookupKey,
+            ids: resolveRankTrendAvailabilityIds({
+              response,
+              data,
+              requestedIds: trendLookupIds,
+            }),
+          });
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load ongoing trend eligibility", error);
+          setTrendEligibility({
+            platform: selectedPlatform,
+            lookupKey: trendLookupKey,
+            ids: new Set(trendLookupIds),
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [frontendVersion, selectedPlatform, trendLookupIds, trendLookupKey]);
+
+  const availableTrendIds = trendEligibility.platform === selectedPlatform &&
+    trendEligibility.lookupKey === trendLookupKey
+    ? trendEligibility.ids
+    : new Set(trendLookupIds);
   function updatePlatform(platform) {
     const nextPlatform = platform === "manbo" ? "manbo" : "missevan";
     setSelectedPlatform(nextPlatform);
@@ -765,6 +838,7 @@ export function OngoingPanel({
               favoriteActionsDisabled={favoriteActionsDisabled}
               onToggleFavorite={onToggleFavorite}
               onAddCompareItem={onAddCompareItem}
+              trendAvailable={availableTrendIds.has(String(item.id))}
             />
           ))}
         </div>

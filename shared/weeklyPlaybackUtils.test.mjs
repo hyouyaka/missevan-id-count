@@ -95,6 +95,24 @@ test("weekly playback trend prefers watchcount and fills missing dates from metr
   );
 });
 
+test("weekly playback trend requires at least two valid data points", () => {
+  const response = buildWeeklyPlaybackTrendResponse({
+    platform: "missevan",
+    id: "93038",
+    weeklyPlaybackSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-17"],
+      snapshotsByDate: {
+        "2026-05-17": { platform: "missevan", dramas: { "93038": { view_count: 115 } } },
+      },
+    },
+  });
+
+  assert.equal(response.success, false);
+  assert.equal(response.status, 404);
+  assert.equal(response.kind, "weekly_playback");
+});
+
 test("metric classification counts five distinct dates with finite configured metrics", () => {
   const aggregateSnapshot = {
     dates: ["2026-05-01", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06"],
