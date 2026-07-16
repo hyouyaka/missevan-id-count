@@ -68,10 +68,16 @@ function buildTicks(domain) {
   return ticks;
 }
 
-function getPointPosition(point, index, points, domain) {
-  const x = points.length <= 1
-    ? CHART_WIDTH / 2
-    : CHART_LEFT + (index / (points.length - 1)) * (CHART_WIDTH - CHART_LEFT - CHART_RIGHT);
+function getPointPosition(point, index, points, domain, dateDomain) {
+  const pointTime = parseDate(point?.date);
+  const hasDateDomain = Number.isFinite(pointTime) && Number.isFinite(dateDomain?.min) && Number.isFinite(dateDomain?.max);
+  const dateRange = hasDateDomain ? dateDomain.max - dateDomain.min : 0;
+  const xRatio = hasDateDomain && dateRange > 0
+    ? (pointTime - dateDomain.min) / dateRange
+    : points.length <= 1
+      ? 0.5
+      : index / (points.length - 1);
+  const x = CHART_LEFT + xRatio * (CHART_WIDTH - CHART_LEFT - CHART_RIGHT);
   const range = domain.max - domain.min || 1;
   const y = CHART_TOP + (1 - (Number(point.axisValue) - domain.min) / range) * (CHART_HEIGHT - CHART_TOP - CHART_BOTTOM);
   return { x, y };
@@ -89,17 +95,10 @@ function offsetPositions(positions, offset) {
   if (!offset || positions.length < 2) {
     return positions;
   }
-  const first = positions[0];
-  const last = positions.at(-1);
-  const dx = last.x - first.x;
-  const dy = last.y - first.y;
-  const length = Math.hypot(dx, dy) || 1;
-  const normalX = -dy / length;
-  const normalY = dx / length;
   return positions.map((point) => ({
     ...point,
-    x: clampX(point.x + normalX * offset),
-    y: clampY(point.y + normalY * offset),
+    x: clampX(point.x),
+    y: clampY(point.y + offset),
   }));
 }
 
@@ -159,10 +158,10 @@ export function getTrendAxisLabelMarkers(markers, windowKey) {
   if (lastIndex < 0) {
     return [];
   }
-  if (windowKey === "30d") {
+  if (windowKey === "30d" || windowKey === "30w") {
     return visibleMarkers.filter((entry, index) => index % 5 === 0 || index === lastIndex);
   }
-  if (windowKey === "7d") {
+  if (windowKey === "7d" || windowKey === "7w") {
     return visibleMarkers.filter((entry, index) => index % 2 === 0 || index === lastIndex);
   }
   return visibleMarkers;
@@ -187,7 +186,22 @@ function splitSegments(entries) {
   return segments;
 }
 
-function buildLine(metric, axis, chartMode) {
+function buildDateDomain(metrics, chartMode) {
+  const pointBuilder = chartMode === "increment" ? buildTrendDeltaPoints : buildTrendValuePoints;
+  const times = metrics
+    .flatMap((metric) => pointBuilder(metric))
+    .map((point) => parseDate(point?.date))
+    .filter(Number.isFinite);
+  if (!times.length) {
+    return null;
+  }
+  return {
+    min: Math.min(...times),
+    max: Math.max(...times),
+  };
+}
+
+function buildLine(metric, axis, chartMode, dateDomain) {
   const pointBuilder = chartMode === "increment" ? buildTrendDeltaPoints : buildTrendValuePoints;
   const points = pointBuilder(metric);
   const validPointCount = points.filter((point) => getTrendNumber(point.axisValue) != null).length;
@@ -199,7 +213,7 @@ function buildLine(metric, axis, chartMode) {
     point,
     position: getTrendNumber(point.axisValue) == null
       ? null
-      : getPointPosition(point, index, points, axis.domain),
+      : getPointPosition(point, index, points, axis.domain, dateDomain),
   }));
   const segments = splitSegments(positionedEntries);
   const markers = positionedEntries.filter((entry) => entry.position);
@@ -231,13 +245,14 @@ function buildAxis(metrics, chartMode) {
 export function buildTrendChartLines(metrics, { chartMode = "absolute" } = {}) {
   const availableMetrics = Array.isArray(metrics) ? metrics : [];
   const axis = buildAxis(availableMetrics, chartMode);
+  const dateDomain = buildDateDomain(availableMetrics, chartMode);
   const axes = {
     left: axis,
   };
   const signatureCounts = new Map();
   const lines = availableMetrics
     .map((metric) => {
-      const line = buildLine(metric, axis, chartMode);
+      const line = buildLine(metric, axis, chartMode, dateDomain);
       if (!line) {
         return null;
       }
@@ -279,11 +294,25 @@ export function buildTrendChartLines(metrics, { chartMode = "absolute" } = {}) {
       };
     })
     .filter(Boolean);
+  const dateMarkerMap = new Map();
+  lines.forEach((line) => {
+    line.markers.forEach((marker) => {
+      const date = String(marker?.point?.date ?? "").trim();
+      if (date && !dateMarkerMap.has(date)) {
+        dateMarkerMap.set(date, marker);
+      }
+    });
+  });
+  const dateMarkers = Array.from(dateMarkerMap.values()).sort((left, right) =>
+    parseDate(left?.point?.date) - parseDate(right?.point?.date)
+  );
 
   return {
     lines,
     axis,
     axes,
+    dateDomain,
+    dateMarkers,
     chartMode,
   };
 }

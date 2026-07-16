@@ -50,6 +50,10 @@ import {
   isRankTrendAggregateSnapshot,
   normalizeRankTrendDates,
 } from "../shared/ranksTrendUtils.js";
+import {
+  buildWeeklyPlaybackTrendResponse,
+  countValidMetricSamples,
+} from "../shared/weeklyPlaybackUtils.js";
 import { normalizeVersion } from "../shared/versionUtils.js";
 import {
   ImageProxyPolicyError,
@@ -73,6 +77,7 @@ import { createMissevanClient } from "./clients/missevanClient.js";
 import { createManboClient } from "./clients/manboClient.js";
 import { createSharedRequestRegistry } from "./clients/sharedRequest.js";
 import { createDramaService } from "./services/dramaService.js";
+import { createWeeklyPlaybackStore } from "./services/weeklyPlaybackService.js";
 import { searchLibraryWithFallback } from "./services/searchService.js";
 import { createRequestSecurityMiddleware } from "./httpSecurity.js";
 import { createLogger, createRequestLoggerMiddleware } from "./logger.js";
@@ -256,7 +261,7 @@ const rankTrendAggregateCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES 
 const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const RANKS_RESPONSE_SCHEMA_VERSION = 5;
-const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 4;
+const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 5;
 const ONGOING_RESPONSE_SCHEMA_VERSION = 3;
 
 function getFiniteNumberEnv(name, fallbackValue) {
@@ -293,6 +298,15 @@ const ONGOING_CACHE_TTL_MS = Math.max(
   10 * 1000,
   Number(process.env.ONGOING_CACHE_TTL_MS ?? 60 * 1000) || 60 * 1000
 );
+const WEEKLY_PLAYBACK_CACHE_TTL_MS = Math.max(
+  60 * 1000,
+  getFiniteNumberEnv("WEEKLY_PLAYBACK_CACHE_TTL_MS", 5 * 60 * 1000)
+);
+const weeklyPlaybackStore = createWeeklyPlaybackStore({
+  command: (args, options) => upstashClient.command(args, options),
+  cacheTtlMs: WEEKLY_PLAYBACK_CACHE_TTL_MS,
+  maxWeeks: 32,
+});
 const RANKS_CACHE_TIME_ZONE = String(process.env.RANKS_CACHE_TIME_ZONE ?? "Asia/Shanghai").trim() || "Asia/Shanghai";
 const RANKS_UPDATE_WINDOW_START_HOUR = 7;
 const RANKS_UPDATE_WINDOW_END_HOUR = 10;
@@ -3571,6 +3585,92 @@ async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
   }
 }
 
+async function getCachedWeeklyPlaybackSnapshot(platform, options = {}) {
+  return weeklyPlaybackStore.getSnapshot(platform, options);
+}
+
+async function getCachedWeeklyRankTrendResponse(platform, dramaId) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  const [weeklyPlaybackSnapshot, aggregateSnapshot] = await Promise.all([
+    getCachedWeeklyPlaybackSnapshot(normalizedPlatform).catch(() => null),
+    getCachedRankTrendAggregateSnapshot(normalizedPlatform).catch(() => null),
+  ]);
+  if (!weeklyPlaybackSnapshot) {
+    return {
+      success: false,
+      status: 503,
+      platform: normalizedPlatform,
+      id: normalizedDramaId,
+      kind: "weekly_playback",
+      message: "Rank trends are unavailable",
+    };
+  }
+
+  const latestDate = [
+    weeklyPlaybackSnapshot?.dates?.at(-1) || "",
+    normalizeRankTrendDates(aggregateSnapshot).at(-1) || "",
+  ].filter(Boolean).sort().at(-1) || "";
+  const sourceVersion = [
+    weeklyPlaybackSnapshot?.generatedAt || weeklyPlaybackSnapshot?.version || "",
+    aggregateSnapshot?.updated_at ?? aggregateSnapshot?.updatedAt ?? "",
+  ].map((value) => String(value).trim()).filter(Boolean).join("|") || "unavailable";
+  const cacheKey = getRankTrendCacheKey(
+    `${normalizedPlatform}:weekly_playback`,
+    normalizedDramaId,
+    latestDate,
+    sourceVersion
+  );
+  const now = Date.now();
+  const cached = rankTrendsCache.get(cacheKey);
+  if (cached?.response && isRankDerivedCacheEntryFresh(cached.loadedAt, now)) {
+    return cached.response;
+  }
+  if (cached?.loadPromise) {
+    return cached.loadPromise;
+  }
+
+  const loadPromise = (async () => {
+    const response = buildWeeklyPlaybackTrendResponse({
+      platform: normalizedPlatform,
+      id: normalizedDramaId,
+      weeklyPlaybackSnapshot,
+      metricAggregateSnapshot: aggregateSnapshot,
+      allowMetricFallback: true,
+    });
+    if (response && typeof response === "object") {
+      response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
+    }
+    await Promise.resolve();
+    if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
+      rankTrendsCache.set(cacheKey, {
+        response,
+        loadedAt: Date.now(),
+        loadPromise: null,
+      });
+    }
+    return response;
+  })();
+
+  rankTrendsCache.set(cacheKey, {
+    response: null,
+    loadedAt: 0,
+    loadPromise,
+  });
+  pruneRankTrendCacheEntries(
+    `${normalizedPlatform}:weekly_playback`,
+    normalizedDramaId,
+    cacheKey
+  );
+
+  try {
+    return await loadPromise;
+  } catch (error) {
+    rankTrendsCache.delete(cacheKey);
+    throw error;
+  }
+}
+
 function getOngoingCacheKey(platform) {
   return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${platform}`;
 }
@@ -3699,7 +3799,7 @@ async function getCachedCvRankTrendResponse(cvName) {
   }
 }
 
-async function getCachedRankTrendResponse(platform, dramaId) {
+async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "") {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedDramaId = String(dramaId ?? "").trim();
 
@@ -3753,7 +3853,55 @@ async function getCachedRankTrendResponse(platform, dramaId) {
     }
   }
 
-  const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform);
+  if (String(requestedKind ?? "").trim() === "weekly_playback") {
+    return getCachedWeeklyRankTrendResponse(normalizedPlatform, normalizedDramaId);
+  }
+
+  let aggregateSnapshot = null;
+  try {
+    aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform);
+  } catch (_) {
+    aggregateSnapshot = null;
+  }
+
+  const metricSampleCount = countValidMetricSamples({
+    platform: normalizedPlatform,
+    aggregateSnapshot,
+    id: normalizedDramaId,
+  });
+  if (metricSampleCount < 5) {
+    const weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(normalizedPlatform).catch(() => null);
+    if (weeklyPlaybackSnapshot) {
+      const response = buildWeeklyPlaybackTrendResponse({
+        platform: normalizedPlatform,
+        id: normalizedDramaId,
+        weeklyPlaybackSnapshot,
+        metricAggregateSnapshot: aggregateSnapshot,
+        allowMetricFallback: false,
+      });
+      if (response && typeof response === "object") {
+        response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
+      }
+      return response;
+    }
+    if (!aggregateSnapshot) {
+      return {
+        success: false,
+        status: 503,
+        platform: normalizedPlatform,
+        id: normalizedDramaId,
+        kind: "weekly_playback",
+        message: "Rank trends are unavailable",
+      };
+    }
+    return buildWeeklyPlaybackTrendResponse({
+      platform: normalizedPlatform,
+      id: normalizedDramaId,
+      weeklyPlaybackSnapshot: null,
+      metricAggregateSnapshot: aggregateSnapshot,
+      allowMetricFallback: false,
+    });
+  }
 
   const hasUsableAggregate = isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform);
   const aggregateDates = hasUsableAggregate ? normalizeRankTrendDates(aggregateSnapshot) : [];
@@ -8561,6 +8709,7 @@ registerStatsRoutes(app, {
   getCachedOngoingResponse,
   getCachedRankTrendAggregateSnapshot,
   getCachedRankTrendResponse,
+  getCachedWeeklyPlaybackSnapshot,
   getCachedRanksResponse,
   getRanksResponseCacheValidator,
   getStatsTaskSnapshotOr404,

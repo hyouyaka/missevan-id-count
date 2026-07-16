@@ -433,7 +433,10 @@ function RankTrendLineChart({ metrics, legendMetrics = metrics, selectedMetricKe
   const chartLines = chartData.lines;
   const axis = chartData.axis || chartData.axes.left;
   const selectedMetric = availableMetrics[0] || availableLegendMetrics.find((metric) => metric.key === selectedMetricKey) || null;
-  const axisLabelMarkers = getTrendAxisLabelMarkers(chartLines[0]?.markers || [], windowKey);
+  const axisLabelMarkers = getTrendAxisLabelMarkers(
+    chartData.dateMarkers || chartLines[0]?.markers || [],
+    windowKey
+  );
   const activeTooltipPoint = selectedPoint || hoveredPoint;
 
   function buildTooltipPoint(line, point, position, style) {
@@ -464,11 +467,13 @@ function RankTrendLineChart({ metrics, legendMetrics = metrics, selectedMetricKe
 
   return (
     <div className="rounded-lg border border-border bg-card p-2.5 shadow-[var(--shadow-card)]">
-      <TrendMetricRadioLegend
-        metrics={availableLegendMetrics}
-        selectedMetricKey={selectedMetricKey}
-        onSelectMetric={onSelectMetric}
-      />
+      {availableLegendMetrics.length > 1 ? (
+        <TrendMetricRadioLegend
+          metrics={availableLegendMetrics}
+          selectedMetricKey={selectedMetricKey}
+          onSelectMetric={onSelectMetric}
+        />
+      ) : null}
       <div
         className="relative h-48 w-full overflow-visible rounded-md bg-card sm:h-52"
         role="group"
@@ -600,7 +605,7 @@ function RankTrendLineChart({ metrics, legendMetrics = metrics, selectedMetricKe
   );
 }
 
-function getSnapshotColumns(metrics, platform) {
+function getSnapshotColumns(metrics, platform, isWeeklyPlayback = false) {
   const metricMap = new Map((Array.isArray(metrics) ? metrics : []).map((metric) => [metric.key, metric]));
   const viewMetric = metricMap.get("view_count") || null;
   const isCvTrend =
@@ -624,6 +629,12 @@ function getSnapshotColumns(metrics, platform) {
     return [
       { key: "date", label: "日期", metric: null },
       { key: "view_count", label: "系列总播放量", metric: viewMetric },
+    ];
+  }
+  if (isWeeklyPlayback) {
+    return [
+      { key: "date", label: "日期", metric: null },
+      { key: "view_count", label: "播放量", metric: viewMetric },
     ];
   }
 
@@ -697,9 +708,9 @@ function buildSnapshotRows(columns, chartMode = "absolute") {
   });
 }
 
-function TrendSnapshotDetails({ metrics, platform, chartMode = "absolute" }) {
+function TrendSnapshotDetails({ metrics, platform, chartMode = "absolute", isWeeklyPlayback = false }) {
   const [isOpen, setIsOpen] = useState(false);
-  const columns = getSnapshotColumns(metrics, platform);
+  const columns = getSnapshotColumns(metrics, platform, isWeeklyPlayback);
   const rows = buildSnapshotRows(columns, chartMode);
 
   return (
@@ -815,7 +826,7 @@ export function formatRankTrendDelta(metric) {
   return formatTrendDelta(metric);
 }
 
-function TrendMetricRow({ metric, windowLabel }) {
+function TrendMetricRow({ metric, windowLabel, isWeeklyPlayback = false }) {
   const style = getTrendMetricStyle(metric);
   const emptyPaidEpisodes = isEmptyPaidDanmakuTrendMetric(metric);
   return (
@@ -835,7 +846,7 @@ function TrendMetricRow({ metric, windowLabel }) {
         <div className="min-w-0">
           <div className="text-[0.82rem] font-medium leading-4">{metric.label}</div>
           <div className="text-[0.7rem] text-muted-foreground">
-            今日：<span className="tabular-nums text-foreground">{formatTrendValue(metric.toValue)}</span>
+            {isWeeklyPlayback ? "最新：" : "今日："}<span className="tabular-nums text-foreground">{formatTrendValue(metric.toValue)}</span>
           </div>
         </div>
       </div>
@@ -890,6 +901,7 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
   const data = trendState.data;
   const windows = data?.windows || {};
   const isCvTrend = data?.kind === "cv";
+  const isWeeklyPlaybackTrend = data?.kind === "weekly_playback";
   const metaTags = getTrendMetaTags(item, platform);
   const latestRankHistory = Array.isArray(data?.rankHistory) ? data.rankHistory.at(-1) : null;
   const latestRankHistoryDate = String(latestRankHistory?.date ?? "").trim();
@@ -899,8 +911,10 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
       rankHistoryLatestDate &&
       latestRankHistoryDate !== rankHistoryLatestDate
   );
-  const defaultWindowKey = isCvTrend ? "7w" : "7d";
-  const availableWindowOrder = isCvTrend ? ["3w", "7w", "30w"] : ["3d", "7d", "30d"];
+  const defaultWindowKey = isCvTrend || isWeeklyPlaybackTrend ? "7w" : "7d";
+  const availableWindowOrder = isCvTrend || isWeeklyPlaybackTrend
+    ? ["3w", "7w", "30w"]
+    : ["3d", "7d", "30d"];
   const availableWindows = availableWindowOrder.filter((key) => windows[key]);
   const activeWindowKey = availableWindows.includes(selectedWindow)
     ? selectedWindow
@@ -978,6 +992,9 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                 {label}
               </Badge>
             ))}
+            {isWeeklyPlaybackTrend ? (
+              <Badge variant="outline" className={metaBadgeClassName}>每周采样 · 仅播放量</Badge>
+            ) : null}
           </div>
           <AlertDialogDescription
             className="flex w-full max-w-none justify-self-stretch items-start gap-1 text-left text-xs"
@@ -1058,13 +1075,19 @@ export function RankTrendDialog({ open, onOpenChange, item, platform, trendState
                   windowKey={activeWindowKey}
                   chartMode={selectedChartMode}
                 />
-                <TrendSnapshotDetails metrics={activeMetrics} platform={platform} chartMode={selectedChartMode} />
+                <TrendSnapshotDetails
+                  metrics={activeMetrics}
+                  platform={platform}
+                  chartMode={selectedChartMode}
+                  isWeeklyPlayback={isWeeklyPlaybackTrend}
+                />
                 <div className="grid gap-1.5">
                   {activeMetrics.map((metric) => (
                     <TrendMetricRow
                       key={`${activeWindow.key}-${metric.key}`}
                       metric={metric}
                       windowLabel={activeWindow.label}
+                      isWeeklyPlayback={isWeeklyPlaybackTrend}
                     />
                   ))}
                 </div>

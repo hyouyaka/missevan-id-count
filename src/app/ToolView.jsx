@@ -242,6 +242,7 @@ function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) 
 
 const MAX_COMPARE_ITEMS = 6;
 const COMPARE_WINDOWS = ["3d", "7d", "30d"];
+const COMPARE_WEEKLY_WINDOWS = ["3w", "7w", "30w"];
 const COMPARE_CHART_MODES = [
   { key: "absolute", label: "绝对值" },
   { key: "increment", label: "增量" },
@@ -270,6 +271,12 @@ function formatTrendDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized)
     ? `${normalized.slice(5, 7)}/${normalized.slice(8, 10)}`
     : normalized || "未知";
+}
+
+function formatCompareWindowLabel(windowKey) {
+  const normalized = String(windowKey ?? "").trim();
+  const unit = normalized.endsWith("w") ? "周" : "日";
+  return `${normalized.slice(0, -1)}${unit}`;
 }
 
 function formatSignedPlainNumber(value) {
@@ -381,7 +388,10 @@ function CompareTrendChart({ items, windowKey, metricOption, chartMode, chartUti
   const chartMetrics = filterNonZeroTrendMetrics(buildCompareChartMetrics(items, windowKey, metricOption));
   const chartData = buildTrendChartLines(chartMetrics, { chartMode });
   const axis = chartData?.axis || chartData?.axes?.left;
-  const axisLabelMarkers = getTrendAxisLabelMarkers(chartData?.lines?.[0]?.markers || [], windowKey);
+  const axisLabelMarkers = getTrendAxisLabelMarkers(
+    chartData?.dateMarkers || chartData?.lines?.[0]?.markers || [],
+    windowKey
+  );
 
   if (!metricOption?.key || !chartMetrics.length || !axis?.domain || !Array.isArray(chartData?.lines) || !chartData.lines.length) {
     return (
@@ -510,13 +520,13 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
     async function loadCompareTrends() {
       setIsLoading(true);
       setErrorMessage("");
-      const loaded = [];
       try {
         const chartUtils = await import("@/app/rankTrendChartUtils");
-        for (const item of items) {
+        async function loadTrend(item, kind = "") {
           const { response, data } = await fetchRankTrendData({
             platform: item.platform,
             id: item.id,
+            kind,
             frontendVersion,
           });
           handleVersionResponseRef.current?.({
@@ -525,9 +535,25 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
             frontendVersion,
           });
           if (!response.ok || !data?.success) {
-            continue;
+            return null;
           }
-          loaded.push({ ...item, trendData: data });
+          return { ...item, trendData: data };
+        }
+        let loaded = (await Promise.all(items.map((item) => loadTrend(item)))).filter(Boolean);
+        const hasPeakSeries = items.some((item) => item.compareKind === "peak_series");
+        const hasWeeklyPlayback = !hasPeakSeries && loaded.some(
+          (item) => item.trendData?.kind === "weekly_playback"
+        );
+        const hasMetricTrend = loaded.some((item) => item.trendData?.kind === "metric");
+        if (hasWeeklyPlayback && hasMetricTrend) {
+          const weeklyMetricItems = loaded.filter((item) => item.trendData?.kind === "metric");
+          const weeklyMetricResults = (await Promise.all(
+            weeklyMetricItems.map((item) => loadTrend(item, "weekly_playback"))
+          )).filter(Boolean);
+          const weeklyByKey = new Map(weeklyMetricResults.map((item) => [item.key, item]));
+          loaded = loaded
+            .map((item) => weeklyByKey.get(item.key) || item)
+            .filter((item) => item.trendData?.kind === "weekly_playback");
         }
         if (!cancelled) {
           setTrendChartUtils(chartUtils);
@@ -554,11 +580,17 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
 
   const isPeakSeriesCompare = trendItems.some((item) => item.compareKind === "peak_series") ||
     (!trendItems.length && items.some((item) => item.compareKind === "peak_series"));
+  const isWeeklyPlaybackCompare = !isPeakSeriesCompare && trendItems.length > 0 &&
+    trendItems.every((item) => item.trendData?.kind === "weekly_playback");
+  const availableCompareWindows = isWeeklyPlaybackCompare ? COMPARE_WEEKLY_WINDOWS : COMPARE_WINDOWS;
   const availableMetricOptions = COMPARE_METRICS.filter((option) => {
     if (!trendItems.length) {
       return isPeakSeriesCompare ? option.key === "view_count" : true;
     }
     if (isPeakSeriesCompare) {
+      return option.key === "view_count" && trendItems.every((item) => isCompareMetricAvailableForItem(item, selectedWindow, option.key));
+    }
+    if (isWeeklyPlaybackCompare) {
       return option.key === "view_count" && trendItems.every((item) => isCompareMetricAvailableForItem(item, selectedWindow, option.key));
     }
     return trendItems.every((item) => isCompareMetricAvailableForItem(item, selectedWindow, option.key));
@@ -584,6 +616,16 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
       setSelectedMetric(selectedMetricOption.key);
     }
   }, [selectedMetric, selectedMetricOption?.key]);
+
+  useEffect(() => {
+    setSelectedWindow((current) => {
+      const windowOptions = isWeeklyPlaybackCompare ? COMPARE_WEEKLY_WINDOWS : COMPARE_WINDOWS;
+      if (windowOptions.includes(current)) {
+        return current;
+      }
+      return isWeeklyPlaybackCompare ? "7w" : "7d";
+    });
+  }, [isWeeklyPlaybackCompare]);
 
   function toggleCompareItemLine(itemKey) {
     setSelectedCompareItemKeys((current) => {
@@ -620,32 +662,34 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
         </AlertDialogHeader>
         <div className="grid min-w-0 gap-3 w-full">
           <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
-            <Tabs value={selectedMetric} onValueChange={setSelectedMetric} className="min-w-0 w-full sm:flex-1">
-              <TabsList
-                className="grid h-auto w-full min-w-0 items-center justify-stretch text-xs!"
-                style={{ gridTemplateColumns: `repeat(${Math.max(availableMetricOptions.length, 1)}, minmax(0, 1fr))` }}
-              >
-              {availableMetricOptions.map((option) => {
-                const Icon = option.icon;
-                return (
-                  <TabsTrigger
-                    key={option.key}
-                    className="h-[26px] min-w-0 px-1.5 text-xs! sm:px-2.5"
-                    title={option.label}
-                    value={option.key}
-                  >
-                    <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-                    <span className="min-w-0 truncate">{option.label}</span>
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
-            </Tabs>
+            {availableMetricOptions.length > 1 ? (
+              <Tabs value={selectedMetric} onValueChange={setSelectedMetric} className="min-w-0 w-full sm:flex-1">
+                <TabsList
+                  className="grid h-auto w-full min-w-0 items-center justify-stretch text-xs!"
+                  style={{ gridTemplateColumns: `repeat(${availableMetricOptions.length}, minmax(0, 1fr))` }}
+                >
+                  {availableMetricOptions.map((option) => {
+                    const Icon = option.icon;
+                    return (
+                      <TabsTrigger
+                        key={option.key}
+                        className="h-[26px] min-w-0 px-1.5 text-xs! sm:px-2.5"
+                        title={option.label}
+                        value={option.key}
+                      >
+                        <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+                        <span className="min-w-0 truncate">{option.label}</span>
+                      </TabsTrigger>
+                    );
+                  })}
+                </TabsList>
+              </Tabs>
+            ) : null}
             <Tabs value={selectedWindow} onValueChange={setSelectedWindow} className="w-fit shrink-0">
               <TabsList className="inline-flex h-[34px] w-fit items-center justify-center text-xs!">
-                {COMPARE_WINDOWS.map((key) => (
+                {availableCompareWindows.map((key) => (
                   <TabsTrigger key={key} data-touch="compact" className="h-[26px] min-w-0 px-3 text-xs!" value={key}>
-                    {key.replace("d", "日")}
+                    {formatCompareWindowLabel(key)}
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -737,8 +781,8 @@ function DramaCompareDialog({ open, onOpenChange, items, frontendVersion, handle
                 <tr>
                   <th className="w-[36%] px-2 py-2 text-left font-medium sm:px-3">剧集</th>
                   <th className="px-2 py-2 text-right font-medium sm:px-3">{selectedMetricOption.label}</th>
-                  <th className="px-2 py-2 text-right font-medium sm:px-3">{selectedWindow.replace("d", "日")}变化</th>
-                  <th className="px-2 py-2 text-right font-medium sm:px-3">{selectedWindow.replace("d", "日")}增幅</th>
+                  <th className="px-2 py-2 text-right font-medium sm:px-3">{formatCompareWindowLabel(selectedWindow)}变化</th>
+                  <th className="px-2 py-2 text-right font-medium sm:px-3">{formatCompareWindowLabel(selectedWindow)}增幅</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/70">

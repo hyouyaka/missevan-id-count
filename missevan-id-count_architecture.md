@@ -56,6 +56,7 @@ This document describes the current implementation, not the historical evolution
 - `server/routes/missevanRoutes.js`: extracted Missevan content lookup, play-count, reward, and danmaku routes
 - `server/routes/manboRoutes.js`: extracted Manbo input, search, content lookup, play-count, and danmaku routes
 - `server/stats/taskExecution.js`: injected Missevan/Manbo statistics task execution and revenue aggregation
+- `server/services/weeklyPlaybackService.js`: indexed/MGET weekly playback loading with legacy daily-key SCAN compatibility and a five-minute in-memory cache
 - `src/main.jsx`: frontend entrypoint
 - `src/app/RootApp.jsx`: application configuration and ToolView bootstrap
 - `src/app/ToolView.jsx`: primary interaction shell
@@ -68,6 +69,7 @@ This document describes the current implementation, not the historical evolution
 ### Shared Domain Modules
 - `shared/episodeRules.js`: paid/member/main-episode rules and danmaku overflow heuristics
 - `shared/ranksTrendUtils.js`: rank trend window calculation and metric normalization
+- `shared/weeklyPlaybackUtils.js`: weekly playback normalization, recent non-repeated metric classification, weekly windows, and same-date metric fallback shaping
 - `shared/ongoingUtils.js`: ongoing-title aggregation and window delta shaping
 
 ### Data and Support Files
@@ -111,7 +113,8 @@ The backend currently exposes these route families.
 
 ### Rankings and Discovery APIs
 - `GET /ranks`: return normalized rank categories for both platforms
-- `GET /ranks/trends`: return historical metrics and rank history for one title
+- `GET /ranks/trends`: return historical metrics and rank history for one title; titles with fewer than five valid, non-repeated metric dates in the latest 30 calendar days use `kind=weekly_playback` semantics
+- `GET /ranks/trends/availability`: return trend-eligible IDs and their `metric` or `weekly_playback` kind
 - `GET /ongoing`: return ongoing-title cards with 3d/7d/30d deltas
 - `POST /register-new-drama-ids`: persist newly discovered titles
 
@@ -167,6 +170,7 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | `newDramaIdsStore` | Upstash `new:dramaIDs` | `runtime/new-drama-ids.json` | Captured new IDs |
 | cooldown state | Upstash `missevan:cooldown:v1` | in-memory only when persistence disabled | Direct, Render fallback, and Deno fallback access-denial recovery state |
 | ranks and ongoing snapshots | Upstash `ranks:latest`, `ranks:cv:latest`, `ranks:trend:{platform}`, `ranks:trend:cv:{platform}`, `ranks:trend:peak:missevan`, `ongoing:{platform}`, `ranks:meta` | none | Rank, trend, and ongoing APIs |
+| weekly playback snapshots | Upstash `{platform}:watchcount:weekly:index` plus indexed `{platform}:watchcount:{date}` values | legacy `SCAN` over `{platform}:watchcount:*` | Weekly playback fallback for titles without five valid metric dates |
 
 ### Missevan Cooldown State
 - Railway stores the direct, Render fallback, and Deno fallback cooldown fields in one `missevan:cooldown:v1` JSON value.
@@ -184,6 +188,7 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | Manbo drama, set, and danmaku caches | 30 minutes |
 | ranks cache | 30 minutes |
 | ongoing cache | 1 minute |
+| weekly playback store cache | 5 minutes |
 | JSON request body limit | `1mb` |
 | default port | `3000` |
 
@@ -230,9 +235,31 @@ This subsystem is backed by shared domain utilities and Upstash snapshot keys.
 
 ### Trend System
 - `GET /ranks/trends` reads ordinary, CV, or peak history from the corresponding `ranks:trend:*` aggregate key.
-- The backend tags the trend response with schema version `4`.
-- Shared shaping logic lives in `shared/ranksTrendUtils.js`.
-- The dialog and visualization layer lives in `src/app/rankTrendUi.jsx`.
+- Ordinary metric trends are classified as `metric` only after at least five dates in the latest 30 calendar days contain a finite configured platform metric and are not repeated snapshots. Otherwise the backend loads weekly playback and returns `kind: "weekly_playback"` with playback-only 3/7/30-week windows.
+- The weekly consumer first reads `{platform}:watchcount:weekly:index` and batches selected snapshot keys in one `MGET`; when that index is unavailable it scans legacy daily watchcount keys and still keeps the result in the five-minute store cache.
+- A weekly response prefers watchcount values. When the compare flow explicitly requests `kind=weekly_playback`, same-date metric view counts fill missing weekly points so mixed comparisons share one real-date axis.
+- The backend tags the trend response with schema version `5`.
+- Shared shaping logic lives in `shared/ranksTrendUtils.js` and `shared/weeklyPlaybackUtils.js`; the Upstash read/cache boundary lives in `server/services/weeklyPlaybackService.js`.
+- The single trend entry remains unchanged. The dialog marks weekly data with `每周采样 · 仅播放量`, hides unnecessary metric choices, and the compare dialog switches to 3/7/30-week playback windows when mixed data is present.
+
+#### Weekly playback consumer contract
+
+The consumer accepts the production index planned for the separate data-generation rollout:
+
+```json
+{
+  "version": 1,
+  "platform": "missevan",
+  "granularity": "weekly",
+  "dates": ["2026-05-10", "2026-05-17"],
+  "keys": {
+    "2026-05-10": "missevan:watchcount:2026-05-10",
+    "2026-05-17": "missevan:watchcount:2026-05-17"
+  }
+}
+```
+
+Snapshot values may expose `view_count`, `watch_count`, or `play_count` records keyed by drama ID. The production publisher for this index belongs to Plan B; Plan A keeps the SCAN fallback so deployment order does not make weekly trends unavailable.
 
 ### Ongoing System
 - `GET /ongoing` reads `ongoing:{platform}` IDs plus `ranks:trend:{platform}` and computes 3-day, 7-day, and 30-day windows.
@@ -249,7 +276,7 @@ This subsystem is backed by shared domain utilities and Upstash snapshot keys.
 - feature links: `MISSEVAN_DESKTOP_APP_URL`, `FEATURE_SUGGESTION_URL`
 - persistence: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
 - cooldown: `MISSEVAN_PERSISTENT_COOLDOWN`, `MISSEVAN_COOLDOWN_KEY`, `MISSEVAN_COOLDOWN_HOURS`
-- cache and sync tuning: `INFO_STORE_SYNC_INTERVAL_MS`, `RANKS_CACHE_TTL_MS`
+- cache and sync tuning: `INFO_STORE_SYNC_INTERVAL_MS`, `RANKS_CACHE_TTL_MS`, `WEEKLY_PLAYBACK_CACHE_TTL_MS`
 - Manbo runtime tuning: `MANBO_FETCH_TIMEOUT_MS`, `MANBO_DANMAKU_PAGE_CONCURRENCY`, `MANBO_STATS_EPISODE_CONCURRENCY`
 
 ### Environment Resolution Order

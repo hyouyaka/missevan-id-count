@@ -26,6 +26,7 @@ const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url),
 const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils.js", import.meta.url), "utf8");
+const weeklyPlaybackUtilsSource = readFileSync(new URL("../../shared/weeklyPlaybackUtils.js", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
@@ -38,12 +39,14 @@ const serverSource = [
   readFileSync(new URL("../../server/routes/missevanRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/routes/manboRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/stats/taskExecution.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../../server/services/weeklyPlaybackService.js", import.meta.url), "utf8"),
 ].join("\n");
 const httpSecuritySource = readFileSync(new URL("../../server/httpSecurity.js", import.meta.url), "utf8");
 const statsRoutesSource = readFileSync(new URL("../../server/routes/statsRoutes.js", import.meta.url), "utf8");
 const missevanRoutesSource = readFileSync(new URL("../../server/routes/missevanRoutes.js", import.meta.url), "utf8");
 const manboRoutesSource = readFileSync(new URL("../../server/routes/manboRoutes.js", import.meta.url), "utf8");
 const statsTaskExecutionSource = readFileSync(new URL("../../server/stats/taskExecution.js", import.meta.url), "utf8");
+const weeklyPlaybackServiceSource = readFileSync(new URL("../../server/services/weeklyPlaybackService.js", import.meta.url), "utf8");
 const taskEngineSource = readFileSync(new URL("../../server/stats/taskEngine.js", import.meta.url), "utf8");
 const taskStateSource = readFileSync(new URL("../../server/stats/taskState.js", import.meta.url), "utf8");
 const envConfigSource = readFileSync(new URL("../../envConfig.js", import.meta.url), "utf8");
@@ -1118,7 +1121,7 @@ test("mobile bottom layers share safe-area offsets", () => {
   assert.match(indexCssSource, /\.mobile-fixed-bottom/);
   assert.match(
     indexCssSource,
-    /@media \(max-width: 639\.98px\) \{[\s\S]*\.mobile-compare-basket \{[\s\S]*bottom: var\(--mobile-compare-basket-bottom\);[\s\S]*\}/
+    /@media \(max-width: 1023\.98px\) \{[\s\S]*\.mobile-compare-basket \{[\s\S]*bottom: var\(--mobile-compare-basket-bottom\);[\s\S]*\}/
   );
   assert.match(toolViewSource, /className="app-shell/);
   assert.match(searchResultsSource, /fixed inset-x-3 mobile-fixed-bottom z-40 lg:hidden/);
@@ -2729,7 +2732,7 @@ test("CV rank trend dialog uses weekly windows and cross-platform radio metrics"
   assert.match(rankTrendUiSource, /3周/);
   assert.match(rankTrendUiSource, /7周/);
   assert.match(rankTrendUiSource, /30周/);
-  assert.match(rankTrendUiSource, /const defaultWindowKey = isCvTrend \? "7w" : "7d"/);
+  assert.match(rankTrendUiSource, /const defaultWindowKey = isCvTrend \|\| isWeeklyPlaybackTrend \? "7w" : "7d"/);
   assert.match(rankTrendUiSource, /availableWindows\.includes\(defaultWindowKey\)/);
   assert.match(ranksTrendUtilsSource, /label: "猫耳总播放量"/);
   assert.match(ranksTrendUtilsSource, /label: "猫耳付费播放量"/);
@@ -3158,7 +3161,10 @@ test("trend and compare dialogs default to 7-day absolute playback", () => {
   assert.match(trendDialogSource, /const \[selectedWindow, setSelectedWindow\] = useState\("7d"\)/);
   assert.match(trendDialogSource, /const \[selectedChartMode, setSelectedChartMode\] = useState\("absolute"\)/);
   assert.match(trendDialogSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\("view_count"\)/);
-  assert.match(trendDialogSource, /const defaultWindowKey = isCvTrend \? "7w" : "7d"/);
+  assert.match(trendDialogSource, /const isWeeklyPlaybackTrend = data\?\.kind === "weekly_playback"/);
+  assert.match(trendDialogSource, /const defaultWindowKey = isCvTrend \|\| isWeeklyPlaybackTrend \? "7w" : "7d"/);
+  assert.match(trendDialogSource, /每周采样 · 仅播放量/);
+  assert.match(rankTrendUiSource, /availableLegendMetrics\.length > 1/);
   assert.match(trendDialogSource, /setSelectedWindow\(defaultWindowKey\)/);
   assert.match(trendDialogSource, /setSelectedChartMode\("absolute"\)/);
   assert.match(trendDialogSource, /setSelectedMetricKey\("view_count"\)/);
@@ -3174,12 +3180,16 @@ test("trend and compare dialogs default to 7-day absolute playback", () => {
   assert.match(compareDialogSource, /setSelectedMetric\("view_count"\)/);
   assert.match(compareDialogSource, /setSelectedWindow\("7d"\)/);
   assert.match(compareDialogSource, /setSelectedChartMode\("absolute"\)/);
+  assert.match(toolViewSource, /const COMPARE_WEEKLY_WINDOWS = \["3w", "7w", "30w"\]/);
+  assert.match(compareDialogSource, /loadTrend\(item, "weekly_playback"\)/);
+  assert.match(compareDialogSource, /const isWeeklyPlaybackCompare/);
+  assert.match(compareDialogSource, /availableMetricOptions\.length > 1/);
 });
 
 test("trend and compare charts position date labels from visible chart markers", () => {
   assert.match(rankTrendUiSource, /getTrendAxisLabelMarkers/);
   assert.doesNotMatch(rankTrendUiSource, /function getTrendAxisLabelPoints/);
-  assert.match(rankTrendUiSource, /const axisLabelMarkers = getTrendAxisLabelMarkers\(chartLines\[0\]\?\.markers \|\| \[\], windowKey\)/);
+  assert.match(rankTrendUiSource, /chartData\.dateMarkers \|\| chartLines\[0\]\?\.markers \|\| \[\]/);
   assert.match(rankTrendUiSource, /axisLabelMarkers\.map\(\(\{ point, position \}\) =>/);
   assert.match(rankTrendUiSource, /left: `\$\{\(position\.x \/ 320\) \* 100\}%`/);
   assert.doesNotMatch(rankTrendUiSource, /axisLabelPoints\.map/);
@@ -3190,7 +3200,7 @@ test("trend and compare charts position date labels from visible chart markers",
   assert.notEqual(chartStart, -1, "CompareTrendChart should exist");
   assert.notEqual(chartEnd, -1, "CompareTrendChart should end before dialog");
   const chartSource = toolViewSource.slice(chartStart, chartEnd);
-  assert.match(chartSource, /getTrendAxisLabelMarkers\(chartData\?\.lines\?\.\[0\]\?\.markers \|\| \[\], windowKey\)/);
+  assert.match(chartSource, /chartData\?\.dateMarkers \|\| chartData\?\.lines\?\.\[0\]\?\.markers \|\| \[\]/);
   assert.match(chartSource, /axisLabelMarkers\.map\(\(\{ point, position \}\) =>/);
   assert.doesNotMatch(chartSource, /const axisPoints = chartMetrics\.find/);
   assert.doesNotMatch(toolViewSource, /function getCompareDateLabelPoints/);
@@ -3303,7 +3313,7 @@ test("rank trend details can display increment values without showing pre-window
   assert.notEqual(detailsEnd, -1, "TrendSnapshotDetails should end before delta badge");
   const detailsSource = rankTrendUiSource.slice(detailsStart, detailsEnd);
 
-  assert.match(detailsSource, /function TrendSnapshotDetails\(\{ metrics, platform, chartMode = "absolute" \}\)/);
+  assert.match(detailsSource, /function TrendSnapshotDetails\(\{ metrics, platform, chartMode = "absolute", isWeeklyPlayback = false \}\)/);
   assert.match(detailsSource, /buildSnapshotRows\(columns, chartMode\)/);
   assert.match(rankTrendUiSource, /point\?\.isPreWindow/);
   assert.match(detailsSource, /formatTrendSnapshotDeltaValue/);
@@ -3432,6 +3442,37 @@ test("transient rank aggregate failures are not retained in daily caches", () =>
     cvSource,
     /response\.status === 503[\s\S]*rankTrendsCache\.delete\(cacheKey\)/
   );
+});
+
+test("rank trend backend supports five-sample classification and weekly playback fallback", () => {
+  assert.match(weeklyPlaybackUtilsSource, /export function countValidMetricSamples/);
+  assert.match(weeklyPlaybackUtilsSource, /export function buildWeeklyPlaybackTrendResponse/);
+  assert.match(weeklyPlaybackUtilsSource, /kind: "weekly_playback"/);
+  assert.match(weeklyPlaybackUtilsSource, /deltaValue/);
+  assert.match(weeklyPlaybackServiceSource, /WEEKLY_PLAYBACK_INDEX_KEY_SUFFIX/);
+  assert.match(weeklyPlaybackServiceSource, /\["MGET", \.\.\.keys\]/);
+  assert.match(weeklyPlaybackServiceSource, /SCAN/);
+  assert.match(serverSource, /createWeeklyPlaybackStore/);
+  assert.match(serverSource, /getCachedWeeklyPlaybackSnapshot/);
+  assert.match(serverSource, /metricSampleCount < 5/);
+  assert.match(statsRoutesSource, /getCachedWeeklyPlaybackSnapshot\(platform\)/);
+  assert.match(rankTrendUiSource, /data\?\.kind === "weekly_playback"/);
+  assert.match(rankTrendUiSource, /getSnapshotColumns\(metrics, platform, isWeeklyPlayback\)/);
+  assert.match(rankTrendUiSource, /isWeeklyPlayback=\{isWeeklyPlaybackTrend\}/);
+  assert.match(
+    rankTrendUiSource,
+    /if \(isWeeklyPlayback\) \{[\s\S]*key: "date", label: "日期"[\s\S]*key: "view_count", label: "播放量"[\s\S]*const finalMetricKey/
+  );
+  assert.match(toolViewSource, /loadTrend\(item, "weekly_playback"\)/);
+  assert.match(toolViewSource, /formatCompareWindowLabel/);
+
+  const weeklyResponseStart = serverSource.indexOf("async function getCachedWeeklyRankTrendResponse");
+  const weeklyResponseEnd = serverSource.indexOf("function getOngoingCacheKey", weeklyResponseStart);
+  assert.notEqual(weeklyResponseStart, -1, "weekly response cache function should exist");
+  assert.notEqual(weeklyResponseEnd, -1, "weekly response cache function should end before ongoing cache");
+  const weeklyResponseSource = serverSource.slice(weeklyResponseStart, weeklyResponseEnd);
+  assert.match(weeklyResponseSource, /await Promise\.resolve\(\)/);
+  assert.match(weeklyResponseSource, /pruneRankTrendCacheEntries/);
 });
 
 test("rank trend availability route reads historical aggregate samples", () => {

@@ -162,6 +162,7 @@ MISSEVAN_FORCE_FALLBACK=0
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `CACHE_MAX_ENTRIES` | 普通详情、摘要、搜索和趋势缓存最大条目数 | Railway `500`，本地 `1000` |
+| `WEEKLY_PLAYBACK_CACHE_TTL_MS` | 周度播放量索引与快照缓存时间 | `300000`（5 分钟） |
 | `MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES` | 猫耳弹幕用户缓存最大条目数 | Railway `20`，本地 `200` |
 | `STATS_TASK_MAX_ITEMS` | 单个统计任务允许的最大作品或分集数 | `1000` |
 | `MISSEVAN_STATS_MAX_CONCURRENCY` | 同时运行的猫耳统计任务数 | `2` |

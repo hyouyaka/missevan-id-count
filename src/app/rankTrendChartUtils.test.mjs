@@ -246,3 +246,40 @@ test("hidden compare series keep the remaining series color identity", () => {
 
   assert.equal(chart.lines[0].metric.color, "#E86A4A");
 });
+
+test("compare lines share real-date x positions across different weekly ranges", () => {
+  const chart = buildTrendChartLines([
+    {
+      key: "drama-a:view_count",
+      label: "剧集 A",
+      history: [
+        { date: "2026-06-01", value: 100 },
+        { date: "2026-06-08", value: 120 },
+        { date: "2026-06-15", value: 140 },
+      ],
+    },
+    {
+      key: "drama-b:view_count",
+      label: "剧集 B",
+      history: [
+        { date: "2026-06-08", value: 200 },
+        { date: "2026-06-15", value: 240 },
+        { date: "2026-06-22", value: 280 },
+      ],
+    },
+  ]);
+
+  const [left, right] = chart.lines;
+  const positionByDate = (line) => new Map(
+    line.markers.map(({ point, position }) => [point.date, position.x])
+  );
+  const leftPositions = positionByDate(left);
+  const rightPositions = positionByDate(right);
+
+  assert.equal(leftPositions.get("2026-06-08"), rightPositions.get("2026-06-08"));
+  assert.equal(leftPositions.get("2026-06-15"), rightPositions.get("2026-06-15"));
+  assert.deepEqual(
+    chart.dateMarkers.map(({ point }) => point.date),
+    ["2026-06-01", "2026-06-08", "2026-06-15", "2026-06-22"]
+  );
+});

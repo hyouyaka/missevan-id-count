@@ -1,3 +1,9 @@
+import {
+  countValidMetricSamples,
+  hasWeeklyPlaybackRecord,
+  normalizeWeeklyPlaybackDate,
+} from "./weeklyPlaybackUtils.js";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const TREND_WINDOWS = Object.freeze([
@@ -704,18 +710,11 @@ function buildAggregateMetricSnapshotsByDate(aggregateSnapshot, platform, id) {
   return snapshotsByDate;
 }
 
-function hasMetricSample(sample) {
-  return Boolean(
-    sample?.metrics &&
-      typeof sample.metrics === "object" &&
-      Object.keys(sample.metrics).length > 0
-  );
-}
-
 export function buildRankTrendAvailabilityResponse({
   platform,
   ids,
   aggregateSnapshot,
+  weeklyPlaybackSnapshot,
 } = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const idList = normalizeStringIdList(ids);
@@ -727,22 +726,40 @@ export function buildRankTrendAvailabilityResponse({
     };
   }
 
-  if (isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform)) {
-    const dates = normalizeRankTrendDates(aggregateSnapshot);
-    const dramas = aggregateSnapshot?.dramas && typeof aggregateSnapshot.dramas === "object"
-      ? aggregateSnapshot.dramas
-      : {};
+  const hasAggregate = isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform);
+  const hasWeekly = weeklyPlaybackSnapshot?.platform === normalizedPlatform &&
+    Array.isArray(weeklyPlaybackSnapshot?.dates);
+  if (hasAggregate || hasWeekly) {
+    const metricDates = hasAggregate ? normalizeRankTrendDates(aggregateSnapshot) : [];
+    const weeklyDates = hasWeekly
+      ? weeklyPlaybackSnapshot.dates.map(normalizeWeeklyPlaybackDate).filter(Boolean).sort()
+      : [];
+    const latestDates = [...metricDates, ...weeklyDates].sort();
+    const kinds = {};
+    const availableIds = [];
+    idList.forEach((id) => {
+      if (hasAggregate && countValidMetricSamples({
+        platform: normalizedPlatform,
+        aggregateSnapshot,
+        id,
+      }) >= 5) {
+        kinds[id] = "metric";
+        availableIds.push(id);
+        return;
+      }
+      if (hasWeekly && hasWeeklyPlaybackRecord(weeklyPlaybackSnapshot, id)) {
+        kinds[id] = "weekly_playback";
+        availableIds.push(id);
+      }
+    });
     return {
       success: true,
       platform: normalizedPlatform,
-      ids: idList.filter((id) => {
-        const samples = dramas[id]?.samples && typeof dramas[id].samples === "object"
-          ? dramas[id].samples
-          : {};
-        return dates.some((date) => hasMetricSample(samples[date]));
-      }),
-      latestDate: dates.at(-1) || "",
-      updatedAt: normalizeGeneratedAt(aggregateSnapshot),
+      ids: availableIds,
+      kinds,
+      latestDate: latestDates.at(-1) || "",
+      updatedAt: normalizeGeneratedAt(aggregateSnapshot) ||
+        String(weeklyPlaybackSnapshot?.generatedAt ?? "").trim(),
     };
   }
 
@@ -751,6 +768,7 @@ export function buildRankTrendAvailabilityResponse({
     status: 503,
     platform: normalizedPlatform,
     ids: [],
+    kinds: {},
     message: "Rank trend availability is unavailable",
   };
 }
@@ -990,6 +1008,7 @@ export function buildRankTrendResponse({
   const latestDrama = getDramaMetrics(metricSnapshotsByDate[latestDate], normalizedId);
   return {
     success: true,
+    kind: "metric",
     platform: normalizedPlatform,
     id: normalizedId,
     name: String(latestDrama?.name ?? "").trim(),

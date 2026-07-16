@@ -854,17 +854,45 @@ test("buildRankTrendAvailabilityResponse returns ids with historical metric samp
       version: 1,
       platform: "missevan",
       updated_at: "2026-05-17T01:00:00.000Z",
-      dates: ["2026-05-15", "2026-05-16", "2026-05-17"],
+      dates: ["2026-05-13", "2026-05-14", "2026-05-15", "2026-05-16", "2026-05-17"],
       dramas: {
         "93038": {
           id: "93038",
           name: "一屋暗灯 全一季",
           samples: {
+            "2026-05-13": {
+              metrics: {
+                view_count: 98,
+                danmaku_uid_count: 9,
+                subscription_num: 48,
+              },
+            },
+            "2026-05-14": {
+              metrics: {
+                view_count: 99,
+                danmaku_uid_count: 9,
+                subscription_num: 49,
+              },
+            },
             "2026-05-15": {
               metrics: {
                 view_count: 100,
                 danmaku_uid_count: 10,
                 subscription_num: 50,
+              },
+            },
+            "2026-05-16": {
+              metrics: {
+                view_count: 101,
+                danmaku_uid_count: 10,
+                subscription_num: 51,
+              },
+            },
+            "2026-05-17": {
+              metrics: {
+                view_count: 102,
+                danmaku_uid_count: 10,
+                subscription_num: 52,
               },
             },
           },
@@ -885,6 +913,7 @@ test("buildRankTrendAvailabilityResponse returns ids with historical metric samp
   assert.equal(response.success, true);
   assert.equal(response.platform, "missevan");
   assert.deepEqual(response.ids, ["93038"]);
+  assert.deepEqual(response.kinds, { "93038": "metric" });
   assert.equal(response.latestDate, "2026-05-17");
   assert.equal(response.updatedAt, "2026-05-17T01:00:00.000Z");
 });
@@ -896,11 +925,39 @@ test("buildRankTrendAvailabilityResponse preserves Manbo big integer ids", () =>
     aggregateSnapshot: {
       version: 1,
       platform: "manbo",
-      dates: ["2026-05-17"],
+      dates: ["2026-05-13", "2026-05-14", "2026-05-15", "2026-05-16", "2026-05-17"],
       dramas: {
         "1467142227078676553": {
           id: "1467142227078676553",
           samples: {
+            "2026-05-13": {
+              metrics: {
+                view_count: 996,
+                danmaku_uid_count: 29,
+                pay_count: 19,
+              },
+            },
+            "2026-05-14": {
+              metrics: {
+                view_count: 997,
+                danmaku_uid_count: 29,
+                pay_count: 19,
+              },
+            },
+            "2026-05-15": {
+              metrics: {
+                view_count: 998,
+                danmaku_uid_count: 30,
+                pay_count: 20,
+              },
+            },
+            "2026-05-16": {
+              metrics: {
+                view_count: 999,
+                danmaku_uid_count: 30,
+                pay_count: 20,
+              },
+            },
             "2026-05-17": {
               metrics: {
                 view_count: 1000,
@@ -915,6 +972,84 @@ test("buildRankTrendAvailabilityResponse preserves Manbo big integer ids", () =>
   });
 
   assert.deepEqual(response.ids, ["1467142227078676553"]);
+  assert.deepEqual(response.kinds, { "1467142227078676553": "metric" });
+});
+
+test("buildRankTrendAvailabilityResponse falls back to weekly playback after fewer than five metric samples", () => {
+  const response = buildRankTrendAvailabilityResponse({
+    platform: "missevan",
+    ids: ["93038", "metric-only"],
+    aggregateSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-15", "2026-05-16", "2026-05-17"],
+      dramas: {
+        "93038": {
+          samples: {
+            "2026-05-15": { metrics: { view_count: 100 } },
+            "2026-05-16": { metrics: { view_count: 101 } },
+            "2026-05-17": { metrics: { view_count: 102 } },
+          },
+        },
+        "metric-only": {
+          samples: {
+            "2026-05-15": { metrics: { view_count: 100 } },
+          },
+        },
+      },
+    },
+    weeklyPlaybackSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-03", "2026-05-10", "2026-05-17"],
+      snapshotsByDate: {
+        "2026-05-03": { platform: "missevan", dramas: { "93038": { view_count: 90 } } },
+        "2026-05-10": { platform: "missevan", dramas: { "93038": { view_count: 95 } } },
+        "2026-05-17": { platform: "missevan", dramas: { "93038": { view_count: 102 } } },
+      },
+    },
+  });
+
+  assert.deepEqual(response.ids, ["93038"]);
+  assert.deepEqual(response.kinds, { "93038": "weekly_playback" });
+  assert.equal(response.latestDate, "2026-05-17");
+});
+
+test("buildRankTrendAvailabilityResponse uses weekly playback when five metric samples are older than thirty days", () => {
+  const metricDates = [
+    "2026-04-01",
+    "2026-04-02",
+    "2026-04-03",
+    "2026-04-04",
+    "2026-04-05",
+    "2026-05-16",
+    "2026-05-17",
+  ];
+  const response = buildRankTrendAvailabilityResponse({
+    platform: "missevan",
+    ids: ["73221"],
+    aggregateSnapshot: {
+      platform: "missevan",
+      dates: metricDates,
+      dramas: {
+        "73221": {
+          samples: Object.fromEntries(metricDates.map((date, index) => [date, {
+            metrics: { view_count: index + 1 },
+          }])),
+        },
+      },
+    },
+    weeklyPlaybackSnapshot: {
+      platform: "missevan",
+      dates: ["2026-05-03", "2026-05-10", "2026-05-17"],
+      snapshotsByDate: {
+        "2026-05-03": { platform: "missevan", dramas: { "73221": { view_count: 90 } } },
+        "2026-05-10": { platform: "missevan", dramas: { "73221": { view_count: 95 } } },
+        "2026-05-17": { platform: "missevan", dramas: { "73221": { view_count: 102 } } },
+      },
+    },
+  });
+
+  assert.deepEqual(response.ids, ["73221"]);
+  assert.deepEqual(response.kinds, { "73221": "weekly_playback" });
 });
 
 test("ordinary trend and availability reject missing or mismatched aggregates", () => {

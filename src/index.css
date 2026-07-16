@@ -700,7 +700,7 @@ body {
   }
 }
 
-@media (max-width: 639.98px) {
+@media (max-width: 1023.98px) {
   .mobile-compare-basket {
     bottom: var(--mobile-compare-basket-bottom);
   }

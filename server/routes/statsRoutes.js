@@ -8,6 +8,7 @@ export function registerStatsRoutes(router, {
   getCachedCvRankTrendResponse,
   getCachedOngoingResponse,
   getCachedRankTrendAggregateSnapshot,
+  getCachedWeeklyPlaybackSnapshot,
   getCachedRankTrendResponse,
   getCachedRanksResponse,
   getRanksResponseCacheValidator,
@@ -41,21 +42,40 @@ export function registerStatsRoutes(router, {
     }
 
     try {
-      const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform);
-      if (!isRankTrendAggregateSnapshot(aggregateSnapshot, platform)) {
-        return res.status(503).json({
-          success: false,
-          platform,
-          latestDate: "",
-          availability: {},
-          message: "Rank trend aggregate is unavailable",
-        });
+      let aggregateSnapshot = null;
+      try {
+        aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform);
+      } catch (_) {
+        aggregateSnapshot = null;
       }
-      const response = buildRankTrendAvailabilityResponse({
+      let response = buildRankTrendAvailabilityResponse({
         platform,
         ids,
         aggregateSnapshot,
       });
+      if (!response.success || response.ids.length < ids.length) {
+        let weeklyPlaybackSnapshot = null;
+        try {
+          weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(platform);
+        } catch (_) {
+          weeklyPlaybackSnapshot = null;
+        }
+        if (!isRankTrendAggregateSnapshot(aggregateSnapshot, platform) && !weeklyPlaybackSnapshot) {
+          return res.status(503).json({
+            success: false,
+            platform,
+            latestDate: "",
+            availability: {},
+            message: "Rank trend aggregate is unavailable",
+          });
+        }
+        response = buildRankTrendAvailabilityResponse({
+          platform,
+          ids,
+          aggregateSnapshot,
+          weeklyPlaybackSnapshot,
+        });
+      }
       if (response && typeof response === "object") {
         response.schemaVersion = rankTrendsResponseSchemaVersion;
       }
@@ -122,7 +142,7 @@ export function registerStatsRoutes(router, {
     }
 
     try {
-      const response = await getCachedRankTrendResponse(platform, dramaId);
+      const response = await getCachedRankTrendResponse(platform, dramaId, kind);
       if (!response.success) {
         return res.status(response.status || 404).json(response);
       }
