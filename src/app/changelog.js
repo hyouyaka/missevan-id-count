@@ -4,6 +4,13 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.5",
+    changes: [
+      "剧集ID添加平台链接，可直接跳转收听。方便因某些原因无法正常使用平台内搜索的小伙伴。",
+      "漫播巅峰榜添加趋势入口。",
+    ],
+  },
+  {
     version: "1.7.3",
     changes: [
       "修复多部作品汇总收益显示异常的问题。",

@@ -96,8 +96,9 @@ test("task store rejects saveTask-only adapters that cannot remove tasks", () =>
   );
 });
 
-test("Upstash task adapter saves one task with a fixed three-command sequence", async () => {
+test("Upstash task adapter refreshes Hash TTL only when it is due", async () => {
   const commands = [];
+  let now = 0;
   const client = {
     async command(args, options) {
       commands.push({ args, options });
@@ -109,28 +110,267 @@ test("Upstash task adapter saves one task with a fixed three-command sequence", 
     instanceId: "replica-1",
     ttlSeconds: 900,
     commandTimeoutMs: 10_000,
+    ttlRefreshIntervalMs: 5000,
+    now: () => now,
   });
 
-  if (typeof adapter.saveTask === "function") {
-    await adapter.saveTask({ taskId: "task-a", status: "running", progress: 50 });
-  }
+  await adapter.saveTask({ taskId: "task-a", status: "running", progress: 10 });
+  now = 4999;
+  await adapter.saveTask({ taskId: "task-a", status: "running", progress: 20 });
+  now = 5000;
+  await adapter.saveTask({ taskId: "task-a", status: "running", progress: 30 });
 
   assert.deepEqual(
     commands.map(({ args }) => args),
     [
-      ["SET", "stats:tasks:v1:replica-1:task-a", JSON.stringify({ taskId: "task-a", status: "running", progress: 50 }), "EX", 900],
-      ["SADD", "stats:tasks:v1:replica-1", "task-a"],
-      ["EXPIRE", "stats:tasks:v1:replica-1", 900],
+      [
+        "HSET",
+        "stats:tasks:v2:replica-1",
+        "task-a",
+        JSON.stringify({ taskId: "task-a", status: "running", progress: 10 }),
+      ],
+      ["EXPIRE", "stats:tasks:v2:replica-1", 900],
+      [
+        "HSET",
+        "stats:tasks:v2:replica-1",
+        "task-a",
+        JSON.stringify({ taskId: "task-a", status: "running", progress: 20 }),
+      ],
+      [
+        "HSET",
+        "stats:tasks:v2:replica-1",
+        "task-a",
+        JSON.stringify({ taskId: "task-a", status: "running", progress: 30 }),
+      ],
+      ["EXPIRE", "stats:tasks:v2:replica-1", 900],
     ]
+  );
+  assert.ok(commands.every(({ options }) => options.timeoutMs === 10_000));
+});
+
+test("Upstash task adapter removes with HDEL and refreshes TTL on the next save", async () => {
+  const commands = [];
+  const client = {
+    async command(args) {
+      commands.push(args);
+      return 1;
+    },
+  };
+  const adapter = createUpstashTaskStoreAdapter({
+    client,
+    instanceId: "replica-delete",
+    ttlSeconds: 900,
+    now: () => 100,
+  });
+
+  await adapter.saveTask({ taskId: "task-a", status: "queued" });
+  await adapter.remove("task-a");
+  await adapter.saveTask({ taskId: "task-b", status: "queued" });
+
+  assert.deepEqual(
+    commands.map((args) => args[0]),
+    ["HSET", "EXPIRE", "HDEL", "HSET", "EXPIRE"]
+  );
+  assert.deepEqual(commands[2], [
+    "HDEL",
+    "stats:tasks:v2:replica-delete",
+    "task-a",
+  ]);
+});
+
+test("Upstash task adapter loads with HGETALL and cleans malformed Hash fields", async () => {
+  const validTask = {
+    taskId: "valid",
+    status: "running",
+    updatedAt: 900,
+  };
+  const commands = [];
+  const client = {
+    async command(args) {
+      commands.push(args);
+      if (args[0] === "HGETALL") {
+        return [
+          "valid",
+          JSON.stringify(validTask),
+          "malformed",
+          "{",
+        ];
+      }
+      if (args[0] === "SMEMBERS") {
+        return [];
+      }
+      return 1;
+    },
+  };
+  const store = createStatsTaskStore({
+    adapter: createUpstashTaskStoreAdapter({
+      client,
+      instanceId: "replica-load",
+      ttlSeconds: 900,
+      now: () => 1000,
+    }),
+  });
+
+  assert.deepEqual(
+    await store.loadTasks({ now: 1000, retentionMs: 1000 }),
+    [validTask]
   );
   assert.deepEqual(
-    commands.map(({ options }) => options),
-    [
-      { timeoutMs: 10_000 },
-      { timeoutMs: 10_000 },
-      { timeoutMs: 10_000 },
-    ]
+    commands.map((args) => args[0]),
+    ["HGETALL", "SMEMBERS", "EXPIRE", "HDEL"]
   );
+  assert.deepEqual(commands.at(-1), [
+    "HDEL",
+    "stats:tasks:v2:replica-load",
+    "malformed",
+  ]);
+});
+
+test("Upstash task adapter migrates v1 only after Hash write and TTL succeed", async () => {
+  const v2Tie = {
+    taskId: "tie",
+    status: "running",
+    progress: 60,
+    updatedAt: 100,
+  };
+  const v2Older = {
+    taskId: "newer",
+    status: "running",
+    progress: 20,
+    updatedAt: 100,
+  };
+  const legacyTie = {
+    ...v2Tie,
+    status: "queued",
+    progress: 10,
+  };
+  const legacyNewer = {
+    ...v2Older,
+    status: "completed",
+    progress: 100,
+    updatedAt: 101,
+  };
+  const legacyOnly = {
+    taskId: "legacy-only",
+    status: "queued",
+    progress: 0,
+    updatedAt: 90,
+  };
+  const repairedFromLegacy = {
+    taskId: "repaired",
+    status: "running",
+    progress: 40,
+    updatedAt: 95,
+  };
+  const commands = [];
+  const client = {
+    async command(args) {
+      commands.push(args);
+      if (args[0] === "HGETALL") {
+        return {
+          tie: JSON.stringify(v2Tie),
+          newer: JSON.stringify(v2Older),
+          repaired: "{",
+        };
+      }
+      if (args[0] === "SMEMBERS") {
+        return ["tie", "newer", "legacy-only", "repaired", "invalid"];
+      }
+      if (args[0] === "MGET") {
+        return [
+          JSON.stringify(legacyTie),
+          JSON.stringify(legacyNewer),
+          JSON.stringify(legacyOnly),
+          JSON.stringify(repairedFromLegacy),
+          "{",
+        ];
+      }
+      return 1;
+    },
+  };
+  const adapter = createUpstashTaskStoreAdapter({
+    client,
+    instanceId: "replica-migrate",
+    ttlSeconds: 900,
+    now: () => 1000,
+  });
+
+  const loaded = await adapter.load();
+
+  assert.deepEqual(loaded.tasks, [
+    v2Tie,
+    legacyNewer,
+    legacyOnly,
+    repairedFromLegacy,
+  ]);
+  assert.deepEqual(loaded.staleIds, []);
+  assert.deepEqual(
+    commands.map((args) => args[0]),
+    ["HGETALL", "SMEMBERS", "MGET", "HSET", "EXPIRE", "DEL"]
+  );
+  assert.deepEqual(commands.at(-1), [
+    "DEL",
+    "stats:tasks:v1:replica-migrate",
+    "stats:tasks:v1:replica-migrate:tie",
+    "stats:tasks:v1:replica-migrate:newer",
+    "stats:tasks:v1:replica-migrate:legacy-only",
+    "stats:tasks:v1:replica-migrate:repaired",
+    "stats:tasks:v1:replica-migrate:invalid",
+  ]);
+  const migratedPairs = Object.fromEntries(
+    Array.from(
+      { length: (commands[3].length - 2) / 2 },
+      (_, index) => [
+        commands[3][index * 2 + 2],
+        JSON.parse(commands[3][index * 2 + 3]),
+      ]
+    )
+  );
+  assert.deepEqual(migratedPairs, {
+    tie: v2Tie,
+    newer: legacyNewer,
+    "legacy-only": legacyOnly,
+    repaired: repairedFromLegacy,
+  });
+});
+
+test("Upstash task adapter keeps all v1 keys when migration TTL fails", async () => {
+  const commands = [];
+  const legacyTask = {
+    taskId: "legacy",
+    status: "running",
+    updatedAt: 100,
+  };
+  const client = {
+    async command(args) {
+      commands.push(args);
+      if (args[0] === "HGETALL") {
+        return [];
+      }
+      if (args[0] === "SMEMBERS") {
+        return ["legacy"];
+      }
+      if (args[0] === "MGET") {
+        return [JSON.stringify(legacyTask)];
+      }
+      if (args[0] === "EXPIRE") {
+        throw new Error("expire failed");
+      }
+      return 1;
+    },
+  };
+  const adapter = createUpstashTaskStoreAdapter({
+    client,
+    instanceId: "replica-failed-migrate",
+    ttlSeconds: 900,
+  });
+
+  await assert.rejects(() => adapter.load(), /expire failed/);
+  assert.deepEqual(
+    commands.map((args) => args[0]),
+    ["HGETALL", "SMEMBERS", "MGET", "HSET", "EXPIRE"]
+  );
+  assert.equal(commands.some((args) => args[0] === "DEL"), false);
 });
 
 test("task store removes expired tasks from persisted snapshots", async () => {

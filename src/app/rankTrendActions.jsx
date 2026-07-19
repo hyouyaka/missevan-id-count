@@ -87,7 +87,7 @@ export function canShowRankTrend({ platform, rankKey, item, isMissevanPeak, deta
   if (platform === "missevan") {
     return isMissevanPeak || (rankKey !== "peak" && item?.type !== "peak");
   }
-  return platform === "manbo" && rankKey !== "peak" && item?.type !== "peak";
+  return platform === "manbo" && item?.type !== "peak";
 }
 
 export function RankTrendDeltaBadge({ metric, children, className = "" }) {

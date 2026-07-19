@@ -1,3 +1,11 @@
+import { SquareArrowOutUpRightIcon } from "lucide-react";
+
+import {
+  buildDramaExternalUrl,
+  buildDramaExternalUsagePayload,
+  buildVersionedUrl,
+  getDefaultAppConfig,
+} from "@/app/app-utils";
 import manboIconUrl from "@/assets/platform-icons/manbo.png";
 import missevanIconUrl from "@/assets/platform-icons/missevan.png";
 
@@ -59,5 +67,72 @@ export function PlatformIdIcon({ platform, label, className = "size-3.5 shrink-0
       title={props.title || label || `${meta?.label || "平台"} ID`}
       {...props}
     />
+  );
+}
+
+export function PlatformDramaLink({
+  platform,
+  dramaId,
+  displayId = dramaId,
+  idLabel = "作品ID",
+  source = "unknown",
+  dramaTitle = "",
+  frontendVersion = getDefaultAppConfig().frontendVersion,
+  ariaLabel,
+  title,
+  className = "",
+  iconClassName = "size-3.5 shrink-0",
+  textClassName = "",
+  externalIconClassName = "size-3.5",
+}) {
+  const key = platform?.key || platform;
+  const meta = platformTabMeta[key];
+  const href = buildDramaExternalUrl(key, dramaId);
+  const visibleId = String(displayId ?? "").trim();
+  if (!meta || !href || !visibleId) {
+    return null;
+  }
+
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  const linkLabel =
+    ariaLabel || `在${meta.label}打开${idLabel} ${normalizedDramaId}（新窗口）`;
+
+  function logExternalOpen() {
+    const payload = buildDramaExternalUsagePayload(key, normalizedDramaId, source, dramaTitle);
+    if (!payload) {
+      return;
+    }
+    fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch((error) => {
+      console.error("Failed to log drama external open", error);
+    });
+  }
+
+  return (
+    <a
+      aria-label={linkLabel}
+      className={`-mt-0.5 -mb-2 inline-flex w-fit max-w-full cursor-pointer items-start self-start gap-1.5 rounded-sm pt-0.5 pb-2 text-xs text-muted-foreground underline-offset-4 transition-colors duration-200 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${className}`.trim()}
+      href={href}
+      onClick={logExternalOpen}
+      rel="noopener noreferrer"
+      target="_blank"
+      title={title || linkLabel}
+    >
+      <PlatformIdIcon
+        aria-hidden="true"
+        className={iconClassName}
+        platform={key}
+        tone="inherit"
+      />
+      <span className={`min-w-0 break-all ${textClassName}`.trim()}>{visibleId}</span>
+      <SquareArrowOutUpRightIcon
+        aria-hidden="true"
+        className={`mt-px shrink-0 ${externalIconClassName}`.trim()}
+      />
+    </a>
   );
 }

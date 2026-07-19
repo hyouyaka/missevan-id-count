@@ -45,55 +45,156 @@ export function createUpstashTaskStoreAdapter({
   instanceId,
   ttlSeconds = 3600,
   commandTimeoutMs = 10_000,
+  now = Date.now,
+  ttlRefreshIntervalMs = Math.min(5 * 60 * 1000, Math.floor(ttlSeconds * 1000 / 3)),
 } = {}) {
-  const indexKey = `stats:tasks:v1:${instanceId}`;
+  const hashKey = `stats:tasks:v2:${instanceId}`;
+  const legacyIndexKey = `stats:tasks:v1:${instanceId}`;
   const commandOptions = { timeoutMs: commandTimeoutMs };
+  const normalizedTtlRefreshIntervalMs = Math.max(
+    1000,
+    Number.isFinite(Number(ttlRefreshIntervalMs))
+      ? Math.floor(Number(ttlRefreshIntervalMs))
+      : Math.min(5 * 60 * 1000, Math.floor(ttlSeconds * 1000 / 3))
+  );
+  let lastExpiryRefreshAt = null;
+
+  function parseTask(value, expectedTaskId = "") {
+    try {
+      const task = typeof value === "string" ? JSON.parse(value) : value;
+      if (!task || typeof task !== "object" || Array.isArray(task)) {
+        return null;
+      }
+      const taskId = String(task.taskId ?? "").trim();
+      if (!taskId || (expectedTaskId && taskId !== expectedTaskId)) {
+        return null;
+      }
+      return task;
+    } catch {
+      return null;
+    }
+  }
+
+  function parseHashTasks(raw) {
+    const entries = raw && !Array.isArray(raw) && typeof raw === "object"
+      ? Object.entries(raw)
+      : Array.isArray(raw)
+        ? Array.from({ length: Math.floor(raw.length / 2) }, (_, index) => [
+            raw[index * 2],
+            raw[index * 2 + 1],
+          ])
+        : [];
+    const tasks = [];
+    const staleIds = [];
+    for (const [field, value] of entries) {
+      const taskId = String(field ?? "").trim();
+      const task = parseTask(value, taskId);
+      if (task) {
+        tasks.push(task);
+      } else if (taskId) {
+        staleIds.push(taskId);
+      }
+    }
+    return { tasks, staleIds, fieldCount: entries.length };
+  }
+
+  function getTaskTimestamp(task) {
+    const timestamp = Number(task?.updatedAt ?? task?.createdAt ?? 0);
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+
+  function mergeTasks(v2Tasks, legacyTasks) {
+    const merged = new Map();
+    for (const task of v2Tasks) {
+      merged.set(String(task.taskId), task);
+    }
+    for (const task of legacyTasks) {
+      const taskId = String(task.taskId);
+      const current = merged.get(taskId);
+      if (!current || getTaskTimestamp(task) > getTaskTimestamp(current)) {
+        merged.set(taskId, task);
+      }
+    }
+    return [...merged.values()];
+  }
+
+  async function refreshHashExpiry({ force = false } = {}) {
+    const currentTime = Number(now());
+    if (
+      !force
+      && lastExpiryRefreshAt != null
+      && currentTime - lastExpiryRefreshAt < normalizedTtlRefreshIntervalMs
+    ) {
+      return false;
+    }
+    const result = await client.command(["EXPIRE", hashKey, ttlSeconds], commandOptions);
+    if (result !== true && Number(result) !== 1) {
+      throw new Error(`Failed to refresh stats task hash TTL key=${hashKey}`);
+    }
+    lastExpiryRefreshAt = currentTime;
+    return true;
+  }
+
+  async function writeTasksToHash(tasks) {
+    if (!tasks.length) {
+      return;
+    }
+    await client.command([
+      "HSET",
+      hashKey,
+      ...tasks.flatMap((task) => [String(task.taskId), JSON.stringify(task)]),
+    ], commandOptions);
+  }
+
   return {
     async load() {
-      const ids = await client.command(["SMEMBERS", indexKey], commandOptions);
-      if (!Array.isArray(ids) || ids.length === 0) {
-        return { tasks: [], staleIds: [] };
+      const rawHash = await client.command(["HGETALL", hashKey], commandOptions);
+      const v2 = parseHashTasks(rawHash);
+      const rawLegacyIds = await client.command(["SMEMBERS", legacyIndexKey], commandOptions);
+      const legacyIds = Array.isArray(rawLegacyIds)
+        ? rawLegacyIds.map((id) => String(id ?? "").trim()).filter(Boolean)
+        : [];
+      let legacyTasks = [];
+      if (legacyIds.length > 0) {
+        const legacyValues = await client.command([
+          "MGET",
+          ...legacyIds.map((id) => `${legacyIndexKey}:${id}`),
+        ], commandOptions);
+        legacyTasks = legacyIds
+          .map((id, index) => parseTask(legacyValues?.[index], id))
+          .filter(Boolean);
       }
-      const values = await client.command([
-        "MGET",
-        ...ids.map((id) => `${indexKey}:${id}`),
-      ], commandOptions);
-      const parsed = (Array.isArray(values) ? values : [])
-        .map((value) => {
-          try {
-            return value ? JSON.parse(value) : null;
-          } catch {
-            return null;
-          }
-        })
+
+      const tasks = mergeTasks(v2.tasks, legacyTasks);
+      const validTaskIds = new Set(tasks.map((task) => String(task.taskId)));
+      if (legacyIds.length > 0) {
+        if (tasks.length > 0) {
+          await writeTasksToHash(tasks);
+          await refreshHashExpiry({ force: true });
+        }
+        await client.command([
+          "DEL",
+          legacyIndexKey,
+          ...legacyIds.map((id) => `${legacyIndexKey}:${id}`),
+        ], commandOptions);
+      } else if (v2.fieldCount > 0) {
+        await refreshHashExpiry({ force: true });
+      }
+
       return {
-        tasks: parsed.filter(Boolean),
-        staleIds: ids.filter((_, index) => !parsed[index]),
+        tasks,
+        staleIds: v2.staleIds.filter((taskId) => !validTaskIds.has(taskId)),
       };
     },
 
     async saveTask(task) {
-      const key = `${indexKey}:${task.taskId}`;
-      await client.command(
-        ["SET", key, JSON.stringify(task), "EX", ttlSeconds],
-        commandOptions
-      );
-      await client.command(
-        ["SADD", indexKey, String(task.taskId)],
-        commandOptions
-      );
-      await client.command(["EXPIRE", indexKey, ttlSeconds], commandOptions);
+      await writeTasksToHash([task]);
+      await refreshHashExpiry();
     },
 
     async remove(taskId) {
-      await client.command(
-        ["DEL", `${indexKey}:${taskId}`],
-        commandOptions
-      );
-      await client.command(
-        ["SREM", indexKey, String(taskId)],
-        commandOptions
-      );
+      await client.command(["HDEL", hashKey, String(taskId)], commandOptions);
+      lastExpiryRefreshAt = null;
     },
   };
 }

@@ -54,8 +54,20 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.3", () => {
-  assert.equal(packageJson.version, "1.7.3");
+test("package version is 1.7.5", () => {
+  assert.equal(packageJson.version, "1.7.5");
+});
+
+test("changelog contains 1.7.5 platform links and Manbo peak trend updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.5");
+
+  assert.deepEqual(entry, {
+    version: "1.7.5",
+    changes: [
+      "剧集ID添加平台链接，可直接跳转收听。方便因某些原因无法正常使用平台内搜索的小伙伴。",
+      "漫播巅峰榜添加趋势入口。",
+    ],
+  });
 });
 
 test("changelog contains 1.7.3 revenue, rank, trend, and address updates", () => {

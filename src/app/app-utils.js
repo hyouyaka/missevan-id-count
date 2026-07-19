@@ -103,6 +103,43 @@ export function buildVersionedUrl(url, frontendVersion) {
   return `${url}${separator}frontendVersion=${encodeURIComponent(normalizeVersion(frontendVersion))}`;
 }
 
+export function buildDramaExternalUrl(platform, dramaId) {
+  const normalizedPlatform = String(platform?.key ?? platform ?? "").trim();
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  if (!normalizedDramaId || !["missevan", "manbo"].includes(normalizedPlatform)) {
+    return "";
+  }
+
+  const encodedDramaId = encodeURIComponent(normalizedDramaId);
+  return normalizedPlatform === "missevan"
+    ? `https://www.missevan.com/mdrama/${encodedDramaId}`
+    : `https://manbo.kilaaudio.com/Activecard/radioplay?id=${encodedDramaId}`;
+}
+
+const dramaExternalUsageSources = new Set(["search", "ongoing", "ranks", "ranks_cv"]);
+
+export function buildDramaExternalUsagePayload(platform, dramaId, source, title) {
+  const normalizedPlatform = String(platform?.key ?? platform ?? "").trim();
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  const normalizedTitle = String(title ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  if (
+    !normalizedDramaId ||
+    !normalizedTitle ||
+    !["missevan", "manbo"].includes(normalizedPlatform)
+  ) {
+    return null;
+  }
+
+  const normalizedSource = String(source ?? "").trim();
+  return {
+    platform: normalizedPlatform,
+    action: "external_open",
+    dramaId: normalizedDramaId,
+    source: dramaExternalUsageSources.has(normalizedSource) ? normalizedSource : "unknown",
+    title: normalizedTitle,
+  };
+}
+
 export async function readJsonResponse(response) {
   try {
     return await response.json();

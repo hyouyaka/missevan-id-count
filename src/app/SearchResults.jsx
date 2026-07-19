@@ -37,7 +37,7 @@ import {
   fetchRankTrendData,
   logRankTrendOpen,
 } from "@/app/rankTrendData";
-import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
@@ -1148,10 +1148,15 @@ export function SearchResults({
                             ))}
                             {importedDrama ? <Badge variant="imported" className={mobileInlineBadgeClassName}>已导入</Badge> : null}
                           </div>
-                          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                            <PlatformIdIcon platform={platform} aria-label={idLabel} className={metaIconClassName} title={idLabel} />
-                            <span className="min-w-0 break-all">{item.id}</span>
-                          </div>
+                          <PlatformDramaLink
+                            platform={platform}
+                            dramaId={item.id}
+                            idLabel={idLabel}
+                            source="search"
+                            dramaTitle={item.name}
+                            frontendVersion={frontendVersion}
+                            iconClassName={metaIconClassName}
+                          />
                           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                             <FeatherIcon aria-label="原作名" className={metaIconClassName} title="原作名" />
                             <span className="min-w-0 break-words">{originalAuthorText || "暂无"}</span>

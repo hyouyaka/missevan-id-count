@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createStatsTaskEngine } from "./taskEngine.js";
+import {
+  createStatsTaskEngine,
+  normalizeStatsTaskPersistenceDebounceMs,
+} from "./taskEngine.js";
 
 function deferred() {
   let resolve;
@@ -10,6 +13,175 @@ function deferred() {
   });
   return { promise, resolve };
 }
+
+function createFakeTimers() {
+  const timers = [];
+  return {
+    timers,
+    setTimer(callback, delay) {
+      const timer = {
+        callback,
+        delay,
+        cancelled: false,
+        unref() {},
+      };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer(timer) {
+      timer.cancelled = true;
+    },
+    run(timer) {
+      if (!timer.cancelled) {
+        timer.callback();
+      }
+    },
+  };
+}
+
+test("persistence debounce defaults to 10 seconds and clamps custom values", () => {
+  assert.equal(normalizeStatsTaskPersistenceDebounceMs(), 10_000);
+  assert.equal(normalizeStatsTaskPersistenceDebounceMs(20_000), 20_000);
+  assert.equal(normalizeStatsTaskPersistenceDebounceMs(100), 1000);
+  assert.equal(normalizeStatsTaskPersistenceDebounceMs(90_000), 60_000);
+  assert.equal(normalizeStatsTaskPersistenceDebounceMs("12500.9"), 12_500);
+  assert.equal(normalizeStatsTaskPersistenceDebounceMs("invalid"), 10_000);
+});
+
+test("task engine debounces running snapshots and clears them before terminal save", async () => {
+  const started = deferred();
+  const finish = deferred();
+  const saved = [];
+  const fakeTimers = createFakeTimers();
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: {
+        maxActive: 1,
+        maxActivePerClient: 1,
+        maxQueued: 1,
+        maxQueuedPerClient: 1,
+      },
+    },
+    store: {
+      async save(task) {
+        saved.push(structuredClone(task));
+      },
+    },
+    setTimer: fakeTimers.setTimer,
+    clearTimer: fakeTimers.clearTimer,
+    async execute() {
+      started.resolve();
+      await finish.promise;
+      return {
+        status: "completed",
+        patch: { progress: 100, result: { ok: true } },
+      };
+    },
+  });
+  const task = {
+    taskId: "debounced-progress",
+    platform: "missevan",
+    clientKey: "ip-debounce",
+    status: "queued",
+    progress: 0,
+  };
+
+  engine.enqueue(task);
+  await started.promise;
+  assert.deepEqual(saved.map((snapshot) => snapshot.status), [
+    "queued",
+    "running",
+  ]);
+
+  engine.report(task.taskId, { progress: 10, currentAction: "第一步" });
+  const firstProgressTimer = fakeTimers.timers.at(-1);
+  engine.report(task.taskId, { progress: 20, currentAction: "第二步" });
+  const latestProgressTimer = fakeTimers.timers.at(-1);
+
+  assert.equal(firstProgressTimer.cancelled, true);
+  assert.equal(latestProgressTimer.delay, 10_000);
+  assert.equal(saved.length, 2);
+
+  fakeTimers.run(latestProgressTimer);
+  assert.equal(saved.at(-1).progress, 20);
+  assert.equal(saved.at(-1).currentAction, "第二步");
+
+  engine.report(task.taskId, { progress: 30, currentAction: "等待终态" });
+  const pendingTerminalTimer = fakeTimers.timers.at(-1);
+  finish.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(pendingTerminalTimer.cancelled, true);
+  assert.equal(saved.at(-1).status, "completed");
+  assert.equal(saved.at(-1).progress, 100);
+});
+
+test("failed and cancelled task states are persisted immediately", async () => {
+  const failedSaves = [];
+  const failedEngine = createStatsTaskEngine({
+    limits: {
+      manbo: {
+        maxActive: 1,
+        maxActivePerClient: 1,
+        maxQueued: 1,
+        maxQueuedPerClient: 1,
+      },
+    },
+    store: {
+      async save(task) {
+        failedSaves.push(structuredClone(task));
+      },
+    },
+    async execute() {
+      throw new Error("planned failure");
+    },
+  });
+  failedEngine.enqueue({
+    taskId: "failed-persistence",
+    platform: "manbo",
+    clientKey: "ip-failed",
+    status: "queued",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(failedSaves.at(-1).status, "failed");
+
+  const started = deferred();
+  const finish = deferred();
+  const cancelledSaves = [];
+  const cancelledEngine = createStatsTaskEngine({
+    limits: {
+      missevan: {
+        maxActive: 1,
+        maxActivePerClient: 1,
+        maxQueued: 1,
+        maxQueuedPerClient: 1,
+      },
+    },
+    store: {
+      async save(task) {
+        cancelledSaves.push(structuredClone(task));
+      },
+    },
+    async execute() {
+      started.resolve();
+      await finish.promise;
+      return { status: "cancelled" };
+    },
+  });
+  cancelledEngine.enqueue({
+    taskId: "cancelled-persistence",
+    platform: "missevan",
+    clientKey: "ip-cancelled",
+    status: "queued",
+  });
+  await started.promise;
+
+  cancelledEngine.cancel("cancelled-persistence");
+  assert.equal(cancelledSaves.at(-1).status, "cancelled");
+  finish.resolve();
+});
 
 test("task engine passes one abort signal to an executor and cancels it", async () => {
   const started = deferred();

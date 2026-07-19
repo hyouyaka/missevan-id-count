@@ -65,12 +65,24 @@ function buildTaskSnapshot(task, queuePosition = 0) {
   };
 }
 
+export function normalizeStatsTaskPersistenceDebounceMs(value = 10_000) {
+  return Math.min(
+    60_000,
+    Math.max(
+      1000,
+      Number.isFinite(Number(value))
+        ? Math.floor(Number(value))
+        : 10_000
+    )
+  );
+}
+
 export function createStatsTaskEngine({
   limits,
   execute,
   store = null,
   metrics = createTaskMetrics(),
-  persistenceDebounceMs = 2000,
+  persistenceDebounceMs = 10_000,
   retentionMs = Infinity,
   onRestore = null,
   onCompleted = null,
@@ -81,6 +93,8 @@ export function createStatsTaskEngine({
   if (typeof execute !== "function") {
     throw new TypeError("Stats task engine requires an execute function");
   }
+  const normalizedPersistenceDebounceMs =
+    normalizeStatsTaskPersistenceDebounceMs(persistenceDebounceMs);
   const cancellations = createTaskCancellationRegistry();
   const persistenceTimers = new Map();
   const tasks = new Map();
@@ -110,7 +124,7 @@ export function createStatsTaskEngine({
     const timer = setTimer(() => {
       persistenceTimers.delete(taskId);
       void store.save(task);
-    }, persistenceDebounceMs);
+    }, normalizedPersistenceDebounceMs);
     timer?.unref?.();
     persistenceTimers.set(taskId, timer);
     return null;

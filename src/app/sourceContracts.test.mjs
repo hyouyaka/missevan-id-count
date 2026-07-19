@@ -24,6 +24,7 @@ const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", im
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
 const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url), "utf8");
 const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
+const rankTrendActionsSource = readFileSync(new URL("./rankTrendActions.jsx", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils.js", import.meta.url), "utf8");
 const rankMetricUtilsSource = readFileSync(new URL("../../shared/rankMetricUtils.js", import.meta.url), "utf8");
@@ -369,7 +370,7 @@ test("search result cards show original author between ID and main CV with a dis
   assert.match(searchResultsSource, /const originalAuthorText = String\(item\.author \?\? ""\)\.trim\(\);/);
   assert.match(searchResultsSource, /originalAuthorText \|\| "暂无"/);
 
-  const idRowIndex = searchResultsSource.indexOf("aria-label={idLabel}");
+  const idRowIndex = searchResultsSource.indexOf("idLabel={idLabel}");
   const authorRowIndex = searchResultsSource.indexOf('aria-label="原作名"');
   const cvRowIndex = searchResultsSource.indexOf('aria-label="主要CV"');
 
@@ -1673,6 +1674,7 @@ test("batch summaries omit imported count and both import actions share ImportIc
 test("platform id icon is globally reusable", () => {
   assert.match(platformTabLabelSource, /platform-tab-label-text/);
   assert.match(platformTabLabelSource, /export function PlatformIdIcon/);
+  assert.match(platformTabLabelSource, /export function PlatformDramaLink/);
   assert.match(platformTabLabelSource, /platformTabMeta\[key\]/);
   assert.match(platformTabLabelSource, /export function PlatformIdIcon\(\{[\s\S]*tone = "inherit"/);
   assert.match(platformTabLabelSource, /export function PlatformTabLabel\(\{[\s\S]*tone = "brand"/);
@@ -1694,19 +1696,53 @@ test("web drawer typography is one step larger without changing the desktop app"
   );
 });
 
-test("work id rows use platform icons instead of HashIcon", () => {
-  assert.match(searchResultsSource, /PlatformIdIcon platform=\{platform\} aria-label=\{idLabel\}/);
-  assert.match(ongoingPanelSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
-  assert.match(ranksPanelSource, /PlatformIdIcon[\s\S]*platform=\{platform\}[\s\S]*aria-label=\{isMissevanPeak \? "包含作品ID" : "作品ID"\}/);
+test("work id rows use shared platform external links instead of HashIcon", () => {
+  assert.match(appUtilsSource, /https:\/\/www\.missevan\.com\/mdrama\/\$\{encodedDramaId\}/);
+  assert.match(appUtilsSource, /https:\/\/manbo\.kilaaudio\.com\/Activecard\/radioplay\?id=\$\{encodedDramaId\}/);
+  assert.match(platformTabLabelSource, /SquareArrowOutUpRightIcon/);
+  assert.match(
+    platformTabLabelSource,
+    /<PlatformIdIcon[\s\S]*\{visibleId\}<\/span>[\s\S]*<SquareArrowOutUpRightIcon/
+  );
+  assert.match(platformTabLabelSource, /rel="noopener noreferrer"/);
+  assert.match(platformTabLabelSource, /target="_blank"/);
+  assert.match(platformTabLabelSource, /inline-flex w-fit max-w-full[\s\S]*self-start/);
+  assert.match(platformTabLabelSource, /-mt-0\.5 -mb-2[\s\S]*pt-0\.5 pb-2/);
+  assert.match(searchResultsSource, /<PlatformDramaLink[\s\S]*dramaId=\{item\.id\}[\s\S]*source="search"[\s\S]*dramaTitle=\{item\.name\}[\s\S]*frontendVersion=\{frontendVersion\}/);
+  assert.match(ongoingPanelSource, /<PlatformDramaLink[\s\S]*dramaId=\{item\.id\}[\s\S]*source="ongoing"[\s\S]*dramaTitle=\{item\.name\}[\s\S]*frontendVersion=\{frontendVersion\}/);
+  assert.match(
+    ranksPanelSource,
+    /<PlatformDramaLink[\s\S]*dramaId=\{searchDramaIds\[0\]\}[\s\S]*displayId=\{detailIdText\}[\s\S]*source="ranks"[\s\S]*dramaTitle=\{item\.name\}[\s\S]*在猫耳打开首个作品ID/
+  );
+  assert.match(
+    ranksPanelSource,
+    /<PlatformDramaLink[\s\S]*dramaId=\{work\.dramaId\}[\s\S]*source="ranks_cv"[\s\S]*dramaTitle=\{work\.title\}[\s\S]*frontendVersion=\{frontendVersion\}[\s\S]*textClassName="truncate text-foreground"/
+  );
   assert.match(rankTrendUiSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
 
-  const searchWorkIdLine = searchResultsSource.slice(searchResultsSource.indexOf("aria-label={idLabel}") - 140, searchResultsSource.indexOf("aria-label={idLabel}") + 180);
+  const searchWorkIdLine = searchResultsSource.slice(searchResultsSource.indexOf("dramaId={item.id}") - 140, searchResultsSource.indexOf("dramaId={item.id}") + 240);
   assert.doesNotMatch(searchWorkIdLine, /HashIcon/);
-  const ongoingWorkIdLine = ongoingPanelSource.slice(ongoingPanelSource.indexOf('aria-label="作品ID"') - 140, ongoingPanelSource.indexOf('aria-label="作品ID"') + 180);
+  const ongoingWorkIdLine = ongoingPanelSource.slice(ongoingPanelSource.indexOf("dramaId={item.id}") - 140, ongoingPanelSource.indexOf("dramaId={item.id}") + 180);
   assert.doesNotMatch(ongoingWorkIdLine, /HashIcon/);
-  const ranksWorkIdLine = ranksPanelSource.slice(ranksPanelSource.indexOf("包含作品ID") - 180, ranksPanelSource.indexOf("包含作品ID") + 220);
+  const ranksWorkIdLine = ranksPanelSource.slice(ranksPanelSource.indexOf("displayId={detailIdText}") - 180, ranksPanelSource.indexOf("displayId={detailIdText}") + 280);
   assert.doesNotMatch(ranksWorkIdLine, /HashIcon/);
   assert.match(rankTrendUiSource, /\#\{rank\.position\}/, "rank position text should keep hash semantics");
+});
+
+test("platform drama links log a validated external-open action without blocking navigation", () => {
+  assert.match(appUtilsSource, /action: "external_open"/);
+  assert.match(appUtilsSource, /dramaExternalUsageSources = new Set\(\["search", "ongoing", "ranks", "ranks_cv"\]\)/);
+  assert.match(platformTabLabelSource, /buildDramaExternalUsagePayload\(key, normalizedDramaId, source, dramaTitle\)/);
+  assert.match(platformTabLabelSource, /fetch\(buildVersionedUrl\("\/usage-log", frontendVersion\)/);
+  assert.match(platformTabLabelSource, /keepalive: true/);
+  assert.match(platformTabLabelSource, /onClick=\{logExternalOpen\}/);
+  assert.doesNotMatch(platformTabLabelSource, /preventDefault/);
+  assert.match(serverSource, /if \(action === "external_open"\)/);
+  assert.match(serverSource, /if \(!isNumericId\(dramaId\)\)/);
+  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv"\]\.includes\(requestedSource\)/);
+  assert.match(serverSource, /normalizeTextValue\(payload\.title\)\.slice\(0, 200\)/);
+  assert.match(serverSource, /message: "Missing external drama title"/);
+  assert.match(serverSource, /action,[\s\S]*dramaId,[\s\S]*source,[\s\S]*title,[\s\S]*success: true/);
 });
 
 test("search empty state uses concise shared copy", () => {
@@ -2754,13 +2790,13 @@ test("CV rank works expose platform ids and search result jumps", () => {
   assert.notEqual(cvWorksEnd, -1, "CV works list should end before CV item card");
   const cvWorksSource = ranksPanelSource.slice(cvWorksStart, cvWorksEnd);
 
-  assert.match(cvWorksSource, /PlatformIdIcon[\s\S]*platform=\{platform\}[\s\S]*aria-label="作品ID"/);
+  assert.match(cvWorksSource, /PlatformDramaLink[\s\S]*platform=\{platform\}[\s\S]*dramaId=\{work\.dramaId\}/);
   assert.match(cvWorksSource, /dramaId: work\.dramaId/);
   assert.match(cvWorksSource, /usageAction: "ranks_open_search_result"/);
   assert.match(cvWorksSource, /underline underline-offset-4/);
   assert.match(cvWorksSource, /formatRankCompactCount\(work\.viewCount\)/);
   assert.match(cvWorksSource, /title=\{work\.title\}/);
-  assert.match(cvWorksSource, /title=\{work\.dramaId\}/);
+  assert.match(cvWorksSource, /textClassName="truncate text-foreground"/);
   assert.match(cvWorksSource, /truncate/);
 });
 
@@ -2776,14 +2812,14 @@ test("CV rank works share one responsive cover and four-row details layout", () 
     /grid-cols-\[4rem_minmax\(0,1fr\)\][\s\S]*sm:grid-cols-\[4\.5rem_minmax\(0,1fr\)\]/
   );
   assert.match(cvWorksSource, /size-16[\s\S]*sm:size-\[4\.5rem\]/);
-  assert.equal(cvWorksSource.match(/<PlatformIdIcon/g)?.length ?? 0, 1);
+  assert.equal(cvWorksSource.match(/<PlatformDramaLink/g)?.length ?? 0, 1);
   assert.equal(cvWorksSource.match(/<PlayCircleIcon/g)?.length ?? 0, 1);
   assert.equal(cvWorksSource.match(/<MicIcon/g)?.length ?? 0, 1);
   assert.doesNotMatch(cvWorksSource, /sm:hidden/);
   assert.doesNotMatch(cvWorksSource, /hidden min-w-0 sm:block/);
   assert.match(
     cvWorksSource,
-    /title=\{work\.title\}[\s\S]*className="[^"]*w-full truncate[^"]*"[\s\S]*PlatformIdIcon[\s\S]*title=\{work\.dramaId\}[\s\S]*PlayCircleIcon[\s\S]*MicIcon/
+    /title=\{work\.title\}[\s\S]*className="[^"]*w-full truncate[^"]*"[\s\S]*PlatformDramaLink[\s\S]*dramaId=\{work\.dramaId\}[\s\S]*PlayCircleIcon[\s\S]*MicIcon/
   );
   assert.doesNotMatch(
     cvWorksSource.slice(cvWorksSource.indexOf("<PlayCircleIcon"), cvWorksSource.indexOf("<MicIcon")),
@@ -3489,6 +3525,37 @@ test("ranks and ongoing actions hide items rejected by trend availability", () =
   assert.match(ongoingPanelSource, /resolveRankTrendAvailabilityIds\(\{[\s\S]*requestedIds: trendLookupIds/);
   assert.match(ongoingPanelSource, /trendAvailable=\{availableTrendIds\.has\(String\(item\.id\)\)\}/);
   assert.match(ongoingPanelSource, /Boolean\(platform && item\?\.id && trendAvailable\)/);
+});
+
+test("Manbo peak rank items reuse ordinary trend and compare actions when daily or weekly data exists", () => {
+  assert.match(
+    rankTrendActionsSource,
+    /return platform === "manbo" && item\?\.type !== "peak";/
+  );
+  assert.doesNotMatch(
+    rankTrendActionsSource,
+    /platform === "manbo" && rankKey !== "peak"/
+  );
+  assert.match(
+    ranksPanelSource,
+    /\(category\?\.key === "cv" \? \[\] : category\?\.ranks \|\| \[\]\)[\s\S]*\.flatMap\(\(rank\) => rank\?\.items \|\| \[\]\)[\s\S]*\.filter\(\(item\) => item\?\.type !== "peak"\)[\s\S]*\.map\(\(item\) => String\(item\?\.id \?\? ""\)\.trim\(\)\)/
+  );
+  assert.doesNotMatch(
+    ranksPanelSource,
+    /\.filter\(\(rank\) => rank\?\.key !== "peak"\)/
+  );
+  assert.match(
+    ranksPanelSource,
+    /!isMissevanPeak && canShowTrend[\s\S]*<RankTrendButton[\s\S]*<CompareActionButton/
+  );
+  assert.match(
+    ranksPanelSource,
+    /ids: response\?\.ok && data\?\.success[\s\S]*resolveRankTrendAvailabilityIds\(\{[\s\S]*requestedIds: trendLookupIds[\s\S]*: new Set\(\)/
+  );
+  assert.doesNotMatch(
+    ranksPanelSource,
+    /ids: new Set\(trendLookupIds\)|: new Set\(trendLookupIds\)/
+  );
 });
 
 test("rank trend backend supports five-sample classification and weekly playback fallback", () => {

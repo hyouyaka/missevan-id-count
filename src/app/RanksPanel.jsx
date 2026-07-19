@@ -25,7 +25,7 @@ import {
   getBackendVersionFromResponse,
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
-import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { RankBadge } from "@/app/RankBadge";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
@@ -564,10 +564,21 @@ function RankItemCard({
               )}
             </div>
             {detailIdText ? (
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <PlatformIdIcon platform={platform} aria-label={isMissevanPeak ? "包含作品ID" : "作品ID"} className={metaIconClassName} title={isMissevanPeak ? "包含作品ID" : "作品ID"} />
-                <span className="min-w-0 break-all">{detailIdText}</span>
-              </div>
+              <PlatformDramaLink
+                platform={platform}
+                dramaId={searchDramaIds[0]}
+                displayId={detailIdText}
+                idLabel={isMissevanPeak ? "包含作品ID" : "作品ID"}
+                source="ranks"
+                dramaTitle={item.name}
+                frontendVersion={frontendVersion}
+                ariaLabel={
+                  isMissevanPeak
+                    ? `在猫耳打开首个作品ID ${String(searchDramaIds[0] ?? "").trim()}（新窗口）`
+                    : undefined
+                }
+                iconClassName={metaIconClassName}
+              />
             ) : null}
             <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
@@ -674,7 +685,7 @@ function getCvWorksPreviewText(works) {
   return titles.length ? `TOP3：${titles.map((title) => `《${title}》`).join(" ")}` : "TOP3：暂无";
 }
 
-function CvWorksList({ works = [], platform, onOpenSearchResult }) {
+function CvWorksList({ works = [], platform, frontendVersion = "0.0.0", onOpenSearchResult }) {
   function openWorkInSearch(work) {
     if (!work?.dramaId || !work?.title) {
       return;
@@ -721,10 +732,16 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                     >
                       {work.title}
                     </button>
-                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:text-sm">
-                      <PlatformIdIcon platform={platform} aria-label="作品ID" className={metaIconClassName} title="作品ID" />
-                      <span className="min-w-0 truncate text-foreground" title={work.dramaId}>{work.dramaId}</span>
-                    </div>
+                    <PlatformDramaLink
+                      platform={platform}
+                      dramaId={work.dramaId}
+                      source="ranks_cv"
+                      dramaTitle={work.title}
+                      frontendVersion={frontendVersion}
+                      className="sm:text-sm"
+                      iconClassName={metaIconClassName}
+                      textClassName="truncate text-foreground"
+                    />
                     <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:text-sm">
                       <PlayCircleIcon aria-label="播放量" className={metaIconClassName} title="播放量" />
                       <span className="min-w-0 break-words font-medium tabular-nums text-foreground">
@@ -921,7 +938,12 @@ function CvRankItemCard({
         </div>
         {isExpanded ? (
           <div id={worksRegionId}>
-            <CvWorksList works={item.works || []} platform={platform} onOpenSearchResult={onOpenSearchResult} />
+            <CvWorksList
+              works={item.works || []}
+              platform={platform}
+              frontendVersion={frontendVersion}
+              onOpenSearchResult={onOpenSearchResult}
+            />
           </div>
         ) : null}
         {canShowTrend && isTrendOpen ? (
@@ -1152,7 +1174,6 @@ export function RanksPanel({
   }, [rankData]);
   const trendLookupIds = useMemo(() => Array.from(new Set(
     (category?.key === "cv" ? [] : category?.ranks || [])
-      .filter((rank) => rank?.key !== "peak")
       .flatMap((rank) => rank?.items || [])
       .filter((item) => item?.type !== "peak")
       .map((item) => String(item?.id ?? "").trim())
@@ -1165,7 +1186,7 @@ export function RanksPanel({
     setTrendEligibility({
       platform: selectedPlatform,
       lookupKey: trendLookupKey,
-      ids: new Set(trendLookupIds),
+      ids: new Set(),
     });
     if (!trendLookupIds.length) {
       return () => {
@@ -1183,11 +1204,13 @@ export function RanksPanel({
           setTrendEligibility({
             platform: selectedPlatform,
             lookupKey: trendLookupKey,
-            ids: resolveRankTrendAvailabilityIds({
-              response,
-              data,
-              requestedIds: trendLookupIds,
-            }),
+            ids: response?.ok && data?.success
+              ? resolveRankTrendAvailabilityIds({
+                  response,
+                  data,
+                  requestedIds: trendLookupIds,
+                })
+              : new Set(),
           });
         }
       })
@@ -1197,7 +1220,7 @@ export function RanksPanel({
           setTrendEligibility({
             platform: selectedPlatform,
             lookupKey: trendLookupKey,
-            ids: new Set(trendLookupIds),
+            ids: new Set(),
           });
         }
       });
@@ -1210,7 +1233,7 @@ export function RanksPanel({
   const availableTrendIds = trendEligibility.platform === selectedPlatform &&
     trendEligibility.lookupKey === trendLookupKey
     ? trendEligibility.ids
-    : new Set(trendLookupIds);
+    : new Set();
 
   useEffect(() => {
     if (routeState?.view !== "ranks") {

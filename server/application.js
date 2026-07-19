@@ -65,7 +65,10 @@ import {
   validateImageProxyUrl,
 } from "../shared/imageProxyPolicy.js";
 import { TtlLruCache } from "../shared/ttlLruCache.js";
-import { createStatsTaskEngine } from "./stats/taskEngine.js";
+import {
+  createStatsTaskEngine,
+  normalizeStatsTaskPersistenceDebounceMs,
+} from "./stats/taskEngine.js";
 import {
   createStatsTaskExecutor,
   getManboRevenueType,
@@ -349,6 +352,10 @@ const MANBO_STATS_TASK_TTL_MS = Math.max(
   60 * 1000,
   getFiniteNumberEnv("MANBO_STATS_TASK_TTL_MS", DEFAULT_MANBO_STATS_TASK_TTL_MS)
 );
+const STATS_TASK_PERSISTENCE_DEBOUNCE_MS =
+  normalizeStatsTaskPersistenceDebounceMs(
+    getFiniteNumberEnv("STATS_TASK_PERSISTENCE_DEBOUNCE_MS", 10_000)
+);
 const MANBO_STATS_TASK_HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
 const RANKS_CACHE_TTL_MS = Math.max(
   60 * 1000,
@@ -611,6 +618,7 @@ const statsTaskEngine = createStatsTaskEngine({
   },
   execute: (...args) => statsTaskExecutor(...args),
   store: statsTaskStore,
+  persistenceDebounceMs: STATS_TASK_PERSISTENCE_DEBOUNCE_MS,
   retentionMs: MANBO_STATS_TASK_TTL_MS,
   onCompleted: async (snapshot) => {
     const entry = buildStatsTaskCompletedUsageLog(snapshot);
@@ -9895,6 +9903,44 @@ app.post("/usage-log", async (req, res) => {
         ...(rankKey
           ? { rankKey }
           : {}),
+        success: true,
+      });
+      return res.json({ success: true });
+    }
+
+    if (action === "external_open") {
+      if (!["missevan", "manbo"].includes(platform)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid usage log payload",
+        });
+      }
+
+      const dramaId = String(payload.dramaId ?? payload.id ?? "").trim().slice(0, 80);
+      if (!isNumericId(dramaId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing external drama id",
+        });
+      }
+
+      const requestedSource = normalizeTextValue(payload.source).slice(0, 40);
+      const source = ["search", "ongoing", "ranks", "ranks_cv"].includes(requestedSource)
+        ? requestedSource
+        : "unknown";
+      const title = normalizeTextValue(payload.title).slice(0, 200);
+      if (!title) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing external drama title",
+        });
+      }
+      await writeUsageLog({
+        platform,
+        action,
+        dramaId,
+        source,
+        title,
         success: true,
       });
       return res.json({ success: true });

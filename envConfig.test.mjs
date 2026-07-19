@@ -18,6 +18,8 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
   const previousSecondaryFallbackTimeoutMs = process.env.MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS;
   const previousForceFallback = process.env.MISSEVAN_FORCE_FALLBACK;
   const previousPort = process.env.PORT;
+  const previousStatsTaskPersistenceDebounceMs =
+    process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS;
 
   delete process.env.ADMIN_CACHE_REFRESH_TOKEN;
   delete process.env.ENABLE_MISSEVAN;
@@ -29,6 +31,7 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
   delete process.env.MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS;
   delete process.env.MISSEVAN_FORCE_FALLBACK;
   delete process.env.PORT;
+  delete process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS;
 
   try {
     await fs.writeFile(
@@ -44,6 +47,7 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
         "MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS=15000",
         "MISSEVAN_FORCE_FALLBACK=2",
         "PORT=3901",
+        "STATS_TASK_PERSISTENCE_DEBOUNCE_MS=12500",
         "UNSUPPORTED_KEY=ignored",
       ].join("\n")
     );
@@ -60,6 +64,7 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
     assert.equal(process.env.MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS, "15000");
     assert.equal(process.env.MISSEVAN_FORCE_FALLBACK, "2");
     assert.equal(process.env.PORT, "3901");
+    assert.equal(process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS, "12500");
     assert.equal(process.env.UNSUPPORTED_KEY, undefined);
   } finally {
     if (previousAdminCacheRefreshToken == null) {
@@ -111,6 +116,12 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
       delete process.env.PORT;
     } else {
       process.env.PORT = previousPort;
+    }
+    if (previousStatsTaskPersistenceDebounceMs == null) {
+      delete process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS;
+    } else {
+      process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS =
+        previousStatsTaskPersistenceDebounceMs;
     }
   }
 });

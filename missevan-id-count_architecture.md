@@ -158,6 +158,7 @@ The backend currently exposes these route families.
 - `runtime/manbo-drama-info.json`: Manbo info fallback storage
 - `runtime/missevan-drama-info.json`: Missevan info fallback storage
 - `runtime/new-drama-ids.json`: new-drama ID fallback storage
+- `runtime/stats-tasks.json`: local statistics task recovery snapshots
 
 These runtime locations resolve relative to `APP_DATA_DIR` when running in desktop mode, or the project directory in local server mode.
 
@@ -171,6 +172,7 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | cooldown state | Upstash `missevan:cooldown:v1` | in-memory only when persistence disabled | Direct, Render fallback, and Deno fallback access-denial recovery state |
 | ranks and ongoing snapshots | Latest/common keys plus v2 Hash `ranks:trend:{platform}:v2`, `ranks:trend:cv:v2`, `ranks:trend:peak:missevan:v2`; fallback v1 aggregate Strings | none | Rank, trend, and ongoing APIs |
 | weekly playback snapshots | Upstash Hash `{platform}:watchcount:history` | canonical `{platform}:watchcount:index`, legacy weekly index, then `SCAN` | Weekly playback fallback for titles without five valid metric dates |
+| statistics task snapshots | Per-instance Upstash Hash `stats:tasks:v2:{instanceId}`; one-way startup migration from `stats:tasks:v1:{instanceId}` | `runtime/stats-tasks.json` | Queued, running, and terminal task recovery snapshots |
 
 ### Missevan Cooldown State
 - Railway stores the direct, Render fallback, and Deno fallback cooldown fields in one `missevan:cooldown:v1` JSON value.
@@ -279,6 +281,7 @@ Snapshot values may expose `view_count`, `watch_count`, or `play_count` records 
 - cooldown: `MISSEVAN_PERSISTENT_COOLDOWN`, `MISSEVAN_COOLDOWN_KEY`, `MISSEVAN_COOLDOWN_HOURS`
 - cache and sync tuning: `INFO_STORE_SYNC_INTERVAL_MS`, `RANKS_CACHE_TTL_MS`, `WEEKLY_PLAYBACK_CACHE_TTL_MS`
 - Manbo runtime tuning: `MANBO_FETCH_TIMEOUT_MS`, `MANBO_DANMAKU_PAGE_CONCURRENCY`, `MANBO_STATS_EPISODE_CONCURRENCY`
+- task persistence tuning: `STATS_TASK_PERSISTENCE_DEBOUNCE_MS` (10 seconds by default, clamped to 1–60 seconds)
 
 ### Environment Resolution Order
 - Desktop mode checks `.env` under the executable directory and app data directory first.

@@ -22,7 +22,7 @@ import {
   resolveRankTrendAvailabilityIds,
 } from "@/app/rankTrendData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
-import { PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
 import {
   CompareActionButton,
@@ -398,10 +398,13 @@ function OngoingCard({
                   ))}
                 </button>
               </div>
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <PlatformIdIcon platform={platform} aria-label="作品ID" className="size-3.5 shrink-0" />
-                <span className="min-w-0 break-all">{item.id}</span>
-              </div>
+              <PlatformDramaLink
+                platform={platform}
+                dramaId={item.id}
+                source="ongoing"
+                dramaTitle={item.name}
+                frontendVersion={frontendVersion}
+              />
               <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <MicIcon aria-label="主要CV" className="size-3.5 shrink-0" />
                 <span className="line-clamp-2 min-w-0 break-words">{String(item.main_cv_text || "").replace(/^主要CV：/, "") || "暂无"}</span>

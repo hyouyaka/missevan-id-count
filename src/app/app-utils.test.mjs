@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildDramaExternalUrl,
+  buildDramaExternalUsagePayload,
   buildRevenuePaidMetricSegments,
   buildRevenueSummary,
   buildMobileRankNavigationItems,
@@ -41,6 +43,48 @@ import {
 
 const appUtilsModule = await import("./app-utils.js");
 const { readJsonResponse } = appUtilsModule;
+
+test("buildDramaExternalUrl creates stable platform drama links", () => {
+  assert.equal(
+    buildDramaExternalUrl("missevan", " 12345 "),
+    "https://www.missevan.com/mdrama/12345"
+  );
+  assert.equal(
+    buildDramaExternalUrl("manbo", "2235647356781461610"),
+    "https://manbo.kilaaudio.com/Activecard/radioplay?id=2235647356781461610"
+  );
+  assert.equal(
+    buildDramaExternalUrl({ key: "missevan" }, "123 /测试"),
+    "https://www.missevan.com/mdrama/123%20%2F%E6%B5%8B%E8%AF%95"
+  );
+  assert.equal(buildDramaExternalUrl("missevan", ""), "");
+  assert.equal(buildDramaExternalUrl("unknown", "12345"), "");
+});
+
+test("buildDramaExternalUsagePayload creates a bounded external-open event", () => {
+  assert.deepEqual(buildDramaExternalUsagePayload("missevan", " 12345 ", "search", "  剧集   标题  "), {
+    platform: "missevan",
+    action: "external_open",
+    dramaId: "12345",
+    source: "search",
+    title: "剧集 标题",
+  });
+  assert.deepEqual(buildDramaExternalUsagePayload({ key: "manbo" }, "2235647356781461610", "ranks_cv", "漫播作品"), {
+    platform: "manbo",
+    action: "external_open",
+    dramaId: "2235647356781461610",
+    source: "ranks_cv",
+    title: "漫播作品",
+  });
+  assert.equal(buildDramaExternalUsagePayload("missevan", "", "ongoing"), null);
+  assert.equal(buildDramaExternalUsagePayload("unknown", "12345", "ranks"), null);
+  assert.equal(buildDramaExternalUsagePayload("manbo", "12345", "custom", "标题")?.source, "unknown");
+  assert.equal(buildDramaExternalUsagePayload("manbo", "12345", "ongoing", ""), null);
+  assert.equal(
+    buildDramaExternalUsagePayload("missevan", "12345", "search", "剧".repeat(220))?.title.length,
+    200
+  );
+});
 
 test("search card detail patches fill only missing base fields", () => {
   assert.deepEqual(
