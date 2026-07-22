@@ -28,7 +28,7 @@ import {
 import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { RankBadge } from "@/app/RankBadge";
-import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
+import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
 import {
   fetchRankTrendAvailabilityData,
   resolveRankTrendAvailabilityIds,
@@ -1375,7 +1375,7 @@ export function RanksPanel({
   const canShowMetricLegend = !isLoading && !errorMessage && hasRanks;
   const isCvCategory = category?.key === "cv";
   const cvSummary = rankData?.cvSummary || {};
-  const rankRefreshAt = isCvCategory ? cvSummary.updatedAt || activeRank?.fetchedAt : rankData?.updatedAt;
+  const rankRefreshAt = resolveRankRefreshAt(rankData, category?.key, activeRank);
   const rankInfoText = isCvCategory
     ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品，每周更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`
     : `同步猫耳和漫播榜单，每日更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`;

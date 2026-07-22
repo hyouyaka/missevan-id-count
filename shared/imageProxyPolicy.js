@@ -71,6 +71,17 @@ export function assertImageContentLength(value, maxBytes) {
   }
 }
 
+export async function cancelResponseBody(body) {
+  if (!body) {
+    return;
+  }
+  if (typeof body.cancel === "function") {
+    await body.cancel();
+    return;
+  }
+  body.destroy?.();
+}
+
 export async function readImageBodyWithLimit(body, maxBytes) {
   if (!body || typeof body[Symbol.asyncIterator] !== "function") {
     throw new ImageProxyPolicyError("Image response body is unavailable", {

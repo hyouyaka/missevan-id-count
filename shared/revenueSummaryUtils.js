@@ -51,7 +51,7 @@ function getMissevanEpisodeSummaryPrice(item, member = false) {
   return hasFiniteOptionalNumber(fallbackPrice) ? toFiniteNumber(fallbackPrice) : null;
 }
 
-export function getRevenueSummaryPrice(item, member = false) {
+function getRevenueSummaryPrice(item, member = false) {
   if (!item?.includeInSummaryPrice) {
     return null;
   }

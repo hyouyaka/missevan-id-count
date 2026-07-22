@@ -4,7 +4,7 @@ Last updated: 2026-07-15
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.7.3
+- **Version**: 1.7.5
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
   - `server.js` as the stable backend facade, with `server/application.js` providing composition and `server/routes/` holding extracted route groups
@@ -73,7 +73,6 @@ This document describes the current implementation, not the historical evolution
 - `shared/ongoingUtils.js`: ongoing-title aggregation and window delta shaping
 
 ### Data and Support Files
-- `data/`: checked-in seed/reference JSON snapshots
 - `scripts/`: developer utilities such as seed-building helpers
 - `logs/`: runtime usage logging output when present
 - `runtime/`: mutable runtime JSON fallback storage when present
@@ -296,23 +295,5 @@ The following items may exist in the repository or on disk, but they are not par
 - `release/`: desktop packaging output and builder metadata; this is not source-of-truth application logic
 - `logs/`: runtime telemetry output
 - `runtime/`: mutable fallback storage created by the running app
-- `tmp-manbo-json-method-note.md`: historical scratch note from an abandoned experiment
 
 `RELEASE.md` explicitly states that packaged executables should be published as release assets and should not be committed as normal source changes.
-
-## Confirmed Redundancy Audit Summary
-
-This pass records confirmed redundancy or low-value leftovers, but does not remove them.
-
-| Finding | Current state | Risk if simplified later |
-| --- | --- | --- |
-| `src/utils/episodeRules.js` | Pure re-export wrapper over `shared/episodeRules.js` with no added logic | Low |
-| duplicate CV text helpers in `server/application.js` | `buildRankMainCvText()` and `buildMainCvText()` perform the same string-assembly job in different regions | Low |
-| duplicated version normalizer | `server/application.js` and `src/app/app-utils.js` both implement the same `normalizeVersion()` rule | Medium |
-| `release/` committed artifacts | Packaging outputs live next to source even though they are not part of the application architecture | Low |
-| `tmp-manbo-json-method-note.md` | Historical experiment note kept in repo root but not used by runtime code | Low |
-
-### Follow-Up Guidance
-- Safe simplification candidates: wrapper re-exports, duplicate helper consolidation, and stronger ignore rules for build outputs
-- Higher-care refactor candidate: moving duplicated version-normalization logic into a shared module that both backend and frontend can consume cleanly
-- No code removal is performed in this documentation pass

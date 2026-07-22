@@ -19,7 +19,7 @@ import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankBadge } from "@/app/RankBadge";
-import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
+import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
 import {
   fetchRankTrendAvailabilityData,
   fetchRankTrendData,
@@ -561,7 +561,7 @@ function HomeRankCard({
   platform,
   rankConfig,
   rank,
-  publishedAt,
+  updatedAt,
   onNavigateRoute,
   onOpenSearchResult,
   canOpenTrend,
@@ -575,9 +575,9 @@ function HomeRankCard({
           <h3 className="line-clamp-1 min-w-0" title={rankConfig.displayTitle || rankConfig.title}>
             {rankConfig.displayTitle || rankConfig.title}
           </h3>
-          {formatHomeUpdatedLabel(publishedAt) ? (
+          {formatHomeUpdatedLabel(updatedAt) ? (
             <span className="home-editorial-updated-at">
-              {formatHomeUpdatedLabel(publishedAt)}
+              {formatHomeUpdatedLabel(updatedAt)}
             </span>
           ) : null}
       </div>
@@ -936,27 +936,26 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
           aria-label={`${platformMeta[selectedRankPlatform].label}榜单速览`}
         >
           <CarouselContent className="-ml-3">
-            {activeRankConfigs.map((rankConfig) => (
-              <CarouselItem
-                key={`${selectedRankPlatform}-${rankConfig.categoryKey}-${rankConfig.rankKey}`}
-                className="flex basis-full pl-3 sm:basis-1/2 lg:basis-1/3"
-              >
-                <HomeRankCard
-                  platform={selectedRankPlatform}
-                  rankConfig={rankConfig}
-                  rank={getRankByConfig(rankData, selectedRankPlatform, rankConfig)}
-                  publishedAt={
-                    rankConfig.categoryKey === "cv"
-                      ? rankData?.meta?.cv?.publishedAt
-                      : rankData?.meta?.normal?.publishedAt
-                  }
-                  onNavigateRoute={onNavigateRoute}
-                  onOpenSearchResult={onOpenSearchResult}
-                  canOpenTrend={canOpenHomeTrend}
-                  onOpenTrend={openHomeTrend}
-                />
-              </CarouselItem>
-            ))}
+            {activeRankConfigs.map((rankConfig) => {
+              const rank = getRankByConfig(rankData, selectedRankPlatform, rankConfig);
+              return (
+                <CarouselItem
+                  key={`${selectedRankPlatform}-${rankConfig.categoryKey}-${rankConfig.rankKey}`}
+                  className="flex basis-full pl-3 sm:basis-1/2 lg:basis-1/3"
+                >
+                  <HomeRankCard
+                    platform={selectedRankPlatform}
+                    rankConfig={rankConfig}
+                    rank={rank}
+                    updatedAt={resolveRankRefreshAt(rankData, rankConfig.categoryKey, rank)}
+                    onNavigateRoute={onNavigateRoute}
+                    onOpenSearchResult={onOpenSearchResult}
+                    canOpenTrend={canOpenHomeTrend}
+                    onOpenTrend={openHomeTrend}
+                  />
+                </CarouselItem>
+              );
+            })}
           </CarouselContent>
           <CarouselPrevious className="left-2" />
           <CarouselNext className="right-2" />

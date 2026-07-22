@@ -606,7 +606,7 @@ test("home title and trend logs use the same homeview source", () => {
   assert.doesNotMatch(homeViewSource, /source: "home"/);
 });
 
-test("home section subtitles show platform and rank publish times", () => {
+test("home section subtitles show platform and shared rank refresh times", () => {
   const ongoingListStart = homeViewSource.indexOf("function OngoingPlatformList");
   const ongoingListEnd = homeViewSource.indexOf("function RankDramaItem", ongoingListStart);
   const rankCardStart = homeViewSource.indexOf("function HomeRankCard");
@@ -632,10 +632,14 @@ test("home section subtitles show platform and rank publish times", () => {
   assert.match(ongoingListSource, /\{formatHomeUpdatedLabel\(updatedAt\)\}/);
   assert.match(homeViewSource, /updatedAt=\{ongoingByPlatform\.missevan\?\.updatedAt\}/);
   assert.match(homeViewSource, /updatedAt=\{ongoingByPlatform\.manbo\?\.updatedAt\}/);
-  assert.match(rankCardSource, /function HomeRankCard\(\{[\s\S]*platform,[\s\S]*rankConfig,[\s\S]*publishedAt,/);
+  assert.match(rankCardSource, /function HomeRankCard\(\{[\s\S]*platform,[\s\S]*rankConfig,[\s\S]*updatedAt,/);
   assert.match(rankCardSource, /home-editorial-updated-at/);
-  assert.match(rankCardSource, /\{formatHomeUpdatedLabel\(publishedAt\)\}/);
-  assert.match(homeViewSource, /rankConfig\.categoryKey === "cv"\s*\? rankData\?\.meta\?\.cv\?\.publishedAt\s*: rankData\?\.meta\?\.normal\?\.publishedAt/);
+  assert.match(rankCardSource, /\{formatHomeUpdatedLabel\(updatedAt\)\}/);
+  assert.match(ranksDataSource, /export function resolveRankRefreshAt\(rankData, categoryKey, rank\)/);
+  assert.match(ranksDataSource, /categoryKey === "cv"[\s\S]*rankData\?\.cvSummary\?\.updatedAt \|\| rank\?\.fetchedAt[\s\S]*rankData\?\.updatedAt/);
+  assert.match(homeViewSource, /updatedAt=\{resolveRankRefreshAt\(rankData, rankConfig\.categoryKey, rank\)\}/);
+  assert.match(ranksPanelSource, /const rankRefreshAt = resolveRankRefreshAt\(rankData, category\?\.key, activeRank\)/);
+  assert.doesNotMatch(homeViewSource, /rankData\?\.meta\?\.(?:normal|cv)\?\.publishedAt/);
   assert.doesNotMatch(homeViewSource, /未知更新/);
 });
 
@@ -690,7 +694,7 @@ test("home update and rank sections use editorial responsive layouts", () => {
   assert.match(homeViewSource, /displayTitle: "CV总榜"/);
 });
 
-test("home rank carousel uses the shadcn Embla composition without replacing shared buttons", () => {
+test("home rank carousel uses the shared Embla composition without replacing shared buttons", () => {
   assert.match(homeViewSource, /from "@\/components\/ui\/carousel"/);
   assert.match(carouselSource, /useEmblaCarousel from "embla-carousel-react"/);
   assert.match(carouselSource, /role="region"/);
@@ -3669,7 +3673,8 @@ test("image proxy retries aborted image bodies and logs concise failures", () =>
 
   assert.match(helperSource, /createTimeoutSignal\(IMAGE_PROXY_TIMEOUT_MS\)/);
   assert.match(helperSource, /redirect: "manual"/);
-  assert.match(helperSource, /response\.body\?\.destroy\(\)/);
+  assert.match(helperSource, /await cancelResponseBody\(response\.body\)/);
+  assert.doesNotMatch(helperSource, /response\.body\?\.destroy\(\)/);
   assert.match(helperSource, /validateImageProxyUrl/);
   assert.match(helperSource, /assertImageContentLength/);
   assert.match(helperSource, /detectImageContentType\(buffer\)/);

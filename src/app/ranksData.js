@@ -36,6 +36,13 @@ export function getCachedRanksData(frontendVersion) {
   return ranksClientCache.data;
 }
 
+export function resolveRankRefreshAt(rankData, categoryKey, rank) {
+  if (categoryKey === "cv") {
+    return rankData?.cvSummary?.updatedAt || rank?.fetchedAt || "";
+  }
+  return rankData?.updatedAt || "";
+}
+
 export async function fetchRanksData(frontendVersion, options = {}) {
   const normalizedVersion = String(frontendVersion ?? "").trim();
   const revalidate = options?.revalidate === true;

@@ -24,24 +24,3 @@ export async function searchLibraryWithFallback({
     source: "api",
   };
 }
-
-export function createSearchService(dependencies = {}) {
-  return {
-    searchMissevan(keyword, options = {}) {
-      return searchLibraryWithFallback({
-        keyword,
-        searchLibrary: dependencies.searchMissevanLibrary,
-        searchApi: dependencies.searchMissevanApi,
-        libraryOnly: Boolean(options.libraryOnly),
-      });
-    },
-    searchManbo(keyword, options = {}) {
-      return searchLibraryWithFallback({
-        keyword,
-        searchLibrary: dependencies.searchManboLibrary,
-        searchApi: dependencies.searchManboApi,
-        libraryOnly: Boolean(options.libraryOnly),
-      });
-    },
-  };
-}

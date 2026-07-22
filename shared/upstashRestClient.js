@@ -1,5 +1,3 @@
-import fetch from "node-fetch";
-
 export function createUpstashRestClient({
   upstashRestUrl = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, ""),
   upstashRestToken = process.env.UPSTASH_REDIS_REST_TOKEN || "",

@@ -3,11 +3,10 @@ import { createHash } from "node:crypto";
 import compression from "compression";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
-import fetch from "node-fetch";
-import https from "https";
 import { createRequire } from "module";
 import path from "path";
 import { fileURLToPath } from "url";
+import { Agent as UndiciAgent } from "undici";
 import {
   extractSearchSortKey,
   isCompleteSearchTermPrefix,
@@ -60,6 +59,7 @@ import { normalizeVersion } from "../shared/versionUtils.js";
 import {
   ImageProxyPolicyError,
   assertImageContentLength,
+  cancelResponseBody,
   detectImageContentType,
   readImageBodyWithLimit,
   validateImageProxyUrl,
@@ -485,9 +485,8 @@ const MISSEVAN_BROWSER_HEADERS = Object.freeze({
   "Referer": "https://www.missevan.com/",
   "Origin": "https://www.missevan.com",
 });
-const manboHttpsAgent = new https.Agent({
-  keepAlive: true,
-  maxSockets: Math.max(
+const manboFetchDispatcher = new UndiciAgent({
+  connections: Math.max(
     8,
     MANBO_DANMAKU_PAGE_CONCURRENCY * MANBO_STATS_EPISODE_CONCURRENCY * 2
   ),
@@ -2475,10 +2474,6 @@ function normalizeDanmakuRankNumber(value) {
   return isSkippedDanmakuMetricValue(value) ? null : normalizeRankNumber(value);
 }
 
-function buildRankMainCvText(mainCvs) {
-  return buildMainCvText(mainCvs);
-}
-
 function normalizeRankCatalogName(drama) {
   const catalogName = normalizeTextValue(
     drama?.catalogName ??
@@ -2553,7 +2548,7 @@ function buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot =
       daily_view_delta: getPeakSeriesDailyViewDelta(peakSeriesRecord),
       drama_ids: dramaIds,
       main_cvs: mainCvs,
-      main_cv_text: buildRankMainCvText(mainCvs),
+      main_cv_text: buildMainCvText(mainCvs),
       platform: "missevan",
       type: "peak",
     };
@@ -2597,7 +2592,7 @@ function buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot =
     }),
     catalogName: rankCatalogName,
     main_cvs: mainCvs,
-    main_cv_text: buildRankMainCvText(mainCvs),
+    main_cv_text: buildMainCvText(mainCvs),
     platform: "missevan",
     type: "drama",
     danmaku_uid_count: normalizeDanmakuRankNumber(drama.danmaku_uid_count),
@@ -2651,7 +2646,7 @@ function buildManboRankCard(rankKey, rank, item, index, dramas) {
     rank_value_label: unitName,
     rank_value: rankValue,
     main_cvs: mainCvs,
-    main_cv_text: buildRankMainCvText(mainCvs),
+    main_cv_text: buildMainCvText(mainCvs),
     platform: "manbo",
     ...(rankKey !== "peak" ? { danmaku_uid_count: normalizeDanmakuRankNumber(drama.danmaku_uid_count) } : {}),
   };
@@ -3421,6 +3416,7 @@ function getAdminCacheRefreshReason(value) {
 export async function refreshAdminRanksCacheTarget(options = {}) {
   const target = normalizeAdminCacheRefreshTarget(options.target || "ranks");
   const force = options.force === true;
+  const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
   const readNormalBundle = options.readNormalRanksBundle || readNormalRanksBundle;
   const readCvBundle = options.readCvRanksBundle || readCvRanksBundle;
   const readMeta = options.readRanksMeta || (() => readRanksJsonKey(RANKS_META_KEY));
@@ -3441,6 +3437,35 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
     statuses.push("cold-refresh");
   }
 
+  const rawMeta = await readMeta();
+  const isMetaObject = Boolean(rawMeta && typeof rawMeta === "object" && !Array.isArray(rawMeta));
+  const meta = isMetaObject ? normalizeRanksMeta(rawMeta) : null;
+  const hasRequiredMeta = Boolean(
+    meta &&
+      (!refreshNormal || meta.normal.updatedAt) &&
+      (!refreshCv || meta.cv.updatedAt)
+  );
+  if (!hasRequiredMeta) {
+    if (force) {
+      throw new Error("Ranks meta is unavailable");
+    }
+    return {
+      target,
+      success: true,
+      cacheStatus: statuses.join("+") || "meta-hit",
+      normalUpdatedAt: ranksCache.response?.updatedAt || ranksCache.normalUpdatedAt || "",
+      cvUpdatedAt: ranksCache.response?.cvSummary?.updatedAt || ranksCache.cvUpdatedAt || "",
+    };
+  }
+
+  const nextMeta = normalizeRanksMeta(ranksCache.meta);
+  if (refreshNormal) {
+    nextMeta.normal = meta.normal;
+  }
+  if (refreshCv) {
+    nextMeta.cv = meta.cv;
+  }
+
   if (force) {
     if (refreshNormal) {
       const normalBundle = await readNormalBundle();
@@ -3457,7 +3482,6 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
       statuses.push("cv-refresh");
     }
   } else {
-    const meta = normalizeRanksMeta(await readMeta());
     const decision = buildRanksMetaRefreshDecision(
       {
         normalUpdatedAt: ranksCache.normalUpdatedAt,
@@ -3490,6 +3514,9 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   ranksCache.cvTrendSnapshots = nextCvTrendSnapshots;
   ranksCache.normalUpdatedAt = nextNormalUpdatedAt;
   ranksCache.cvUpdatedAt = nextCvUpdatedAt;
+  ranksCache.meta = nextMeta;
+  ranksCache.metaLoadedAt = target === "ranks" ? now : 0;
+  ranksCache.metaLoadFailedAt = 0;
 
   const response = hasNormalRanksSnapshot(nextNormalSnapshot)
     ? updateCombinedRanksResponseCache()
@@ -7105,12 +7132,12 @@ export function buildFetchOptions(url, options = {}) {
       ? buildMissevanFetchHeaders(options.headers)
       : options.headers,
     signal: options.signal,
-    agent: options.agent,
+    dispatcher: options.dispatcher,
     redirect: options.redirect,
   };
 
-  if (!fetchOptions.agent && targetUrl.hostname === MANBO_API_HOST) {
-    fetchOptions.agent = manboHttpsAgent;
+  if (!fetchOptions.dispatcher && targetUrl.hostname === MANBO_API_HOST) {
+    fetchOptions.dispatcher = manboFetchDispatcher;
   }
 
   return fetchOptions;
@@ -7497,7 +7524,7 @@ async function fetchImageBufferWithRetry(targetUrl) {
         if (![301, 302, 303, 307, 308].includes(response.status)) {
           break;
         }
-        response.body?.destroy();
+        await cancelResponseBody(response.body);
         if (redirectCount >= IMAGE_PROXY_MAX_REDIRECTS) {
           throw new ImageProxyPolicyError("Image proxy redirect limit exceeded", {
             status: 400,
@@ -7526,7 +7553,7 @@ async function fetchImageBufferWithRetry(targetUrl) {
           IMAGE_PROXY_MAX_BYTES
         );
       } catch (error) {
-        response.body?.destroy();
+        await cancelResponseBody(response.body);
         throw error;
       }
       const buffer = await readImageBodyWithLimit(

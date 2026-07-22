@@ -1122,6 +1122,10 @@ test("admin ranks force refresh does not partially mutate cache when a requested
     cvSnapshot: { generated_at: "old-cv", items: [] },
     normalUpdatedAt: "old-normal",
     cvUpdatedAt: "old-cv",
+    meta: {
+      normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
+      cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+    },
     response: {
       success: true,
       schemaVersion: 5,
@@ -1136,6 +1140,10 @@ test("admin ranks force refresh does not partially mutate cache when a requested
       refreshAdminRanksCacheTarget({
         target: "ranks",
         force: true,
+        readRanksMeta: async () => ({
+          normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
+          cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+        }),
         readNormalRanksBundle: async () => ({
           snapshot: { _meta: { updated_at: "new-normal" }, ranks: [] },
           peakTrendSnapshot: { new: true },
@@ -1153,6 +1161,145 @@ test("admin ranks force refresh does not partially mutate cache when a requested
   assert.deepEqual(cache.normalSnapshot, { _meta: { updated_at: "old-normal" }, ranks: [] });
   assert.deepEqual(cache.peakTrendSnapshot, { old: true });
   assert.equal(cache.response.updatedAt, "old-normal");
+  assert.deepEqual(cache.meta, {
+    normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
+    cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+  });
+});
+
+test("admin ranks force refresh leaves cache untouched when meta cannot be read", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+  const oldSnapshot = {
+    _meta: { updated_at: "old-normal" },
+    missevan: { ranks: {}, dramas: {} },
+    manbo: { ranks: {}, dramas: {} },
+  };
+  const oldMeta = {
+    normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
+    cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+  };
+
+  __setRanksCacheForTest({
+    normalSnapshot: oldSnapshot,
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "old-cv", rankings: {} },
+    normalUpdatedAt: "old-normal",
+    cvUpdatedAt: "old-cv",
+    meta: oldMeta,
+    response: null,
+  });
+
+  await assert.rejects(
+    () => refreshAdminRanksCacheTarget({
+      target: "ranks",
+      force: true,
+      readRanksMeta: async () => {
+        throw new Error("meta unavailable");
+      },
+      readNormalRanksBundle: async () => {
+        throw new Error("bundle reads must wait for meta");
+      },
+      readCvRanksBundle: async () => {
+        throw new Error("bundle reads must wait for meta");
+      },
+    }),
+    /meta unavailable/
+  );
+
+  const cache = __getRanksCacheForTest();
+  assert.deepEqual(cache.normalSnapshot, oldSnapshot);
+  assert.equal(cache.normalUpdatedAt, "old-normal");
+  assert.equal(cache.cvUpdatedAt, "old-cv");
+  assert.deepEqual(cache.meta, oldMeta);
+});
+
+test("admin ranks force refresh rejects incomplete target meta before reading bundles", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+  const oldSnapshot = {
+    _meta: { updated_at: "old-normal" },
+    missevan: { ranks: {}, dramas: {} },
+    manbo: { ranks: {}, dramas: {} },
+  };
+  const oldMeta = {
+    normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
+    cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+  };
+  let bundleCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: oldSnapshot,
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "old-cv", rankings: {} },
+    normalUpdatedAt: "old-normal",
+    cvUpdatedAt: "old-cv",
+    meta: oldMeta,
+    response: null,
+  });
+
+  await assert.rejects(
+    () => refreshAdminRanksCacheTarget({
+      target: "ranks",
+      force: true,
+      readRanksMeta: async () => ({
+        normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
+      }),
+      readNormalRanksBundle: async () => {
+        bundleCalls += 1;
+        return {};
+      },
+      readCvRanksBundle: async () => {
+        bundleCalls += 1;
+        return {};
+      },
+    }),
+    /Ranks meta is unavailable/
+  );
+
+  const cache = __getRanksCacheForTest();
+  assert.equal(bundleCalls, 0);
+  assert.deepEqual(cache.normalSnapshot, oldSnapshot);
+  assert.equal(cache.normalUpdatedAt, "old-normal");
+  assert.equal(cache.cvUpdatedAt, "old-cv");
+  assert.deepEqual(cache.meta, oldMeta);
+});
+
+test("admin ranks non-force partial refresh ignores meta missing the requested branch", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+  const oldMeta = {
+    normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
+    cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+  };
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "old-normal" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "old-cv", rankings: {} },
+    normalUpdatedAt: "old-normal",
+    cvUpdatedAt: "old-cv",
+    meta: oldMeta,
+    response: null,
+  });
+
+  const result = await refreshAdminRanksCacheTarget({
+    target: "ranks:normal",
+    force: false,
+    readRanksMeta: async () => ({
+      cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+    }),
+    readNormalRanksBundle: async () => {
+      throw new Error("bundle must not be read for incomplete meta");
+    },
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(__getRanksCacheForTest().meta, oldMeta);
 });
 
 test("admin ranks CV force refresh on a cold cache reads only the CV bundle", async () => {
@@ -1174,6 +1321,10 @@ test("admin ranks CV force refresh on a cold cache reads only the CV bundle", as
   const result = await refreshAdminRanksCacheTarget({
     target: "ranks:cv",
     force: true,
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "", publishedAt: "" },
+      cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+    }),
     readNormalRanksBundle: async () => {
       normalCalls += 1;
       throw new Error("normal bundle should not be read");
@@ -1216,6 +1367,10 @@ test("admin ranks normal force refresh on a cold cache reads only the normal bun
   const result = await refreshAdminRanksCacheTarget({
     target: "ranks:normal",
     force: true,
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
+      cv: { updatedAt: "", publishedAt: "" },
+    }),
     readNormalRanksBundle: async () => {
       normalCalls += 1;
       return {
@@ -1238,6 +1393,189 @@ test("admin ranks normal force refresh on a cold cache reads only the normal bun
   assert.equal(cvCalls, 0);
   assert.equal(result.success, true);
   assert.equal(result.normalUpdatedAt, "new-normal");
+});
+
+test("admin ranks force refresh publishes matching bundles and meta in the first response", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const {
+    __getRanksCacheForTest,
+    __setRanksCacheForTest,
+    getCachedRanksResponse,
+    getRanksMetaProbeCycleIds,
+    refreshAdminRanksCacheTarget,
+  } = await import("./server.js");
+  const now = Date.parse("2026-06-13T00:36:00.000Z");
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "old-normal" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: { old: true },
+    cvSnapshot: { generated_at: "old-cv", rankings: {} },
+    cvTrendSnapshots: { old: true },
+    normalUpdatedAt: "old-normal",
+    cvUpdatedAt: "old-cv",
+    meta: {
+      normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
+      cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+    },
+    metaLoadedAt: now - 60_000,
+    metaPostRefreshBackoff: {},
+  });
+
+  const result = await refreshAdminRanksCacheTarget({
+    target: "ranks",
+    force: true,
+    now,
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
+      cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+    }),
+    readNormalRanksBundle: async () => ({
+      snapshot: {
+        _meta: { updated_at: "new-normal" },
+        missevan: { ranks: {}, dramas: {} },
+        manbo: { ranks: {}, dramas: {} },
+      },
+      peakTrendSnapshot: { new: true },
+      updatedAt: "new-normal",
+    }),
+    readCvRanksBundle: async () => ({
+      cvSnapshot: { generated_at: "new-cv", rankings: {} },
+      cvTrendSnapshots: { new: true },
+      updatedAt: "new-cv",
+    }),
+  });
+
+  assert.equal(result.normalUpdatedAt, "new-normal");
+  assert.equal(result.cvUpdatedAt, "new-cv");
+  assert.deepEqual(__getRanksCacheForTest().meta, {
+    normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
+    cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+  });
+  assert.deepEqual(__getRanksCacheForTest().response.meta, {
+    normal: { publishedAt: "new-normal-published" },
+    cv: { publishedAt: "new-cv-published" },
+  });
+
+  __setRanksCacheForTest({
+    metaPostRefreshBackoff: {
+      normal: { cycleId: getRanksMetaProbeCycleIds(now).normal },
+    },
+  });
+  let metaCalls = 0;
+  const cached = await getCachedRanksResponse({
+    now: now + 10 * 60 * 1000,
+    readRanksMeta: async () => {
+      metaCalls += 1;
+      throw new Error("fresh admin meta should remain valid during backoff");
+    },
+  });
+  assert.equal(metaCalls, 0);
+  assert.equal(cached.response.meta.normal.publishedAt, "new-normal-published");
+});
+
+test("admin ranks non-force refresh commits published times without rereading unchanged bundles", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+  const normalSnapshot = {
+    _meta: { updated_at: "same-normal" },
+    missevan: { ranks: {}, dramas: {} },
+    manbo: { ranks: {}, dramas: {} },
+  };
+  const cvSnapshot = { generated_at: "same-cv", rankings: {} };
+
+  __setRanksCacheForTest({
+    normalSnapshot,
+    peakTrendSnapshot: null,
+    cvSnapshot,
+    cvTrendSnapshots: null,
+    normalUpdatedAt: "same-normal",
+    cvUpdatedAt: "same-cv",
+    meta: {
+      normal: { updatedAt: "same-normal", publishedAt: "old-normal-published" },
+      cv: { updatedAt: "same-cv", publishedAt: "old-cv-published" },
+    },
+    response: null,
+    metaPostRefreshBackoff: {},
+  });
+
+  const result = await refreshAdminRanksCacheTarget({
+    target: "ranks",
+    force: false,
+    now: Date.parse("2026-06-13T00:36:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "same-normal", publishedAt: "new-normal-published" },
+      cv: { updatedAt: "same-cv", publishedAt: "new-cv-published" },
+    }),
+    readNormalRanksBundle: async () => {
+      throw new Error("unchanged normal bundle should not be read");
+    },
+    readCvRanksBundle: async () => {
+      throw new Error("unchanged CV bundle should not be read");
+    },
+  });
+
+  assert.equal(result.cacheStatus, "cold-refresh");
+  assert.deepEqual(__getRanksCacheForTest().response.meta, {
+    normal: { publishedAt: "new-normal-published" },
+    cv: { publishedAt: "new-cv-published" },
+  });
+});
+
+test("admin ranks partial refresh updates only the requested meta branch", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "old-normal" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "old-cv", rankings: {} },
+    cvTrendSnapshots: { old: true },
+    normalUpdatedAt: "old-normal",
+    cvUpdatedAt: "old-cv",
+    meta: {
+      normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
+      cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+    },
+    response: null,
+  });
+
+  await refreshAdminRanksCacheTarget({
+    target: "ranks:normal",
+    force: true,
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
+      cv: { updatedAt: "unrequested-cv", publishedAt: "unrequested-cv-published" },
+    }),
+    readNormalRanksBundle: async () => ({
+      snapshot: {
+        _meta: { updated_at: "new-normal" },
+        missevan: { ranks: {}, dramas: {} },
+        manbo: { ranks: {}, dramas: {} },
+      },
+      peakTrendSnapshot: null,
+      updatedAt: "new-normal",
+    }),
+    readCvRanksBundle: async () => {
+      throw new Error("unrequested CV bundle should not be read");
+    },
+  });
+
+  const cache = __getRanksCacheForTest();
+  assert.equal(cache.normalUpdatedAt, "new-normal");
+  assert.equal(cache.cvUpdatedAt, "old-cv");
+  assert.deepEqual(cache.cvSnapshot, { generated_at: "old-cv", rankings: {} });
+  assert.deepEqual(cache.meta, {
+    normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
+    cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+  });
 });
 
 test("admin ranks non-force refresh does not poison a cold cache when meta is unavailable", async () => {

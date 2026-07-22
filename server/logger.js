@@ -120,5 +120,3 @@ export function createRequestLoggerMiddleware({ logger }) {
     next();
   };
 }
-
-export { SENSITIVE_FIELD_PATTERN };

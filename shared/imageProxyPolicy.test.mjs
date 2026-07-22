@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ImageProxyPolicyError,
   assertImageContentLength,
+  cancelResponseBody,
   detectImageContentType,
   readImageBodyWithLimit,
   validateImageProxyUrl,
@@ -67,6 +68,25 @@ test("image policy rejects declared lengths above the byte limit", () => {
   );
   assert.doesNotThrow(() => assertImageContentLength("", 10));
   assert.doesNotThrow(() => assertImageContentLength("10", 10));
+});
+
+test("image policy cancels native fetch response bodies", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  await cancelResponseBody(body);
+  assert.equal(cancelled, true);
+});
+
+test("image policy destroys legacy Node response bodies", async () => {
+  const body = Readable.from([Buffer.from("unused")]);
+
+  await cancelResponseBody(body);
+  assert.equal(body.destroyed, true);
 });
 
 test("image policy stops reading when streamed bytes exceed the limit", async () => {

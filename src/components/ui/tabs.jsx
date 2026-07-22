@@ -1,6 +1,6 @@
 import * as React from "react"
 import { cva } from "class-variance-authority";
-import { Tabs as TabsPrimitive } from "radix-ui"
+import * as TabsPrimitive from "@radix-ui/react-tabs"
 
 import { cn } from "@/lib/utils"
 
@@ -62,16 +62,4 @@ function TabsTrigger({
   );
 }
 
-function TabsContent({
-  className,
-  ...props
-}) {
-  return (
-    <TabsPrimitive.Content
-      data-slot="tabs-content"
-      className={cn("flex-1 text-sm outline-none", className)}
-      {...props} />
-  );
-}
-
-export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants }
+export { Tabs, TabsList, TabsTrigger }

@@ -1,4 +1,4 @@
-export class PlatformClientError extends Error {
+class PlatformClientError extends Error {
   constructor(message, { code = "PLATFORM_REQUEST_FAILED", status = 0, cause } = {}) {
     super(message, { cause });
     this.name = "PlatformClientError";

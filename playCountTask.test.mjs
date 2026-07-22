@@ -251,6 +251,13 @@ test("Missevan fetch options attach browser-like headers without Cookie", () => 
   assert.equal(options.headers.Cookie, undefined);
 });
 
+test("Manbo fetch options use a native-fetch dispatcher", () => {
+  const options = buildFetchOptions("https://www.kilamanbo.com/api/v1/test");
+
+  assert.equal(typeof options.dispatcher?.dispatch, "function");
+  assert.equal("agent" in options, false);
+});
+
 test("Missevan fallback URL maps upstream URLs to Render proxy", () => {
   assert.equal(
     buildMissevanFallbackUrl(

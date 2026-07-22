@@ -7,15 +7,13 @@ import {
   isCompleteSearchTermPrefix,
   isSearchKeywordLongEnough,
   parseMissevanInputToken,
-  normalizeManboIndexName,
   normalizeSearchText,
   stripSearchSeasonSuffix,
 } from "./searchUtils.js";
 
-test("normalizeSearchText removes common symbols and keeps compatibility alias", () => {
+test("normalizeSearchText removes common symbols", () => {
   assert.equal(normalizeSearchText("彼得·潘"), normalizeSearchText("彼得潘"));
   assert.equal(normalizeSearchText("A•B・C…D—E"), "abcde");
-  assert.equal(normalizeManboIndexName("彼得·潘"), normalizeSearchText("彼得潘"));
 });
 
 test("isSearchKeywordLongEnough requires two Han chars or three normalized non-Han chars", () => {

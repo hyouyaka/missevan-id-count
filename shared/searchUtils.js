@@ -11,8 +11,6 @@ export function normalizeSearchText(value) {
     .replace(/\s+/g, "");
 }
 
-export const normalizeManboIndexName = normalizeSearchText;
-
 export function isSearchKeywordLongEnough(value) {
   const raw = String(value ?? "").trim();
   if (!raw) {
