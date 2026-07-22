@@ -1,12 +1,17 @@
 import { buildVersionedUrl } from "@/app/app-utils";
+import { getBeijingYearMonth } from "../../shared/ongoingUtils.js";
 
 const ongoingClientCache = new Map();
-const ONGOING_CLIENT_SCHEMA_VERSION = 3;
+const ONGOING_CLIENT_SCHEMA_VERSION = 4;
 const ONGOING_CLIENT_CACHE_TTL_MS = 30 * 60 * 1000;
 
-export async function fetchOngoingData({ platform, frontendVersion, revalidate = false }) {
+function getOngoingClientCacheKey({ platform, frontendVersion }, now = Date.now()) {
   const normalizedVersion = String(frontendVersion ?? "").trim();
-  const cacheKey = `${ONGOING_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${platform}`;
+  return `${ONGOING_CLIENT_SCHEMA_VERSION}:${getBeijingYearMonth(now)}:${normalizedVersion}:${platform}`;
+}
+
+export async function fetchOngoingData({ platform, frontendVersion, revalidate = false }) {
+  const cacheKey = getOngoingClientCacheKey({ platform, frontendVersion });
   const cached = ongoingClientCache.get(cacheKey);
   if (!revalidate && cached?.data && Date.now() - cached.loadedAt < ONGOING_CLIENT_CACHE_TTL_MS) {
     return cached.data;
@@ -51,7 +56,6 @@ export async function fetchOngoingData({ platform, frontendVersion, revalidate =
 }
 
 export function getCachedOngoingData({ platform, frontendVersion }) {
-  const normalizedVersion = String(frontendVersion ?? "").trim();
-  const cacheKey = `${ONGOING_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${platform}`;
+  const cacheKey = getOngoingClientCacheKey({ platform, frontendVersion });
   return ongoingClientCache.get(cacheKey)?.data || null;
 }

@@ -3627,7 +3627,7 @@ test("Upstash v2 reads stay entity-scoped with legacy rollback paths", () => {
   assert.match(serverSource, /if \(raw\) \{[\s\S]*return JSON\.parse\(raw\);[\s\S]*getInfoStoreReadFailureSnapshot\(store\)/);
 });
 
-test("ongoing backend reads metrics only from the rank trend aggregate", () => {
+test("ongoing backend combines rank metrics with cached info and batched weekly playback baselines", () => {
   assert.match(serverSource, /buildMetricSnapshotsFromRankTrendAggregate/);
   assert.doesNotMatch(serverSource, /getLegacyOngoingMetricSnapshots/);
 
@@ -3640,6 +3640,15 @@ test("ongoing backend reads metrics only from the rank trend aggregate", () => {
   assert.match(primarySource, /isRankTrendAggregateSnapshot\(aggregateSnapshot, normalizedPlatform\)/);
   assert.match(primarySource, /error\.status = 503/);
   assert.match(primarySource, /buildMetricSnapshotsFromRankTrendAggregate\(aggregateSnapshot, normalizedPlatform\)/);
+  assert.match(primarySource, /getCachedWeeklyPlaybackSnapshot\(normalizedPlatform, \{[\s\S]*ids: ongoingIds/);
+  assert.match(primarySource, /historyOnly: true/);
+  assert.match(primarySource, /ensureInfoStoreLoaded\(infoStore, forceRefresh\)/);
+  assert.match(primarySource, /createTimesById/);
+  assert.match(primarySource, /const currentMonth = getBeijingYearMonth\(now\)/);
+  assert.match(primarySource, /getOngoingCacheKey\(normalizedPlatform, currentMonth\)/);
+  assert.match(primarySource, /currentMonth,/);
+  assert.match(ongoingDataSource, /getOngoingClientCacheKey/);
+  assert.match(ongoingDataSource, /getBeijingYearMonth\(now\)/);
 });
 
 test("rank-derived runtime has no dated shard reads or fixed CV baseline", () => {

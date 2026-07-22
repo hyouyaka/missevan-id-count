@@ -87,22 +87,120 @@ function getLatestMetricDate(dates, metricSnapshotsByDate) {
   return [...dates].reverse().find((date) => Object.keys(getSnapshotDramas(metricSnapshotsByDate?.[date])).length) || "";
 }
 
-function getWindowFromDate({ windowConfig, dates, latestDate, metricSnapshotsByDate, id }) {
+function getWindowTargetDate(windowConfig, latestDate) {
   const latestTime = parseDateKey(latestDate);
-  const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
-  return dates.find((date) => {
-    const time = parseDateKey(date);
-    return (
-      Number.isFinite(time) &&
-      time >= earliestAllowedTime &&
-      time <= latestTime &&
-      getDramaMetrics(metricSnapshotsByDate?.[date], id)
-    );
-  }) || "";
+  if (!Number.isFinite(latestTime)) {
+    return "";
+  }
+  return new Date(latestTime - windowConfig.days * DAY_MS).toISOString().slice(0, 10);
 }
 
-function buildWindowMetric(config, fromDrama, currentDrama) {
-  const fromValue = normalizeFiniteNumber(fromDrama?.[config.key]);
+function parseYearMonth(value) {
+  const match = /^(\d{4})\.(\d{2})$/.exec(normalizeText(value));
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+  return { year, month, ordinal: year * 12 + month - 1 };
+}
+
+export function getBeijingYearMonth(now = Date.now()) {
+  const date = now instanceof Date ? now : new Date(now);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+    }).formatToParts(date);
+    const year = Number(parts.find((part) => part.type === "year")?.value);
+    const month = Number(parts.find((part) => part.type === "month")?.value);
+    if (Number.isInteger(year) && Number.isInteger(month) && month >= 1 && month <= 12) {
+      return `${String(year).padStart(4, "0")}.${String(month).padStart(2, "0")}`;
+    }
+  } catch (_) {
+    // Asia/Shanghai is fixed at UTC+8 for the contemporary dates used here.
+  }
+  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  return `${String(shifted.getUTCFullYear()).padStart(4, "0")}.${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+export function isOngoingNewDrama(createTime, currentMonth) {
+  const normalizedCreateTime = normalizeText(createTime);
+  if (!normalizedCreateTime) {
+    return true;
+  }
+  const created = parseYearMonth(normalizedCreateTime);
+  const current = parseYearMonth(currentMonth);
+  if (!created || !current) {
+    return false;
+  }
+  const monthDifference = current.ordinal - created.ordinal;
+  return monthDifference >= 0 && monthDifference <= 1;
+}
+
+function getWeeklyPlaybackDates(weeklyPlaybackSnapshot) {
+  const explicitDates = Array.isArray(weeklyPlaybackSnapshot?.dates)
+    ? weeklyPlaybackSnapshot.dates
+    : Object.keys(weeklyPlaybackSnapshot?.snapshotsByDate || {});
+  return Array.from(new Set(explicitDates.map(normalizeDateKey).filter(Boolean))).sort();
+}
+
+function findNearestWeeklyPlaybackBaseline({
+  weeklyPlaybackSnapshot,
+  id,
+  targetDate,
+  latestDate,
+}) {
+  const targetTime = parseDateKey(targetDate);
+  const latestTime = parseDateKey(latestDate);
+  if (!Number.isFinite(targetTime) || !Number.isFinite(latestTime)) {
+    return null;
+  }
+  return getWeeklyPlaybackDates(weeklyPlaybackSnapshot)
+    .map((date) => {
+      const time = parseDateKey(date);
+      const drama = getDramaMetrics(weeklyPlaybackSnapshot?.snapshotsByDate?.[date], id);
+      const value = normalizeFiniteNumber(drama?.view_count);
+      return Number.isFinite(time) && time <= latestTime && value != null
+        ? { date, time, value }
+        : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      const distanceDifference = Math.abs(left.time - targetTime) - Math.abs(right.time - targetTime);
+      return distanceDifference || left.time - right.time;
+    })[0] || null;
+}
+
+function resolveMetricBaseline({
+  config,
+  exactDrama,
+  isNewDrama,
+  targetDate,
+  weeklyPlaybackBaseline,
+}) {
+  const exactValue = normalizeFiniteNumber(exactDrama?.[config.key]);
+  if (exactValue != null) {
+    return { value: exactValue, date: targetDate };
+  }
+  if (isNewDrama) {
+    return { value: 0, date: targetDate };
+  }
+  if (config.key === "view_count" && weeklyPlaybackBaseline) {
+    return {
+      value: weeklyPlaybackBaseline.value,
+      date: weeklyPlaybackBaseline.date,
+    };
+  }
+  return { value: null, date: "" };
+}
+
+function buildWindowMetric(config, baseline, currentDrama) {
+  const fromValue = normalizeFiniteNumber(baseline?.value);
   const toValue = normalizeFiniteNumber(currentDrama?.[config.key]);
   const available = fromValue != null && toValue != null;
   const delta = available ? toValue - fromValue : null;
@@ -118,34 +216,52 @@ function buildWindowMetric(config, fromDrama, currentDrama) {
   };
 }
 
-function buildItemWindows({ platform, id, currentDrama, dates, latestDate, metricSnapshotsByDate }) {
+function buildItemWindows({
+  platform,
+  id,
+  currentDrama,
+  latestDate,
+  metricSnapshotsByDate,
+  isNewDrama,
+  weeklyPlaybackSnapshot,
+}) {
   const metricConfigs = getRankTrendMetricConfigs(platform);
   return Object.fromEntries(
     ONGOING_WINDOWS.map((windowConfig) => {
-      const fromDate = getWindowFromDate({
-        windowConfig,
-        dates,
-        latestDate,
-        metricSnapshotsByDate,
+      const targetDate = getWindowTargetDate(windowConfig, latestDate);
+      const exactDrama = targetDate
+        ? getDramaMetrics(metricSnapshotsByDate?.[targetDate], id)
+        : null;
+      const weeklyPlaybackBaseline = findNearestWeeklyPlaybackBaseline({
+        weeklyPlaybackSnapshot,
         id,
+        targetDate,
+        latestDate,
       });
-      const fromDrama =
-        fromDate && fromDate !== latestDate ? getDramaMetrics(metricSnapshotsByDate[fromDate], id) : null;
-      const metrics = Object.fromEntries(
-        metricConfigs.map((config) => [
-          config.key,
-          buildWindowMetric(config, fromDrama, currentDrama),
-        ])
-      );
+      const baselines = Object.fromEntries(metricConfigs.map((config) => [
+        config.key,
+        resolveMetricBaseline({
+          config,
+          exactDrama,
+          isNewDrama,
+          targetDate,
+          weeklyPlaybackBaseline,
+        }),
+      ]));
+      const metrics = Object.fromEntries(metricConfigs.map((config) => [
+        config.key,
+        buildWindowMetric(config, baselines[config.key], currentDrama),
+      ]));
+      const playbackBaseline = baselines.view_count || { value: null, date: "" };
       return [
         windowConfig.key,
         {
           key: windowConfig.key,
           label: windowConfig.label,
           days: windowConfig.days,
-          fromDate,
+          fromDate: playbackBaseline.date,
           toDate: latestDate,
-          insufficientData: !fromDate || fromDate === latestDate,
+          insufficientData: metrics.view_count?.available !== true,
           metrics,
         },
       ];
@@ -224,7 +340,17 @@ function getPaymentLabel(drama) {
   return ["付费", "会员", "免费"].includes(paymentLabel) ? paymentLabel : "";
 }
 
-function buildOngoingItem({ platform, id, currentDrama, dates, latestDate, metricSnapshotsByDate }) {
+function buildOngoingItem({
+  platform,
+  id,
+  currentDrama,
+  latestDate,
+  metricSnapshotsByDate,
+  createTime,
+  currentMonth,
+  weeklyPlaybackSnapshot,
+}) {
+  const isNewDrama = isOngoingNewDrama(createTime, currentMonth);
   return applyMetricVisibility({
     id,
     platform,
@@ -240,9 +366,10 @@ function buildOngoingItem({ platform, id, currentDrama, dates, latestDate, metri
       platform,
       id,
       currentDrama,
-      dates,
       latestDate,
       metricSnapshotsByDate,
+      isNewDrama,
+      weeklyPlaybackSnapshot,
     }),
   });
 }
@@ -277,6 +404,9 @@ export function buildOngoingResponse({
   ongoingIds,
   indexSnapshot,
   metricSnapshotsByDate,
+  createTimesById,
+  currentMonth,
+  weeklyPlaybackSnapshot,
 } = {}) {
   const normalizedPlatform = normalizeText(platform);
   const metricConfigs = getRankTrendMetricConfigs(normalizedPlatform);
@@ -304,9 +434,11 @@ export function buildOngoingResponse({
         platform: normalizedPlatform,
         id,
         currentDrama,
-        dates,
         latestDate,
         metricSnapshotsByDate,
+        createTime: createTimesById?.[id],
+        currentMonth,
+        weeklyPlaybackSnapshot,
       });
     })
     .filter(Boolean);

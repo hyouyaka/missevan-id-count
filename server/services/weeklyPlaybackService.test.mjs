@@ -66,6 +66,68 @@ test("weekly playback store reads requested drama history with one HMGET", async
   assert.equal(bundle.snapshotsByDate["2026-06-26"].dramas["93038"].view_count, 125);
 });
 
+test("weekly playback history-only reads do not fall back when the hash has no record", async () => {
+  const calls = [];
+  const store = createWeeklyPlaybackStore({
+    command: async (args) => {
+      calls.push(args);
+      if (args[0] === "HMGET") {
+        return [null];
+      }
+      throw new Error(`Unexpected fallback command: ${args[0]}`);
+    },
+  });
+
+  const bundle = await store.getSnapshot("missevan", {
+    ids: ["93038"],
+    historyOnly: true,
+  });
+  const cachedBundle = await store.getSnapshot("missevan", {
+    ids: ["93038"],
+    historyOnly: true,
+  });
+
+  assert.equal(bundle, null);
+  assert.equal(cachedBundle, null);
+  assert.deepEqual(calls, [["HMGET", "missevan:watchcount:history", "93038"]]);
+});
+
+test("weekly playback history-only cache stays isolated from ordinary snapshot fallback", async () => {
+  const calls = [];
+  const store = createWeeklyPlaybackStore({
+    command: async (args) => {
+      calls.push(args);
+      if (args[0] === "HMGET") {
+        return [null];
+      }
+      if (args[0] === "GET") {
+        return JSON.stringify({
+          platform: "missevan",
+          granularity: "weekly",
+          dates: ["2026-05-10"],
+        });
+      }
+      if (args[0] === "MGET") {
+        return [JSON.stringify({
+          date: "2026-05-10",
+          dramas: { "93038": { view_count: 110 } },
+        })];
+      }
+      throw new Error(`Unexpected command: ${args[0]}`);
+    },
+  });
+
+  const historyOnly = await store.getSnapshot("missevan", {
+    ids: ["93038"],
+    historyOnly: true,
+  });
+  const ordinary = await store.getSnapshot("missevan", { ids: ["93038"] });
+
+  assert.equal(historyOnly, null);
+  assert.equal(ordinary.snapshotsByDate["2026-05-10"].dramas["93038"].view_count, 110);
+  assert.deepEqual(calls.map(([command]) => command), ["HMGET", "GET", "MGET"]);
+});
+
 test("weekly playback history version changes when same-date values are corrected", async () => {
   let latestValue = 125;
   const store = createWeeklyPlaybackStore({

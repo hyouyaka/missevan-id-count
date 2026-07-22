@@ -31,8 +31,10 @@ import {
 } from "../shared/episodeRules.js";
 import {
   buildOngoingResponse,
+  getBeijingYearMonth,
   normalizeOngoingIdList,
 } from "../shared/ongoingUtils.js";
+export { getBeijingYearMonth } from "../shared/ongoingUtils.js";
 import {
   computeMissevanRevenueMetrics,
   normalizeMissevanPayType,
@@ -326,7 +328,7 @@ const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const RANKS_RESPONSE_SCHEMA_VERSION = 5;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 7;
-const ONGOING_RESPONSE_SCHEMA_VERSION = 3;
+const ONGOING_RESPONSE_SCHEMA_VERSION = 4;
 
 function getFiniteNumberEnv(name, fallbackValue) {
   const rawValue = process.env[name];
@@ -3980,15 +3982,16 @@ async function getCachedWeeklyRankTrendResponse(platform, dramaId) {
   }
 }
 
-function getOngoingCacheKey(platform) {
-  return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${platform}`;
+function getOngoingCacheKey(platform, currentMonth) {
+  return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${currentMonth}:${platform}`;
 }
 
 async function getCachedOngoingResponse(platform, options = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const forceRefresh = options?.force === true;
-  const cacheKey = getOngoingCacheKey(normalizedPlatform);
   const now = Date.now();
+  const currentMonth = getBeijingYearMonth(now);
+  const cacheKey = getOngoingCacheKey(normalizedPlatform, currentMonth);
   const cached = ongoingCache.get(cacheKey);
   if (
     !forceRefresh &&
@@ -4003,10 +4006,19 @@ async function getCachedOngoingResponse(platform, options = {}) {
 
   const loadPromise = (async () => {
     const ongoingIds = await readOngoingIds(normalizedPlatform);
-    const aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(normalizedPlatform, {
-      force: forceRefresh,
-      ids: ongoingIds,
-    });
+    const infoStore = getInfoStore(normalizedPlatform);
+    const [aggregateSnapshot, weeklyPlaybackSnapshot] = await Promise.all([
+      getCachedRankTrendAggregateSnapshot(normalizedPlatform, {
+        force: forceRefresh,
+        ids: ongoingIds,
+      }),
+      getCachedWeeklyPlaybackSnapshot(normalizedPlatform, {
+        force: forceRefresh,
+        historyOnly: true,
+        ids: ongoingIds,
+      }).catch(() => null),
+      ensureInfoStoreLoaded(infoStore, forceRefresh).catch(() => infoStore),
+    ]);
     if (!isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform)) {
       const error = new Error("Ongoing rank trend aggregate is unavailable");
       error.status = 503;
@@ -4014,11 +4026,20 @@ async function getCachedOngoingResponse(platform, options = {}) {
     }
     const { indexSnapshot, metricSnapshotsByDate } =
       buildMetricSnapshotsFromRankTrendAggregate(aggregateSnapshot, normalizedPlatform);
+    const createTimesById = Object.fromEntries(
+      ongoingIds.map((id) => [
+        id,
+        normalizeTextValue(infoStore.byDramaId.get(String(id))?.createTime),
+      ])
+    );
     const response = buildOngoingResponse({
       platform: normalizedPlatform,
       ongoingIds,
       indexSnapshot,
       metricSnapshotsByDate,
+      createTimesById,
+      currentMonth,
+      weeklyPlaybackSnapshot,
     });
     if (response && typeof response === "object") {
       response.schemaVersion = ONGOING_RESPONSE_SCHEMA_VERSION;

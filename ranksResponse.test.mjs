@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+test("ongoing new-drama month uses the Beijing calendar boundary", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { getBeijingYearMonth } = await import("./server.js");
+
+  assert.equal(getBeijingYearMonth("2026-06-30T15:59:59.999Z"), "2026.06");
+  assert.equal(getBeijingYearMonth("2026-06-30T16:00:00.000Z"), "2026.07");
+  assert.equal(getBeijingYearMonth("2026-12-31T16:00:00.000Z"), "2027.01");
+});
+
 test("cold ranks batch parser tolerates malformed optional JSON only when requested", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { parseRanksBatchJson } = await import("./server.js");

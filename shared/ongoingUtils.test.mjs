@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildOngoingResponse,
+  isOngoingNewDrama,
   isOngoingEmptyPaidDanmakuMetric,
   normalizeOngoingIdList,
   sortOngoingItemsByWindowDelta,
@@ -92,7 +93,7 @@ test("buildOngoingResponse filters listed dramas and computes window deltas", ()
   assert.equal(response.items[1].payment_label, "会员");
   assert.equal(response.items[0].main_cv_text, "袁铭喆，赵成晨");
   assert.equal(response.items[0].windows["3d"].metrics.view_count.delta, 400);
-  assert.equal(response.items[0].windows["30d"].metrics.view_count.delta, 800);
+  assert.equal(response.items[0].windows["30d"].metrics.view_count.delta, 900);
   assert.equal(response.items[0].windows["3d"].metrics.subscription_num.label, "追剧人数");
 });
 
@@ -102,14 +103,14 @@ test("buildOngoingResponse accepts metric snapshots converted from rank trend ag
       version: 1,
       platform: "missevan",
       updated_at: "2026-05-17T01:00:00.000Z",
-      dates: ["2026-05-15", "2026-05-17"],
+      dates: ["2026-05-14", "2026-05-17"],
       dramas: {
         101: {
           name: "四面佛",
           cover: "https://example.com/101.jpg",
           payStatus: "付费",
           samples: {
-            "2026-05-15": {
+            "2026-05-14": {
               metrics: {
                 view_count: 100,
                 danmaku_uid_count: 1,
@@ -175,6 +176,8 @@ test("buildOngoingResponse marks missing previous data unavailable without hidin
     platform: "manbo",
     ongoingIds: ["2087206604062588962"],
     indexSnapshot: sampleIndex,
+    createTimesById: { "2087206604062588962": "2026.01" },
+    currentMonth: "2026.04",
     metricSnapshotsByDate: {
       "2026-04-29": {
         dramas: {
@@ -195,6 +198,191 @@ test("buildOngoingResponse marks missing previous data unavailable without hidin
   assert.equal(response.items[0].windows["7d"].insufficientData, true);
   assert.equal(response.items[0].windows["7d"].metrics.view_count.delta, null);
   assert.equal(response.items[0].windows["7d"].metrics.view_count.available, false);
+});
+
+test("isOngoingNewDrama compares YYYY.MM values by calendar month", () => {
+  assert.equal(isOngoingNewDrama("2026.07", "2026.07"), true);
+  assert.equal(isOngoingNewDrama("2026.06", "2026.07"), true);
+  assert.equal(isOngoingNewDrama("2026.05", "2026.07"), false);
+  assert.equal(isOngoingNewDrama("2026.12", "2027.01"), true);
+  assert.equal(isOngoingNewDrama("", "2026.07"), true);
+  assert.equal(isOngoingNewDrama(undefined, "2026.07"), true);
+  assert.equal(isOngoingNewDrama("2026.13", "2026.07"), false);
+  assert.equal(isOngoingNewDrama("2026-06", "2026.07"), false);
+  assert.equal(isOngoingNewDrama("2026.08", "2026.07"), false);
+});
+
+test("buildOngoingResponse uses the exact target date before new-drama zero or weekly history", () => {
+  const id = "2087206604062588962";
+  const response = buildOngoingResponse({
+    platform: "manbo",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-07-19", "2026-07-22"] },
+    createTimesById: { [id]: "2026.07" },
+    currentMonth: "2026.07",
+    metricSnapshotsByDate: {
+      "2026-07-19": {
+        dramas: {
+          [id]: { view_count: 800, pay_count: 30, danmaku_uid_count: 4 },
+        },
+      },
+      "2026-07-22": {
+        dramas: {
+          [id]: { name: "新剧", view_count: 1000, pay_count: 40, danmaku_uid_count: 7 },
+        },
+      },
+    },
+    weeklyPlaybackSnapshot: {
+      dates: ["2026-07-19"],
+      snapshotsByDate: {
+        "2026-07-19": { dramas: { [id]: { view_count: 850 } } },
+      },
+    },
+  });
+
+  const window = response.items[0].windows["3d"];
+  assert.equal(window.fromDate, "2026-07-19");
+  assert.equal(window.metrics.view_count.delta, 200);
+  assert.equal(window.metrics.pay_count.delta, 10);
+  assert.equal(window.metrics.danmaku_uid_count.delta, 3);
+});
+
+test("buildOngoingResponse treats missing new-drama baselines as zero for every metric", () => {
+  const id = "2087206604062588962";
+  const response = buildOngoingResponse({
+    platform: "manbo",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-07-22"] },
+    createTimesById: { [id]: "" },
+    currentMonth: "2026.07",
+    metricSnapshotsByDate: {
+      "2026-07-22": {
+        dramas: {
+          [id]: { name: "新剧", view_count: 1000, pay_count: 40, danmaku_uid_count: 7 },
+        },
+      },
+    },
+  });
+
+  const window = response.items[0].windows["7d"];
+  assert.equal(window.fromDate, "2026-07-15");
+  assert.equal(window.insufficientData, false);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(window.metrics).map(([key, metric]) => [key, [metric.fromValue, metric.delta, metric.available]])),
+    {
+      view_count: [0, 1000, true],
+      danmaku_uid_count: [0, 7, true],
+      pay_count: [0, 40, true],
+    }
+  );
+});
+
+test("buildOngoingResponse uses the nearest weekly playback point for old dramas and prefers earlier ties", () => {
+  const id = "2087206604062588962";
+  const response = buildOngoingResponse({
+    platform: "manbo",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-07-22"] },
+    createTimesById: { [id]: "2026.05" },
+    currentMonth: "2026.07",
+    metricSnapshotsByDate: {
+      "2026-07-22": {
+        dramas: {
+          [id]: { name: "老剧", view_count: 1000, pay_count: 40, danmaku_uid_count: 7 },
+        },
+      },
+    },
+    weeklyPlaybackSnapshot: {
+      dates: ["2026-07-16", "2026-07-22", "2026-07-23"],
+      snapshotsByDate: {
+        "2026-07-16": { dramas: { [id]: { view_count: 600 } } },
+        "2026-07-22": { dramas: { [id]: { view_count: 900 } } },
+        "2026-07-23": { dramas: { [id]: { view_count: 950 } } },
+      },
+    },
+  });
+
+  const window = response.items[0].windows["3d"];
+  assert.equal(window.fromDate, "2026-07-16");
+  assert.equal(window.metrics.view_count.delta, 400);
+  assert.equal(window.metrics.view_count.available, true);
+  assert.equal(window.metrics.pay_count.delta, null);
+  assert.equal(window.metrics.pay_count.available, false);
+  assert.equal(window.metrics.danmaku_uid_count.delta, null);
+  assert.equal(window.metrics.danmaku_uid_count.available, false);
+});
+
+test("buildOngoingResponse leaves old-drama deltas unavailable without weekly playback history", () => {
+  const id = "2087206604062588962";
+  const response = buildOngoingResponse({
+    platform: "manbo",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-07-22"] },
+    createTimesById: { [id]: "2026.05" },
+    currentMonth: "2026.07",
+    metricSnapshotsByDate: {
+      "2026-07-22": {
+        dramas: {
+          [id]: { name: "老剧", view_count: 1000, pay_count: 40, danmaku_uid_count: 7 },
+        },
+      },
+    },
+  });
+
+  const window = response.items[0].windows["30d"];
+  assert.equal(window.fromDate, "");
+  assert.equal(window.insufficientData, true);
+  assert.equal(window.metrics.view_count.delta, null);
+  assert.equal(window.metrics.view_count.available, false);
+});
+
+test("buildOngoingResponse excludes weekly playback points after the latest ongoing date", () => {
+  const id = "2087206604062588962";
+  const response = buildOngoingResponse({
+    platform: "manbo",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-07-22"] },
+    createTimesById: { [id]: "2026.05" },
+    currentMonth: "2026.07",
+    metricSnapshotsByDate: {
+      "2026-07-22": {
+        dramas: { [id]: { name: "老剧", view_count: 1000 } },
+      },
+    },
+    weeklyPlaybackSnapshot: {
+      dates: ["2026-07-10", "2026-07-23"],
+      snapshotsByDate: {
+        "2026-07-10": { dramas: { [id]: { view_count: 500 } } },
+        "2026-07-23": { dramas: { [id]: { view_count: 990 } } },
+      },
+    },
+  });
+
+  const window = response.items[0].windows["3d"];
+  assert.equal(window.fromDate, "2026-07-10");
+  assert.equal(window.metrics.view_count.delta, 500);
+});
+
+test("buildOngoingResponse does not fill a missing current metric for new dramas", () => {
+  const id = "2087206604062588962";
+  const response = buildOngoingResponse({
+    platform: "manbo",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-07-22"] },
+    createTimesById: { [id]: "2026.07" },
+    currentMonth: "2026.07",
+    metricSnapshotsByDate: {
+      "2026-07-22": {
+        dramas: { [id]: { name: "新剧", view_count: 1000, danmaku_uid_count: 7 } },
+      },
+    },
+  });
+
+  const metric = response.items[0].windows["7d"].metrics.pay_count;
+  assert.equal(metric.fromValue, 0);
+  assert.equal(metric.toValue, null);
+  assert.equal(metric.delta, null);
+  assert.equal(metric.available, false);
 });
 
 test("buildOngoingResponse hides Manbo pay count when missing or always zero", () => {

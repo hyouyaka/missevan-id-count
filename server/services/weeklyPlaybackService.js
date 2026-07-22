@@ -357,8 +357,14 @@ export function createWeeklyPlaybackStore({
       return null;
     }
     const force = options?.force === true;
+    const historyOnly = options?.historyOnly === true;
     const ids = normalizeRequestedIds(options?.ids);
-    const cacheKey = ids.length ? `${normalizedPlatform}:${ids.join(",")}` : normalizedPlatform;
+    if (historyOnly && !ids.length) {
+      return null;
+    }
+    const cacheKey = ids.length
+      ? `${normalizedPlatform}:${historyOnly ? "history-only:" : ""}${ids.join(",")}`
+      : normalizedPlatform;
     const timestamp = Number(now()) || Date.now();
     const cached = cache.get(cacheKey);
     if (
@@ -384,6 +390,9 @@ export function createWeeklyPlaybackStore({
         if (historyBundle) {
           return historyBundle;
         }
+      }
+      if (historyOnly) {
+        return null;
       }
       const index = await readIndex(normalizedPlatform);
       if (!index) {
