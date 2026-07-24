@@ -1844,16 +1844,49 @@ test("history toolbar uses compact labels without shrinking button height", () =
   );
 });
 
-test("overflow episodes preserve server order and use an accessible disclosure", () => {
+test("overflow episodes preserve server order and use an accessible responsive table", () => {
   const helperStart = outputPanelSource.indexOf("function getOverflowEpisodesForDrama");
   const helperEnd = outputPanelSource.indexOf("const HISTORY_METRIC_ICON_MAP", helperStart);
   const helperSource = outputPanelSource.slice(helperStart, helperEnd);
+  const overflowListStart = outputPanelSource.indexOf("function OverflowEpisodeList");
+  const overflowListEnd = outputPanelSource.indexOf("function getOverflowEpisodesForDrama", overflowListStart);
+  const overflowListSource = outputPanelSource.slice(overflowListStart, overflowListEnd);
 
   assert.match(outputPanelSource, /aria-controls=\{regionId\}/);
   assert.match(outputPanelSource, /aria-expanded=\{expanded\}/);
-  assert.match(outputPanelSource, /role="list"/);
+  assert.match(overflowListSource, /<table/);
+  assert.match(overflowListSource, /分集标题/);
+  assert.match(overflowListSource, /总弹幕/);
+  assert.match(overflowListSource, /抓取弹幕/);
+  assert.match(outputPanelSource, /暂不可得/);
+  assert.match(overflowListSource, /formatOverflowDanmakuCount/);
+  assert.match(outputPanelSource, /function formatOverflowDanmakuCount[\s\S]*formatPlainNumber/);
+  assert.match(overflowListSource, /w-full max-w-full table-fixed/);
+  assert.match(overflowListSource, /sm:w-fit sm:table-auto/);
+  assert.match(overflowListSource, /calc\(7ch \+ 1rem\)/);
+  assert.match(overflowListSource, /\[overflow-wrap:anywhere\]/);
+  assert.match(overflowListSource, /break-all/);
+  assert.doesNotMatch(overflowListSource, /overflow-x-auto/);
   assert.match(helperSource, /keys\.flatMap/);
+  assert.match(helperSource, /typeof item === "string"/);
   assert.doesNotMatch(helperSource, /\.sort\(/);
+  assert.match(outputPanelSource, /label: "抓取弹幕"/);
+});
+
+test("overflow detail collection reuses platform totals without changing thresholds", () => {
+  assert.match(serverSource, /sound\.comment_count/);
+  assert.match(serverSource, /cached && !options\.forceRefresh/);
+  assert.match(statsTaskExecutionSource, /forceRefresh: true/);
+  assert.match(
+    statsTaskExecutionSource,
+    /if \(isMissevanLikelyDanmakuOverflow\([\s\S]*?getMissevanOverflowTotalDanmaku/
+  );
+  assert.match(
+    statsTaskExecutionSource,
+    /const overflowAssessment = await isLikelyManboDanmakuOverflow[\s\S]*?totalDanmaku: overflowAssessment\.totalDanmaku/
+  );
+  assert.match(statsTaskExecutionSource, /fetchedDanmaku: result\.danmaku/);
+  assert.match(statsTaskExecutionSource, /fetchedDanmaku: danmakuResult\.danmaku/);
 });
 
 test("completed background tasks collapse and dismiss after opening results", () => {

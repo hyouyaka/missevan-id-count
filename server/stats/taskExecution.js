@@ -17,6 +17,56 @@ export function getManboRevenueType(info, isMemberDramaInfo) {
   return "unknown";
 }
 
+function createOverflowEpisodeDetail({
+  dramaId,
+  episodeTitle,
+  totalDanmaku,
+  fetchedDanmaku,
+}) {
+  const normalizedDramaId = String(dramaId ?? "").trim();
+  const normalizedTitle = String(episodeTitle ?? "").trim();
+  const normalizedTotal = Number(totalDanmaku);
+  const normalizedFetched = Number(fetchedDanmaku);
+  return {
+    key: `${normalizedDramaId}-${normalizedTitle}`,
+    dramaId: normalizedDramaId,
+    title: normalizedTitle || "未知分集",
+    totalDanmaku:
+      totalDanmaku != null && Number.isFinite(normalizedTotal) && normalizedTotal >= 0
+        ? normalizedTotal
+        : null,
+    fetchedDanmaku:
+      Number.isFinite(normalizedFetched) && normalizedFetched >= 0
+        ? normalizedFetched
+        : 0,
+  };
+}
+
+function getOrderedOverflowEpisodeDetails(detailsByKey, orderedKeys, orderKeys) {
+  const details = detailsByKey instanceof Map ? detailsByKey : new Map();
+  return orderKeys(Array.from(details.keys()), orderedKeys)
+    .map((key) => details.get(key))
+    .filter(Boolean);
+}
+
+async function getMissevanOverflowTotalDanmaku(missevanClient, soundId, signal) {
+  try {
+    const summary = await missevanClient.getSoundSummary(soundId, {
+      forceRefresh: true,
+      signal,
+    });
+    if (summary?.comment_count == null || summary.comment_count === "") {
+      return null;
+    }
+    const commentCount = Number(summary.comment_count);
+    return Number.isFinite(commentCount) && commentCount >= 0
+      ? commentCount
+      : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 export function createStatsTaskExecutor(dependencies = {}) {
   const {
     aggregateRevenueFinancials,
@@ -300,7 +350,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
     const episodes = Array.isArray(task.episodes) ? task.episodes : [];
     const dramaMap = buildIdDramaMap(episodes);
     const allUsers = new Set();
-    const suspectedOverflowEpisodes = new Set();
+    const suspectedOverflowEpisodes = new Map();
 
     reportStatsTask(task, {
       status: "running",
@@ -368,9 +418,21 @@ export function createStatsTaskExecutor(dependencies = {}) {
             durationMs,
             danmaku: result.danmaku,
           })) {
-            suspectedOverflowEpisodes.add(
-              buildOverflowEpisodeKey(dramaId, episodeTitle)
+            const totalDanmaku = await getMissevanOverflowTotalDanmaku(
+              missevanClient,
+              soundId,
+              task.abortSignal
             );
+            if (task.cancelled || task.abortSignal?.aborted) {
+              return;
+            }
+            const detail = createOverflowEpisodeDetail({
+              dramaId,
+              episodeTitle,
+              totalDanmaku,
+              fetchedDanmaku: result.danmaku,
+            });
+            suspectedOverflowEpisodes.set(detail.key, detail);
           }
         } else {
           task.failedCount += 1;
@@ -402,6 +464,19 @@ export function createStatsTaskExecutor(dependencies = {}) {
     if (task.cancelled) {
       return finalizeCancelledTask(task, {
         totalUsers: allUsers.size,
+        result: {
+          idResults: Array.from(dramaMap.values()).map((drama) => ({
+            dramaId: drama.dramaId,
+            title: drama.title,
+            selectedEpisodeCount: drama.selectedEpisodeCount,
+            danmaku: drama.danmaku,
+            users: drama.userSet.size,
+          })),
+          suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes.values()),
+          totalDanmaku: task.totalDanmaku,
+          totalUsers: allUsers.size,
+          idSelectedEpisodeCount: task.totalCount,
+        },
       });
     }
 
@@ -422,7 +497,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
           danmaku: drama.danmaku,
           users: drama.userSet.size,
         })),
-        suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
+        suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes.values()),
         totalDanmaku: task.totalDanmaku,
         totalUsers: allUsers.size,
         idSelectedEpisodeCount: task.totalCount,
@@ -434,7 +509,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
     const episodes = Array.isArray(task.episodes) ? task.episodes : [];
     const dramaMap = buildIdDramaMap(episodes);
     const allUsers = new Set();
-    const suspectedOverflowEpisodes = new Set();
+    const suspectedOverflowEpisodes = new Map();
     const overflowEpisodeOrder = episodes.map((episode) => buildOverflowEpisodeKey(
       episode?.drama_id,
       episode?.episode_title ?? episode?.name
@@ -480,10 +555,18 @@ export function createStatsTaskExecutor(dependencies = {}) {
               });
             }
             task.totalDanmaku += Number(result.danmaku ?? 0);
-            if (await isLikelyManboDanmakuOverflow(setId, result.danmaku)) {
-              suspectedOverflowEpisodes.add(
-                buildOverflowEpisodeKey(dramaId, episodeTitle)
-              );
+            const overflowAssessment = await isLikelyManboDanmakuOverflow(
+              setId,
+              result.danmaku
+            );
+            if (overflowAssessment.overflow) {
+              const detail = createOverflowEpisodeDetail({
+                dramaId,
+                episodeTitle,
+                totalDanmaku: overflowAssessment.totalDanmaku,
+                fetchedDanmaku: result.danmaku,
+              });
+              suspectedOverflowEpisodes.set(detail.key, detail);
             }
           } else {
             task.failedCount += 1;
@@ -522,9 +605,10 @@ export function createStatsTaskExecutor(dependencies = {}) {
             danmaku: drama.danmaku,
             users: drama.userSet.size,
           })),
-          suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
-            Array.from(suspectedOverflowEpisodes),
-            overflowEpisodeOrder
+          suspectedOverflowEpisodes: getOrderedOverflowEpisodeDetails(
+            suspectedOverflowEpisodes,
+            overflowEpisodeOrder,
+            orderDetectedOverflowEpisodeKeys
           ),
           totalDanmaku: task.totalDanmaku,
           totalUsers: allUsers.size,
@@ -550,9 +634,10 @@ export function createStatsTaskExecutor(dependencies = {}) {
           danmaku: drama.danmaku,
           users: drama.userSet.size,
         })),
-        suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
-          Array.from(suspectedOverflowEpisodes),
-          overflowEpisodeOrder
+        suspectedOverflowEpisodes: getOrderedOverflowEpisodeDetails(
+          suspectedOverflowEpisodes,
+          overflowEpisodeOrder,
+          orderDetectedOverflowEpisodeKeys
         ),
         totalDanmaku: task.totalDanmaku,
         totalUsers: allUsers.size,
@@ -766,7 +851,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
   async function executeMissevanRevenueTask(task) {
     const dramaIds = Array.isArray(task.dramaIds) ? task.dramaIds : [];
     const results = [];
-    const suspectedOverflowEpisodes = new Set();
+    const suspectedOverflowEpisodes = new Map();
     initializeRevenueProgress(task, dramaIds);
 
     reportStatsTask(task, {
@@ -869,9 +954,22 @@ export function createStatsTaskExecutor(dependencies = {}) {
             durationMs: Number(episode?.duration ?? 0),
             danmaku: danmakuResult.danmaku,
           })) {
-            suspectedOverflowEpisodes.add(
-              buildOverflowEpisodeKey(dramaId, String(episode?.name ?? "").trim())
+            const episodeTitle = String(episode?.name ?? "").trim();
+            const totalDanmaku = await getMissevanOverflowTotalDanmaku(
+              missevanClient,
+              episode.sound_id,
+              task.abortSignal
             );
+            if (task.cancelled || task.abortSignal?.aborted) {
+              break;
+            }
+            const detail = createOverflowEpisodeDetail({
+              dramaId,
+              episodeTitle,
+              totalDanmaku,
+              fetchedDanmaku: danmakuResult.danmaku,
+            });
+            suspectedOverflowEpisodes.set(detail.key, detail);
           }
           advanceRevenueProgress(
             task,
@@ -1015,7 +1113,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
           revenueResults: compactRevenueResults(results),
           revenueSummary: {
             ...revenueSummary,
-            suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
+            suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes.values()),
           },
         },
       });
@@ -1032,7 +1130,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
         revenueResults: compactRevenueResults(results),
         revenueSummary: {
           ...revenueSummary,
-          suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes),
+          suspectedOverflowEpisodes: Array.from(suspectedOverflowEpisodes.values()),
         },
       },
     });
@@ -1041,7 +1139,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
   async function executeManboRevenueTask(task) {
     const dramaIds = Array.isArray(task.dramaIds) ? task.dramaIds : [];
     const results = [];
-    const suspectedOverflowEpisodes = new Set();
+    const suspectedOverflowEpisodes = new Map();
     const overflowEpisodeOrder = [];
     initializeRevenueProgress(task, dramaIds);
 
@@ -1179,10 +1277,18 @@ export function createStatsTaskExecutor(dependencies = {}) {
             if (episodePrice > 0) {
               episodePrices.add(episodePrice);
             }
-            if (await isLikelyManboDanmakuOverflow(episode.sound_id, danmakuResult.danmaku)) {
-              suspectedOverflowEpisodes.add(
-                buildOverflowEpisodeKey(dramaId, String(episode?.name ?? "").trim())
-              );
+            const overflowAssessment = await isLikelyManboDanmakuOverflow(
+              episode.sound_id,
+              danmakuResult.danmaku
+            );
+            if (overflowAssessment.overflow) {
+              const detail = createOverflowEpisodeDetail({
+                dramaId,
+                episodeTitle: String(episode?.name ?? "").trim(),
+                totalDanmaku: overflowAssessment.totalDanmaku,
+                fetchedDanmaku: danmakuResult.danmaku,
+              });
+              suspectedOverflowEpisodes.set(detail.key, detail);
             }
             advanceRevenueProgress(
               task,
@@ -1333,9 +1439,10 @@ export function createStatsTaskExecutor(dependencies = {}) {
           revenueResults: compactRevenueResults(results),
           revenueSummary: {
             ...revenueSummary,
-            suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
-              Array.from(suspectedOverflowEpisodes),
-              overflowEpisodeOrder
+            suspectedOverflowEpisodes: getOrderedOverflowEpisodeDetails(
+              suspectedOverflowEpisodes,
+              overflowEpisodeOrder,
+              orderDetectedOverflowEpisodeKeys
             ),
           },
         },
@@ -1353,9 +1460,10 @@ export function createStatsTaskExecutor(dependencies = {}) {
         revenueResults: compactRevenueResults(results),
         revenueSummary: {
           ...revenueSummary,
-          suspectedOverflowEpisodes: orderDetectedOverflowEpisodeKeys(
-            Array.from(suspectedOverflowEpisodes),
-            overflowEpisodeOrder
+          suspectedOverflowEpisodes: getOrderedOverflowEpisodeDetails(
+            suspectedOverflowEpisodes,
+            overflowEpisodeOrder,
+            orderDetectedOverflowEpisodeKeys
           ),
         },
       },

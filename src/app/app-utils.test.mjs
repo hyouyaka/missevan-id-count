@@ -1307,7 +1307,7 @@ test("createStatsHistoryEntry includes total danmaku in id summary for multi-dra
 
   assert.ok(historyEntry, "expected an id history entry");
   assert.deepEqual(historyEntry.summaryMetrics, [
-    { key: "danmakuCount", label: "总弹幕数", value: "12345" },
+    { key: "danmakuCount", label: "抓取弹幕", value: "12345" },
     { key: "uniqueUsers", label: "去重 ID", value: "23" },
   ]);
 });

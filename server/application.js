@@ -7666,7 +7666,7 @@ async function fetchSoundSummary(soundId, options = {}) {
     soundId,
     SOUND_SUMMARY_CACHE_TTL_MS
   );
-  if (cached) {
+  if (cached && !options.forceRefresh) {
     return {
       ...cached,
       cached: true,
@@ -7682,6 +7682,11 @@ async function fetchSoundSummary(soundId, options = {}) {
   const sound = data?.info?.sound || data?.info || {};
   const viewCount = Number(sound.view_count ?? 0);
   const duration = Number(sound.duration ?? 0);
+  const rawCommentCount = sound.comment_count;
+  const commentCount =
+    rawCommentCount == null || rawCommentCount === ""
+      ? null
+      : Number(rawCommentCount);
 
   const summary = {
     sound_id: Number(soundId),
@@ -7689,6 +7694,8 @@ async function fetchSoundSummary(soundId, options = {}) {
     view_count: viewCount,
     viewCountWan: sound.view_count_formatted || formatPlayCountWan(viewCount),
     duration,
+    comment_count:
+      Number.isFinite(commentCount) && commentCount >= 0 ? commentCount : null,
     playCountFailed: false,
     accessDenied: false,
     error: "",
@@ -9094,15 +9101,30 @@ function buildOverflowEpisodeKey(dramaId, episodeTitle) {
 async function isLikelyManboDanmakuOverflow(setId, danmakuCount) {
   const normalizedSetId = String(setId ?? "").trim();
   if (!normalizedSetId) {
-    return false;
+    return {
+      overflow: false,
+      totalDanmaku: null,
+    };
   }
 
   try {
     const setDetail = await fetchManboStatsSetDetail(normalizedSetId);
     const apiCommentCount = Number(setDetail?.commentCount ?? 0);
-    return apiCommentCount > 0 && Number(danmakuCount ?? 0) < apiCommentCount * 0.8;
+    const totalDanmaku =
+      Number.isFinite(apiCommentCount) && apiCommentCount > 0
+        ? apiCommentCount
+        : null;
+    return {
+      overflow:
+        totalDanmaku != null
+        && Number(danmakuCount ?? 0) < totalDanmaku * 0.8,
+      totalDanmaku,
+    };
   } catch (_detailErr) {
-    return false;
+    return {
+      overflow: false,
+      totalDanmaku: null,
+    };
   }
 }
 

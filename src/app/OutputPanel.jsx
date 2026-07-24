@@ -131,11 +131,19 @@ function ResultCard({ title, metrics, emphasized = false, footer = null }) {
   );
 }
 
-function OverflowEpisodeList({ titles = [] }) {
+function formatOverflowDanmakuCount(value) {
+  if (value == null || value === "") {
+    return "暂不可得";
+  }
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? formatPlainNumber(count) : "暂不可得";
+}
+
+function OverflowEpisodeList({ episodes = [] }) {
   const [expanded, setExpanded] = useState(false);
   const regionId = useId();
 
-  if (!titles?.length) {
+  if (!episodes?.length) {
     return null;
   }
 
@@ -150,7 +158,7 @@ function OverflowEpisodeList({ titles = [] }) {
         aria-controls={regionId}
         onClick={() => setExpanded((current) => !current)}
       >
-        <span className="truncate">疑似弹幕溢出 {titles.length} 集</span>
+        <span className="truncate">疑似弹幕溢出 {episodes.length} 集</span>
         <ChevronDownIcon
           data-icon="inline-end"
           aria-hidden="true"
@@ -158,12 +166,45 @@ function OverflowEpisodeList({ titles = [] }) {
         />
       </Button>
       {expanded ? (
-        <div id={regionId} role="list" className="grid gap-1 border-t border-border/65 px-1.5 pb-1 pt-2">
-          {titles.map((item) => (
-            <div key={item.key} role="listitem" className="break-words text-xs leading-5 text-foreground/80">
-              {item.title}
-            </div>
-          ))}
+        <div id={regionId} className="border-t border-border/65 px-1.5 pb-1 pt-2">
+          <div className="w-full max-w-full overflow-hidden rounded-md border border-border/70 sm:w-fit">
+            <table className="w-full max-w-full table-fixed border-collapse text-xs sm:w-fit sm:table-auto">
+              <caption className="sr-only">疑似弹幕溢出分集明细</caption>
+              <colgroup>
+                <col />
+                <col style={{ width: "calc(7ch + 1rem)" }} />
+                <col style={{ width: "calc(7ch + 1rem)" }} />
+              </colgroup>
+              <thead className="bg-muted/45 text-muted-foreground">
+                <tr>
+                  <th scope="col" className="px-2 py-1.5 text-left font-medium">
+                    分集标题
+                  </th>
+                  <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                    总弹幕
+                  </th>
+                  <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                    抓取弹幕
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/65 text-foreground/80">
+                {episodes.map((item) => (
+                  <tr key={item.key}>
+                    <td className="min-w-0 px-2 py-1.5 text-left align-top leading-5 [overflow-wrap:anywhere]">
+                      {item.title}
+                    </td>
+                    <td className="break-all px-2 py-1.5 text-right align-top leading-5 tabular-nums">
+                      {formatOverflowDanmakuCount(item.totalDanmaku)}
+                    </td>
+                    <td className="break-all px-2 py-1.5 text-right align-top leading-5 tabular-nums">
+                      {formatOverflowDanmakuCount(item.fetchedDanmaku)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : null}
     </div>
@@ -177,13 +218,27 @@ function getOverflowEpisodesForDrama(dramaId, keys = []) {
   }
 
   const prefix = `${normalizedDramaId}-`;
-  const filteredTitles = keys.flatMap((key) => {
-    const normalizedKey = String(key ?? "").trim();
+  const filteredTitles = keys.flatMap((item) => {
+    const isLegacyKey = typeof item === "string";
+    const itemDramaId = isLegacyKey
+      ? ""
+      : String(item?.dramaId ?? "").trim();
+    const normalizedKey = String(isLegacyKey ? item : item?.key ?? "").trim();
     if (!normalizedKey || !normalizedKey.startsWith(prefix)) {
       return [];
     }
-    const episodeTitle = normalizedKey.slice(prefix.length).trim();
-    return [{ key: normalizedKey, title: episodeTitle || "未知分集" }];
+    if (itemDramaId && itemDramaId !== normalizedDramaId) {
+      return [];
+    }
+    const episodeTitle = isLegacyKey
+      ? normalizedKey.slice(prefix.length).trim()
+      : String(item?.title ?? normalizedKey.slice(prefix.length)).trim();
+    return [{
+      key: normalizedKey,
+      title: episodeTitle || "未知分集",
+      totalDanmaku: isLegacyKey ? null : item?.totalDanmaku,
+      fetchedDanmaku: isLegacyKey ? null : item?.fetchedDanmaku,
+    }];
   });
 
   return filteredTitles;
@@ -453,7 +508,7 @@ export function OutputPanel({
                 title={`汇总 / 已选 ${idSelectedEpisodeCount} 集`}
                 emphasized
                 metrics={[
-                  { label: "总弹幕数", value: formatPlainNumber(totalDanmaku) },
+                  { label: "抓取弹幕", value: formatPlainNumber(totalDanmaku) },
                   { label: "总去重", value: formatPlainNumber(totalUsers) },
                 ]}
               />
@@ -463,11 +518,11 @@ export function OutputPanel({
                 key={`id-${drama.dramaId || drama.title}`}
                 title={`${drama.title} / 已选 ${drama.selectedEpisodeCount} 集`}
                 metrics={[
-                  { label: "总弹幕数", value: formatPlainNumber(drama.danmaku) },
+                  { label: "抓取弹幕", value: formatPlainNumber(drama.danmaku) },
                   { label: "去重 ID 数", value: formatPlainNumber(drama.users) },
                 ]}
                 footer={
-                  <OverflowEpisodeList titles={getOverflowEpisodesForDrama(drama.dramaId, suspectedOverflowEpisodes)} />
+                  <OverflowEpisodeList episodes={getOverflowEpisodesForDrama(drama.dramaId, suspectedOverflowEpisodes)} />
                 }
               />
             ))}
@@ -549,7 +604,7 @@ export function OutputPanel({
                           ),
                     },
                   ]}
-                  footer={<OverflowEpisodeList titles={overflowTitles} />}
+                  footer={<OverflowEpisodeList episodes={overflowTitles} />}
                 />
               );
             })}

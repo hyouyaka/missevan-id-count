@@ -1467,7 +1467,7 @@ function buildIdHistoryEntry(platform, stats, createdAt) {
       ? [
           {
             key: "danmakuCount",
-            label: "总弹幕数",
+            label: "抓取弹幕",
             value: formatPlainNumber(stats.totalDanmaku),
           },
           {
@@ -1481,7 +1481,7 @@ function buildIdHistoryEntry(platform, stats, createdAt) {
       id: String(drama?.dramaId ?? drama?.title ?? `id-${index}`),
       title: drama?.title || "未知作品",
       segments: [
-        buildHistoryMetricSegment("danmakuCount", "总弹幕数", formatPlainNumber(drama?.danmaku)),
+        buildHistoryMetricSegment("danmakuCount", "抓取弹幕", formatPlainNumber(drama?.danmaku)),
         buildHistoryMetricSegment("uniqueUsers", "去重 ID", formatPlainNumber(drama?.users), "ID"),
       ],
     })),
