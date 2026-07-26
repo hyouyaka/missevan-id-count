@@ -942,14 +942,20 @@ test("header navigation uses one right-side semantic surface drawer", () => {
 
 test("web feedback route initializes the npm Twikoo client inside its own view", () => {
   assert.match(packageSource, /"twikoo": "\^1\.7\.14"/);
-  assert.match(toolViewSource, /import \{ FeedbackView \} from "@\/app\/FeedbackView"/);
+  assert.match(
+    toolViewSource,
+    /const FeedbackView = lazy\(\(\) =>[\s\S]*import\("@\/app\/FeedbackView"\)[\s\S]*default: module\.FeedbackView/
+  );
   assert.match(navigationSource, /feedback: MessageSquarePlusIcon/);
   assert.match(
     toolViewSource,
-    /currentPlatform === "feedback" \? \([\s\S]*<FeedbackView featureSuggestionUrl=\{appConfig\.featureSuggestionUrl\} \/>/
+    /currentPlatform === "feedback" \? \([\s\S]*<Suspense[\s\S]*正在加载建议反馈[\s\S]*<FeedbackView[\s\S]*featureSuggestionUrl=\{appConfig\.featureSuggestionUrl\}[\s\S]*frontendVersion=\{appConfig\.frontendVersion\}[\s\S]*\/>[\s\S]*<\/Suspense>/
   );
 
-  assert.match(feedbackViewSource, /export function FeedbackView\(\{ featureSuggestionUrl \}\)/);
+  assert.match(
+    feedbackViewSource,
+    /export function FeedbackView\(\{ featureSuggestionUrl, frontendVersion \}\)/
+  );
   assert.match(feedbackViewSource, /import\("twikoo"\)/);
   assert.doesNotMatch(feedbackViewSource, /window\.twikoo/);
   assert.match(feedbackViewSource, /typeof twikooModule\.init === "function"/);
@@ -968,7 +974,36 @@ test("web feedback route initializes the npm Twikoo client inside its own view",
   assert.match(feedbackViewSource, /类型：Bug \/ 数据异常 \/ 新功能建议/);
   assert.match(feedbackViewSource, /详细描述：说明现象、期望或建议内容/);
   assert.match(feedbackViewSource, /昵称和联系方式（选填）：便于进一步确认/);
+  assert.match(
+    feedbackViewSource,
+    /import revenueCalculationMarkdown from "\.\.\/\.\.\/REVENUE_CALCULATION\.md\?raw"/
+  );
+  assert.match(
+    feedbackViewSource,
+    /import danmakuOverflowMarkdown from "\.\.\/\.\.\/DANMAKU_OVERFLOW\.md\?raw"/
+  );
+  assert.match(feedbackViewSource, /import ReactMarkdown from "react-markdown"/);
+  assert.match(feedbackViewSource, /import remarkGfm from "remark-gfm"/);
+  assert.match(feedbackViewSource, /<Accordion[\s\S]*type="single"[\s\S]*collapsible/);
+  assert.match(feedbackViewSource, /<AccordionTrigger>收益预估计算说明<\/AccordionTrigger>/);
+  assert.match(feedbackViewSource, /<AccordionTrigger>弹幕溢出判断说明<\/AccordionTrigger>/);
+  assert.ok(
+    feedbackViewSource.indexOf("收益预估计算说明")
+      < feedbackViewSource.indexOf("弹幕溢出判断说明")
+  );
+  assert.match(feedbackViewSource, /remarkPlugins=\{\[remarkGfm\]\}/);
+  assert.match(feedbackViewSource, /h1: \(\) => null/);
+  assert.match(feedbackViewSource, /<Alert role="note">/);
+  assert.match(
+    feedbackViewSource,
+    /<AlertDescription className="!\[text-wrap:wrap\] text-left md:!\[text-wrap:wrap\]">/
+  );
   assert.match(feedbackViewSource, /<div id="twikoo-feedback" ref=\{feedbackRef\} \/>/);
+  assert.match(feedbackViewSource, /action: "feedback_explanation_open"/);
+  assert.match(feedbackViewSource, /logExplanationOpen\("revenue_calculation", frontendVersion\)/);
+  assert.match(feedbackViewSource, /logExplanationOpen\("danmaku_overflow", frontendVersion\)/);
+  assert.match(serverSource, /if \(action === "feedback_explanation_open"\)/);
+  assert.match(serverSource, /\["revenue_calculation", "danmaku_overflow"\]\.includes\(section\)/);
 });
 
 test("Twikoo feedback font fallback stays scoped to its container", () => {
@@ -1817,6 +1852,13 @@ test("statistics output uses a compact completed state and semantic metric grid"
   assert.doesNotMatch(outputPanelSource, />空闲</);
 });
 
+test("revenue result cards append reward and revenue after paid calculation metrics", () => {
+  assert.match(
+    outputPanelSource,
+    /buildRevenuePaidMetricSegments\(drama\)[\s\S]*getRewardLabel\(drama\)[\s\S]*getRevenueLabel\(drama\)/
+  );
+});
+
 test("running statistics keep long mobile progress copy visible", () => {
   const runningStart = outputPanelSource.indexOf("{isRunning ? (");
   const runningEnd = outputPanelSource.indexOf("{!isRunning && hasAnyResults", runningStart);
@@ -1873,9 +1915,13 @@ test("overflow episodes preserve server order and use an accessible responsive t
   assert.match(outputPanelSource, /label: "抓取弹幕"/);
 });
 
-test("overflow detail collection reuses platform totals without changing thresholds", () => {
+test("overflow detail collection reuses platform totals and keeps the Manbo threshold", () => {
   assert.match(serverSource, /sound\.comment_count/);
   assert.match(serverSource, /cached && !options\.forceRefresh/);
+  assert.match(
+    serverSource,
+    /Number\(danmakuCount \?\? 0\) <= totalDanmaku \* 0\.9/
+  );
   assert.match(statsTaskExecutionSource, /forceRefresh: true/);
   assert.match(
     statsTaskExecutionSource,
@@ -2696,6 +2742,11 @@ test("ongoing paid ID metric displays full numbers while playback stays compact"
 });
 
 test("changelog dialog keeps header and footer fixed while entries scroll", () => {
+  assert.match(
+    changelogDialogSource,
+    /<AlertDialogDescription[\s\S]*asChild[\s\S]*className="!\[text-wrap:wrap\] md:!\[text-wrap:wrap\]"/,
+    "long changelog copy should use natural wrapping on mobile Safari"
+  );
   assert.match(
     changelogDialogSource,
     /h-\[min\(80dvh,34rem\)\]/,

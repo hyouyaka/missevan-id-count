@@ -71,7 +71,10 @@ export function ChangelogDialog({ open, onOpenChange }) {
             <AlertDialogTitle>更新日志</AlertDialogTitle>
           </div>
         </AlertDialogHeader>
-        <AlertDialogDescription asChild>
+        <AlertDialogDescription
+          asChild
+          className="![text-wrap:wrap] md:![text-wrap:wrap]"
+        >
           <div
             data-changelog-scroll-region="true"
             role="region"

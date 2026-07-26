@@ -4,6 +4,14 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.6",
+    changes: [
+      "添加弹幕溢出集数的明细展示",
+      "更新漫播单集付费剧集的收益计算",
+      "建议反馈页面更新预估收益与弹幕溢出的相关说明",
+    ],
+  },
+  {
     version: "1.7.5",
     changes: [
       "剧集ID添加平台链接，可直接跳转收听。方便因某些原因无法正常使用平台内搜索的小伙伴。",

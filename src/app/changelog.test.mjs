@@ -54,8 +54,21 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.5", () => {
-  assert.equal(packageJson.version, "1.7.5");
+test("package version is 1.7.6", () => {
+  assert.equal(packageJson.version, "1.7.6");
+});
+
+test("changelog contains all 1.7.6 overflow, revenue, and feedback updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.6");
+
+  assert.deepEqual(entry, {
+    version: "1.7.6",
+    changes: [
+      "添加弹幕溢出集数的明细展示",
+      "更新漫播单集付费剧集的收益计算",
+      "建议反馈页面更新预估收益与弹幕溢出的相关说明",
+    ],
+  });
 });
 
 test("changelog contains 1.7.5 platform links and Manbo peak trend updates", () => {

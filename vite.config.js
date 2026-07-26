@@ -11,6 +11,40 @@ await loadLocalEnv({ projectRoot: path.resolve(__dirname) });
 const packageJson = JSON.parse(
   fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")
 );
+const packageLock = JSON.parse(
+  fs.readFileSync(new URL("./package-lock.json", import.meta.url), "utf8")
+);
+
+function collectPackageDependencyNames(rootNames) {
+  const names = new Set();
+
+  function visit(name) {
+    if (names.has(name)) {
+      return;
+    }
+    names.add(name);
+    const metadata = packageLock.packages?.[`node_modules/${name}`];
+    Object.keys(metadata?.dependencies || {}).forEach(visit);
+  }
+
+  rootNames.forEach(visit);
+  return names;
+}
+
+function getNodeModulePackageName(normalizedId) {
+  const marker = "/node_modules/";
+  const markerIndex = normalizedId.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    return "";
+  }
+  const [first, second] = normalizedId.slice(markerIndex + marker.length).split("/");
+  return first?.startsWith("@") ? `${first}/${second || ""}` : first || "";
+}
+
+const markdownVendorPackageNames = collectPackageDependencyNames([
+  "react-markdown",
+  "remark-gfm",
+]);
 const backendTarget = `http://localhost:${Number(process.env.PORT) || 3000}`;
 
 export default defineConfig({
@@ -22,6 +56,9 @@ export default defineConfig({
         manualChunks(id) {
           const normalizedId = id.replaceAll("\\", "/");
           if (!normalizedId.includes("/node_modules/")) {
+            return undefined;
+          }
+          if (markdownVendorPackageNames.has(getNodeModulePackageName(normalizedId))) {
             return undefined;
           }
           if (

@@ -18,7 +18,6 @@ import { toast } from "sonner";
 import { AppIcon } from "@/app/AppIcon";
 import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { FavoritesPanel } from "@/app/FavoritesPanel";
-import { FeedbackView } from "@/app/FeedbackView";
 import { HomeView } from "@/app/HomeView";
 import { MessageDialog } from "@/app/MessageDialog";
 import { OutputPanel } from "@/app/OutputPanel";
@@ -99,6 +98,10 @@ const RanksPanel = lazy(() =>
 
 const OngoingPanel = lazy(() =>
   import("@/app/OngoingPanel").then((module) => ({ default: module.OngoingPanel }))
+);
+
+const FeedbackView = lazy(() =>
+  import("@/app/FeedbackView").then((module) => ({ default: module.FeedbackView }))
 );
 
 function getStatsRequestErrorMessage(error) {
@@ -3437,7 +3440,19 @@ export function ToolView({ initialAppConfig }) {
           />
         </Suspense>
       ) : currentPlatform === "feedback" ? (
-        <FeedbackView featureSuggestionUrl={appConfig.featureSuggestionUrl} />
+        <Suspense
+          fallback={
+            <LazyRouteFallback
+              title="正在加载建议反馈"
+              description="正在准备建议反馈与收益预估说明。"
+            />
+          }
+        >
+          <FeedbackView
+            featureSuggestionUrl={appConfig.featureSuggestionUrl}
+            frontendVersion={appConfig.frontendVersion}
+          />
+        </Suspense>
       ) : currentPlatform === "favorites" ? (
         <FavoritesPanel
           favorites={favoriteItems}

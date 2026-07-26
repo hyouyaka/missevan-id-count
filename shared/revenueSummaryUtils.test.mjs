@@ -109,3 +109,28 @@ test("null range bounds are never converted into a zero-value range", () => {
   assert.equal(summary.minRevenueYuan, null);
   assert.equal(summary.maxRevenueYuan, null);
 });
+
+test("Manbo episode summaries use drama-level total and member prices", () => {
+  const summary = aggregateRevenueFinancials(
+    [
+      {
+        platform: "manbo",
+        revenueType: "episode",
+        summaryRevenueMode: "range",
+        titlePrice: 100,
+        titleMemberPrice: 80,
+        includeInSummaryPrice: true,
+        estimatedRevenueYuan: 6,
+        minRevenueYuan: 6,
+        maxRevenueYuan: 9,
+        failed: false,
+      },
+    ],
+    "manbo"
+  );
+
+  assert.equal(summary.titlePriceTotal, 100);
+  assert.equal(summary.titleMemberPriceTotal, 80);
+  assert.equal(summary.minRevenueYuan, 6);
+  assert.equal(summary.maxRevenueYuan, 9);
+});

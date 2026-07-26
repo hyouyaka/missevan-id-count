@@ -22,9 +22,22 @@ function visitStatic(key) {
 }
 visitStatic(entryKey);
 
-const reachableDynamicImports = new Set(
-  [...visited].flatMap((key) => manifest[key]?.dynamicImports || [])
-);
+const reachableDynamicImports = new Set();
+const reachableModules = new Set();
+function visitReachable(key) {
+  if (reachableModules.has(key)) {
+    return;
+  }
+  reachableModules.add(key);
+  for (const dependency of manifest[key]?.imports || []) {
+    visitReachable(dependency);
+  }
+  for (const dependency of manifest[key]?.dynamicImports || []) {
+    reachableDynamicImports.add(dependency);
+    visitReachable(dependency);
+  }
+}
+visitReachable(entryKey);
 
 const forbiddenStaticModules = [
   "src/app/RankTrendDialog.jsx",

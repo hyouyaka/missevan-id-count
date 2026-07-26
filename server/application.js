@@ -9117,7 +9117,7 @@ async function isLikelyManboDanmakuOverflow(setId, danmakuCount) {
     return {
       overflow:
         totalDanmaku != null
-        && Number(danmakuCount ?? 0) < totalDanmaku * 0.8,
+        && Number(danmakuCount ?? 0) <= totalDanmaku * 0.9,
       totalDanmaku,
     };
   } catch (_detailErr) {
@@ -10061,6 +10061,23 @@ app.post("/usage-log", async (req, res) => {
         platform,
         action,
         keyword,
+        success: true,
+      });
+      return res.json({ success: true });
+    }
+
+    if (action === "feedback_explanation_open") {
+      const section = normalizeTextValue(payload.section).slice(0, 40);
+      if (!["revenue_calculation", "danmaku_overflow"].includes(section)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid usage log payload",
+        });
+      }
+
+      await writeUsageLog({
+        action,
+        section,
         success: true,
       });
       return res.json({ success: true });

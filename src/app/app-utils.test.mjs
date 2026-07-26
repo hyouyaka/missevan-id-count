@@ -1535,6 +1535,64 @@ test("Missevan pay_type=1 paid metrics include summed and deduped paid episode I
   ]);
 });
 
+test("Manbo episode revenue metrics show every input in calculation order", () => {
+  const segments = buildRevenuePaidMetricSegments({
+    platform: "manbo",
+    revenueType: "episode",
+    payCount: 12,
+    paidUserCount: 4,
+    episodePaidUserCountTotal: 7,
+    seasonPaidUserCount: 4,
+  });
+
+  assert.deepEqual(segments, [
+    { key: "seasonPaidUserCount", kind: "metric", metricKey: "seasonPaidUserCount", label: "付费ID数", value: "4", unit: "ID" },
+    { key: "episodePaidUserCountTotal", kind: "metric", metricKey: "episodePaidUserCountTotal", label: "付费单集ID汇总", value: "7", unit: "ID" },
+    { key: "paidCount", kind: "metric", metricKey: "paidCount", label: "付费人数", value: "12", unit: "" },
+  ]);
+});
+
+test("Manbo episode revenue history preserves the five-value display order", () => {
+  const drama = createRevenueDrama({
+    platform: "manbo",
+    dramaId: "8",
+    title: "漫播单集付费剧",
+    revenueType: "episode",
+    payCount: 12,
+    paidCountSource: "pay_count_and_danmaku_ids",
+    paidUserCount: 4,
+    episodePaidUserCountTotal: 7,
+    seasonPaidUserCount: 4,
+    diamondValue: 500,
+    summaryRevenueMode: "range",
+    minRevenueYuan: 6,
+    maxRevenueYuan: 9,
+  });
+  const historyEntry = createStatsHistoryEntry(
+    "manbo",
+    {
+      activeTaskType: "revenue",
+      revenueResults: [drama],
+      revenueSummary: buildRevenueSummary([drama], "manbo"),
+    },
+    {
+      taskType: "revenue",
+      createdAt: 1710000000000,
+    }
+  );
+
+  assert.deepEqual(
+    historyEntry.items[0].segments.map((segment) => [segment.label, segment.unit]),
+    [
+      ["付费ID数", "ID"],
+      ["付费单集ID汇总", "ID"],
+      ["付费人数", ""],
+      ["投喂总数", "红豆"],
+      ["收益预估", "元"],
+    ]
+  );
+});
+
 test("Missevan pay_type=1 paid history metrics use the ID icon key", () => {
   const segments = buildRevenuePaidMetricSegments({
     platform: "missevan",

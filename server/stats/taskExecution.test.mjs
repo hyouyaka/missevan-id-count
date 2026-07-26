@@ -5,7 +5,8 @@ import {
   isMissevanLikelyDanmakuOverflow,
   orderDetectedOverflowEpisodeKeys,
 } from "../../shared/episodeRules.js";
-import { createStatsTaskExecutor } from "./taskExecution.js";
+import { aggregateRevenueFinancials } from "../../shared/revenueSummaryUtils.js";
+import { createStatsTaskExecutor, getManboRevenueType } from "./taskExecution.js";
 
 function buildIdDramaMap(episodes) {
   const dramas = new Map();
@@ -42,6 +43,20 @@ function createIdTask(platform, episodes) {
   };
 }
 
+function createRevenueTask(dramaIds = ["8"]) {
+  return {
+    platform: "manbo",
+    taskType: "revenue",
+    dramaIds,
+    source: "test",
+    completedCount: 0,
+    failedCount: 0,
+    accessDenied: false,
+    cancelled: false,
+    abortSignal: new AbortController().signal,
+  };
+}
+
 function createDependencies(overrides = {}) {
   return {
     buildIdDramaMap,
@@ -66,6 +81,44 @@ function createDependencies(overrides = {}) {
     shouldBlockMissevanAccessForCooldown: () => false,
     statsTaskReporters: new WeakMap(),
     ...overrides,
+  };
+}
+
+async function runManboRevenueTask(dramaInfo, usersBySetId = {}) {
+  const executor = createStatsTaskExecutor(createDependencies({
+    aggregateRevenueFinancials,
+    isLikelyManboDanmakuOverflow: async () => ({
+      overflow: false,
+      totalDanmaku: null,
+    }),
+    normalizeOptionalFiniteNumber(value) {
+      if (value == null || value === "") {
+        return null;
+      }
+      const normalized = Number(value);
+      return Number.isFinite(normalized) ? normalized : null;
+    },
+    manboClient: {
+      async getDramaDetail() {
+        return dramaInfo;
+      },
+      async getDanmakuSummary(setId) {
+        const users = usersBySetId[String(setId)] || [];
+        return {
+          success: true,
+          danmaku: users.length,
+          users,
+        };
+      },
+    },
+  }));
+  const task = createRevenueTask([dramaInfo.drama.id]);
+
+  await executor(task, { report() {} });
+
+  return {
+    result: task.result.revenueResults[0],
+    summary: task.result.revenueSummary,
   };
 }
 
@@ -289,4 +342,185 @@ test("Manbo overflow details reuse assessment totals and preserve episode order"
       [2_000_002, 200],
     ]
   );
+});
+
+test("Manbo episode revenue uses the lowest set price and both paid ID counts", async () => {
+  const { result, summary } = await runManboRevenueTask(
+    {
+      drama: {
+        id: "8",
+        name: "分集付费剧",
+        view_count: 1000,
+        diamond_value: 500,
+        pay_type: 0,
+        price: 100,
+        member_price: 80,
+        pay_count: 2,
+      },
+      episodes: {
+        episode: [
+          { sound_id: "11", name: "第一集", price: 20 },
+          { sound_id: "12", name: "第二集", price: 30 },
+        ],
+      },
+    },
+    {
+      11: ["a", "b"],
+      12: ["b", "c", "d"],
+    }
+  );
+
+  assert.equal(result.summaryRevenueMode, "range");
+  assert.equal(result.paidCountSource, "pay_count_and_danmaku_ids");
+  assert.equal(result.payCount, 2);
+  assert.equal(result.episodePaidUserCountTotal, 5);
+  assert.equal(result.seasonPaidUserCount, 4);
+  assert.equal(result.paidUserCount, 4);
+  assert.equal(result.titlePrice, 100);
+  assert.equal(result.titleMemberPrice, 80);
+  assert.equal(result.estimatedRevenueYuan, 6);
+  assert.equal(result.minRevenueYuan, 6);
+  assert.equal(result.maxRevenueYuan, 9);
+  assert.equal(summary.paidCountSourceSummary, "mixed");
+  assert.equal(summary.totalPayCount, 2);
+  assert.equal(summary.totalDanmakuPaidUserCount, 4);
+});
+
+test("Manbo episode revenue lets official pay count win both bounds", async () => {
+  const { result } = await runManboRevenueTask(
+    {
+      drama: {
+        id: "8",
+        name: "分集付费剧",
+        view_count: 1000,
+        diamond_value: 500,
+        pay_type: 0,
+        price: 100,
+        member_price: 0,
+        pay_count: 10,
+      },
+      episodes: {
+        episode: [
+          { sound_id: "11", name: "第一集", price: 20 },
+          { sound_id: "12", name: "第二集", price: 30 },
+        ],
+      },
+    },
+    {
+      11: ["a"],
+      12: ["b"],
+    }
+  );
+
+  assert.equal(result.minRevenueYuan, 7);
+  assert.equal(result.maxRevenueYuan, 15);
+});
+
+test("Manbo episode revenue sums paid set prices when the title price is missing", async () => {
+  const { result, summary } = await runManboRevenueTask(
+    {
+      drama: {
+        id: "8",
+        name: "缺少总价的分集付费剧",
+        view_count: 1000,
+        diamond_value: 500,
+        pay_type: 0,
+        price: 0,
+        member_price: 0,
+        pay_count: 2,
+      },
+      episodes: {
+        episode: [
+          { sound_id: "11", name: "第一集", price: 20 },
+          { sound_id: "12", name: "第二集", price: 30 },
+        ],
+      },
+    },
+    {
+      11: ["a", "b"],
+      12: ["b", "c"],
+    }
+  );
+
+  assert.equal(result.titlePrice, 50);
+  assert.equal(result.minRevenueYuan, 5.8);
+  assert.equal(result.maxRevenueYuan, 6.5);
+  assert.equal(summary.titlePriceTotal, 50);
+});
+
+test("Manbo zero-paid-set episode drama uses title member range", async () => {
+  const dramaInfo = {
+    drama: {
+      id: "8",
+      name: "暂无付费集",
+      view_count: 1000,
+      diamond_value: 500,
+      pay_type: 0,
+      price: 100,
+      member_price: 80,
+      pay_count: 2,
+    },
+    episodes: {
+      episode: [{ sound_id: "11", name: "预告", price: 0 }],
+    },
+  };
+
+  assert.equal(getManboRevenueType(dramaInfo, () => false), "episode");
+
+  const { result } = await runManboRevenueTask(dramaInfo);
+
+  assert.equal(result.summaryRevenueMode, "range");
+  assert.equal(result.episodePaidUserCountTotal, 0);
+  assert.equal(result.seasonPaidUserCount, 0);
+  assert.equal(result.estimatedRevenueYuan, 6.6);
+  assert.equal(result.minRevenueYuan, 6.6);
+  assert.equal(result.maxRevenueYuan, 7);
+});
+
+test("Manbo episode revenue ignores a member price that is not a discount", async () => {
+  const { result } = await runManboRevenueTask({
+    drama: {
+      id: "8",
+      name: "会员价异常",
+      view_count: 1000,
+      diamond_value: 500,
+      pay_type: 0,
+      price: 100,
+      member_price: 120,
+      pay_count: 2,
+    },
+    episodes: {
+      episode: [],
+    },
+  });
+
+  assert.equal(result.summaryRevenueMode, "single");
+  assert.equal(result.titleMemberPrice, null);
+  assert.equal(result.estimatedRevenueYuan, 7);
+  assert.equal(result.minRevenueYuan, null);
+  assert.equal(result.maxRevenueYuan, null);
+});
+
+test("Manbo zero-paid-set episode drama without member price uses one value", async () => {
+  const { result } = await runManboRevenueTask({
+    drama: {
+      id: "8",
+      name: "暂无付费集",
+      view_count: 1000,
+      diamond_value: 500,
+      pay_type: 0,
+      price: 100,
+      member_price: 0,
+      pay_count: null,
+    },
+    episodes: {
+      episode: [],
+    },
+  });
+
+  assert.equal(result.summaryRevenueMode, "single");
+  assert.equal(result.payCount, 0);
+  assert.equal(result.estimatedRevenueYuan, 5);
+  assert.equal(result.minRevenueYuan, null);
+  assert.equal(result.maxRevenueYuan, null);
 });

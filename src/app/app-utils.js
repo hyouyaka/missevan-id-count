@@ -1033,10 +1033,11 @@ export function buildRevenueSummary(results, currentPlatform) {
   let hasDanmakuIds = false;
   results.forEach((item) => {
     const paidCountSource = String(item?.paidCountSource || "");
-    if (paidCountSource === "pay_count") {
+    if (paidCountSource === "pay_count" || paidCountSource === "pay_count_and_danmaku_ids") {
       hasPayCount = true;
       totalPayCount += Number(item?.payCount ?? item?.paidUserCount ?? 0);
-    } else {
+    }
+    if (paidCountSource !== "pay_count") {
       allPayCount = false;
       hasDanmakuIds = true;
     }
@@ -1378,6 +1379,26 @@ function isMissevanEpisodeRevenueResult(drama) {
 }
 
 export function buildRevenuePaidMetricSegments(drama) {
+  if (drama?.platform === "manbo" && drama?.revenueType === "episode") {
+    const seasonPaidUserCount =
+      drama?.seasonPaidUserCount ?? drama?.paidUserCount
+      ?? (Array.isArray(drama?.paidUserIds) ? drama.paidUserIds.length : 0);
+    return [
+      buildHistoryMetricSegment(
+        "seasonPaidUserCount",
+        "付费ID数",
+        formatPlainNumber(seasonPaidUserCount),
+        "ID"
+      ),
+      buildHistoryMetricSegment(
+        "episodePaidUserCountTotal",
+        "付费单集ID汇总",
+        formatPlainNumber(drama?.episodePaidUserCountTotal),
+        "ID"
+      ),
+      buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.payCount)),
+    ];
+  }
   if (drama?.platform === "manbo" && drama?.paidCountSource === "pay_count") {
     return [buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.paidUserCount))];
   }
