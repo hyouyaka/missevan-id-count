@@ -54,8 +54,21 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.6", () => {
-  assert.equal(packageJson.version, "1.7.6");
+test("package version is 1.7.7", () => {
+  assert.equal(packageJson.version, "1.7.7");
+});
+
+test("changelog contains all 1.7.7 CV profile and compare chart updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.7");
+
+  assert.deepEqual(entry, {
+    version: "1.7.7",
+    changes: [
+      "新增CV主页，支持筛选、查看目前数据库里上架中的所有主役作品。",
+      "对比界面的折线图中的数据点点击可查看具体数值",
+      "修正漫播导入时的偶发问题",
+    ],
+  });
 });
 
 test("changelog contains all 1.7.6 overflow, revenue, and feedback updates", () => {

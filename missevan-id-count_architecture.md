@@ -1,10 +1,10 @@
 # M&M Toolkit Architecture
 
-Last updated: 2026-07-27
+Last updated: 2026-07-30
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.7.6
+- **Version**: 1.7.7
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
   - `server.js` as the stable backend facade, with `server/application.js` providing composition and `server/routes/` holding extracted route groups

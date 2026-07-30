@@ -16,6 +16,7 @@ dist-ssr
 upstash.env
 release
 playwright-report/
+.playwright-cli/
 test-results/
 output/
 logs

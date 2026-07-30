@@ -8,6 +8,7 @@ import {
   isAllowedDesktopHost,
   isLoopbackAddress,
   isSameOriginRequest,
+  MANBO_CRYPTO_SCRIPT_ORIGIN,
 } from "./httpSecurity.js";
 
 function request(overrides = {}) {
@@ -62,6 +63,9 @@ test("desktop requests require loopback, matching port, and same-origin writes",
 test("content security policy only includes a valid HTTPS Twikoo origin", () => {
   const policy = buildContentSecurityPolicy({ twikooUrl: "https://twikoo.example.com/" });
   assert.match(policy, /default-src 'self'/);
+  assert.match(policy, new RegExp(`script-src 'self' ${MANBO_CRYPTO_SCRIPT_ORIGIN.replaceAll(".", "\\.")}`));
+  assert.doesNotMatch(policy, /script-src[^;]*\*/);
+  assert.doesNotMatch(policy, /script-src[^;]*https:(?:;|$)/);
   assert.match(policy, /connect-src 'self' https:\/\/twikoo\.example\.com/);
   assert.doesNotMatch(policy, /upgrade-insecure-requests/);
   assert.doesNotMatch(

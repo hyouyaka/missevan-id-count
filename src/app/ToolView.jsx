@@ -350,6 +350,10 @@ function getCompareAxisTick(value, metricKey) {
   return formatPlainNumber(Math.round(number));
 }
 
+function clampCompareTooltipPercent(value) {
+  return Math.min(92, Math.max(8, value));
+}
+
 function buildCompareChartMetrics(items, windowKey, metricOption) {
   if (!metricOption?.key) {
     return [];
@@ -372,12 +376,24 @@ function buildCompareChartMetrics(items, windowKey, metricOption) {
 }
 
 function CompareTrendChart({ items, windowKey, metricOption, chartMode, chartUtils }) {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [selectedPoint, setSelectedPoint] = useState(null);
   const {
     buildTrendChartLines,
     filterNonZeroTrendMetrics,
     getTrendAxisLabelMarkers,
     getTrendAxisY,
   } = chartUtils || {};
+  const rawChartMetrics = buildCompareChartMetrics(items, windowKey, metricOption);
+  const chartMetricSignature = rawChartMetrics
+    .map((metric) => `${metric.key}:${(Array.isArray(metric.history) ? metric.history : []).map((point) => `${point.date}:${point.value ?? ""}`).join(",")}`)
+    .join("|");
+  const activeTooltipPoint = selectedPoint || hoveredPoint;
+
+  useEffect(() => {
+    setHoveredPoint(null);
+    setSelectedPoint(null);
+  }, [windowKey, metricOption?.key, chartMode, chartMetricSignature]);
 
   if (
     typeof buildTrendChartLines !== "function" ||
@@ -392,13 +408,22 @@ function CompareTrendChart({ items, windowKey, metricOption, chartMode, chartUti
     );
   }
 
-  const chartMetrics = filterNonZeroTrendMetrics(buildCompareChartMetrics(items, windowKey, metricOption));
+  const chartMetrics = filterNonZeroTrendMetrics(rawChartMetrics);
   const chartData = buildTrendChartLines(chartMetrics, { chartMode });
   const axis = chartData?.axis || chartData?.axes?.left;
   const axisLabelMarkers = getTrendAxisLabelMarkers(
     chartData?.dateMarkers || chartData?.lines?.[0]?.markers || [],
     windowKey
   );
+  const tooltipPlacement = activeTooltipPoint?.position?.y < 44 ? "below" : "above";
+  const tooltipLeft = activeTooltipPoint
+    ? clampCompareTooltipPercent((activeTooltipPoint.position.x / 320) * 100)
+    : 50;
+  const tooltipTop = activeTooltipPoint
+    ? clampCompareTooltipPercent(
+        ((activeTooltipPoint.position.y + (tooltipPlacement === "below" ? 18 : -12)) / 170) * 100
+      )
+    : 50;
 
   if (!metricOption?.key || !chartMetrics.length || !axis?.domain || !Array.isArray(chartData?.lines) || !chartData.lines.length) {
     return (
@@ -410,7 +435,19 @@ function CompareTrendChart({ items, windowKey, metricOption, chartMode, chartUti
 
   return (
     <div className="rounded-lg border border-border bg-card p-2.5 shadow-[var(--shadow-card)]">
-      <div className="relative h-56 overflow-visible rounded-md bg-background">
+      <div
+        className="relative h-56 overflow-visible rounded-md bg-background"
+        role="group"
+        tabIndex={0}
+        aria-label="剧集对比趋势图交互区域"
+        onClick={() => setSelectedPoint(null)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setSelectedPoint(null);
+          }
+        }}
+        onPointerLeave={() => setHoveredPoint(null)}
+      >
         <svg aria-label="剧集对比趋势图" className="size-full" preserveAspectRatio="none" viewBox="0 0 320 170">
           {(axis.ticks || []).map((tick) => (
             <line
@@ -469,6 +506,56 @@ function CompareTrendChart({ items, windowKey, metricOption, chartMode, chartUti
               />
             ))
         )}
+        {chartData.lines.flatMap((line) =>
+          (line.markers || []).map(({ point, position }) => {
+            const tooltipPoint = {
+              key: `${line.metric.key}-${point.date}`,
+              label: line.metric.label,
+              date: formatTrendDate(point.date),
+              value: chartMode === "increment"
+                ? formatSignedPlainNumber(point.displayValue)
+                : formatOptionalPlainNumber(point.value),
+              color: line.metric.color,
+              position,
+            };
+            return (
+              <button
+                key={`compare-target-${tooltipPoint.key}`}
+                type="button"
+                aria-label={`${tooltipPoint.label} ${tooltipPoint.date} ${tooltipPoint.value}`}
+                className="absolute size-7 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                style={{
+                  left: `${(position.x / 320) * 100}%`,
+                  top: `${(position.y / 170) * 100}%`,
+                }}
+                onFocus={() => setHoveredPoint(tooltipPoint)}
+                onBlur={() => setHoveredPoint(null)}
+                onPointerEnter={() => setHoveredPoint(tooltipPoint)}
+                onPointerLeave={() => setHoveredPoint(null)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedPoint(tooltipPoint);
+                }}
+              />
+            );
+          })
+        )}
+        {activeTooltipPoint ? (
+          <div
+            className={`pointer-events-none absolute z-20 min-w-12 -translate-x-1/2 rounded-md border bg-popover px-2 py-1 text-center text-[0.62rem] font-medium leading-tight text-popover-foreground shadow-md ${
+              tooltipPlacement === "below" ? "" : "-translate-y-full"
+            }`}
+            style={{
+              borderColor: activeTooltipPoint.color,
+              left: `${tooltipLeft}%`,
+              top: `${tooltipTop}%`,
+            }}
+          >
+            <div>{activeTooltipPoint.date}</div>
+            <div className="mt-0.5">{activeTooltipPoint.label}</div>
+            <div className="mt-0.5 tabular-nums">{activeTooltipPoint.value}</div>
+          </div>
+        ) : null}
         <div className="pointer-events-none absolute inset-x-0 bottom-1 text-[0.58rem] text-muted-foreground">
           {axisLabelMarkers.map(({ point, position }) => (
             <span

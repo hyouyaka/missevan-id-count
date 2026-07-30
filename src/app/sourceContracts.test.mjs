@@ -3255,6 +3255,31 @@ test("rank trend chart data points show hover and touch tooltips", () => {
   assert.doesNotMatch(lineChartSource, /formatAxisPercent\(point\.percent\)/);
 });
 
+test("compare trend chart data points show hover and touch tooltips", () => {
+  const chartStart = toolViewSource.indexOf("function CompareTrendChart");
+  const chartEnd = toolViewSource.indexOf("function DramaCompareDialog", chartStart);
+  assert.notEqual(chartStart, -1, "CompareTrendChart should exist");
+  assert.notEqual(chartEnd, -1, "CompareTrendChart should end before dialog");
+  const chartSource = toolViewSource.slice(chartStart, chartEnd);
+
+  assert.match(chartSource, /const \[hoveredPoint, setHoveredPoint\] = useState\(null\)/);
+  assert.match(chartSource, /const \[selectedPoint, setSelectedPoint\] = useState\(null\)/);
+  assert.match(chartSource, /const activeTooltipPoint = selectedPoint \|\| hoveredPoint/);
+  assert.match(chartSource, /const chartMetricSignature = rawChartMetrics[\s\S]*\.map\(\(metric\) => `\$\{metric\.key\}:/);
+  assert.match(chartSource, /useEffect\(\(\) => \{[\s\S]*setHoveredPoint\(null\);[\s\S]*setSelectedPoint\(null\);[\s\S]*\}, \[windowKey, metricOption\?\.key, chartMode, chartMetricSignature\]\)/);
+  assert.match(chartSource, /role="group"[\s\S]*tabIndex=\{0\}[\s\S]*aria-label="剧集对比趋势图交互区域"/);
+  assert.match(chartSource, /onClick=\{\(\) => setSelectedPoint\(null\)\}/);
+  assert.match(chartSource, /event\.key === "Escape"[\s\S]*setSelectedPoint\(null\)/);
+  assert.match(chartSource, /onPointerEnter=\{\(\) => setHoveredPoint\(tooltipPoint\)\}/);
+  assert.match(chartSource, /onFocus=\{\(\) => setHoveredPoint\(tooltipPoint\)\}/);
+  assert.match(chartSource, /onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*setSelectedPoint\(tooltipPoint\)/);
+  assert.match(chartSource, /className="absolute size-7 -translate-x-1\/2 -translate-y-1\/2 cursor-pointer rounded-full/);
+  assert.match(chartSource, /chartMode === "increment"[\s\S]*formatSignedPlainNumber\(point\.displayValue\)[\s\S]*formatOptionalPlainNumber\(point\.value\)/);
+  assert.match(chartSource, /borderColor: activeTooltipPoint\.color/);
+  assert.match(chartSource, /activeTooltipPoint\.date[\s\S]*activeTooltipPoint\.label[\s\S]*activeTooltipPoint\.value/);
+  assert.match(chartSource, /clampCompareTooltipPercent/);
+});
+
 test("rank trend dialog uses compact window tabs and details trigger", () => {
   const dialogStart = rankTrendUiSource.indexOf("export function RankTrendDialog");
   assert.notEqual(dialogStart, -1, "RankTrendDialog should exist");

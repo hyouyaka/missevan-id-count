@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const MANBO_CRYPTO_SCRIPT_ORIGIN = "https://download.hongrenshuo.com.cn";
 const DEFAULT_PERMISSION_POLICY = [
   "camera=()",
   "microphone=()",
@@ -120,7 +121,7 @@ export function buildContentSecurityPolicy({ twikooUrl = "" } = {}) {
 
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    `script-src 'self' ${MANBO_CRYPTO_SCRIPT_ORIGIN}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: blob: https:",
@@ -175,4 +176,9 @@ export function createRequestSecurityMiddleware({ desktopApp = false, twikooUrl 
   };
 }
 
-export { DEFAULT_PERMISSION_POLICY, LOOPBACK_HOSTS, UNSAFE_METHODS };
+export {
+  DEFAULT_PERMISSION_POLICY,
+  LOOPBACK_HOSTS,
+  MANBO_CRYPTO_SCRIPT_ORIGIN,
+  UNSAFE_METHODS,
+};

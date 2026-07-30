@@ -93,7 +93,7 @@ const profileResponse = {
 
 test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }) => {
   await page.addInitScript(() => {
-    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.6");
+    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.7");
   });
   await page.route("**/cv-profile?**", (route) =>
     route.fulfill({

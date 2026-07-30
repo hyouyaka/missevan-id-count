@@ -4,6 +4,14 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.7",
+    changes: [
+      "新增CV主页，支持筛选、查看目前数据库里上架中的所有主役作品。",
+      "对比界面的折线图中的数据点点击可查看具体数值",
+      "修正漫播导入时的偶发问题",
+    ],
+  },
+  {
     version: "1.7.6",
     changes: [
       "添加弹幕溢出集数的明细展示",
