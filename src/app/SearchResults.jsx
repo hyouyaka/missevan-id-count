@@ -39,6 +39,7 @@ import {
 } from "@/app/rankTrendData";
 import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
+import { CvSearchResults } from "@/app/CvSearchResults";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 function buildProxyImageUrl(url) {
@@ -249,6 +250,8 @@ export function SearchResults({
   activePlatform = platform,
   onPlatformChange,
   platformResultCounts = {},
+  cvResults = [],
+  onOpenCv,
   metricLegendOpen = false,
   onToggleMetricLegend,
   favoriteKeys = new Set(),
@@ -270,6 +273,7 @@ export function SearchResults({
   const totalCount = Number(totalResults || 0);
   const canToggleMetricLegend = typeof onToggleMetricLegend === "function";
   const showResultsHeader = platformTabs.length > 1 || canToggleMetricLegend;
+  const showingCvResults = activePlatform === "cv";
   const selectedDramaIdSet = new Set(actionResults.filter((result) => result.checked).map((result) => String(result.id)));
   const trendLookupIds = useMemo(() => {
     const sourceResults = Array.isArray(allResults) && allResults.length > 0 ? allResults : results;
@@ -298,6 +302,7 @@ export function SearchResults({
     data: null,
   });
   const trendRequestIdRef = useRef(0);
+  const trendEligibilityCacheRef = useRef(new Map());
 
   function getPlatformResultCountText(nextPlatform) {
     const count = Number(platformResultCounts?.[nextPlatform] ?? 0) || 0;
@@ -306,6 +311,9 @@ export function SearchResults({
 
   useEffect(() => {
     let cancelled = false;
+    if (showingCvResults) {
+      return undefined;
+    }
     if (!trendLookupKey || (platform !== "missevan" && platform !== "manbo")) {
       setTrendEligibility((current) => {
         if (current.platform === platform && !current.isLoaded && current.ids.size === 0) {
@@ -316,6 +324,17 @@ export function SearchResults({
       return () => {
         cancelled = true;
       };
+    }
+
+    const cacheKey = `${frontendVersion}:${platform}:${trendLookupKey}`;
+    const cachedIds = trendEligibilityCacheRef.current.get(cacheKey);
+    if (cachedIds) {
+      setTrendEligibility({
+        platform,
+        ids: new Set(cachedIds),
+        isLoaded: true,
+      });
+      return undefined;
     }
 
     setTrendEligibility((current) => ({
@@ -334,11 +353,19 @@ export function SearchResults({
           return;
         }
 
+        const ids = response?.ok && data?.success
+          ? new Set((Array.isArray(data.ids) ? data.ids : []).map((id) => String(id)))
+          : new Set();
+        if (response?.ok && data?.success) {
+          const cache = trendEligibilityCacheRef.current;
+          cache.set(cacheKey, ids);
+          if (cache.size > 50) {
+            cache.delete(cache.keys().next().value);
+          }
+        }
         setTrendEligibility({
           platform,
-          ids: response?.ok && data?.success
-            ? new Set((Array.isArray(data.ids) ? data.ids : []).map((id) => String(id)))
-            : new Set(),
+          ids,
           isLoaded: true,
         });
       })
@@ -352,7 +379,7 @@ export function SearchResults({
     return () => {
       cancelled = true;
     };
-  }, [frontendVersion, platform, trendLookupIds, trendLookupKey]);
+  }, [frontendVersion, platform, showingCvResults, trendLookupIds, trendLookupKey]);
 
   function getTitleClassName(title) {
     const length = String(title ?? "").trim().length;
@@ -1040,7 +1067,7 @@ export function SearchResults({
                         key={item.key}
                         data-touch="compact"
                         data-platform={item.key}
-                        className="h-7 min-w-[5.25rem] flex-none px-2 text-sm"
+                        className="h-7 min-w-[3.75rem] flex-none px-1 text-xs sm:min-w-[5.25rem] sm:px-2 sm:text-sm"
                         value={item.key}
                       >
                         <PlatformTabLabel platform={item.key} iconClassName="size-3.5" />
@@ -1057,16 +1084,22 @@ export function SearchResults({
                   type="button"
                   aria-controls="search-metric-legend"
                   aria-expanded={metricLegendOpen}
+                  aria-label={metricLegendOpen ? "收起统计图例" : "展开统计图例"}
                   className="shrink-0 text-sm! font-semibold leading-5 text-primary underline-offset-4 hover:underline sm:hidden"
                   onClick={onToggleMetricLegend}
                 >
-                  {metricLegendOpen ? "收起图例" : "查看图例"}
+                  图例
                 </button>
               ) : null}
             </div>
           </div>
         ) : null}
-        {results.length ? (
+        {showingCvResults ? (
+          <CvSearchResults
+            results={cvResults}
+            onOpenCv={onOpenCv}
+          />
+        ) : results.length ? (
           <div className={showResultsHeader ? "mt-3 divide-y divide-border/75" : "divide-y divide-border/75"}>
             {visibleResults.map((item) => {
               const importedDrama = getImportedDrama(item.id);

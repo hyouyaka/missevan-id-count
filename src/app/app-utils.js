@@ -32,6 +32,23 @@ export function getInlineTaggedTitleDisplayText(title, options = {}) {
   return `${characters.slice(0, maxLength).join("").trimEnd()}...`;
 }
 
+export function buildCvRankProfileId(platform, item = {}) {
+  const normalizedPlatform = String(platform ?? "").trim();
+  if (!["missevan", "manbo"].includes(normalizedPlatform)) {
+    return "";
+  }
+
+  const works = Array.isArray(item?.works)
+    ? item.works
+    : Array.isArray(item?.topWorks)
+      ? item.topWorks
+      : [];
+  const dramaId = works
+    .map((work) => String(work?.dramaId ?? work?.id ?? "").trim())
+    .find((value) => /^\d+$/.test(value));
+  return dramaId ? `rank-work:${normalizedPlatform}:${dramaId}` : "";
+}
+
 function normalizeExternalHttpUrl(value) {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -116,7 +133,7 @@ export function buildDramaExternalUrl(platform, dramaId) {
     : `https://manbo.kilaaudio.com/Activecard/radioplay?id=${encodedDramaId}`;
 }
 
-const dramaExternalUsageSources = new Set(["search", "ongoing", "ranks", "ranks_cv"]);
+const dramaExternalUsageSources = new Set(["search", "ongoing", "ranks", "ranks_cv", "cv_profile"]);
 
 export function buildDramaExternalUsagePayload(platform, dramaId, source, title) {
   const normalizedPlatform = String(platform?.key ?? platform ?? "").trim();
@@ -138,6 +155,41 @@ export function buildDramaExternalUsagePayload(platform, dramaId, source, title)
     source: dramaExternalUsageSources.has(normalizedSource) ? normalizedSource : "unknown",
     title: normalizedTitle,
   };
+}
+
+export function buildCvProfileOpenUsagePayload(name, context = {}) {
+  const cvName = String(name ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const requestedSource = String(context?.source ?? "").trim();
+  const source = requestedSource === "search"
+    ? "search"
+    : ["home", "ranks"].includes(requestedSource)
+      ? "ranks"
+      : "";
+  const platform = ["missevan", "manbo"].includes(context?.platform)
+    ? context.platform
+    : "";
+  if (!cvName || !source || (source === "ranks" && !platform)) {
+    return null;
+  }
+
+  const rankKey = String(context?.rankKey ?? "").trim().slice(0, 80);
+  return {
+    action: "cv_profile_open",
+    cvName,
+    source,
+    ...(source === "ranks" ? {
+      platform,
+      ...(rankKey ? { rankKey } : {}),
+    } : {}),
+  };
+}
+
+export function shouldLoadSearchMetrics(currentPlatform, activeSearchCategory, activeBrowsePlatform) {
+  return (
+    currentPlatform === "search" &&
+    ["missevan", "manbo"].includes(activeBrowsePlatform) &&
+    activeSearchCategory === activeBrowsePlatform
+  );
 }
 
 export async function readJsonResponse(response) {
@@ -168,12 +220,18 @@ export const TOOL_ROUTE_QUERY_PARAMS = {
   window: "window",
   category: "category",
   rank: "rank",
+  cv: "cv",
+  cvKey: "cvKey",
+  payment: "payment",
+  release: "release",
+  partners: "partners",
+  sort: "sort",
 };
 
 export function getAllowedToolViews({ desktopApp = false } = {}) {
   return desktopApp
-    ? ["search", "favorites"]
-    : ["home", "search", "ongoing", "ranks", "favorites", "feedback"];
+    ? ["search", "cv", "favorites"]
+    : ["home", "search", "cv", "ongoing", "ranks", "favorites", "feedback"];
 }
 
 export function normalizeToolView(value, options = {}) {
@@ -187,18 +245,108 @@ export function normalizeToolPlatform(value) {
   return value === "manbo" ? "manbo" : "missevan";
 }
 
+export function normalizeCvPlatform(value) {
+  return ["all", "missevan", "manbo", "none"].includes(value) ? value : "all";
+}
+
+export function normalizeCvPayment(value) {
+  return ["all", "paid", "free", "none"].includes(value) ? value : "all";
+}
+
+export function normalizeCvRelease(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized === "all") {
+    return "all";
+  }
+  if (normalized === "none") {
+    return "none";
+  }
+  const values = [...new Set(
+    normalized
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item === "unknown" || /^(?:19|20)\d{2}$/.test(item))
+  )].sort((left, right) => {
+    if (left === "unknown") {
+      return 1;
+    }
+    if (right === "unknown") {
+      return -1;
+    }
+    return Number(right) - Number(left);
+  });
+  return values.length ? values.join(",") : "all";
+}
+
+export function normalizeCvPartners(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized === "all") {
+    return "all";
+  }
+  if (normalized === "none") {
+    return "none";
+  }
+  try {
+    const parsed = JSON.parse(normalized);
+    if (!Array.isArray(parsed)) {
+      return "all";
+    }
+    const values = [...new Set(
+      parsed
+        .map((item) => String(item ?? "").replace(/\s+/g, " ").trim().slice(0, 80))
+        .filter(Boolean)
+    )].sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+    return values.length ? JSON.stringify(values) : "none";
+  } catch {
+    return "all";
+  }
+}
+
+export function normalizeCvSort() {
+  return "plays_desc";
+}
+
 export function normalizeOngoingWindow(value) {
   return ["3d", "7d", "30d"].includes(value) ? value : "7d";
 }
 
 export function normalizeToolRouteState(routeState = {}, options = {}) {
+  const view = normalizeToolView(routeState.view, options);
   return {
-    view: normalizeToolView(routeState.view, options),
-    platform: normalizeToolPlatform(routeState.platform),
+    view,
+    platform: view === "cv"
+      ? normalizeCvPlatform(routeState.platform)
+      : normalizeToolPlatform(routeState.platform),
     window: normalizeOngoingWindow(routeState.window),
     category: String(routeState.category || "").trim(),
     rank: String(routeState.rank || "").trim(),
+    cv: String(routeState.cv || "").replace(/\s+/g, " ").trim(),
+    cvKey: String(routeState.cvKey || "").trim().slice(0, 240),
+    payment: normalizeCvPayment(routeState.payment),
+    release: normalizeCvRelease(routeState.release),
+    partners: normalizeCvPartners(routeState.partners),
+    sort: normalizeCvSort(routeState.sort),
   };
+}
+
+const TOOL_ROUTE_STATE_COMPARISON_KEYS = [
+  "view",
+  "platform",
+  "window",
+  "category",
+  "rank",
+  "cv",
+  "cvKey",
+  "payment",
+  "release",
+  "partners",
+  "sort",
+];
+
+export function areToolRouteStatesEqual(left = {}, right = {}) {
+  return TOOL_ROUTE_STATE_COMPARISON_KEYS.every(
+    (key) => left?.[key] === right?.[key]
+  );
 }
 
 export function readToolViewFromLocation(locationLike, options = {}) {
@@ -217,6 +365,12 @@ export function readToolRouteStateFromLocation(locationLike, options = {}) {
       window: params.get(TOOL_ROUTE_QUERY_PARAMS.window),
       category: params.get(TOOL_ROUTE_QUERY_PARAMS.category),
       rank: params.get(TOOL_ROUTE_QUERY_PARAMS.rank),
+      cv: params.get(TOOL_ROUTE_QUERY_PARAMS.cv),
+      cvKey: params.get(TOOL_ROUTE_QUERY_PARAMS.cvKey),
+      payment: params.get(TOOL_ROUTE_QUERY_PARAMS.payment),
+      release: params.get(TOOL_ROUTE_QUERY_PARAMS.release),
+      partners: params.get(TOOL_ROUTE_QUERY_PARAMS.partners),
+      sort: params.get(TOOL_ROUTE_QUERY_PARAMS.sort),
     },
     options
   );
@@ -227,6 +381,12 @@ function deleteToolRouteDetailParams(params) {
   params.delete(TOOL_ROUTE_QUERY_PARAMS.window);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.category);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.rank);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.cv);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.cvKey);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.payment);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.release);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.partners);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.sort);
 }
 
 export function buildToolRouteUrl(locationLike, routeState = {}, options = {}) {
@@ -263,6 +423,19 @@ export function buildToolRouteUrl(locationLike, routeState = {}, options = {}) {
     }
     if (nextState.rank) {
       params.set(TOOL_ROUTE_QUERY_PARAMS.rank, nextState.rank);
+    }
+  } else if (nextState.view === "cv" && nextState.cv) {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.cv, nextState.cv);
+    if (nextState.cvKey) {
+      params.set(TOOL_ROUTE_QUERY_PARAMS.cvKey, nextState.cvKey);
+    }
+    params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
+    params.set(TOOL_ROUTE_QUERY_PARAMS.payment, nextState.payment);
+    if (nextState.release !== "all") {
+      params.set(TOOL_ROUTE_QUERY_PARAMS.release, nextState.release);
+    }
+    if (nextState.partners !== "all") {
+      params.set(TOOL_ROUTE_QUERY_PARAMS.partners, nextState.partners);
     }
   }
 

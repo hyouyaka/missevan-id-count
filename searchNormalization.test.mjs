@@ -15,6 +15,40 @@ test("new drama id normalization preserves long Manbo ids as strings", async () 
   assert.deepEqual(normalizeNewDramaIdsForPlatform("invalid", ids), []);
 });
 
+test("Manbo library normalization preserves positional long CV ids as strings", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeManboLibraryRecord } = await import("./server.js");
+  const cvIds = ["2028968973537640401", "2235627191910006844"];
+  const normalized = normalizeManboLibraryRecord({
+    dramaId: "2235647356781461610",
+    name: "测试作品",
+    mainCvIds: [cvIds[0], cvIds[1], cvIds[0]],
+  });
+
+  assert.deepEqual(normalized.mainCvIds, [cvIds[0], cvIds[1], cvIds[0]]);
+  assert.ok(normalized.mainCvIds.every((id) => typeof id === "string"));
+
+  const positional = normalizeManboLibraryRecord({
+    dramaId: "1",
+    name: "位置映射",
+    mainCvNames: ["甲", "", "乙"],
+    mainCvNicknames: ["甲", "缺失本名", "乙"],
+    mainCvIds: ["11", Number("2028968973537640401"), "33"],
+  });
+  assert.deepEqual(positional.mainCvNames, ["甲", "", "乙"]);
+  assert.deepEqual(positional.mainCvIds, ["11", "", "33"]);
+});
+
+test("CV profile library availability requires both platform snapshots", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { hasCvProfileLibraryData } = await import("./server.js");
+
+  assert.equal(hasCvProfileLibraryData([{ dramaId: "1" }], [{ dramaId: "2" }]), true);
+  assert.equal(hasCvProfileLibraryData([], [{ dramaId: "2" }]), false);
+  assert.equal(hasCvProfileLibraryData([{ dramaId: "1" }], []), false);
+  assert.equal(hasCvProfileLibraryData(null, [{ dramaId: "2" }]), false);
+});
+
 function buildMissevanSearchRecord(title, dramaId) {
   return {
     dramaId,
@@ -90,6 +124,64 @@ test("compatibility search usage logs preserve platform and original keyword", a
     action: "compatibility_search",
     keyword: "愚蠢有钱人",
   });
+});
+
+test("CV profile open usage logs normalize search, rank and legacy events", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildCvProfileOpenUsageLog } = await import("./server.js");
+
+  assert.deepEqual(buildCvProfileOpenUsageLog({
+    action: "cv_profile_open",
+    cvName: "  倔强的  小红 ",
+    source: "search",
+    platform: "missevan",
+  }), {
+    action: "cv_profile_open",
+    cvName: "倔强的 小红",
+    source: "search",
+    success: true,
+  });
+  assert.deepEqual(buildCvProfileOpenUsageLog({
+    action: "cv_profile_open",
+    cvName: "张福正",
+    source: "ranks",
+    platform: "manbo",
+    rankKey: "cv_total",
+  }), {
+    action: "cv_profile_open",
+    cvName: "张福正",
+    source: "ranks",
+    platform: "manbo",
+    rankKey: "cv_total",
+    success: true,
+  });
+  assert.deepEqual(buildCvProfileOpenUsageLog({
+    action: "cv_rank_open_profile",
+    cvName: "乔苏",
+    source: "home",
+    platform: "missevan",
+  }), {
+    action: "cv_profile_open",
+    cvName: "乔苏",
+    source: "ranks",
+    platform: "missevan",
+    success: true,
+  });
+  assert.equal(buildCvProfileOpenUsageLog({
+    action: "cv_profile_open",
+    cvName: "",
+    source: "search",
+  }), null);
+  assert.equal(buildCvProfileOpenUsageLog({
+    action: "cv_profile_open",
+    cvName: "乔苏",
+    source: "direct",
+  }), null);
+  assert.equal(buildCvProfileOpenUsageLog({
+    action: "cv_profile_open",
+    cvName: "乔苏",
+    source: "ranks",
+  }), null);
 });
 
 test("library search falls back to optional internal 的 compatibility", async () => {

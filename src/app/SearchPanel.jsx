@@ -42,7 +42,9 @@ export function SearchPanel({
   onUpdatePlatformFormState,
   onResetPlatformState,
   onUpdatePlatformResults,
+  onUpdateCvResults,
   onSelectPlatform,
+  onSelectCategory,
   onCrossPlatformImport,
   onNotice,
   onSearchCommit,
@@ -183,6 +185,7 @@ export function SearchPanel({
       return {
         missevan: normalizeUnifiedPlatformResult(data?.results?.missevan, keyword),
         manbo: normalizeUnifiedPlatformResult(data?.results?.manbo, keyword),
+        cv: normalizeUnifiedPlatformResult(data?.results?.cv, keyword),
       };
     } catch (error) {
       console.error("Unified search failed", error);
@@ -205,6 +208,16 @@ export function SearchPanel({
             matchedCount: 0,
           },
         },
+        cv: {
+          success: false,
+          error,
+          results: [],
+          meta: {
+            keyword,
+            matchedCount: 0,
+            exactMatch: false,
+          },
+        },
       };
     }
   }
@@ -218,15 +231,29 @@ export function SearchPanel({
       ...(resultsByPlatform.manbo?.meta || {}),
       searchGeneration,
     });
+    onUpdateCvResults?.(resultsByPlatform.cv?.results || [], {
+      ...(resultsByPlatform.cv?.meta || {}),
+      searchGeneration,
+    });
   }
 
   function selectFirstPlatformWithResults(resultsByPlatform) {
+    if (hasPlatformMatches(resultsByPlatform.cv) && resultsByPlatform.cv?.meta?.exactMatch) {
+      onSelectCategory?.("cv");
+      return;
+    }
     if (hasPlatformMatches(resultsByPlatform.missevan)) {
       onSelectPlatform?.("missevan");
+      onSelectCategory?.("missevan");
       return;
     }
     if (hasPlatformMatches(resultsByPlatform.manbo)) {
       onSelectPlatform?.("manbo");
+      onSelectCategory?.("manbo");
+      return;
+    }
+    if (hasPlatformMatches(resultsByPlatform.cv)) {
+      onSelectCategory?.("cv");
     }
   }
 
@@ -237,6 +264,11 @@ export function SearchPanel({
 
     onResetPlatformState?.("missevan");
     onResetPlatformState?.("manbo");
+    onUpdateCvResults?.([], {
+      keyword,
+      matchedCount: 0,
+      exactMatch: false,
+    });
     setSearchPending(true);
     const searchGeneration = ++searchGenerationRef.current;
 
@@ -259,7 +291,8 @@ export function SearchPanel({
       } else if (
         !finalResults.missevan?.accessDenied &&
         !hasPlatformMatches(finalResults.missevan) &&
-        !hasPlatformMatches(finalResults.manbo)
+        !hasPlatformMatches(finalResults.manbo) &&
+        !hasPlatformMatches(finalResults.cv)
       ) {
         showBlockingNotice("", "未找到结果，可尝试导入作品ID或链接。");
       }

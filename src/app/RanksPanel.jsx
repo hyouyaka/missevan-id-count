@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import {
+  buildCvRankProfileId,
   buildRankPlatformSwitchRoutePatch,
   buildVersionedUrl,
   formatDeviceDateTime,
@@ -869,9 +870,11 @@ function CvRankActions({ item, canShowTrend, onOpenTrend, className }) {
 function CvRankItemCard({
   item,
   platform,
+  rankKey,
   frontendVersion = "0.0.0",
   handleVersionResponse,
   onOpenSearchResult,
+  onOpenCv,
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const worksRegionId = useId();
@@ -900,9 +903,19 @@ function CvRankItemCard({
             )}
           </div>
           <div className="col-start-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <div className="min-w-0 break-words text-base font-semibold leading-6 text-foreground sm:text-lg">
+            <button
+              type="button"
+              className="min-w-0 rounded-sm text-left text-base font-semibold leading-6 text-foreground underline underline-offset-4 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-lg"
+              title={item.cvName}
+              onClick={() => onOpenCv?.(item.cvName, {
+                platform,
+                profileId: buildCvRankProfileId(platform, item),
+                source: "ranks",
+                rankKey,
+              })}
+            >
               {item.cvName}
-            </div>
+            </button>
             <div
               aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
               title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
@@ -970,6 +983,7 @@ function CvRankColumn({
   frontendVersion = "0.0.0",
   handleVersionResponse,
   onOpenSearchResult,
+  onOpenCv,
 }) {
   const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
   return (
@@ -994,9 +1008,11 @@ function CvRankColumn({
               key={`${rank.key}-${item.rank}-${item.cvName}`}
               item={item}
               platform={platform}
+              rankKey={rank.key}
               frontendVersion={frontendVersion}
               handleVersionResponse={handleVersionResponse}
               onOpenSearchResult={onOpenSearchResult}
+              onOpenCv={onOpenCv}
             />
           ))}
         </div>
@@ -1089,6 +1105,7 @@ export function RanksPanel({
   routeState = null,
   onRouteStateChange,
   onOpenSearchResult,
+  onOpenCv,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   onToggleFavorite,
@@ -1556,6 +1573,7 @@ export function RanksPanel({
                   frontendVersion={frontendVersion}
                   handleVersionResponse={handleVersionResponse}
                   onOpenSearchResult={onOpenSearchResult}
+                  onOpenCv={onOpenCv}
                 />
               ))
             ) : (
@@ -1589,6 +1607,7 @@ export function RanksPanel({
                 frontendVersion={frontendVersion}
                 handleVersionResponse={handleVersionResponse}
                 onOpenSearchResult={onOpenSearchResult}
+                onOpenCv={onOpenCv}
               />
             ) : activeRank ? (
               <RankColumn

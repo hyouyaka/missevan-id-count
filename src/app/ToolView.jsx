@@ -17,6 +17,7 @@ import { toast } from "sonner";
 
 import { AppIcon } from "@/app/AppIcon";
 import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
+import { CvProfileView } from "@/app/CvProfileView";
 import { FavoritesPanel } from "@/app/FavoritesPanel";
 import { HomeView } from "@/app/HomeView";
 import { MessageDialog } from "@/app/MessageDialog";
@@ -38,6 +39,8 @@ import {
   saveFavorite,
 } from "@/app/favoritesStorage";
 import {
+  areToolRouteStatesEqual,
+  buildCvProfileOpenUsagePayload,
   buildOngoingNavigationMenu,
   buildRanksNavigationMenu,
   buildRevenueSummary,
@@ -70,6 +73,7 @@ import {
   savePersistedHistoryEntries,
   selectSearchMetricQueue,
   selectDramaEpisodesByMode,
+  shouldLoadSearchMetrics,
   STATS_HISTORY_LIMIT,
 } from "@/app/app-utils";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
@@ -935,6 +939,15 @@ export function ToolView({ initialAppConfig }) {
   const [activeSearchPlatform, setActiveSearchPlatform] = useState(() =>
     initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
   );
+  const [activeSearchCategory, setActiveSearchCategory] = useState(() =>
+    initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
+  );
+  const [cvSearchState, setCvSearchState] = useState({
+    results: [],
+    matchedCount: 0,
+    exactMatch: false,
+    keyword: "",
+  });
   const [sharedSearchForm, setSharedSearchForm] = useState({
     keyword: "",
     manualInput: "",
@@ -1108,13 +1121,7 @@ export function ToolView({ initialAppConfig }) {
     }
     const normalizedRoute = normalizeToolRouteState(toolRouteStateRef.current, appConfig);
     const currentRoute = toolRouteStateRef.current;
-    if (
-      normalizedRoute.view !== currentRoute.view ||
-      normalizedRoute.platform !== currentRoute.platform ||
-      normalizedRoute.window !== currentRoute.window ||
-      normalizedRoute.category !== currentRoute.category ||
-      normalizedRoute.rank !== currentRoute.rank
-    ) {
+    if (!areToolRouteStatesEqual(normalizedRoute, currentRoute)) {
       navigateToolRoute(normalizedRoute, { replace: true });
     }
   }, [appConfig]);
@@ -1170,9 +1177,6 @@ export function ToolView({ initialAppConfig }) {
     { key: "search", label: "统计" },
     { key: "favorites", label: "收藏" },
   ];
-  const visibleSearchPlatforms = searchPlatforms.filter((platform) => {
-    return platform.key !== "missevan" || appConfig.missevanEnabled;
-  });
   const visiblePlatforms = appConfig.desktopApp ? desktopPlatforms : webPlatforms;
   const drawerRootItemClassName = appConfig.desktopApp
     ? "relative w-full justify-start overflow-hidden text-sm! font-medium text-foreground visited:text-foreground hover:text-foreground"
@@ -1251,22 +1255,16 @@ export function ToolView({ initialAppConfig }) {
       appConfigRef.current
     );
     const currentState = toolRouteStateRef.current;
-    const isDetailRoute = currentState.view === "ongoing" || currentState.view === "ranks";
+    const isDetailRoute =
+      currentState.view === "ongoing" ||
+      currentState.view === "ranks" ||
+      currentState.view === "cv";
     const isDetailUpdate =
       currentState.view === nextState.view &&
-      (currentState.platform !== nextState.platform ||
-        currentState.window !== nextState.window ||
-        currentState.category !== nextState.category ||
-        currentState.rank !== nextState.rank);
+      !areToolRouteStatesEqual(currentState, nextState);
     const replace =
       options?.replace === true || (pendingDetailRouteReplaceRef.current && isDetailRoute && isDetailUpdate);
-    if (
-      currentState.view === nextState.view &&
-      currentState.platform === nextState.platform &&
-      currentState.window === nextState.window &&
-      currentState.category === nextState.category &&
-      currentState.rank === nextState.rank
-    ) {
+    if (areToolRouteStatesEqual(currentState, nextState)) {
       return;
     }
     if (typeof window !== "undefined") {
@@ -1308,7 +1306,10 @@ export function ToolView({ initialAppConfig }) {
   const mainMenuButtonLabel = mainDrawerOpen ? "关闭菜单" : "打开菜单";
   const headerHomeLabel = appConfig.desktopApp ? "返回统计页" : "返回首页";
 
-  function commitGlobalSearchNavigation() {
+  function commitGlobalSearchNavigation(action = {}) {
+    if (action?.action === "import") {
+      clearCvSearchResults();
+    }
     navigateToolRoute({ view: "search" });
     setMainDrawerOpen(false);
   }
@@ -1371,7 +1372,59 @@ export function ToolView({ initialAppConfig }) {
   function openSearchPlatform(platform) {
     const normalizedPlatform = platform === "manbo" ? "manbo" : "missevan";
     setActiveSearchPlatform(normalizedPlatform);
+    setActiveSearchCategory(normalizedPlatform);
     navigateCurrentPlatform("search");
+  }
+
+  function changeSearchCategory(category) {
+    if (category === "cv") {
+      setActiveSearchCategory("cv");
+      return;
+    }
+    const platform = category === "manbo" ? "manbo" : "missevan";
+    setActiveSearchPlatform(platform);
+    setActiveSearchCategory(platform);
+  }
+
+  function clearCvSearchResults() {
+    setCvSearchState({
+      results: [],
+      matchedCount: 0,
+      exactMatch: false,
+      keyword: "",
+    });
+  }
+
+  function openCvProfile(name, context = {}) {
+    const cvName = String(name ?? "").replace(/\s+/g, " ").trim();
+    if (!cvName) {
+      return;
+    }
+    const usagePayload = buildCvProfileOpenUsagePayload(cvName, context);
+    if (usagePayload) {
+      fetch(buildVersionedUrl("/usage-log", appConfigRef.current.frontendVersion), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(usagePayload),
+      }).catch((error) => {
+        console.error("Failed to log CV profile navigation", error);
+      });
+    }
+    navigateToolRoute({
+      view: "cv",
+      cv: cvName,
+      cvKey: String(context?.profileId ?? "").trim(),
+      platform: "all",
+      payment: "all",
+      release: "all",
+      partners: "all",
+    });
+    scrollToPageTop();
+  }
+
+  function returnFromCvProfile() {
+    navigateToolRoute({ view: "search", cv: "" }, { replace: true });
+    scrollToPageTop();
   }
 
   function renderMissevanDesktopLink(config = appConfig) {
@@ -1470,6 +1523,7 @@ export function ToolView({ initialAppConfig }) {
       setAppConfig(merged);
       if (!merged.missevanEnabled && activeSearchPlatformRef.current === "missevan") {
         setActiveSearchPlatform("manbo");
+        setActiveSearchCategory((current) => current === "missevan" ? "manbo" : current);
       }
       if (!merged.missevanEnabled && sharedOutputPlatformRef.current === "missevan") {
         setSharedOutputPlatform("manbo");
@@ -1988,7 +2042,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   useEffect(() => {
-    if (currentPlatform !== "search") {
+    if (!shouldLoadSearchMetrics(currentPlatform, activeSearchCategory, activeBrowsePlatform)) {
       return undefined;
     }
     const state = platformStatesRef.current[activeBrowsePlatform];
@@ -2031,7 +2085,7 @@ export function ToolView({ initialAppConfig }) {
       });
       searchMetricControllers.delete(controller);
     };
-  }, [activeBrowsePlatform, currentPlatform, currentBrowseState?.searchGeneration, currentBrowseState?.searchResults?.length]);
+  }, [activeBrowsePlatform, activeSearchCategory, currentPlatform, currentBrowseState?.searchGeneration, currentBrowseState?.searchResults?.length]);
 
   useEffect(() => () => {
     searchMetricControllersRef.current.forEach((controller) => controller.abort());
@@ -2286,7 +2340,7 @@ export function ToolView({ initialAppConfig }) {
     const visibleImportInput = dramaIds.length === 1 ? dramaIds[0] : dramaIds.join(", ");
     const dramaName = String(name ?? "").trim();
     const dramaTitles = normalizeDramaSearchTitles(titles, dramaIds, dramaName);
-    const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result"].includes(String(usageAction ?? "").trim())
+    const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result", "cv_profile_open_search_result"].includes(String(usageAction ?? "").trim())
       ? String(usageAction).trim()
       : "";
     const normalizedUsageSource = String(usageSource ?? "").trim().slice(0, 40);
@@ -2350,6 +2404,7 @@ export function ToolView({ initialAppConfig }) {
 
       resetSearchFlow("missevan");
       resetSearchFlow("manbo");
+      clearCvSearchResults();
       updateSharedSearchForm({
         keyword: visibleImportInput,
         manualInput,
@@ -3269,6 +3324,18 @@ export function ToolView({ initialAppConfig }) {
 
   const missevanResultCount = getPlatformResultCount("missevan");
   const manboResultCount = getPlatformResultCount("manbo");
+  const cvResultCount = Number(cvSearchState.matchedCount ?? cvSearchState.results.length) || 0;
+  const visibleSearchCategories = [
+    ...searchPlatforms.filter((platform) =>
+      platform.key !== "missevan" || appConfig.missevanEnabled
+    ),
+    { key: "cv", label: "CV" },
+  ];
+  const searchResultCounts = {
+    missevan: missevanResultCount,
+    manbo: manboResultCount,
+    cv: cvResultCount,
+  };
 
   return (
     <div className="app-shell mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pt-3 sm:px-5 sm:pt-[6.5rem] lg:gap-5 lg:px-6">
@@ -3360,8 +3427,15 @@ export function ToolView({ initialAppConfig }) {
             onSearchCommit={commitGlobalSearchNavigation}
             onSearchPendingChange={setGlobalSearchPending}
             onSelectPlatform={setActiveSearchPlatform}
+            onSelectCategory={setActiveSearchCategory}
             onUpdateFormState={updateSharedSearchForm}
             onUpdatePlatformResults={(platform, results, source, meta) => setSearchResults(platform, results, source, meta)}
+            onUpdateCvResults={(results, meta) => setCvSearchState({
+              results: Array.isArray(results) ? results : [],
+              matchedCount: Number(meta?.matchedCount ?? results?.length ?? 0) || 0,
+              exactMatch: Boolean(meta?.exactMatch),
+              keyword: String(meta?.keyword ?? "").trim(),
+            })}
             placeholder="请输入关键词、ID、分享链接。"
           />
           <Button
@@ -3396,6 +3470,7 @@ export function ToolView({ initialAppConfig }) {
           handleVersionResponse={updateVersionStatusFromResponse}
           onNavigateRoute={navigateHomeRoute}
           onOpenSearchResult={openDramaInSearch}
+          onOpenCv={openCvProfile}
         />
       ) : currentPlatform === "ranks" ? (
         <Suspense
@@ -3415,6 +3490,7 @@ export function ToolView({ initialAppConfig }) {
             onRouteStateChange={navigateToolRoute}
             onToggleFavorite={toggleFavorite}
             onOpenSearchResult={openDramaInSearch}
+            onOpenCv={openCvProfile}
             onAddCompareItem={addDramaToCompareBasket}
           />
         </Suspense>
@@ -3453,6 +3529,20 @@ export function ToolView({ initialAppConfig }) {
             frontendVersion={appConfig.frontendVersion}
           />
         </Suspense>
+      ) : currentPlatform === "cv" ? (
+        <CvProfileView
+          cvName={toolRouteState.cv}
+          profileId={toolRouteState.cvKey}
+          frontendVersion={appConfig.frontendVersion}
+          handleVersionResponse={updateVersionStatusFromResponse}
+          onBack={returnFromCvProfile}
+          platformFilter={toolRouteState.platform}
+          paymentFilter={toolRouteState.payment}
+          releaseFilter={toolRouteState.release}
+          partnersFilter={toolRouteState.partners}
+          onRouteStateChange={(patch) => navigateToolRoute(patch, { replace: true })}
+          onOpenSearchResult={openDramaInSearch}
+        />
       ) : currentPlatform === "favorites" ? (
         <FavoritesPanel
           favorites={favoriteItems}
@@ -3486,43 +3576,42 @@ export function ToolView({ initialAppConfig }) {
 
           <section ref={resultsPanelRef} className="grid gap-3">
             <SearchResults
-              dramas={currentBrowseState?.dramas || []}
-              frontendVersion={appConfig.frontendVersion}
-              handleVersionResponse={updateVersionStatusFromResponse}
-              favoriteKeys={favoriteKeySet}
-              favoriteActionsDisabled={favoriteActionsDisabled}
-              statisticsActionsDisabled={statisticsActionsDisabled}
-              onAddDramas={addDramas}
-              onSelectionChange={updateSelection}
-              onSetDramas={setDramas}
-              onSetResults={setResults}
-              onStartIdStatistics={startIdStatisticsConcurrent}
-              onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
-              onStartPlayCountStatistics={startPlayCountStatistics}
-              onStartRevenueEstimate={startRevenueEstimate}
-              onToggleFavorite={toggleFavorite}
-              onAddCompareItem={addDramaToCompareBasket}
-              onRetryMetrics={retrySearchCardMetrics}
-              onLoadMoreResults={() => loadMoreSearchResults(activeBrowsePlatform)}
-              allResults={getAllSearchResults(currentBrowseState)}
-              hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
-              isSearchPending={globalSearchPending}
-              isLoadingMoreResults={Boolean(currentBrowseState?.isLoadingMoreResults)}
-              loadedResultCount={Number(currentBrowseState?.searchResults?.length ?? 0) || 0}
-              platformTabs={visibleSearchPlatforms}
-              activePlatform={activeBrowsePlatform}
-              onPlatformChange={setActiveSearchPlatform}
-              metricLegendOpen={searchMetricLegendOpen}
-              onToggleMetricLegend={() => setSearchMetricLegendOpen((open) => !open)}
-              platformResultCounts={{
-                missevan: missevanResultCount,
-                manbo: manboResultCount,
-              }}
-              platform={activeBrowsePlatform}
-              resultSource={currentBrowseState?.searchResultSource || "search"}
-              results={currentBrowseState?.searchResults || []}
-              selectedEpisodes={currentBrowseState?.selectedEpisodesSnapshot || []}
-              totalResults={Number(currentBrowseState?.searchTotalMatched ?? 0) || 0}
+                dramas={currentBrowseState?.dramas || []}
+                frontendVersion={appConfig.frontendVersion}
+                handleVersionResponse={updateVersionStatusFromResponse}
+                favoriteKeys={favoriteKeySet}
+                favoriteActionsDisabled={favoriteActionsDisabled}
+                statisticsActionsDisabled={statisticsActionsDisabled}
+                onAddDramas={addDramas}
+                onSelectionChange={updateSelection}
+                onSetDramas={setDramas}
+                onSetResults={setResults}
+                onStartIdStatistics={startIdStatisticsConcurrent}
+                onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
+                onStartPlayCountStatistics={startPlayCountStatistics}
+                onStartRevenueEstimate={startRevenueEstimate}
+                onToggleFavorite={toggleFavorite}
+                onAddCompareItem={addDramaToCompareBasket}
+                onRetryMetrics={retrySearchCardMetrics}
+                onLoadMoreResults={() => loadMoreSearchResults(activeBrowsePlatform)}
+                allResults={getAllSearchResults(currentBrowseState)}
+                hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
+                isSearchPending={globalSearchPending}
+                isLoadingMoreResults={Boolean(currentBrowseState?.isLoadingMoreResults)}
+                loadedResultCount={Number(currentBrowseState?.searchResults?.length ?? 0) || 0}
+                platformTabs={visibleSearchCategories}
+                activePlatform={activeSearchCategory}
+                onPlatformChange={changeSearchCategory}
+                cvResults={cvSearchState.results}
+                onOpenCv={openCvProfile}
+                metricLegendOpen={searchMetricLegendOpen}
+                onToggleMetricLegend={() => setSearchMetricLegendOpen((open) => !open)}
+                platformResultCounts={searchResultCounts}
+                platform={activeBrowsePlatform}
+                resultSource={currentBrowseState?.searchResultSource || "search"}
+                results={currentBrowseState?.searchResults || []}
+                selectedEpisodes={currentBrowseState?.selectedEpisodesSnapshot || []}
+                totalResults={Number(currentBrowseState?.searchTotalMatched ?? 0) || 0}
             />
           </section>
 

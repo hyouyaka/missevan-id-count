@@ -1,4 +1,4 @@
-import { SquareArrowOutUpRightIcon } from "lucide-react";
+import { MicIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 
 import {
   buildDramaExternalUrl,
@@ -12,11 +12,23 @@ import missevanIconUrl from "@/assets/platform-icons/missevan.png";
 export const platformTabMeta = {
   missevan: { label: "猫耳", icon: missevanIconUrl },
   manbo: { label: "漫播", icon: manboIconUrl },
+  cv: { label: "CV", icon: "" },
 };
 
-function PlatformGlyph({ platform, className = "size-4", tone = "brand", ...props }) {
+export function PlatformGlyph({ platform, className = "size-4", tone = "brand", ...props }) {
   const key = platform?.key || platform;
   const meta = platformTabMeta[key];
+  if (key === "cv") {
+    return (
+      <MicIcon
+        aria-hidden="true"
+        data-platform={key}
+        data-tone={tone}
+        className={`shrink-0 text-foreground/70 ${className}`.trim()}
+        {...props}
+      />
+    );
+  }
   if (!meta?.icon) {
     return null;
   }

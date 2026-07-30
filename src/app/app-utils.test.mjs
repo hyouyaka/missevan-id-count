@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  areToolRouteStatesEqual,
+  buildCvRankProfileId,
+  buildCvProfileOpenUsagePayload,
   buildDramaExternalUrl,
   buildDramaExternalUsagePayload,
   buildRevenuePaidMetricSegments,
@@ -38,6 +41,7 @@ import {
   selectDramaEpisodesByMode,
   hasSearchKeywordInResultTitles,
   shouldUseManboLibraryFallbackForMissevanSearch,
+  shouldLoadSearchMetrics,
   STATS_HISTORY_STORAGE_KEY,
 } from "./app-utils.js";
 
@@ -84,6 +88,54 @@ test("buildDramaExternalUsagePayload creates a bounded external-open event", () 
     buildDramaExternalUsagePayload("missevan", "12345", "search", "剧".repeat(220))?.title.length,
     200
   );
+});
+
+test("buildCvProfileOpenUsagePayload separates search and rank navigation sources", () => {
+  assert.deepEqual(buildCvProfileOpenUsagePayload("  倔强的  小红  ", { source: "search" }), {
+    action: "cv_profile_open",
+    cvName: "倔强的 小红",
+    source: "search",
+  });
+  assert.deepEqual(buildCvProfileOpenUsagePayload("张福正", {
+    source: "home",
+    platform: "missevan",
+    rankKey: " cv_paid ",
+  }), {
+    action: "cv_profile_open",
+    cvName: "张福正",
+    source: "ranks",
+    platform: "missevan",
+    rankKey: "cv_paid",
+  });
+  assert.equal(buildCvProfileOpenUsagePayload("", { source: "search" }), null);
+  assert.equal(buildCvProfileOpenUsagePayload("张福正", { source: "direct" }), null);
+  assert.equal(buildCvProfileOpenUsagePayload("张福正", { source: "ranks" }), null);
+});
+
+test("buildCvRankProfileId derives a rank navigation discriminator from a work", () => {
+  assert.equal(
+    buildCvRankProfileId("missevan", {
+      works: [{ dramaId: "307" }],
+    }),
+    "rank-work:missevan:307"
+  );
+  assert.equal(
+    buildCvRankProfileId("manbo", {
+      topWorks: [{ id: "2235647356781461610" }],
+    }),
+    "rank-work:manbo:2235647356781461610"
+  );
+  assert.equal(buildCvRankProfileId("missevan", { works: [] }), "");
+  assert.equal(buildCvRankProfileId("unknown", { works: [{ dramaId: "307" }] }), "");
+});
+
+test("search metrics load only for the visible platform result category", () => {
+  assert.equal(shouldLoadSearchMetrics("search", "cv", "missevan"), false);
+  assert.equal(shouldLoadSearchMetrics("search", "cv", "manbo"), false);
+  assert.equal(shouldLoadSearchMetrics("search", "missevan", "missevan"), true);
+  assert.equal(shouldLoadSearchMetrics("search", "manbo", "manbo"), true);
+  assert.equal(shouldLoadSearchMetrics("search", "missevan", "manbo"), false);
+  assert.equal(shouldLoadSearchMetrics("cv", "missevan", "missevan"), false);
 });
 
 test("search card detail patches fill only missing base fields", () => {
@@ -282,6 +334,7 @@ test("tool view URL helper defaults to home without query", () => {
 test("tool view URL helper reads valid view query", () => {
   assert.equal(readToolViewFromLocation({ search: "?view=ranks" }), "ranks");
   assert.equal(readToolViewFromLocation({ search: "?view=feedback" }), "feedback");
+  assert.equal(readToolViewFromLocation({ search: "?view=cv&cv=路知行" }), "cv");
 });
 
 test("tool view URL helper rejects unavailable desktop views", () => {
@@ -291,8 +344,8 @@ test("tool view URL helper rejects unavailable desktop views", () => {
 });
 
 test("tool view URL helper exposes platform-specific allowed views", () => {
-  assert.deepEqual(getAllowedToolViews(), ["home", "search", "ongoing", "ranks", "favorites", "feedback"]);
-  assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "favorites"]);
+  assert.deepEqual(getAllowedToolViews(), ["home", "search", "cv", "ongoing", "ranks", "favorites", "feedback"]);
+  assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "cv", "favorites"]);
 });
 
 test("tool view URL builder keeps explicit views and omits default home view", () => {
@@ -327,6 +380,12 @@ test("tool route state reader includes detail params with normalized fallbacks",
       window: "7d",
       category: "ignored",
       rank: "ignored",
+      cv: "",
+      cvKey: "",
+      payment: "all",
+      release: "all",
+      partners: "all",
+      sort: "plays_desc",
     }
   );
   assert.deepEqual(readToolRouteStateFromLocation({ search: "?view=bad&platform=bad&window=bad" }), {
@@ -335,6 +394,12 @@ test("tool route state reader includes detail params with normalized fallbacks",
     window: "7d",
     category: "",
     rank: "",
+    cv: "",
+    cvKey: "",
+    payment: "all",
+    release: "all",
+    partners: "all",
+    sort: "plays_desc",
   });
   assert.deepEqual(readToolRouteStateFromLocation({ search: "" }), {
     view: "home",
@@ -342,6 +407,12 @@ test("tool route state reader includes detail params with normalized fallbacks",
     window: "7d",
     category: "",
     rank: "",
+    cv: "",
+    cvKey: "",
+    payment: "all",
+    release: "all",
+    partners: "all",
+    sort: "plays_desc",
   });
   assert.equal(normalizeOngoingWindow(undefined), "7d");
 });
@@ -371,6 +442,83 @@ test("tool route URL builder keeps only ranks route params", () => {
     ),
     "/?foo=bar&view=ranks&platform=missevan&category=cv&rank=weekly"
   );
+});
+
+test("tool route URL builder keeps the encoded CV deep link only on the CV view", () => {
+  assert.equal(
+    buildToolRouteUrl(
+      { pathname: "/tool", search: "?view=ranks&platform=manbo&foo=bar", hash: "" },
+      { view: "cv", cv: "路知行" }
+    ),
+    "/tool?foo=bar&view=cv&cv=%E8%B7%AF%E7%9F%A5%E8%A1%8C&platform=all&payment=all"
+  );
+  assert.equal(
+    readToolRouteStateFromLocation({ search: "?view=cv&cv=%E8%B7%AF%E7%9F%A5%E8%A1%8C" }).cv,
+    "路知行"
+  );
+  assert.deepEqual(
+    readToolRouteStateFromLocation({
+      search: "?view=cv&cv=%E8%B7%AF%E7%9F%A5%E8%A1%8C&platform=none&payment=free&sort=plays_asc",
+    }),
+    {
+      view: "cv",
+      platform: "none",
+      window: "7d",
+      category: "",
+      rank: "",
+      cv: "路知行",
+      cvKey: "",
+      payment: "free",
+      release: "all",
+      partners: "all",
+      sort: "plays_desc",
+    }
+  );
+});
+
+test("CV route round-trips release years and JSON-encoded partner names", () => {
+  const partners = JSON.stringify(["名字,带逗号", "顾辰"]);
+  const url = buildToolRouteUrl(
+    { pathname: "/tool", search: "?foo=bar", hash: "" },
+    {
+      view: "cv",
+      cv: "路知行",
+      cvKey: "mapped:路知行",
+      platform: "all",
+      payment: "all",
+      release: "2021,unknown,2019",
+      partners,
+    }
+  );
+  assert.equal(
+    url,
+    `/tool?foo=bar&view=cv&cv=%E8%B7%AF%E7%9F%A5%E8%A1%8C&cvKey=mapped%3A%E8%B7%AF%E7%9F%A5%E8%A1%8C&platform=all&payment=all&release=2021%2C2019%2Cunknown&partners=${encodeURIComponent(JSON.stringify(["顾辰", "名字,带逗号"]))}`
+  );
+  assert.deepEqual(readToolRouteStateFromLocation({ search: url.slice(url.indexOf("?")) }), {
+    view: "cv",
+    platform: "all",
+    window: "7d",
+    category: "",
+    rank: "",
+    cv: "路知行",
+    cvKey: "mapped:路知行",
+    payment: "all",
+    release: "2021,2019,unknown",
+    partners: JSON.stringify(["顾辰", "名字,带逗号"]),
+    sort: "plays_desc",
+  });
+});
+
+test("tool route comparison includes CV identity discriminators", () => {
+  const base = readToolRouteStateFromLocation({
+    search: "?view=cv&cv=%E5%90%8C%E5%90%8D&cvKey=mapped%3Amissevan%3A1",
+  });
+  const otherIdentity = {
+    ...base,
+    cvKey: "mapped:missevan:2",
+  };
+  assert.equal(areToolRouteStatesEqual(base, { ...base }), true);
+  assert.equal(areToolRouteStatesEqual(base, otherIdentity), false);
 });
 
 test("tool route URL builder clears detail params for root views", () => {

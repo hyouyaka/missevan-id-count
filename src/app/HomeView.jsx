@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import {
+  buildCvRankProfileId,
   formatDeviceDateTime,
   formatPlainNumber,
   formatRankCompactCount,
@@ -521,7 +522,7 @@ function RankDramaItem({
   );
 }
 
-function RankCvItem({ item }) {
+function RankCvItem({ item, platform, rankKey, onOpenCv }) {
   const avatarUrl = buildProxyImageUrl(item?.avatar);
   const playCountText = formatRankCompactCount(item?.totalViewCount);
   const topWorksText = getHomeCvWorksPreviewText(item?.topWorks || item?.works);
@@ -536,12 +537,19 @@ function RankCvItem({ item }) {
         )}
       </div>
       <div className="min-w-0">
-        <div
-          className="min-w-0 break-words text-base! font-semibold! leading-6! text-foreground"
+        <button
+          type="button"
+          className="min-w-0 break-words rounded-sm text-left text-base! font-semibold! leading-6! text-foreground underline underline-offset-4 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           title={item?.cvName || "未命名CV"}
+          onClick={() => onOpenCv?.(item?.cvName, {
+            platform,
+            profileId: buildCvRankProfileId(platform, item),
+            source: "ranks",
+            rankKey,
+          })}
         >
           {item?.cvName || "未命名CV"}
-        </div>
+        </button>
         <div
           className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground"
           title={`播放量：${playCountText}`}
@@ -564,6 +572,7 @@ function HomeRankCard({
   updatedAt,
   onNavigateRoute,
   onOpenSearchResult,
+  onOpenCv,
   canOpenTrend,
   onOpenTrend,
 }) {
@@ -585,7 +594,13 @@ function HomeRankCard({
           {items.length ? (
             items.map((item) =>
               isCvRank ? (
-                <RankCvItem key={`${rankConfig.rankKey}-${item.rank}-${item.cvName}`} item={item} />
+                <RankCvItem
+                  key={`${rankConfig.rankKey}-${item.rank}-${item.cvName}`}
+                  item={item}
+                  platform={platform}
+                  rankKey={rankConfig.rankKey}
+                  onOpenCv={onOpenCv}
+                />
               ) : (
                 <RankDramaItem
                   key={`${rankConfig.rankKey}-${item.rank}-${item.id || item.name}`}
@@ -620,7 +635,13 @@ function HomeRankCard({
   );
 }
 
-export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onNavigateRoute, onOpenSearchResult }) {
+export function HomeView({
+  frontendVersion = "0.0.0",
+  handleVersionResponse,
+  onNavigateRoute,
+  onOpenSearchResult,
+  onOpenCv,
+}) {
   const handleVersionResponseRef = useRef(handleVersionResponse);
   const [selectedRankPlatform, setSelectedRankPlatform] = useState("missevan");
   const [ongoingByPlatform, setOngoingByPlatform] = useState({ missevan: null, manbo: null });
@@ -950,6 +971,7 @@ export function HomeView({ frontendVersion = "0.0.0", handleVersionResponse, onN
                     updatedAt={resolveRankRefreshAt(rankData, rankConfig.categoryKey, rank)}
                     onNavigateRoute={onNavigateRoute}
                     onOpenSearchResult={onOpenSearchResult}
+                    onOpenCv={onOpenCv}
                     canOpenTrend={canOpenHomeTrend}
                     onOpenTrend={openHomeTrend}
                   />

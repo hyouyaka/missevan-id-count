@@ -1,6 +1,6 @@
 # M&M Toolkit Architecture
 
-Last updated: 2026-07-15
+Last updated: 2026-07-27
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
@@ -23,6 +23,7 @@ This document describes the current implementation, not the historical evolution
 3. `src/app/ToolView.jsx` is the main workspace shell. It hosts the active tabs for:
    - Missevan search and analysis
    - Manbo search and analysis
+   - CV search results and dual-platform profiles
    - Ongoing titles
    - Ranks and trends
 
@@ -44,7 +45,7 @@ This document describes the current implementation, not the historical evolution
 
 ### Development Flow
 - `vite.config.js` injects `__APP_VERSION__` from `package.json`.
-- The Vite dev server proxies API paths such as `/app-config`, `/search`, `/manbo/*`, `/ranks`, `/ranks/trends`, `/ongoing`, `/stat-tasks`, and `/usage-log` to the Express server.
+- The Vite dev server proxies API paths such as `/app-config`, `/unified-search`, `/cv-profile`, `/search`, `/manbo/*`, `/ranks`, `/ranks/trends`, `/ongoing`, `/stat-tasks`, and `/usage-log` to the Express server.
 
 ## Repository Layout
 
@@ -71,6 +72,7 @@ This document describes the current implementation, not the historical evolution
 - `shared/ranksTrendUtils.js`: rank trend window calculation and metric normalization
 - `shared/weeklyPlaybackUtils.js`: weekly playback normalization, recent non-repeated metric classification, weekly windows, and same-date metric fallback shaping
 - `shared/ongoingUtils.js`: ongoing-title aggregation and window delta shaping
+- `shared/cvProfileUtils.js`: library-only CV indexing, alias matching, work collection, partner shaping, and playback aggregation
 
 ### Data and Support Files
 - `scripts/`: developer utilities such as seed-building helpers
@@ -84,6 +86,10 @@ The backend currently exposes these route families.
 ### Configuration and Health
 - `GET /app-config`: frontend feature flags, brand text, desktop metadata, cooldown info, version mismatch state
 - `GET /health`: backend liveness
+
+### Unified Search and CV APIs
+- `GET /unified-search`: query both platform libraries and return an optional, capped CV category without external CV lookup
+- `GET /cv-profile`: aggregate one canonical CV's library works and latest valid `watchcount:history` point per work
 
 ### Missevan Search and Content APIs
 - `GET /search`: library-backed search with fallback to Missevan public search API when needed
@@ -146,6 +152,14 @@ The backend currently exposes these route families.
 - Detail fetches combine legacy and v530 API shapes into a normalized UI contract.
 - Danmaku is paginated and fetched concurrently, with a dedicated in-memory cache and in-flight deduplication.
 
+### CV Profiles
+- `cvid-map:v1` is the authoritative source for CV avatars, explicit aliases, and cross-platform identity links. Platform IDs are matched first; only explicitly declared aliases can merge identities.
+- CV info metadata and bodies share the existing two-phase batched loader with the Missevan and Manbo info stores: one metadata `MGET`, followed by one body `MGET` for changed snapshots. Search and profile requests do not read or write CV info.
+- When CV info is unavailable, candidates still come from the two info stores' main-cast fields. Missevan uses `maincvs -> cvnames`; Manbo prefers `mainCvNames` and treats paired nicknames as local search aliases, while avatars fall back to the microphone icon.
+- Exact canonical, alias, full-pinyin, and initial matches can open the CV result category. Profile links use `/tool?view=cv&cv=<name>` and add `cvKey=<profileId>` when a search result has an authoritative identity discriminator; name-only legacy links remain supported.
+- Profile playback never calls platform search, detail, or playback APIs. Each platform performs one cached history batch read, then each work selects its own latest valid point.
+- The profile response exposes per-platform statistics and card-ready works with covers and normalized categories while retaining totals, freshness, and per-work dates for compatibility.
+
 ### New Drama Tracking
 - `POST /register-new-drama-ids` records titles that should become part of future lookups.
 - The store persists through Upstash when configured, with JSON fallback files under `runtime/`.
@@ -167,6 +181,7 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | --- | --- | --- | --- |
 | `manboInfoStore` | Upstash `manbo:info:meta:v2` + `manbo:info:v2`; fallback `manbo:info:v1` | `runtime/manbo-drama-info.json` | Searchable Manbo title metadata |
 | `missevanInfoStore` | Upstash `missevan:info:meta:v2` + `missevan:info:v2`; fallback `missevan:info:v1` | `runtime/missevan-drama-info.json` | Searchable Missevan title metadata |
+| `cvInfoStore` | Upstash `cvid-map:meta:v1` + `cvid-map:v1` | stale in-memory snapshot, then empty snapshot | Canonical CV identities, explicit aliases, platform IDs, and avatars |
 | `newDramaIdsStore` | Upstash `new:dramaIDs` | `runtime/new-drama-ids.json` | Captured new IDs |
 | cooldown state | Upstash `missevan:cooldown:v1` | in-memory only when persistence disabled | Direct, Render fallback, and Deno fallback access-denial recovery state |
 | ranks and ongoing snapshots | Latest/common keys plus v2 Hash `ranks:trend:{platform}:v2`, `ranks:trend:cv:v2`, `ranks:trend:peak:missevan:v2`; fallback v1 aggregate Strings | none | Rank, trend, and ongoing APIs |

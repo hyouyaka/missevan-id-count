@@ -9,6 +9,8 @@ function readSourceIfExists(relativeUrl) {
 
 const messageDialogSource = readFileSync(new URL("./MessageDialog.jsx", import.meta.url), "utf8");
 const changelogDialogSource = readFileSync(new URL("./ChangelogDialog.jsx", import.meta.url), "utf8");
+const cvProfileViewSource = readFileSync(new URL("./CvProfileView.jsx", import.meta.url), "utf8");
+const cvSearchResultsSource = readFileSync(new URL("./CvSearchResults.jsx", import.meta.url), "utf8");
 const appUtilsSource = readFileSync(new URL("./app-utils.js", import.meta.url), "utf8");
 const appIconSource = readFileSync(new URL("./AppIcon.jsx", import.meta.url), "utf8");
 const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import.meta.url), "utf8");
@@ -28,6 +30,7 @@ const rankTrendActionsSource = readFileSync(new URL("./rankTrendActions.jsx", im
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
 const ranksTrendUtilsSource = readFileSync(new URL("../../shared/ranksTrendUtils.js", import.meta.url), "utf8");
 const rankMetricUtilsSource = readFileSync(new URL("../../shared/rankMetricUtils.js", import.meta.url), "utf8");
+const cvProfileUtilsSource = readFileSync(new URL("../../shared/cvProfileUtils.js", import.meta.url), "utf8");
 const weeklyPlaybackUtilsSource = readFileSync(new URL("../../shared/weeklyPlaybackUtils.js", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
@@ -191,10 +194,10 @@ test("search result platform tabs avoid WebKit intrinsic grid sizing", () => {
   assert.match(searchResultsSource, /<TabsList className="h-9 max-w-full justify-start">/);
   assert.match(
     searchResultsSource,
-    /data-touch="compact"\s+data-platform=\{item\.key\}\s+className="h-7 min-w-\[5\.25rem\] flex-none px-2 text-sm"/
+    /data-touch="compact"\s+data-platform=\{item\.key\}\s+className="h-7 min-w-\[3\.75rem\] flex-none px-1 text-xs sm:min-w-\[5\.25rem\] sm:px-2 sm:text-sm"/
   );
   const resultsHeaderStart = searchResultsSource.indexOf("{showResultsHeader ? (");
-  const resultsHeaderEnd = searchResultsSource.indexOf("{results.length ? (", resultsHeaderStart);
+  const resultsHeaderEnd = searchResultsSource.indexOf("{showingCvResults ? (", resultsHeaderStart);
   const resultsHeaderSource = searchResultsSource.slice(resultsHeaderStart, resultsHeaderEnd);
   assert.doesNotMatch(resultsHeaderSource, /grid-cols-2|grid-template-columns/);
   assert.doesNotMatch(resultsHeaderSource, /flex-1/);
@@ -523,7 +526,7 @@ test("web navigation keeps platform drawer roots and favorites with statistics l
 });
 
 test("tool routes default to the new home view", () => {
-  assert.match(appUtilsSource, /return desktopApp\s*\?\s*\["search", "favorites"\]\s*:\s*\["home", "search", "ongoing", "ranks", "favorites", "feedback"\]/);
+  assert.match(appUtilsSource, /return desktopApp\s*\?\s*\["search", "cv", "favorites"\]\s*:\s*\["home", "search", "cv", "ongoing", "ranks", "favorites", "feedback"\]/);
   assert.match(appUtilsSource, /const defaultView = options\?\.desktopApp \? "search" : "home"/);
   assert.match(appUtilsSource, /if \(nextState\.view === "home"\) \{\s*params\.delete\(TOOL_ROUTE_QUERY_PARAMS\.view\);/);
   assert.match(appUtilsSource, /else if \(nextState\.view === "ongoing"\) \{\s*params\.set\(TOOL_ROUTE_QUERY_PARAMS\.view, "ongoing"\);/);
@@ -600,10 +603,11 @@ test("home drama titles open the shared statistics result flow", () => {
   assert.match(homeViewSource, /className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary/);
 });
 
-test("home title and trend logs use the same homeview source", () => {
+test("home title and trend logs keep homeview while CV rank links use ranks", () => {
   assert.match(homeViewSource, /usageSource: "homeview"/);
   assert.match(homeViewSource, /logRankTrendOpen\(\{[\s\S]*source: "homeview"/);
-  assert.doesNotMatch(homeViewSource, /source: "home"/);
+  assert.match(homeViewSource, /onOpenCv\?\.\([\s\S]*source: "ranks"/);
+  assert.match(homeViewSource, /profileId: buildCvRankProfileId\(platform, item\)/);
 });
 
 test("home section subtitles show platform and shared rank refresh times", () => {
@@ -813,10 +817,10 @@ test("home rank previews keep titles compact and expose formatted playback conte
     /truncate|whitespace-nowrap/
   );
   assert.doesNotMatch(dramaItemSource.slice(dramaItemSource.indexOf("<PlayCircleIcon")), /truncate|whitespace-nowrap/);
-  assert.match(cvItemSource, /break-words text-base! font-semibold! leading-6! text-foreground/);
+  assert.match(cvItemSource, /break-words[^"]*text-base! font-semibold! leading-6! text-foreground/);
   assert.doesNotMatch(cvItemSource, /className=\{homeRankItemTitleClassName\}/);
   assert.doesNotMatch(cvItemSource, /whitespace-nowrap/);
-  assert.doesNotMatch(cvItemSource, /underline/);
+  assert.match(cvItemSource, /underline underline-offset-4/);
   assert.match(cvItemSource, /formatRankCompactCount\(item\?\.totalViewCount\)/);
   assert.match(cvItemSource, /getHomeCvWorksPreviewText\(item\?\.topWorks \|\| item\?\.works\)/);
   assert.match(cvItemSource, /className="[^"]*line-clamp-2[^"]*" title=\{topWorksText\}/);
@@ -1224,10 +1228,109 @@ test("search page owns compact platform result tabs", () => {
   const searchResultsProps = toolViewSource.slice(searchResultsStart, searchResultsEnd);
   assert.doesNotMatch(beforeSearchResults, /<SearchPanel/, "search page should rely on the global header search panel");
   assert.doesNotMatch(beforeSearchResults, /<Tabs value=\{activeBrowsePlatform\}/, "platform tabs should not render as a standalone ToolView row");
-  assert.match(searchResultsProps, /platformTabs=\{visibleSearchPlatforms\}/);
-  assert.match(searchResultsProps, /activePlatform=\{activeBrowsePlatform\}/);
-  assert.match(searchResultsProps, /onPlatformChange=\{setActiveSearchPlatform\}/);
-  assert.match(searchResultsProps, /platformResultCounts=\{\{\s*missevan: missevanResultCount,\s*manbo: manboResultCount,\s*\}\}/);
+  assert.match(searchResultsProps, /platformTabs=\{visibleSearchCategories\}/);
+  assert.match(searchResultsProps, /activePlatform=\{activeSearchCategory\}/);
+  assert.match(searchResultsProps, /onPlatformChange=\{changeSearchCategory\}/);
+  assert.match(searchResultsProps, /platformResultCounts=\{searchResultCounts\}/);
+  assert.match(searchResultsProps, /cvResults=\{cvSearchState\.results\}/);
+  assert.match(searchResultsProps, /onOpenCv=\{openCvProfile\}/);
+});
+
+test("CV search and profile stay library-backed and route-driven", () => {
+  assert.match(searchPanelSource, /data\?\.results\?\.cv/);
+  assert.match(searchPanelSource, /onUpdateCvResults/);
+  assert.doesNotMatch(toolViewSource, /<CvSearchResults/);
+  assert.match(searchResultsSource, /import \{ CvSearchResults \} from "@\/app\/CvSearchResults";/);
+  assert.match(searchResultsSource, /showingCvResults \? \(\s*<CvSearchResults/);
+  assert.doesNotMatch(cvSearchResultsSource, /<Card|<Tabs/);
+  assert.match(toolViewSource, /<CvProfileView/);
+  assert.match(toolViewSource, /view: "cv",[\s\S]*cv: cvName,[\s\S]*cvKey:[\s\S]*platform: "all",[\s\S]*payment: "all"/);
+  assert.doesNotMatch(toolViewSource, /payment: "all",\s*sort:/);
+  assert.match(toolViewSource, /const visibleSearchCategories = \[[\s\S]*searchPlatforms\.filter\([\s\S]*appConfig\.missevanEnabled[\s\S]*\{ key: "cv", label: "CV" \}/);
+  assert.match(serverSource, /app\.get\("\/cv-profile"/);
+  assert.match(serverSource, /hasCvProfileLibraryData\([\s\S]*missevanInfoStore\.records,[\s\S]*manboInfoStore\.records[\s\S]*res\.status\(503\)/);
+  assert.match(serverSource, /resolveCvCatalogEntry\([\s\S]*requestedName,[\s\S]*requestedProfileId/);
+  assert.match(serverSource, /historyOnly: true/);
+  assert.match(serverSource, /results:\s*\{\s*missevan: missevanResult,\s*manbo: manboResult,\s*cv: cvResult,/);
+  assert.match(serverSource, /"cvid-map:v1"/);
+  assert.match(serverSource, /"cvid-map:meta:v1"/);
+  assert.doesNotMatch(serverSource, /"cv:info:v2"|"cv:info:meta:v2"/);
+  assert.match(serverSource, /return \[manboInfoStore, missevanInfoStore, cvInfoStore\]/);
+  assert.match(serverSource, /INFO_META_SCHEMA_VERSIONS\[store\.platform\]/);
+  assert.match(serverSource, /parseCvIdMapSnapshot\(raw\)/);
+  assert.match(cvSearchResultsSource, /MicIcon/);
+  assert.doesNotMatch(cvSearchResultsSource, /Mic2Icon/);
+  assert.match(platformTabLabelSource, /key === "cv"[\s\S]*<MicIcon/);
+  assert.match(cvSearchResultsSource, /<CvAvatar name=\{item\.name\} avatar=\{item\.avatar\}/);
+  assert.match(cvSearchResultsSource, /key=\{item\.profileId \|\| item\.name\}/);
+  assert.match(cvProfileViewSource, /function PlatformStatCard/);
+  assert.match(cvProfileViewSource, /WORK_CATEGORY_LABELS/);
+  assert.match(cvProfileViewSource, /radioDrama/);
+  assert.match(cvProfileViewSource, /audioDrama/);
+  assert.match(cvProfileViewSource, /md:grid-cols-2 xl:grid-cols-3/);
+  assert.match(cvProfileViewSource, /cv-profile-work-grid/);
+  assert.match(cvProfileViewSource, /getInlineTaggedTitleDisplayText/);
+  assert.match(cvProfileViewSource, /mobileDisplayTitle/);
+  assert.match(cvProfileViewSource, /desktopDisplayTitle/);
+  assert.doesNotMatch(cvProfileViewSource, /line-clamp-2/);
+  assert.match(cvProfileViewSource, /size-20[\s\S]*sm:size-24/);
+  assert.match(cvProfileViewSource, /CalendarDaysIcon[\s\S]*aria-label="时间"/);
+  assert.match(cvProfileViewSource, /UsersIcon[\s\S]*aria-label="搭档"/);
+  assert.match(cvProfileViewSource, /whitespace-normal/);
+  assert.match(cvProfileViewSource, /data-touch="compact"/);
+  assert.match(cvProfileViewSource, /rounded-full/);
+  assert.match(cvProfileViewSource, /lg:flex-col lg:items-center/);
+  assert.match(cvProfileViewSource, /cv_profile_open_search_result/);
+  assert.match(cvProfileViewSource, /paymentFilter/);
+  assert.match(cvProfileViewSource, /releaseFilter/);
+  assert.match(cvProfileViewSource, /partnersFilter/);
+  assert.match(cvProfileViewSource, /<Popover open=\{open\} onOpenChange=\{handleOpenChange\}>/);
+  assert.match(cvProfileViewSource, /<Checkbox/);
+  assert.match(cvProfileViewSource, /搜索搭档/);
+  assert.match(cvProfileViewSource, /function commitDraftSelection/);
+  assert.match(cvProfileViewSource, />\s*应用\s*<\/Button>/);
+  assert.match(cvProfileViewSource, /onOpenAutoFocus=\{searchable[\s\S]*event\.preventDefault\(\)/);
+  assert.match(cvProfileViewSource, /matchesWorkSelections\(work, appliedSelections, "platform"\)/);
+  assert.match(cvProfileViewSource, /matchesWorkSelections\(work, appliedSelections, "partners"\)/);
+  assert.match(cvProfileViewSource, /getReleaseYear/);
+  assert.match(cvProfileViewSource, /NO_PARTNER_KEY/);
+  assert.match(cvProfileViewSource, /playbackValues\.reduce/);
+  assert.match(toolViewSource, /releaseFilter=\{toolRouteState\.release\}/);
+  assert.match(toolViewSource, /partnersFilter=\{toolRouteState\.partners\}/);
+  assert.match(toolViewSource, /profileId=\{toolRouteState\.cvKey\}/);
+  assert.match(cvProfileViewSource, /播放量更新/);
+  assert.doesNotMatch(indexCssSource, /\.cv-profile-work-grid::before|\.cv-profile-work-grid::after/);
+  assert.match(indexCssSource, /@media \(min-width: 48rem\) \{[\s\S]*\.cv-profile-work-grid \{[\s\S]*gap: 0\.75rem/);
+  assert.match(indexCssSource, /\.cv-profile-work-grid > article,[\s\S]*\.cv-profile-work-grid > article:last-child \{[\s\S]*border: 1px solid[\s\S]*border-radius:[\s\S]*background: var\(--card\)[\s\S]*box-shadow: var\(--shadow-card\)/);
+  assert.match(platformTabLabelSource, /text-foreground\/70/);
+  assert.match(cvProfileViewSource, /加载更多/);
+  assert.match(cvProfileViewSource, /data-touch="compact"\s+className="h-8 min-h-8 rounded-full px-4 text-sm! leading-none"/);
+  assert.doesNotMatch(cvProfileViewSource, /sortOrder|plays_asc|ArrowDownIcon|ArrowUpIcon/);
+  assert.doesNotMatch(cvProfileViewSource, /双平台总播放量|全部库内作品|<Table|dataDate/);
+  assert.match(toolViewSource, /resetSearchFlow\("manbo"\);\s*clearCvSearchResults\(\);/);
+  assert.match(toolViewSource, /buildCvProfileOpenUsagePayload\(cvName, context\)/);
+  assert.match(toolViewSource, /shouldLoadSearchMetrics\(currentPlatform, activeSearchCategory, activeBrowsePlatform\)/);
+  assert.match(toolViewSource, /\[activeBrowsePlatform, activeSearchCategory, currentPlatform,/);
+  assert.match(cvSearchResultsSource, /onOpenCv\?\.\(item\.name, \{[\s\S]*source: "search",[\s\S]*profileId: item\.profileId,/);
+  assert.match(searchResultsSource, /if \(showingCvResults\) \{\s*return undefined;/);
+  assert.match(searchResultsSource, /trendEligibilityCacheRef\.current\.get\(cacheKey\)/);
+  assert.match(serverSource, /mainCvIds:[\s\S]*\.map\(normalizeCvPlatformId\)[\s\S]*\.slice\(0, 20\)/);
+  assert.match(serverSource, /parseManboInfoSnapshotPreservingCvIds\(raw\)/);
+  assert.match(cvProfileUtilsSource, /CV_IDENTITY_NOT_FOUND/);
+  assert.match(serverSource, /CV identity is ambiguous/);
+  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv", "cv_profile"\]\.includes\(requestedSource\)/);
+  assert.match(serverSource, /\["cv_profile_open", "cv_rank_open_profile"\]\.includes\(action\)/);
+  assert.match(serverSource, /function buildCvProfileOpenUsageLog|export function buildCvProfileOpenUsageLog/);
+  assert.match(homeViewSource, /source: "ranks"/);
+  assert.match(ranksPanelSource, /source: "ranks"/);
+  assert.match(ranksPanelSource, /profileId: buildCvRankProfileId\(platform, item\)/);
+  assert.match(appUtilsSource, /export function buildCvRankProfileId/);
+  assert.match(appUtilsSource, /export function areToolRouteStatesEqual/);
+  assert.match(appUtilsSource, /"cvKey"/);
+  assert.match(toolViewSource, /areToolRouteStatesEqual\(currentState, nextState\)/);
+  assert.match(cvProfileUtilsSource, /rank-work:\(missevan\|manbo\)/);
+  assert.doesNotMatch(cvProfileUtilsSource, /record\?\.cvId/);
+  assert.match(cvProfileUtilsSource, /if \(!workIds \|\| typeof workIds !== "object"\) \{\s*return \[\];/);
 });
 
 test("frontend unified keyword search uses backend aggregate route", () => {
@@ -1285,7 +1388,7 @@ test("backend unified search uses coupled API fallback and library card details"
   assert.notEqual(routeEnd, -1, "unified search route should sit before the legacy Missevan search route");
   const routeSource = serverSource.slice(routeStart, routeEnd);
 
-  assert.match(routeSource, /Promise\.all\(\[\s*ensureInfoStoreReadyForSearch\(missevanInfoStore\),\s*ensureInfoStoreReadyForSearch\(manboInfoStore\),\s*\]\)/);
+  assert.match(routeSource, /Promise\.all\(\[\s*ensureInfoStoreReadyForSearch\(missevanInfoStore\),\s*ensureInfoStoreReadyForSearch\(manboInfoStore\),\s*ensureInfoStoreReadyForSearch\(cvInfoStore\),\s*\]\)/);
   assert.match(serverSource, /async function ensureInfoStoreReadyForSearch\(store\)[\s\S]*if \(!store\.loaded\)[\s\S]*void ensureInfoStoreLoaded\(store\)/);
   assert.equal(routeSource.match(/refreshMissevanCooldownState/g)?.length ?? 0, 0);
   assert.match(routeSource, /runMissevanLibraryUnifiedSearch/);
@@ -1392,7 +1495,7 @@ test("search result platform tabs live in the result card header with counts", (
   assert.notEqual(platformTabsEnd, -1, "platform tabs should close inside SearchResults");
   const platformTabsSource = searchResultsSource.slice(platformTabsStart, platformTabsEnd);
   assert.match(platformTabsSource, /data-platform=\{item\.key\}/);
-  assert.match(platformTabsSource, /className="h-7 min-w-\[5\.25rem\] flex-none px-2 text-sm"/);
+  assert.match(platformTabsSource, /className="h-7 min-w-\[3\.75rem\] flex-none px-1 text-xs sm:min-w-\[5\.25rem\] sm:px-2 sm:text-sm"/);
 });
 
 test("global search input area supports header layout and compact controls", () => {
@@ -1541,7 +1644,8 @@ test("search metric legend is permanent on web and toggled on mobile", () => {
   assert.match(searchResultsSource, /aria-controls="search-metric-legend"/);
   assert.match(searchResultsSource, /aria-expanded=\{metricLegendOpen\}/);
   assert.match(searchResultsSource, /className="shrink-0 text-sm! font-semibold leading-5 text-primary underline-offset-4 hover:underline sm:hidden"/);
-  assert.match(searchResultsSource, /metricLegendOpen \? "收起图例" : "查看图例"/);
+  assert.match(searchResultsSource, /aria-label=\{metricLegendOpen \? "收起统计图例" : "展开统计图例"\}/);
+  assert.match(searchResultsSource, />\s*图例\s*<\/button>/);
   assert.match(searchResultsSource, /const showResultsHeader = platformTabs\.length > 1 \|\| canToggleMetricLegend/);
 
   const searchPanelIndex = toolViewSource.indexOf("<SearchPanel");
@@ -1770,7 +1874,7 @@ test("work id rows use shared platform external links instead of HashIcon", () =
 
 test("platform drama links log a validated external-open action without blocking navigation", () => {
   assert.match(appUtilsSource, /action: "external_open"/);
-  assert.match(appUtilsSource, /dramaExternalUsageSources = new Set\(\["search", "ongoing", "ranks", "ranks_cv"\]\)/);
+  assert.match(appUtilsSource, /dramaExternalUsageSources = new Set\(\["search", "ongoing", "ranks", "ranks_cv", "cv_profile"\]\)/);
   assert.match(platformTabLabelSource, /buildDramaExternalUsagePayload\(key, normalizedDramaId, source, dramaTitle\)/);
   assert.match(platformTabLabelSource, /fetch\(buildVersionedUrl\("\/usage-log", frontendVersion\)/);
   assert.match(platformTabLabelSource, /keepalive: true/);
@@ -1778,7 +1882,7 @@ test("platform drama links log a validated external-open action without blocking
   assert.doesNotMatch(platformTabLabelSource, /preventDefault/);
   assert.match(serverSource, /if \(action === "external_open"\)/);
   assert.match(serverSource, /if \(!isNumericId\(dramaId\)\)/);
-  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv"\]\.includes\(requestedSource\)/);
+  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv", "cv_profile"\]\.includes\(requestedSource\)/);
   assert.match(serverSource, /normalizeTextValue\(payload\.title\)\.slice\(0, 200\)/);
   assert.match(serverSource, /message: "Missing external drama title"/);
   assert.match(serverSource, /action,[\s\S]*dramaId,[\s\S]*source,[\s\S]*title,[\s\S]*success: true/);
@@ -2954,7 +3058,7 @@ test("CV rank actions appear before the TOP3 disclosure row", () => {
   const cvItemEnd = ranksPanelSource.indexOf("function CvRankColumn", cvItemStart);
   const cvItemSource = ranksPanelSource.slice(cvItemStart, cvItemEnd);
   const actionsIndex = cvItemSource.indexOf("<CvRankActions");
-  const disclosureIndex = cvItemSource.indexOf("<button", cvItemSource.indexOf("return ("));
+  const disclosureIndex = cvItemSource.lastIndexOf("<button", cvItemSource.indexOf("aria-expanded"));
 
   assert.notEqual(actionsIndex, -1, "CV actions should exist");
   assert.notEqual(disclosureIndex, -1, "TOP3 disclosure should exist");

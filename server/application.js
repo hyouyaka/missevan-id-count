@@ -22,6 +22,16 @@ import {
   buildPinyinSearchTokens,
   buildPinyinSearchUnits,
 } from "../shared/pinyinSearchUtils.js";
+import {
+  buildCvCatalog,
+  buildCvProfileResponse,
+  collectCvWorks,
+  normalizeCvPlatformId,
+  parseCvIdMapSnapshot,
+  parseManboInfoSnapshotPreservingCvIds,
+  resolveCvCatalogEntry,
+  searchCvCatalog,
+} from "../shared/cvProfileUtils.js";
 import { canonicalizeCompatibleSearchText } from "../shared/searchCompatibility.js";
 import { createUpstashRestClient } from "../shared/upstashRestClient.js";
 import { loadLocalEnv } from "../envConfig.js";
@@ -149,13 +159,21 @@ const MANBO_SEARCH_API_BASE = "https://api.kilamanbo.com/api/v530/search/page/co
 const MANBO_API_HOST = "www.kilamanbo.com";
 const MANBO_INFO_KEY = "manbo:info:v1";
 const MISSEVAN_INFO_KEY = "missevan:info:v1";
+const CV_INFO_KEY = "cvid-map:v1";
 const INFO_V2_KEYS = Object.freeze({
   manbo: "manbo:info:v2",
   missevan: "missevan:info:v2",
+  cv: CV_INFO_KEY,
 });
 const INFO_V2_META_KEYS = Object.freeze({
   manbo: "manbo:info:meta:v2",
   missevan: "missevan:info:meta:v2",
+  cv: "cvid-map:meta:v1",
+});
+const INFO_META_SCHEMA_VERSIONS = Object.freeze({
+  manbo: 2,
+  missevan: 2,
+  cv: 1,
 });
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
@@ -293,6 +311,21 @@ const missevanInfoStore = {
   lastLoadedAt: 0,
   loadPromise: null,
   contentSha1: "",
+  dataSource: "",
+};
+const cvInfoStore = {
+  platform: "cv",
+  key: CV_INFO_KEY,
+  fallbackPath: "",
+  snapshot: null,
+  records: [],
+  byDramaId: new Map(),
+  loaded: false,
+  remoteAvailable: false,
+  lastLoadedAt: 0,
+  loadPromise: null,
+  contentSha1: "",
+  diagnosticsSha1: "",
   dataSource: "",
 };
 let infoStoresV2LoadPromise = null;
@@ -2116,6 +2149,41 @@ export function buildFavoriteUsageLog(payload = {}) {
   };
 }
 
+export function buildCvProfileOpenUsageLog(payload = {}) {
+  const requestedAction = normalizeTextValue(payload.action);
+  if (!["cv_profile_open", "cv_rank_open_profile"].includes(requestedAction)) {
+    return null;
+  }
+
+  const cvName = normalizeTextValue(payload.cvName).slice(0, 200);
+  const requestedSource = normalizeTextValue(payload.source).slice(0, 40);
+  const source = requestedSource === "search"
+    ? "search"
+    : ["home", "ranks"].includes(requestedSource)
+      ? "ranks"
+      : "";
+  const platform = normalizeTextValue(payload.platform);
+  if (
+    !cvName ||
+    !source ||
+    (source === "ranks" && !["missevan", "manbo"].includes(platform))
+  ) {
+    return null;
+  }
+
+  const rankKey = normalizeTextValue(payload.rankKey).slice(0, 80);
+  return {
+    action: "cv_profile_open",
+    cvName,
+    source,
+    ...(source === "ranks" ? {
+      platform,
+      ...(rankKey ? { rankKey } : {}),
+    } : {}),
+    success: true,
+  };
+}
+
 function normalizeStringIds(values, limit = 200) {
   return Array.from(
     new Set(
@@ -2320,6 +2388,20 @@ function createEmptyMissevanInfoSnapshot() {
   return {};
 }
 
+function createEmptyCvInfoSnapshot() {
+  return {
+    schemaVersion: 1,
+    updatedAt: 0,
+    records: [],
+    diagnostics: {
+      duplicatePlatformIdCount: 0,
+      duplicatePlatformIds: [],
+      invalidIdCount: 0,
+      noIdRecordCount: 0,
+    },
+  };
+}
+
 function createEmptyNewDramaIdsSnapshot() {
   return {
     manbo: [],
@@ -2329,6 +2411,74 @@ function createEmptyNewDramaIdsSnapshot() {
 
 function getInfoStore(platform) {
   return platform === "manbo" ? manboInfoStore : missevanInfoStore;
+}
+
+let cvCatalogCache = {
+  missevanRecords: null,
+  manboRecords: null,
+  cvInfoRecords: null,
+  catalog: [],
+};
+
+function getCvCatalog() {
+  if (
+    cvCatalogCache.missevanRecords === missevanInfoStore.records &&
+    cvCatalogCache.manboRecords === manboInfoStore.records &&
+    cvCatalogCache.cvInfoRecords === cvInfoStore.records
+  ) {
+    return cvCatalogCache.catalog;
+  }
+  const catalog = buildCvCatalog({
+    missevanRecords: missevanInfoStore.records,
+    manboRecords: manboInfoStore.records,
+    cvInfoRecords: cvInfoStore.records,
+  });
+  cvCatalogCache = {
+    missevanRecords: missevanInfoStore.records,
+    manboRecords: manboInfoStore.records,
+    cvInfoRecords: cvInfoStore.records,
+    catalog,
+  };
+  return catalog;
+}
+
+function buildEmptyCvSearchResult(keyword = "") {
+  return {
+    success: false,
+    results: [],
+    meta: {
+      keyword: normalizeTextValue(keyword),
+      matchedCount: 0,
+      exactMatch: false,
+      source: "library_only",
+    },
+  };
+}
+
+function buildCvSearchResult(keyword, offset = 0) {
+  if (Number(offset) > 0) {
+    return buildEmptyCvSearchResult(keyword);
+  }
+  const result = searchCvCatalog(getCvCatalog(), keyword, 10);
+  return {
+    success: result.results.length > 0,
+    results: result.results,
+    meta: {
+      keyword: normalizeTextValue(keyword),
+      matchedCount: result.matchedCount,
+      exactMatch: result.exactMatch,
+      source: "library_only",
+    },
+  };
+}
+
+export function hasCvProfileLibraryData(missevanRecords, manboRecords) {
+  return (
+    Array.isArray(missevanRecords) &&
+    missevanRecords.length > 0 &&
+    Array.isArray(manboRecords) &&
+    manboRecords.length > 0
+  );
 }
 
 function normalizeNewDramaIdsSnapshot(snapshot) {
@@ -2354,7 +2504,7 @@ async function readJsonFileIfExists(filePath) {
   }
 }
 
-function normalizeManboLibraryRecord(record) {
+export function normalizeManboLibraryRecord(record) {
   const dramaId = String(record?.dramaId ?? "").trim();
   if (!isNumericId(dramaId)) {
     return null;
@@ -2362,9 +2512,13 @@ function normalizeManboLibraryRecord(record) {
 
   const name = normalizeTextValue(record?.name);
   const aliases = normalizeStringArray(record?.aliases, 30);
-  const mainCvNicknames = normalizeStringArray(record?.mainCvNicknames, 20);
-  const mainCvNames = normalizeStringArray(record?.mainCvNames, 20);
-  const mainCvRoleNames = normalizeStringArray(record?.mainCvRoleNames, 20);
+  const normalizePositionalStrings = (values) =>
+    (Array.isArray(values) ? values : [])
+      .map((item) => normalizeTextValue(item))
+      .slice(0, 20);
+  const mainCvNicknames = normalizePositionalStrings(record?.mainCvNicknames);
+  const mainCvNames = normalizePositionalStrings(record?.mainCvNames);
+  const mainCvRoleNames = normalizePositionalStrings(record?.mainCvRoleNames);
   const seriesTitle = normalizeTextValue(record?.seriesTitle);
   const author = normalizeTextValue(record?.author);
   return {
@@ -2382,7 +2536,9 @@ function normalizeManboLibraryRecord(record) {
     catalogName: normalizeTextValue(record?.catalogName),
     type: normalizeOptionalFiniteNumber(record?.type),
     genre: normalizeTextValue(record?.genre),
-    mainCvIds: normalizeNumericArray(record?.mainCvIds, 20),
+    mainCvIds: (Array.isArray(record?.mainCvIds) ? record.mainCvIds : [])
+      .map(normalizeCvPlatformId)
+      .slice(0, 20),
     mainCvRoleNames,
     seriesTitle,
     author,
@@ -4526,9 +4682,23 @@ function applyInfoStoreSnapshot(store, snapshot) {
       ? snapshot
       : store.platform === "manbo"
         ? createEmptyManboInfoSnapshot()
-        : createEmptyMissevanInfoSnapshot();
+        : store.platform === "cv"
+          ? createEmptyCvInfoSnapshot()
+          : createEmptyMissevanInfoSnapshot();
 
-  if (store.platform === "manbo") {
+  if (store.platform === "cv") {
+    const records = Array.isArray(safeSnapshot.records)
+      ? safeSnapshot.records.filter((record) => normalizeTextValue(record?.name))
+      : [];
+    store.snapshot = {
+      schemaVersion: 1,
+      updatedAt: Date.now(),
+      records,
+      diagnostics: safeSnapshot.diagnostics || createEmptyCvInfoSnapshot().diagnostics,
+    };
+    store.records = records;
+    store.byDramaId = new Map();
+  } else if (store.platform === "manbo") {
     const records = (Array.isArray(safeSnapshot.records) ? safeSnapshot.records : [])
       .map((record) => normalizeManboLibraryRecord(record))
       .filter(Boolean);
@@ -4558,6 +4728,10 @@ export function getInfoStoreReadFailureSnapshot(store) {
 }
 
 async function readLegacyInfoStoreSnapshot(store) {
+  if (store.platform === "cv") {
+    store.remoteAvailable = false;
+    return getInfoStoreReadFailureSnapshot(store) || createEmptyCvInfoSnapshot();
+  }
   if (upstashClient.enabled) {
     try {
       const raw = await readUpstashData(["GET", store.key], {
@@ -4591,7 +4765,7 @@ async function readLegacyInfoStoreSnapshot(store) {
 }
 
 function getInfoStores() {
-  return [manboInfoStore, missevanInfoStore];
+  return [manboInfoStore, missevanInfoStore, cvInfoStore];
 }
 
 function parseInfoV2Meta(raw, store) {
@@ -4599,7 +4773,7 @@ function parseInfoV2Meta(raw, store) {
     const meta = typeof raw === "string" ? JSON.parse(raw) : raw;
     const expectedKey = INFO_V2_KEYS[store.platform];
     if (
-      Number(meta?.schemaVersion) !== 2 ||
+      Number(meta?.schemaVersion) !== INFO_META_SCHEMA_VERSIONS[store.platform] ||
       String(meta?.dataKey ?? "") !== expectedKey ||
       !/^[a-f0-9]{40}$/i.test(String(meta?.contentSha1 ?? ""))
     ) {
@@ -4613,6 +4787,39 @@ function parseInfoV2Meta(raw, store) {
 
 function getSha1(value) {
   return createHash("sha1").update(String(value ?? ""), "utf8").digest("hex");
+}
+
+function parseInfoStoreSnapshot(raw, store) {
+  if (store.platform === "cv") {
+    return parseCvIdMapSnapshot(raw);
+  }
+  return store.platform === "manbo"
+    ? parseManboInfoSnapshotPreservingCvIds(raw)
+    : JSON.parse(raw);
+}
+
+function logCvInfoDiagnostics(store, snapshot, contentSha1) {
+  if (store.platform !== "cv" || store.diagnosticsSha1 === contentSha1) {
+    return;
+  }
+  store.diagnosticsSha1 = contentSha1;
+  const diagnostics = snapshot?.diagnostics || {};
+  if (
+    Number(diagnostics.duplicatePlatformIdCount) > 0 ||
+    Number(diagnostics.invalidIdCount) > 0 ||
+    Number(diagnostics.noIdRecordCount) > 0
+  ) {
+    console.warn(JSON.stringify({
+      event: "cv_info_data_quality",
+      contentSha1,
+      duplicatePlatformIdCount: Number(diagnostics.duplicatePlatformIdCount) || 0,
+      duplicatePlatformIds: Array.isArray(diagnostics.duplicatePlatformIds)
+        ? diagnostics.duplicatePlatformIds
+        : [],
+      invalidIdCount: Number(diagnostics.invalidIdCount) || 0,
+      noIdRecordCount: Number(diagnostics.noIdRecordCount) || 0,
+    }));
+  }
 }
 
 async function loadInfoStoresV2() {
@@ -4654,7 +4861,7 @@ async function loadInfoStoresV2() {
           return;
         }
         try {
-          prepared.set(store, { snapshot: JSON.parse(raw), meta });
+          prepared.set(store, { snapshot: parseInfoStoreSnapshot(raw, store), meta });
         } catch (_) {
           shouldRetry = true;
         }
@@ -4667,8 +4874,13 @@ async function loadInfoStoresV2() {
         const preparedEntry = prepared.get(store);
         if (preparedEntry) {
           applyInfoStoreSnapshot(store, preparedEntry.snapshot);
+          logCvInfoDiagnostics(
+            store,
+            preparedEntry.snapshot,
+            preparedEntry.meta.contentSha1
+          );
           store.contentSha1 = preparedEntry.meta.contentSha1;
-          store.dataSource = "v2";
+          store.dataSource = store.platform === "cv" ? "cvid-map:v1" : "v2";
           store.remoteAvailable = true;
           return;
         }
@@ -4732,7 +4944,9 @@ async function ensureInfoStoreLoaded(store, forceRefresh = false) {
           store,
           store.platform === "manbo"
             ? createEmptyManboInfoSnapshot()
-            : createEmptyMissevanInfoSnapshot()
+            : store.platform === "cv"
+              ? createEmptyCvInfoSnapshot()
+              : createEmptyMissevanInfoSnapshot()
         );
       }
       console.error(`Failed to load info store platform=${store.platform}`, error);
@@ -9535,12 +9749,18 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
   const offset = normalizeSearchOffset(req.query.offset);
   const limit = normalizeSearchLimit(req.query.limit, 5, 5);
 
-  function buildUnifiedResponse(missevanResult, manboResult, usedApiFallback = false) {
+  function buildUnifiedResponse(
+    missevanResult,
+    manboResult,
+    cvResult = buildEmptyCvSearchResult(normalizedKeyword),
+    usedApiFallback = false
+  ) {
     return {
-      success: Boolean(missevanResult?.success || manboResult?.success),
+      success: Boolean(missevanResult?.success || manboResult?.success || cvResult?.success),
       results: {
         missevan: missevanResult,
         manbo: manboResult,
+        cv: cvResult,
       },
       meta: {
         keyword: normalizedKeyword,
@@ -9556,6 +9776,7 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
       results: {
         missevan: buildEmptyUnifiedPlatformSearchResult("", offset, limit),
         manbo: buildEmptyUnifiedPlatformSearchResult("", offset, limit),
+        cv: buildEmptyCvSearchResult(""),
       },
       meta: {
         keyword: "",
@@ -9572,6 +9793,7 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
         manbo: buildKeywordTooShortSearchResponse(normalizedKeyword, offset, limit, {
           hydratedCount: 0,
         }),
+        cv: buildEmptyCvSearchResult(normalizedKeyword),
       },
       meta: {
         keyword: normalizedKeyword,
@@ -9590,7 +9812,9 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
     await Promise.all([
       ensureInfoStoreReadyForSearch(missevanInfoStore),
       ensureInfoStoreReadyForSearch(manboInfoStore),
+      ensureInfoStoreReadyForSearch(cvInfoStore),
     ]);
+    const cvResult = buildCvSearchResult(normalizedKeyword, offset);
 
     const [missevanLibrarySettled, manboLibrarySettled] = await Promise.allSettled([
       runMissevanLibraryUnifiedSearch(normalizedKeyword, offset, limit, "strict"),
@@ -9624,9 +9848,15 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
     }
 
     const shouldRunApiFallback = !hasUnifiedSearchMatches(missevanLibraryResult) &&
-      !hasUnifiedSearchMatches(manboLibraryResult);
+      !hasUnifiedSearchMatches(manboLibraryResult) &&
+      !cvResult.success;
     if (!shouldRunApiFallback) {
-      return res.json(buildUnifiedResponse(missevanLibraryResult, manboLibraryResult, false));
+      return res.json(buildUnifiedResponse(
+        missevanLibraryResult,
+        manboLibraryResult,
+        cvResult,
+        false
+      ));
     }
     const [missevanFinalSettled, manboFinalSettled] = await Promise.allSettled([
       runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit),
@@ -9636,7 +9866,7 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
       missevanFinalSettled, missevanLibraryResult, "api");
     const manboFinal = normalizeSettledUnifiedSearchResult("manbo",
       manboFinalSettled, manboLibraryResult, "api");
-    return res.json(buildUnifiedResponse(missevanFinal, manboFinal, true));
+    return res.json(buildUnifiedResponse(missevanFinal, manboFinal, cvResult, true));
   } catch (error) {
     console.error(`Failed to run unified search keyword=${normalizedKeyword}`, error);
     return res.status(500).json({
@@ -9644,12 +9874,106 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
       results: {
         missevan: buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit),
         manbo: buildEmptyUnifiedPlatformSearchResult(normalizedKeyword, offset, limit),
+        cv: buildEmptyCvSearchResult(normalizedKeyword),
       },
       meta: {
         keyword: normalizedKeyword,
         usedApiFallback: false,
       },
       error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+app.get("/cv-profile", expensiveDataLimiter, async (req, res) => {
+  const requestedName = normalizeTextValue(req.query.name);
+  const requestedProfileId = normalizeTextValue(req.query.profileId).slice(0, 240);
+  if (!requestedName) {
+    return res.status(400).json({
+      success: false,
+      message: "Missing CV name",
+    });
+  }
+
+  try {
+    await Promise.all([
+      ensureInfoStoreReadyForSearch(missevanInfoStore),
+      ensureInfoStoreReadyForSearch(manboInfoStore),
+      ensureInfoStoreReadyForSearch(cvInfoStore),
+    ]);
+    if (!hasCvProfileLibraryData(
+      missevanInfoStore.records,
+      manboInfoStore.records
+    )) {
+      return res.status(503).json({
+        success: false,
+        message: "CV profile library is unavailable",
+      });
+    }
+    const resolution = resolveCvCatalogEntry(
+      getCvCatalog(),
+      requestedName,
+      requestedProfileId
+    );
+    if (!resolution.entry) {
+      return res.status(resolution.status).json({
+        success: false,
+        code: resolution.code,
+        message: resolution.status === 409
+          ? "CV identity is ambiguous"
+          : "CV not found",
+      });
+    }
+    const catalogEntry = resolution.entry;
+    const works = collectCvWorks({
+      ...catalogEntry,
+      missevanRecords: missevanInfoStore.records,
+      manboRecords: manboInfoStore.records,
+    });
+    if (!works.length) {
+      return res.status(404).json({
+        success: false,
+        message: "CV works not found",
+      });
+    }
+    const idsByPlatform = {
+      missevan: works
+        .filter((work) => work.platform === "missevan")
+        .map((work) => work.id),
+      manbo: works
+        .filter((work) => work.platform === "manbo")
+        .map((work) => work.id),
+    };
+    const [missevanPlayback, manboPlayback] = await Promise.all([
+      idsByPlatform.missevan.length
+        ? getCachedWeeklyPlaybackSnapshot("missevan", {
+            ids: idsByPlatform.missevan,
+            historyOnly: true,
+          }).catch(() => null)
+        : null,
+      idsByPlatform.manbo.length
+        ? getCachedWeeklyPlaybackSnapshot("manbo", {
+            ids: idsByPlatform.manbo,
+            historyOnly: true,
+          }).catch(() => null)
+        : null,
+    ]);
+    const response = buildCvProfileResponse({
+      name: catalogEntry.name,
+      avatar: catalogEntry.avatar,
+      works,
+      playbackBundles: {
+        missevan: missevanPlayback,
+        manbo: manboPlayback,
+      },
+    });
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    return res.json(response);
+  } catch (error) {
+    console.error(`Failed to build CV profile name=${requestedName}`, error);
+    return res.status(503).json({
+      success: false,
+      message: "CV profile is unavailable",
     });
   }
 });
@@ -9995,7 +10319,7 @@ app.post("/usage-log", async (req, res) => {
       }
 
       const requestedSource = normalizeTextValue(payload.source).slice(0, 40);
-      const source = ["search", "ongoing", "ranks", "ranks_cv"].includes(requestedSource)
+      const source = ["search", "ongoing", "ranks", "ranks_cv", "cv_profile"].includes(requestedSource)
         ? requestedSource
         : "unknown";
       const title = normalizeTextValue(payload.title).slice(0, 200);
@@ -10063,6 +10387,19 @@ app.post("/usage-log", async (req, res) => {
         keyword,
         success: true,
       });
+      return res.json({ success: true });
+    }
+
+    if (["cv_profile_open", "cv_rank_open_profile"].includes(action)) {
+      const cvProfileOpenLog = buildCvProfileOpenUsageLog(payload);
+      if (!cvProfileOpenLog) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid usage log payload",
+        });
+      }
+
+      await writeUsageLog(cvProfileOpenLog);
       return res.json({ success: true });
     }
 
@@ -10444,6 +10781,7 @@ export async function startServer(port = defaultPort, options = {}) {
   void Promise.all([
     ensureInfoStoreLoaded(missevanInfoStore),
     ensureInfoStoreLoaded(manboInfoStore),
+    ensureInfoStoreLoaded(cvInfoStore),
   ]).catch((error) => {
     console.warn(`Info store prewarm failed: ${formatImageProxyError(error)}`);
   });
