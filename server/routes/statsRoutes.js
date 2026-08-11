@@ -15,6 +15,7 @@ export function registerStatsRoutes(router, {
   getStatsTaskSnapshotOr404,
   isNumericId,
   isRankTrendAggregateSnapshot,
+  logger,
   ongoingResponseSchemaVersion,
   rankTrendsResponseSchemaVersion,
   refreshMissevanCooldownState,
@@ -89,7 +90,7 @@ export function registerStatsRoutes(router, {
       }
       return res.json(response);
     } catch (error) {
-      console.error("Failed to read rank trend availability", error);
+      void logger.error("rank_trend_availability_read_failed", error, { platform });
       return res.status(503).json({
         success: false,
         message: "Rank trend availability is unavailable",
@@ -123,7 +124,7 @@ export function registerStatsRoutes(router, {
         }
         return res.json(response);
       } catch (error) {
-        console.error("Failed to read CV ranks trend", error);
+        void logger.error("cv_ranks_trend_read_failed", error, { platform });
         return res.status(503).json({
           success: false,
           message: "Rank trends are unavailable",
@@ -156,7 +157,7 @@ export function registerStatsRoutes(router, {
       }
       return res.json(response);
     } catch (error) {
-      console.error("Failed to read ranks trend", error);
+      void logger.error("ranks_trend_read_failed", error, { platform });
       return res.status(503).json({
         success: false,
         message: "Rank trends are unavailable",
@@ -195,7 +196,7 @@ export function registerStatsRoutes(router, {
       }
       return res.json(response);
     } catch (error) {
-      console.error("Failed to read ongoing dramas", error);
+      void logger.error("ongoing_dramas_read_failed", error, { platform });
       return res.status(503).json({
         success: false,
         platform,
@@ -225,7 +226,7 @@ export function registerStatsRoutes(router, {
       }
       return res.json(response);
     } catch (error) {
-      console.error("Failed to read ranks snapshot", error);
+      void logger.error("ranks_snapshot_read_failed", error);
       return res.status(503).json({
         success: false,
         updatedAt: "",

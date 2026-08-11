@@ -1,5 +1,6 @@
 import fs from "fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import compression from "compression";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
@@ -97,7 +98,12 @@ import { createDramaService } from "./services/dramaService.js";
 import { createWeeklyPlaybackStore } from "./services/weeklyPlaybackService.js";
 import { searchLibraryWithFallback } from "./services/searchService.js";
 import { createRequestSecurityMiddleware } from "./httpSecurity.js";
-import { createLogger, createRequestLoggerMiddleware } from "./logger.js";
+import {
+  createCategoryFileSink,
+  createLogger,
+  createRequestLoggerMiddleware,
+  runWithLogContext,
+} from "./logger.js";
 import { registerSystemRoutes } from "./routes/systemRoutes.js";
 import { registerStatsRoutes } from "./routes/statsRoutes.js";
 import { registerMissevanRoutes } from "./routes/missevanRoutes.js";
@@ -126,9 +132,15 @@ const appDataDir = process.env.APP_DATA_DIR
   : __dirname;
 const logsDir = path.join(appDataDir, "logs");
 const runtimeDir = path.join(appDataDir, "runtime");
-const usageLogPath = path.join(logsDir, "usage.log");
 const APP_VERSION = String(packageJson.version || "0.0.0").trim() || "0.0.0";
-const logger = createLogger({ service: "missevan-counter" });
+const logFileSink = process.env.NODE_TEST_CONTEXT
+  ? null
+  : createCategoryFileSink({ logsDir });
+const logger = createLogger(
+  { service: "missevan-counter" },
+  { sink: logFileSink }
+);
+const operationTraceStorage = new AsyncLocalStorage();
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || "1mb").trim() || "1mb";
 const ADMIN_CACHE_REFRESH_TOKEN = String(process.env.ADMIN_CACHE_REFRESH_TOKEN || "").trim();
 const MISSEVAN_ENABLED = process.env.ENABLE_MISSEVAN !== "false";
@@ -275,13 +287,13 @@ async function readUpstashData(command, { source, key, fallbackReason = "" }) {
     result = await upstashClient.command(command);
     return result;
   } finally {
-    console.info(JSON.stringify({
+    void logger.info("datastore_read", {
       source,
       key,
       bytes: getStructuredReadBytes(result),
       durationMs: Date.now() - startedAt,
       fallbackReason,
-    }));
+    });
   }
 }
 
@@ -407,6 +419,7 @@ const WEEKLY_PLAYBACK_CACHE_TTL_MS = Math.max(
 );
 const weeklyPlaybackStore = createWeeklyPlaybackStore({
   command: (args, options) => upstashClient.command(args, options),
+  logger,
   cacheTtlMs: WEEKLY_PLAYBACK_CACHE_TTL_MS,
   cacheMaxEntries: CACHE_MAX_ENTRIES,
   maxWeeks: 32,
@@ -630,7 +643,9 @@ const statsTaskStore = createStatsTaskStore({
       })
     : createJsonTaskStoreAdapter(path.join(runtimeDir, "stats-tasks.json")),
   onError(error) {
-    console.warn(`Stats task snapshot failed: ${formatImageProxyError(error)}`);
+    void logger.warn("stats_task_snapshot_failed", {
+      errorMessage: formatImageProxyError(error),
+    });
   },
 });
 const statsTaskReporters = new WeakMap();
@@ -650,15 +665,25 @@ const statsTaskEngine = createStatsTaskEngine({
       maxQueuedPerClient: STATS_TASK_CLIENT_QUEUE_MAX,
     },
   },
-  execute: (...args) => statsTaskExecutor(...args),
+  execute: (...args) => {
+    const task = args[0] || {};
+    return runWithLogContext({
+      taskId: normalizeTextValue(task.taskId) || null,
+      platform: normalizeTextValue(task.platform) || null,
+      source: normalizeStatsTaskSource(task.source) || null,
+    }, () => statsTaskExecutor(...args));
+  },
   store: statsTaskStore,
   persistenceDebounceMs: STATS_TASK_PERSISTENCE_DEBOUNCE_MS,
   retentionMs: MANBO_STATS_TASK_TTL_MS,
-  onCompleted: async (snapshot) => {
+  onTerminal: async (snapshot) => {
     const entry = buildStatsTaskCompletedUsageLog(snapshot);
     if (entry) {
       await writeUsageLog(entry);
     }
+  },
+  onError(event, error) {
+    void logger.error(event, error);
   },
 });
 const missevanClient = createMissevanClient({
@@ -720,9 +745,10 @@ app.use(compression({
 
 app.use((error, req, res, next) => {
   if (error?.type === "request.aborted" || error?.code === "ECONNABORTED") {
-    console.warn("Request body aborted before parsing completed", {
+    void logger.warn("request_body_aborted", {
+      requestId: req.requestId,
       method: req.method,
-      url: req.originalUrl || req.url,
+      route: req.path || null,
       contentLength: req.get("content-length") || "",
       expected: error?.expected ?? "",
       received: error?.received ?? "",
@@ -742,9 +768,10 @@ app.use((error, req, res, next) => {
     return next(error);
   }
 
-  console.error("Request payload too large", {
+  void logger.error("request_payload_too_large", error, {
+    requestId: req.requestId,
     method: req.method,
-    url: req.originalUrl || req.url,
+    route: req.path || null,
     contentLength: req.get("content-length") || "",
     limit: JSON_BODY_LIMIT,
   });
@@ -1182,11 +1209,11 @@ function logCooldownPersistenceUnavailable(message, error = null) {
   }
 
   cooldownPersistenceWarningLogged = true;
-  if (error) {
-    console.error(message, error);
-    return;
-  }
-  console.error(message);
+  void logger.error(
+    "missevan_cooldown_persistence_unavailable",
+    error instanceof Error ? error : new Error(message),
+    { errorMessage: message }
+  );
 }
 
 function normalizeMissevanCooldownMode(value) {
@@ -1373,7 +1400,7 @@ async function writeCooldownStateToUpstash(payload = null) {
     const serializedState = JSON.stringify(payload ?? getCooldownStatePayload());
     await upstashClient.command(["SET", MISSEVAN_COOLDOWN_KEY, serializedState]);
   } catch (error) {
-    console.error("Failed to persist Missevan cooldown state to Upstash", error);
+    void logger.error("missevan_cooldown_persist_failed", error);
   }
 }
 
@@ -1397,7 +1424,7 @@ async function clearCooldownStateFromUpstash() {
       accessDeniedUseShortCooldown: false,
     });
   } catch (error) {
-    console.error("Failed to clear Missevan cooldown state from Upstash", error);
+    void logger.error("missevan_cooldown_clear_failed", error);
   }
 }
 
@@ -1441,7 +1468,7 @@ async function loadAccessDeniedCooldown() {
   } catch (error) {
     cooldownStateLoaded = false;
     lastCooldownRefreshSucceeded = false;
-    console.error("Failed to read Missevan cooldown state from Upstash", error);
+    void logger.error("missevan_cooldown_read_failed", error);
     return;
   }
 
@@ -2107,31 +2134,66 @@ export function normalizeStatsTaskSource(value) {
 }
 
 export function buildStatsTaskCompletedUsageLog(snapshot = {}) {
-  if (snapshot?.status !== "completed") {
+  const status = normalizeTextValue(snapshot?.status);
+  if (!["completed", "failed", "cancelled"].includes(status)) {
     return null;
   }
   const source = normalizeStatsTaskSource(snapshot.source);
   const failedCount = Math.max(0, Math.floor(Number(snapshot.failedCount ?? 0) || 0));
   const accessDenied = Boolean(snapshot.accessDenied);
+  const createdAt = Math.max(0, Number(snapshot.createdAt ?? 0) || 0);
+  const updatedAt = Math.max(createdAt, Number(snapshot.updatedAt ?? 0) || 0);
   return {
     action: "calculate",
     platform: normalizeTextValue(snapshot.platform),
     taskId: normalizeTextValue(snapshot.taskId),
     taskType: normalizeTextValue(snapshot.taskType),
-    status: "completed",
-    success: !accessDenied && failedCount === 0,
+    status,
+    success: status === "completed" && !accessDenied && failedCount === 0,
     ...(source ? { source } : {}),
+    ...(updatedAt > createdAt ? { durationMs: updatedAt - createdAt } : {}),
     totalCount: Math.max(0, Math.floor(Number(snapshot.totalCount ?? 0) || 0)),
     completedCount: Math.max(0, Math.floor(Number(snapshot.completedCount ?? 0) || 0)),
     failedCount,
     accessDenied,
+    ...(snapshot.error ? { errorMessage: normalizeTextValue(snapshot.error).slice(0, 512) } : {}),
+    ...(status === "cancelled" ? { cancelled: true } : {}),
+    ...(snapshot.resultIncomplete ? { resultIncomplete: true } : {}),
     result: snapshot.result ?? null,
   };
+}
+
+const FAVORITE_HISTORY_USAGE_ACTIONS = new Set([
+  "favorite_history_import",
+  "favorite_history_export",
+  "favorite_history_download",
+]);
+const FAVORITE_USAGE_ACTIONS = new Set([
+  "favorite_add",
+  "favorite_remove",
+  ...FAVORITE_HISTORY_USAGE_ACTIONS,
+]);
+
+function normalizeFavoriteUsageCount(value) {
+  return Math.min(1_000_000, Math.max(0, Math.floor(Number(value) || 0)));
 }
 
 export function buildFavoriteUsageLog(payload = {}) {
   const platform = normalizeTextValue(payload.platform);
   const action = normalizeTextValue(payload.action);
+  if (FAVORITE_HISTORY_USAGE_ACTIONS.has(action)) {
+    const isDownload = action === "favorite_history_download";
+    return {
+      action,
+      source: "favorites",
+      format: isDownload ? "csv" : "json",
+      favoriteCount: normalizeFavoriteUsageCount(payload.favoriteCount),
+      ...(isDownload
+        ? { rowCount: normalizeFavoriteUsageCount(payload.rowCount) }
+        : { snapshotCount: normalizeFavoriteUsageCount(payload.snapshotCount) }),
+      success: true,
+    };
+  }
   const dramaId = normalizeTextValue(payload.dramaId ?? payload.id).slice(0, 80);
   if (!["missevan", "manbo"].includes(platform) || !["favorite_add", "favorite_remove"].includes(action) || !dramaId) {
     return null;
@@ -2684,7 +2746,11 @@ function getMissevanPeakSeriesRecord(peakTrendSnapshot, seriesName) {
 
 function normalizeDramaCardUsageAction(value) {
   const action = normalizeTextValue(value);
-  return ["ranks_open_search_result", "ongoing_open_search_result"].includes(action)
+  return [
+    "ranks_open_search_result",
+    "ongoing_open_search_result",
+    "cv_profile_open_search_result",
+  ].includes(action)
     ? action
     : "manual_import";
 }
@@ -3188,7 +3254,7 @@ async function readCvRanksBundle(options = {}) {
     if (!tolerateError) {
       throw error;
     }
-    console.warn("Failed to read CV ranks snapshot", error);
+    void logger.operation("cv_ranks_snapshot_read_failed", {}, "warn", error);
   }
   return {
     cvSnapshot,
@@ -3296,7 +3362,7 @@ async function readInitialRanksMeta(readMeta, now) {
     ranksCache.metaLoadFailedAt = 0;
     return meta;
   } catch (error) {
-    console.warn("Failed to read ranks meta during cold refresh", error);
+    void logger.operation("ranks_meta_cold_read_failed", {}, "warn", error);
     ranksCache.metaLoadFailedAt = now;
     return normalizeRanksMeta(ranksCache.meta);
   }
@@ -3470,7 +3536,7 @@ export async function getCachedRanksResponse(options = {}) {
           readRanksMeta: readMeta,
         });
       } catch (error) {
-        console.warn("Failed to read ranks meta", error);
+        void logger.operation("ranks_meta_read_failed", {}, "warn", error);
         return { response: ranksCache.response, cacheStatus: "stale", probePhase };
       }
 
@@ -3499,7 +3565,7 @@ export async function getCachedRanksResponse(options = {}) {
           recordRanksMetaPostRefreshBackoff("normal", probeCycleIds, now);
           refreshStatuses.push("normal-refresh");
         } catch (error) {
-          console.warn("Failed to refresh normal ranks snapshot", error);
+          void logger.operation("normal_ranks_refresh_failed", {}, "warn", error);
           refreshStatuses.push("stale");
         }
       }
@@ -3513,7 +3579,7 @@ export async function getCachedRanksResponse(options = {}) {
           recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
           refreshStatuses.push("cv-refresh");
         } catch (error) {
-          console.warn("Failed to refresh CV ranks snapshot", error);
+          void logger.operation("cv_ranks_refresh_failed", {}, "warn", error);
           refreshStatuses.push("stale");
         }
       }
@@ -3950,13 +4016,13 @@ async function getCachedLegacyRankTrendAggregateSnapshot(platform, options = {})
   const loadPromise = (async () => {
     const startedAt = Date.now();
     const snapshot = await readRankTrendAggregateSnapshot(normalizedPlatform);
-    console.info(JSON.stringify({
+    void logger.info("datastore_read", {
       source: "rank_trend_v1",
       key: getRankTrendAggregateUpstashKey(normalizedPlatform),
       bytes: getStructuredReadBytes(snapshot),
       durationMs: Date.now() - startedAt,
       fallbackReason: UPSTASH_DATA_READ_MODE === "legacy" ? "legacy_mode" : "v2_unavailable",
-    }));
+    });
     if (!isRankTrendAggregateSnapshot(snapshot, normalizedPlatform)) {
       const error = new Error("Rank trend aggregate is unavailable");
       error.status = 503;
@@ -4019,7 +4085,12 @@ async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
     try {
       snapshot = await readRankTrendV2Snapshot(normalizedPlatform, ids);
     } catch (error) {
-      console.warn(`Failed to read rank trend v2 platform=${normalizedPlatform}`, error);
+      void logger.operation(
+        "rank_trend_v2_read_failed",
+        { platform: normalizedPlatform },
+        "warn",
+        error
+      );
     }
     if (!snapshot) {
       rankTrendAggregateCache.delete(cacheKey);
@@ -4346,7 +4417,12 @@ async function getCachedCvRankTrendResponse(cvName) {
       try {
         v2Snapshots = await readCvRankTrendV2Snapshots(normalizedCvName);
       } catch (error) {
-        console.warn(`Failed to read CV trend v2 cv=${normalizedCvName}`, error);
+        void logger.operation(
+          "cv_trend_v2_read_failed",
+          { cvName: normalizedCvName },
+          "warn",
+          error
+        );
       }
     }
     const [missevanTrendSnapshot, manboTrendSnapshot] = v2Snapshots
@@ -4420,7 +4496,12 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
         try {
           peakSnapshot = await readPeakRankTrendV2Snapshot(normalizedDramaId);
         } catch (error) {
-          console.warn(`Failed to read peak trend v2 series=${normalizedDramaId}`, error);
+          void logger.operation(
+            "peak_trend_v2_read_failed",
+            { dramaId: normalizedDramaId },
+            "warn",
+            error
+          );
         }
       }
       if (!peakSnapshot) {
@@ -4748,7 +4829,7 @@ async function readLegacyInfoStoreSnapshot(store) {
         return fallbackSnapshot;
       }
     } catch (error) {
-      console.error(`Failed to read Upstash info snapshot key=${store.key}`, error);
+      void logger.error("upstash_info_snapshot_read_failed", error, { key: store.key, platform: store.platform });
       const fallbackSnapshot = getInfoStoreReadFailureSnapshot(store);
       if (fallbackSnapshot) {
         return fallbackSnapshot;
@@ -4809,8 +4890,7 @@ function logCvInfoDiagnostics(store, snapshot, contentSha1) {
     Number(diagnostics.invalidIdCount) > 0 ||
     Number(diagnostics.noIdRecordCount) > 0
   ) {
-    console.warn(JSON.stringify({
-      event: "cv_info_data_quality",
+    void logger.warn("cv_info_data_quality", {
       contentSha1,
       duplicatePlatformIdCount: Number(diagnostics.duplicatePlatformIdCount) || 0,
       duplicatePlatformIds: Array.isArray(diagnostics.duplicatePlatformIds)
@@ -4818,7 +4898,7 @@ function logCvInfoDiagnostics(store, snapshot, contentSha1) {
         : [],
       invalidIdCount: Number(diagnostics.invalidIdCount) || 0,
       noIdRecordCount: Number(diagnostics.noIdRecordCount) || 0,
-    }));
+    });
   }
 }
 
@@ -4927,7 +5007,10 @@ async function ensureInfoStoreLoaded(store, forceRefresh = false) {
         try {
           await loadInfoStoresV2();
         } catch (error) {
-          console.warn(`Failed to load info v2; falling back platform=${store.platform}`, error);
+          void logger.warn("info_v2_fallback_used", {
+            platform: store.platform,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          });
           const snapshot = await readLegacyInfoStoreSnapshot(store);
           applyInfoStoreSnapshot(store, snapshot);
           store.contentSha1 = "";
@@ -4949,7 +5032,7 @@ async function ensureInfoStoreLoaded(store, forceRefresh = false) {
               : createEmptyMissevanInfoSnapshot()
         );
       }
-      console.error(`Failed to load info store platform=${store.platform}`, error);
+      void logger.error("info_store_load_failed", error, { platform: store.platform });
     } finally {
       store.loadPromise = null;
     }
@@ -4968,7 +5051,10 @@ async function ensureInfoStoreReadyForSearch(store) {
     : INFO_STORE_SYNC_INTERVAL_MS;
   if (Date.now() - store.lastLoadedAt >= refreshIntervalMs && !store.loadPromise) {
     void ensureInfoStoreLoaded(store).catch((error) => {
-      console.warn(`Info store background refresh failed platform=${store.platform}: ${formatImageProxyError(error)}`);
+      void logger.warn("info_store_background_refresh_failed", {
+        platform: store.platform,
+        errorMessage: formatImageProxyError(error),
+      });
     });
   }
   return store;
@@ -4982,7 +5068,7 @@ async function readNewDramaIdsSnapshot() {
         return normalizeNewDramaIdsSnapshot(JSON.parse(raw));
       }
     } catch (error) {
-      console.error(`Failed to read Upstash new drama id snapshot key=${newDramaIdsStore.key}`, error);
+      void logger.error("new_drama_ids_upstash_read_failed", error, { key: newDramaIdsStore.key });
     }
   }
 
@@ -5016,7 +5102,7 @@ async function ensureNewDramaIdsLoaded(forceRefresh = false) {
       if (!newDramaIdsStore.loaded) {
         applyNewDramaIdsSnapshot(createEmptyNewDramaIdsSnapshot());
       }
-      console.error("Failed to load new drama id snapshot", error);
+      void logger.error("new_drama_ids_snapshot_load_failed", error);
     } finally {
       newDramaIdsStore.loadPromise = null;
     }
@@ -5080,7 +5166,7 @@ function fireAndForget(label, task) {
     Promise.resolve()
       .then(task)
       .catch((error) => {
-        console.error(label, error);
+        void logger.error("background_task_failed", error, { label });
       });
   }, 0);
 }
@@ -6576,9 +6662,11 @@ async function hydrateMissevanApiSearchBaseRecord(record) {
         search_access_denied: true,
       };
     }
-    console.warn(
-      `Failed to resolve Missevan API search base card drama_id=${record.dramaId}: ${formatImageProxyError(error)}`
-    );
+    void logger.warn("missevan_search_base_card_resolve_failed", {
+      platform: "missevan",
+      dramaId: record.dramaId,
+      errorMessage: formatImageProxyError(error),
+    });
     return fallbackCard;
   }
 }
@@ -6617,10 +6705,10 @@ async function hydrateMissevanSearchRecord(record) {
       rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
     } catch (error) {
       if (!isMissevanAccessDenied(error)) {
-        console.error(
-          `Failed to fetch Missevan reward detail drama_id=${record.dramaId}`,
-          error
-        );
+        void logger.error("missevan_reward_detail_fetch_failed", error, {
+          platform: "missevan",
+          dramaId: record.dramaId,
+        });
       }
     }
 
@@ -6656,10 +6744,10 @@ async function hydrateMissevanSearchRecord(record) {
       throw error;
     }
     if (!isMissevanAccessDenied(error)) {
-      console.error(
-        `Failed to hydrate Missevan search result drama_id=${record.dramaId}`,
-        error
-      );
+      void logger.error("missevan_search_result_hydrate_failed", error, {
+        platform: "missevan",
+        dramaId: record.dramaId,
+      });
     }
     return fallbackCard;
   }
@@ -6680,10 +6768,10 @@ async function hydrateMissevanApiSearchRecord(record) {
       rewardNum = normalizeOptionalFiniteNumber(rewardMeta?.reward_num);
     } catch (error) {
       if (!isMissevanAccessDenied(error)) {
-        console.error(
-          `Failed to fetch Missevan reward detail drama_id=${record.dramaId}`,
-          error
-        );
+        void logger.error("missevan_reward_detail_fetch_failed", error, {
+          platform: "missevan",
+          dramaId: record.dramaId,
+        });
       }
     }
 
@@ -6722,10 +6810,10 @@ async function hydrateMissevanApiSearchRecord(record) {
       throw error;
     }
     if (!isMissevanAccessDenied(error)) {
-      console.error(
-        `Failed to hydrate Missevan API search result drama_id=${record.dramaId}`,
-        error
-      );
+      void logger.error("missevan_api_search_result_hydrate_failed", error, {
+        platform: "missevan",
+        dramaId: record.dramaId,
+      });
     }
     return fallbackCard;
   }
@@ -6750,7 +6838,7 @@ export function normalizeSettledUnifiedSearchResult(platform, settled, fallbackR
   const error = settled.reason;
   const message = error instanceof Error ? error.message : String(error);
   const accessDenied = platform === "missevan" && isMissevanAccessDenied(error);
-  console.error(`Unified ${stage} search failed platform=${platform}`, error);
+  void logger.error("unified_search_stage_failed", error, { platform, stage });
   return {
     ...fallbackResult,
     success: false,
@@ -6869,7 +6957,10 @@ async function runMissevanApiUnifiedSearch(keyword, offset, limit) {
       },
     };
   } catch (error) {
-    console.error(`Failed to run unified Missevan API search keyword=${keyword}`, error);
+    void logger.error("unified_missevan_api_search_failed", error, {
+      platform: "missevan",
+      keyword,
+    });
     return {
       ...buildMissevanAccessDeniedResponse(error),
       results: [],
@@ -6898,7 +6989,10 @@ async function runManboApiUnifiedSearch(keyword, offset, limit) {
       },
     };
   } catch (error) {
-    console.error(`Failed to run unified Manbo API search keyword=${keyword}`, error);
+    void logger.error("unified_manbo_api_search_failed", error, {
+      platform: "manbo",
+      keyword,
+    });
     return {
       success: false,
       results: [],
@@ -6949,10 +7043,10 @@ async function buildMissevanDramaCardFromInput(item) {
     if (isMissevanAccessDenied(error)) {
       throw error;
     }
-    console.error(
-      `Failed to fetch Missevan reward detail drama_id=${resolvedDramaId}`,
-      error
-    );
+    void logger.error("missevan_reward_detail_fetch_failed", error, {
+      platform: "missevan",
+      dramaId: resolvedDramaId,
+    });
   }
 
   const card = {
@@ -7009,10 +7103,10 @@ async function hydrateManboSearchRecord(record) {
       author: card.author || fallbackCard.author,
     };
   } catch (error) {
-    console.error(
-      `Failed to hydrate Manbo search result dramaId=${record.dramaId}`,
-      error
-    );
+    void logger.error("manbo_search_result_hydrate_failed", error, {
+      platform: "manbo",
+      dramaId: record.dramaId,
+    });
     return fallbackCard;
   }
 }
@@ -7038,20 +7132,194 @@ function extractMissevanCvEntries(info) {
   return entries;
 }
 
-async function writeUsageLog(entry) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    ...entry,
-  };
+const OPERATION_USAGE_ACTIONS = new Set([
+  "cache_refresh",
+  "compatibility_search",
+  "danmaku_summary",
+  "manbo_search_api",
+  "missevan_request",
+  "missevan_search_api",
+  "watch_count",
+]);
 
-  console.log("[usage]", JSON.stringify(logEntry));
+function getActiveOperationTrace() {
+  return operationTraceStorage.getStore() || null;
+}
 
-  try {
-    await fs.mkdir(logsDir, { recursive: true });
-    await fs.appendFile(usageLogPath, `${JSON.stringify(logEntry)}\n`, "utf8");
-  } catch (error) {
-    console.error("Failed to write usage log", error);
+function recordOperationAttempt(fields = {}) {
+  const trace = getActiveOperationTrace();
+  if (!trace) {
+    return false;
   }
+  trace.attempts.push({ ...fields });
+  return true;
+}
+
+function runWithOperationTrace(event, fields, callback) {
+  const operationId = randomUUID();
+  const trace = {
+    event,
+    fields: { ...fields },
+    operationId,
+    startedAt: Date.now(),
+    attempts: [],
+    finalized: false,
+  };
+  return runWithLogContext({ operationId }, () => operationTraceStorage.run(trace, callback));
+}
+
+export function buildOperationTraceLog(trace = {}, entry = {}, now = Date.now()) {
+  const attempts = Array.isArray(trace.attempts) ? trace.attempts : [];
+  const lastAttempt = attempts.at(-1) || {};
+  const anomalousAttempts = attempts.filter((attempt) =>
+    attempt.success === false ||
+    attempt.fallbackUsed ||
+    attempt.cooldownBlocked ||
+    Number(attempt.attempt) > 1
+  );
+  const requestDurationMs = attempts.reduce(
+    (total, attempt) => total + Math.max(0, Number(attempt.durationMs) || 0),
+    0
+  );
+  const fallbackAttempt = [...attempts].reverse().find((attempt) => attempt.fallbackUsed);
+  const finalFields = {
+    ...trace.fields,
+    ...normalizeUsageLogFields(entry, normalizeTextValue(entry?.action)),
+    endpoint: lastAttempt.endpoint || trace.fields.endpoint || null,
+    attemptCount: attempts.length,
+    requestDurationMs,
+    httpStatus: typeof lastAttempt.status === "number" ? lastAttempt.status : null,
+    fallbackUsed: attempts.some((attempt) => attempt.fallbackUsed),
+    fallbackRoute: fallbackAttempt?.fallbackRoute || "",
+    fallbackReason: fallbackAttempt?.fallbackReason || "",
+    durationMs: Math.max(0, now - (Number(trace.startedAt) || now)),
+    ...(anomalousAttempts.length > 0 ? { attempts: anomalousAttempts } : {}),
+  };
+  const level = finalFields.cancelled || finalFields.outcome === "cancelled"
+    ? "info"
+    : finalFields.success === false
+      ? "error"
+      : finalFields.fallbackUsed || anomalousAttempts.length > 0
+        ? "warn"
+        : "info";
+  return { anomalousAttempts, fields: finalFields, level };
+}
+
+export function normalizeOperationAttemptLogFields(attempt = {}) {
+  const { status, ...fields } = attempt;
+  if (typeof status === "number") {
+    return { ...fields, httpStatus: status };
+  }
+  if (status) {
+    return { ...fields, outcome: String(status) };
+  }
+  return fields;
+}
+
+async function finalizeActiveOperation(entry) {
+  const trace = getActiveOperationTrace();
+  if (!trace || trace.finalized) {
+    return false;
+  }
+  trace.finalized = true;
+  const { anomalousAttempts, fields, level } = buildOperationTraceLog(trace, entry);
+  for (const attempt of anomalousAttempts) {
+    const attemptLevel = attempt.success === false ? "warn" : "info";
+    await logger.operation("external_request_attempt", {
+      operation: trace.event,
+      ...normalizeOperationAttemptLogFields(attempt),
+    }, attemptLevel);
+  }
+  await logger.operation(trace.event, fields, level);
+  return true;
+}
+
+export function getStatsTaskSummaryLogLevel(fields = {}) {
+  const outcome = normalizeTextValue(fields.outcome) || "completed";
+  if (outcome === "failed") {
+    return "error";
+  }
+  if (
+    outcome === "completed" &&
+    (fields.success === false || Number(fields.failedCount) > 0)
+  ) {
+    return "warn";
+  }
+  return "info";
+}
+
+function normalizeUsageLogEvent(action) {
+  if (action === "calculate" || action === "stats_task_completed") {
+    return "stats_task_finished";
+  }
+  if (action === "ranks") {
+    return "ranks_view";
+  }
+  if (action === "ongoing") {
+    return "ongoing_view";
+  }
+  if (action === "trend") {
+    return "trend_open";
+  }
+  if (action === "compare") {
+    return "compare_open";
+  }
+  if (action.endsWith("_open_search_result")) {
+    return "search_result_open";
+  }
+  return action || "usage_event";
+}
+
+function normalizeUsageLogFields(entry, action) {
+  const { action: _action, timestamp: _timestamp, status, ...fields } = entry || {};
+  if (action === "ranks_open_search_result" && !fields.source) {
+    fields.source = "ranks";
+  } else if (action === "ongoing_open_search_result" && !fields.source) {
+    fields.source = "ongoing";
+  } else if (action === "cv_profile_open_search_result" && !fields.source) {
+    fields.source = "cv_profile";
+  }
+  if (typeof status === "number") {
+    fields.httpStatus = status;
+  } else if (status) {
+    fields.outcome = status;
+  }
+  return fields;
+}
+
+async function writeUsageLog(entry) {
+  const action = normalizeTextValue(entry?.action);
+  if (action === "danmaku_summary" && await finalizeActiveOperation(entry)) {
+    return;
+  }
+  const event = normalizeUsageLogEvent(action);
+  const fields = normalizeUsageLogFields(entry, action);
+  if (event === "stats_task_finished") {
+    const outcome = fields.outcome || "completed";
+    const level = getStatsTaskSummaryLogLevel({ ...fields, outcome });
+    return logger.taskSummary(event, { ...fields, outcome }, level);
+  }
+  if (OPERATION_USAGE_ACTIONS.has(action)) {
+    if (!fields.operationId) {
+      fields.operationId = randomUUID();
+    }
+    const terminalFailure = fields.success === false && [
+      "cache_refresh",
+      "danmaku_summary",
+      "missevan_request",
+      "watch_count",
+    ].includes(action);
+    const level = fields.cancelled
+      ? "info"
+      : fields.error || fields.accessDenied || terminalFailure
+        ? "error"
+        : fields.fallbackUsed
+        ? "warn"
+        : "info";
+    return logger.operation(event, fields, level);
+  }
+  const level = fields.success === false ? "warn" : "info";
+  return logger.userAction(event, fields, level);
 }
 
 export function createTimeoutSignal(timeoutMs, externalSignal) {
@@ -7389,10 +7657,24 @@ function getMissevanRequestLogEndpoint(url) {
   }
 }
 
-function writeMissevanRequestUsageLog(url, details = {}) {
-  void writeUsageLog({
-    platform: "missevan",
-    action: "missevan_request",
+function getRequestLogPlatform(url) {
+  try {
+    const hostname = (typeof url === "string" ? new URL(url) : url).hostname;
+    if (hostname.includes("missevan.com")) {
+      return "missevan";
+    }
+    if (hostname.includes("kilamanbo.com")) {
+      return "manbo";
+    }
+    return hostname || "external";
+  } catch (_) {
+    return "external";
+  }
+}
+
+function recordGenericRequestAttempt(url, details = {}) {
+  recordOperationAttempt({
+    platform: getRequestLogPlatform(url),
     endpoint: getMissevanRequestLogEndpoint(url),
     attempt: Math.max(0, Number(details.attempt ?? 0) || 0),
     status: details.status ?? "",
@@ -7404,6 +7686,26 @@ function writeMissevanRequestUsageLog(url, details = {}) {
     fallbackRoute: String(details.fallbackRoute || ""),
     fallbackReason: String(details.fallbackReason || ""),
   });
+}
+
+function writeMissevanRequestUsageLog(url, details = {}) {
+  const entry = {
+    platform: "missevan",
+    endpoint: getMissevanRequestLogEndpoint(url),
+    attempt: Math.max(0, Number(details.attempt ?? 0) || 0),
+    status: details.status ?? "",
+    durationMs: Math.max(0, Math.round(Number(details.durationMs ?? 0) || 0)),
+    success: Boolean(details.success),
+    accessDenied: Boolean(details.accessDenied),
+    cooldownBlocked: Boolean(details.cooldownBlocked),
+    fallbackUsed: Boolean(details.fallbackUsed),
+    fallbackRoute: String(details.fallbackRoute || ""),
+    fallbackReason: String(details.fallbackReason || ""),
+  };
+  if (recordOperationAttempt(entry)) {
+    return;
+  }
+  void writeUsageLog({ action: "missevan_request", ...entry });
 }
 
 function ensureMissevanFetchOptions(options = {}) {
@@ -7496,6 +7798,14 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
             accessDenied: response.status === 418,
           });
           requestLogged = true;
+        } else if (getActiveOperationTrace()) {
+          recordGenericRequestAttempt(url, {
+            attempt: attempt + 1,
+            status: response.status,
+            durationMs: Date.now() - requestStartedAt,
+            success: false,
+          });
+          requestLogged = true;
         }
         if (options.missevan && response.status === 418 && hasEnabledMissevanFallbackRoutes()) {
           markAccessDeniedCooldown();
@@ -7518,6 +7828,14 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
         });
         requestLogged = true;
         markSuccessfulMissevanRequest();
+      } else if (getActiveOperationTrace()) {
+        recordGenericRequestAttempt(url, {
+          attempt: attempt + 1,
+          status: response.status,
+          durationMs: Date.now() - requestStartedAt,
+          success: true,
+        });
+        requestLogged = true;
       }
       return data;
     } catch (error) {
@@ -7553,6 +7871,13 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
           accessDenied: false,
+        });
+      } else if (!options.missevan && !requestLogged && getActiveOperationTrace()) {
+        recordGenericRequestAttempt(url, {
+          attempt: attempt + 1,
+          status: responseStatus || (options.signal?.aborted ? "cancelled" : timeoutState?.timedOut ? "timeout" : "error"),
+          durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
+          success: false,
         });
       }
 
@@ -7995,10 +8320,11 @@ async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
           }
         }
       } catch (error) {
-        console.error(
-          `Failed to backfill Missevan subscription_num drama_id=${dramaId} sound_id=${resolvedSoundId}`,
-          error
-        );
+        void logger.error("missevan_subscription_backfill_failed", error, {
+          platform: "missevan",
+          dramaId,
+          soundId: resolvedSoundId,
+        });
       }
     }
 
@@ -8228,6 +8554,21 @@ async function fetchDanmakuSummary(
   options = {}
 ) {
   const source = normalizeStatsTaskSource(rawSource);
+  if (!options.operationTraceActive) {
+    return runWithOperationTrace("danmaku_summary", {
+      platform: "missevan",
+      soundId: Number(soundId),
+      dramaTitle,
+      episodeTitle,
+      ...(source ? { source } : {}),
+    }, () => fetchDanmakuSummary(
+      soundId,
+      dramaTitle,
+      episodeTitle,
+      rawSource,
+      { ...options, operationTraceActive: true }
+    ));
+  }
   const cacheKey = String(soundId);
   const cached = getCachedValue(danmakuCache, cacheKey, SOUND_SUMMARY_CACHE_TTL_MS);
   if (cached) {
@@ -8308,7 +8649,6 @@ async function fetchDanmakuSummary(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (options.signal?.aborted) {
-      console.info(`Cancelled Missevan danmaku sound_id=${soundId}`);
       void writeUsageLog({
         platform: "missevan",
         action: "danmaku_summary",
@@ -8332,11 +8672,6 @@ async function fetchDanmakuSummary(
         accessDenied: false,
         error: message,
       };
-    }
-    if (error?.requestTimedOut) {
-      console.warn(`Timed out fetching Missevan danmaku sound_id=${soundId}: ${message}`);
-    } else {
-      console.error(`Failed to fetch Missevan danmaku sound_id=${soundId}: ${message}`);
     }
     const accessDenied =
       isAccessDeniedError(error) ||
@@ -9069,6 +9404,21 @@ async function fetchManboDanmakuSummary(
 ) {
   const source = normalizeStatsTaskSource(rawSource);
   const resolvedEpisodeTitle = resolveManboEpisodeTitle(setId, episodeTitle);
+  if (!options.operationTraceActive) {
+    return runWithOperationTrace("danmaku_summary", {
+      platform: "manbo",
+      soundId: String(setId),
+      dramaTitle,
+      episodeTitle: resolvedEpisodeTitle,
+      ...(source ? { source } : {}),
+    }, () => fetchManboDanmakuSummary(
+      setId,
+      dramaTitle,
+      episodeTitle,
+      rawSource,
+      { ...options, operationTraceActive: true }
+    ));
+  }
   const cached = getCachedValue(
     manboDanmakuCache,
     setId,
@@ -9195,7 +9545,6 @@ async function fetchManboDanmakuSummary(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (sharedSignal.aborted) {
-          console.info(`Cancelled Manbo danmaku set_id=${setId}`);
           void writeUsageLog({
             platform: "manbo",
             action: "danmaku_summary",
@@ -9221,11 +9570,6 @@ async function fetchManboDanmakuSummary(
             accessDenied: false,
             error: message,
           };
-        }
-        if (error?.requestTimedOut) {
-          console.warn(`Timed out fetching Manbo danmaku set_id=${setId}: ${message}`);
-        } else {
-          console.error(`Failed to fetch Manbo danmaku set_id=${setId}: ${message}`);
         }
         const accessDenied =
           isAccessDeniedError(error) ||
@@ -9543,6 +9887,7 @@ registerStatsRoutes(app, {
   getStatsTaskSnapshotOr404,
   isNumericId,
   isRankTrendAggregateSnapshot,
+  logger,
   ongoingResponseSchemaVersion: ONGOING_RESPONSE_SCHEMA_VERSION,
   rankTrendsResponseSchemaVersion: RANK_TRENDS_RESPONSE_SCHEMA_VERSION,
   refreshMissevanCooldownState,
@@ -9572,17 +9917,35 @@ app.get("/image-proxy", imageProxyLimiter, async (req, res) => {
     });
   }
 
+  const operationId = randomUUID();
+  const operationStartedAt = Date.now();
   try {
-    const { buffer, contentType } = await fetchImageBufferWithRetry(targetUrl);
+    const { attempts, buffer, contentType } = await fetchImageBufferWithRetry(targetUrl);
+    void logger.operation("image_proxy_fetch", {
+      operationId,
+      endpoint: targetUrl.pathname,
+      targetHost: targetUrl.hostname,
+      attempts,
+      responseBytes: buffer.byteLength,
+      contentType,
+      durationMs: Date.now() - operationStartedAt,
+      success: true,
+    });
     res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "public, max-age=3600");
     return res.send(buffer);
   } catch (error) {
     const attempts = error?.attempts ?? 1;
     const summary = formatImageProxyError(error);
-    console.warn(
-      `Image proxy failed url=${targetUrl.toString()} attempts=${attempts} error=${summary}`
-    );
+    void logger.operation("image_proxy_fetch", {
+      operationId,
+      endpoint: targetUrl.pathname,
+      targetHost: targetUrl.hostname,
+      attempts,
+      errorMessage: summary,
+      durationMs: Date.now() - operationStartedAt,
+      success: false,
+    }, "warn");
     const isPolicyError = error instanceof ImageProxyPolicyError;
     const status = isPolicyError ? error.status : 502;
     const code = error?.code === "IMAGE_TOO_LARGE"
@@ -9711,9 +10074,11 @@ async function fetchSearchCardMetrics(platform, id, soundId, signal) {
       if (signal?.aborted || isMissevanAccessDenied(error)) {
         throw error;
       }
-      console.warn(
-        `Failed to fetch Missevan search reward metric drama_id=${id}: ${formatImageProxyError(error)}`
-      );
+      void logger.warn("missevan_search_reward_metric_failed", {
+        platform: "missevan",
+        dramaId: id,
+        errorMessage: formatImageProxyError(error),
+      });
     }
     return {
       cached,
@@ -9868,7 +10233,7 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
       manboFinalSettled, manboLibraryResult, "api");
     return res.json(buildUnifiedResponse(missevanFinal, manboFinal, cvResult, true));
   } catch (error) {
-    console.error(`Failed to run unified search keyword=${normalizedKeyword}`, error);
+    void logger.error("unified_search_failed", error, { keyword: normalizedKeyword });
     return res.status(500).json({
       success: false,
       results: {
@@ -9970,7 +10335,7 @@ app.get("/cv-profile", expensiveDataLimiter, async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     return res.json(response);
   } catch (error) {
-    console.error(`Failed to build CV profile name=${requestedName}`, error);
+    void logger.error("cv_profile_build_failed", error, { cvName: requestedName });
     return res.status(503).json({
       success: false,
       message: "CV profile is unavailable",
@@ -10177,7 +10542,10 @@ app.get("/search", expensiveDataLimiter, async (req, res) => {
       meta,
     });
   } catch (error) {
-    console.error(error);
+    void logger.error("missevan_search_failed", error, {
+      platform: "missevan",
+      keyword: normalizedKeyword,
+    });
     return res.json(buildMissevanAccessDeniedResponse(error));
   }
 });
@@ -10211,7 +10579,7 @@ app.post("/register-new-drama-ids", async (req, res) => {
       count: missingDramaIds.length,
     });
   } catch (error) {
-    console.error(`Failed to register new drama ids for ${platform}`, error);
+    void logger.error("new_drama_ids_register_failed", error, { platform });
     return res.status(500).json({
       success: false,
       message: "Failed to register drama ids",
@@ -10420,7 +10788,7 @@ app.post("/usage-log", async (req, res) => {
       return res.json({ success: true });
     }
 
-    if (["favorite_add", "favorite_remove"].includes(action)) {
+    if (FAVORITE_USAGE_ACTIONS.has(action)) {
       const entry = buildFavoriteUsageLog(payload);
       if (!entry) {
         return res.status(400).json({
@@ -10473,7 +10841,7 @@ app.post("/usage-log", async (req, res) => {
     await writeUsageLog(sanitizedEntry);
     return res.json({ success: true });
   } catch (error) {
-    console.error("Failed to write usage log from client payload", error);
+    void logger.error("user_action_log_write_failed", error);
     return res.status(500).json({
       success: false,
       message: "Failed to write usage log",
@@ -10497,6 +10865,7 @@ registerMissevanRoutes(app, {
   fireAndForget,
   isAccessDeniedError,
   isMissevanAccessDenied,
+  logger,
   missevanInfoStore,
   normalizeDramaCardUsageAction,
   normalizeDramaIds,
@@ -10531,6 +10900,7 @@ registerManboRoutes(app, {
   getManboMainCvNames,
   hydrateManboSearchRecord,
   isAccessDeniedError,
+  logger,
   manboInfoStore,
   mapWithConcurrency,
   normalizeDramaCardUsageAction,
@@ -10783,10 +11153,14 @@ export async function startServer(port = defaultPort, options = {}) {
     ensureInfoStoreLoaded(manboInfoStore),
     ensureInfoStoreLoaded(cvInfoStore),
   ]).catch((error) => {
-    console.warn(`Info store prewarm failed: ${formatImageProxyError(error)}`);
+    void logger.warn("info_store_prewarm_failed", {
+      errorMessage: formatImageProxyError(error),
+    });
   });
   void statsTaskEngine.restore().catch((error) => {
-    console.warn(`Stats task recovery failed: ${formatImageProxyError(error)}`);
+    void logger.warn("stats_task_recovery_failed", {
+      errorMessage: formatImageProxyError(error),
+    });
     return [];
   });
   return serverInstance;
@@ -10794,7 +11168,7 @@ export async function startServer(port = defaultPort, options = {}) {
 
 if (process.env.START_SERVER_ON_IMPORT !== "false") {
   startServer().catch((error) => {
-    console.error("Failed to start server", error);
+    void logger.error("server_start_failed", error);
     process.exitCode = 1;
   });
 }

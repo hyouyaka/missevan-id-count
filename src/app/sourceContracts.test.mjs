@@ -53,6 +53,7 @@ const manboRoutesSource = readFileSync(new URL("../../server/routes/manboRoutes.
 const statsTaskExecutionSource = readFileSync(new URL("../../server/stats/taskExecution.js", import.meta.url), "utf8");
 const weeklyPlaybackServiceSource = readFileSync(new URL("../../server/services/weeklyPlaybackService.js", import.meta.url), "utf8");
 const taskEngineSource = readFileSync(new URL("../../server/stats/taskEngine.js", import.meta.url), "utf8");
+const loggerSource = readFileSync(new URL("../../server/logger.js", import.meta.url), "utf8");
 const taskStateSource = readFileSync(new URL("../../server/stats/taskState.js", import.meta.url), "utf8");
 const envConfigSource = readFileSync(new URL("../../envConfig.js", import.meta.url), "utf8");
 const packageSource = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
@@ -2112,6 +2113,10 @@ test("favorites panel documents local storage risk and uses responsive filtered 
   assert.match(favoritesPanelSource, /导入历史/);
   assert.match(favoritesPanelSource, /导出历史/);
   assert.match(favoritesPanelSource, /下载数据/);
+  assert.match(favoritesPanelSource, /logFavoriteHistoryUsage\("favorite_history_import"/);
+  assert.match(favoritesPanelSource, /logFavoriteHistoryUsage\("favorite_history_export"/);
+  assert.match(favoritesPanelSource, /logFavoriteHistoryUsage\("favorite_history_download"/);
+  assert.match(serverSource, /FAVORITE_HISTORY_USAGE_ACTIONS/);
   assert.match(favoritesPanelSource, /filterFavorites\(sortedFavorites, filters\)/);
   assert.match(favoritesPanelSource, /filteredFavorites\.filter\(\(favorite\) => selectedKeys\.has\(favorite\.key\)\)/);
   assert.match(favoritesPanelSource, /全选当前筛选结果/);
@@ -3210,7 +3215,7 @@ test("paid ID-equivalent tasks and revenue actions pass ID-scoped stats sources"
   );
 });
 
-test("completed stats tasks write one full-result usage log through the engine hook", () => {
+test("all terminal stats tasks write one full-result summary through the engine hook", () => {
   assert.match(serverSource, /export function buildStatsTaskCompletedUsageLog\(snapshot = \{\}\)/);
   const completionLogSource = serverSource.slice(
     serverSource.indexOf("export function buildStatsTaskCompletedUsageLog"),
@@ -3219,8 +3224,18 @@ test("completed stats tasks write one full-result usage log through the engine h
   assert.match(completionLogSource, /action: "calculate"/);
   assert.doesNotMatch(completionLogSource, /action: "missevan_request"/);
   assert.match(serverSource, /result: snapshot\.result \?\? null/);
-  assert.match(serverSource, /onCompleted: async \(snapshot\)/);
+  assert.match(serverSource, /onTerminal: async \(snapshot\)/);
   assert.match(serverSource, /await writeUsageLog\(entry\)/);
+  assert.match(completionLogSource, /\["completed", "failed", "cancelled"\]/);
+});
+
+test("backend runtime logs flow through the structured logger", () => {
+  assert.doesNotMatch(`${serverSource}\n${taskEngineSource}`, /console\.(?:log|info|warn|error)\(/);
+  assert.match(loggerSource, /message: normalizedEvent/);
+  assert.match(loggerSource, /category: normalizedCategory/);
+  assert.match(loggerSource, /createCategoryFileSink/);
+  assert.match(serverSource, /category === LOG_CATEGORIES\.TASK_SUMMARY|logger\.taskSummary/);
+  assert.doesNotMatch(serverSource, /console\.log\("\[usage\]"/);
 });
 
 test("rank category tabs adapt to the number of categories", () => {
@@ -4016,10 +4031,12 @@ test("image proxy retries aborted image bodies and logs concise failures", () =>
 
   assert.match(routeSource, /fetchImageBufferWithRetry\(targetUrl\)/);
   assert.match(routeSource, /formatImageProxyError\(error\)/);
-  assert.match(routeSource, /console\.warn\(/);
+  assert.match(routeSource, /logger\.operation\("image_proxy_fetch"/);
+  assert.match(routeSource, /operationId/);
+  assert.match(routeSource, /targetHost: targetUrl\.hostname/);
   assert.match(routeSource, /IMAGE_TOO_LARGE/);
   assert.match(routeSource, /IMAGE_TYPE_UNSUPPORTED/);
-  assert.doesNotMatch(routeSource, /console\.error\(error\)/);
+  assert.doesNotMatch(routeSource, /console\.(?:warn|error)\(/);
 });
 
 test("server applies tiered rate limits and queues stats tasks by platform", () => {
@@ -4093,9 +4110,10 @@ test("Missevan request-slot waiting follows task cancellation", () => {
     serverSource,
     /beforeAttempt: \(\) => waitForMissevanRequestSlot\(options\.signal\)/
   );
-  assert.match(serverSource, /Cancelled Missevan danmaku/);
-  assert.match(serverSource, /Cancelled Manbo danmaku/);
   assert.match(serverSource, /status: "cancelled"/);
+  assert.match(serverSource, /runWithOperationTrace\("danmaku_summary"/);
+  assert.match(serverSource, /cancelled: true/);
+  assert.match(serverSource, /finalizeActiveOperation\(entry\)/);
   assert.match(serverSource, /result\.cancelled \|\| task\.cancelled \|\| task\.abortSignal\?\.aborted/);
   assert.match(serverSource, /get timedOut\(\)/);
   assert.match(serverSource, /error\.requestTimedOut = true/);

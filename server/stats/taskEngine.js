@@ -86,6 +86,8 @@ export function createStatsTaskEngine({
   retentionMs = Infinity,
   onRestore = null,
   onCompleted = null,
+  onTerminal = null,
+  onError = null,
   now = Date.now,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -98,6 +100,8 @@ export function createStatsTaskEngine({
   const cancellations = createTaskCancellationRegistry();
   const persistenceTimers = new Map();
   const tasks = new Map();
+  const terminalNotifications = new WeakSet();
+  const terminalRemovals = new WeakSet();
   let resolveReady;
   const readyPromise = new Promise((resolve) => {
     resolveReady = resolve;
@@ -139,19 +143,42 @@ export function createStatsTaskEngine({
     return true;
   }
 
+  function reportEngineError(event, error) {
+    onError?.(event, error);
+  }
+
   function finalizeTaskInBackground(task, finalStatus) {
     const snapshot = buildTaskSnapshot(task);
+    const taskId = String(snapshot?.taskId || "");
+    if (!taskId || terminalNotifications.has(task)) {
+      return;
+    }
+    terminalNotifications.add(task);
     void (async () => {
       try {
         await persist(task, true);
       } catch (error) {
-        console.error("Stats task final persistence failed", error);
+        reportEngineError("stats_task_final_persistence_failed", error);
+      }
+      if (typeof onTerminal === "function") {
+        try {
+          await onTerminal(snapshot);
+        } catch (error) {
+          reportEngineError("stats_task_terminal_callback_failed", error);
+        }
       }
       if (finalStatus === "completed" && typeof onCompleted === "function") {
         try {
           await onCompleted(snapshot);
         } catch (error) {
-          console.error("Stats task completion callback failed", error);
+          reportEngineError("stats_task_completion_callback_failed", error);
+        }
+      }
+      if (terminalRemovals.delete(task)) {
+        try {
+          await remove(taskId);
+        } catch (error) {
+          reportEngineError("stats_task_terminal_removal_failed", error);
         }
       }
     })();
@@ -292,8 +319,10 @@ export function createStatsTaskEngine({
       stamp(task);
       if (queued || (wasQueued && !running)) {
         metrics.finished(task, "cancelled");
+        finalizeTaskInBackground(task, "cancelled");
+      } else {
+        persist(task, true);
       }
-      persist(task, true);
       return {
         found: true,
         changed: queued || running || wasQueued,
@@ -345,8 +374,16 @@ export function createStatsTaskEngine({
           Number.isFinite(retentionMs) &&
           currentTime - updatedAt > retentionMs
         ) {
-          this.cancel(taskId);
-          void remove(taskId);
+          if (TERMINAL_TASK_STATUSES.has(task.status)) {
+            void remove(taskId);
+            continue;
+          }
+          terminalRemovals.add(task);
+          const cancellation = this.cancel(taskId);
+          if (!cancellation.changed) {
+            terminalRemovals.delete(task);
+            void remove(taskId);
+          }
         }
       }
     },
@@ -393,7 +430,7 @@ export function createStatsTaskEngine({
               error: result.code || "TASK_RESTORE_QUEUE_FULL",
             });
             tasks.set(String(task.taskId), task);
-            persist(task, true);
+            finalizeTaskInBackground(task, "failed");
             continue;
           }
           onRestore?.(task);

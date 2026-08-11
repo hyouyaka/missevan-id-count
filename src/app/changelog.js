@@ -4,6 +4,10 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.8",
+    changes: ["优化了收藏界面和功能"],
+  },
+  {
     version: "1.7.7",
     changes: [
       "新增CV主页，支持筛选、查看目前数据库里上架中的所有主役作品。",

@@ -46,6 +46,28 @@ Vite 开发服务器会自动将 API 请求代理到 `http://localhost:3000`。
 
 Railway 环境应使用 `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:v1` 持久化猫耳直连及两级备用代理的 cooldown 状态。
 
+### 结构化日志
+
+后端统一向 stdout/stderr 输出单行 JSON，不再使用 `[usage]` 文本前缀；`info`、`warn` 写入 stdout，`error` 写入 stderr。每条日志都包含 `timestamp`、`level`、`message`、`logSchemaVersion`、`category` 和 `event`；可按场景附带 `requestId`、`taskId`、`operationId`、`platform`、`outcome`、`durationMs` 等字段。
+
+| `category` | 用途 | 本地文件 |
+|------|------|------|
+| `user_action` | 打开搜索结果、榜单、趋势、对比等主要用户行为 | `logs/usage.log` |
+| `task_summary` | 统计任务完成、失败或取消的终态及完整结果 | `logs/usage.log` |
+| `operation` | 外部请求、弹幕、图片代理、存储读写和服务运行细节 | `logs/operations.log` |
+
+同一次弹幕操作的请求与汇总共享 `operationId`。正常成功只写一条 `danmaku_summary`；发生重试、fallback、取消或失败时，汇总中额外包含 `attempts`，便于按需排查。首次启用新格式时，旧 `logs/usage.log` 会自动改名为 `logs/usage.legacy-<timestamp>.log`。
+
+Railway 常用过滤：
+
+| 目的 | 查询 |
+|------|------|
+| 只看主要用户行为和任务结果 | `@category:user_action OR @category:task_summary` |
+| 日常运行分析，同时保留所有错误 | `(@category:user_action OR @category:task_summary) OR @level:error` |
+| 只看需要排查的后台操作 | `@category:operation AND (@level:warn OR @level:error OR @fallbackUsed:true)` |
+| 只看 fallback | `@category:operation AND @fallbackUsed:true` |
+| 追踪一次请求/任务/操作 | `@requestId:<id>` / `@taskId:<id>` / `@operationId:<id>` |
+
 ### 桌面版
 
 ```bash
@@ -94,7 +116,7 @@ Windows 桌面版会直接在界面中提示这一步。
 | `MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS` | 二级备用代理请求超时毫秒数 | `15000` |
 | `MISSEVAN_FORCE_FALLBACK` | 本地/灰度强制猫耳 JSON/XML 请求出口：`0` 直连优先，`1` 一级 Render，`2` 二级 Deno | `0` |
 
-Render 不承载本项目网页主站，只作为猫耳 418 时的一级备用代理；Deno 是二级备用代理。两者只代理猫耳 JSON/XML 请求，不用于图片、音频、视频或漫播请求。触发备用代理时，`logs/usage.log` 会写入 `fallbackUsed=true`、`fallbackRoute=render/deno` 和 `fallbackReason`。Render 免费实例冷启动可能需要几十秒；Render 失败后会再尝试 Deno。
+Render 不承载本项目网页主站，只作为猫耳 418 时的一级备用代理；Deno 是二级备用代理。两者只代理猫耳 JSON/XML 请求，不用于图片、音频、视频或漫播请求。触发备用代理时，`logs/operations.log` 会写入 `fallbackUsed=true`、`fallbackRoute=render/deno` 和 `fallbackReason`。Render 免费实例冷启动可能需要几十秒；Render 失败后会再尝试 Deno。
 
 本地强制测试链路：
 
@@ -124,7 +146,7 @@ MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS=15000
 MISSEVAN_FORCE_FALLBACK=2
 ```
 
-启动主站后访问任意猫耳 JSON/XML 功能，检查 `logs/usage.log` 是否出现：
+启动主站后访问任意猫耳 JSON/XML 功能，检查 `logs/operations.log` 是否出现：
 
 ```text
 fallbackUsed=true

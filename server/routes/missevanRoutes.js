@@ -14,6 +14,7 @@ export function registerMissevanRoutes(router, {
   fireAndForget,
   isAccessDeniedError,
   isMissevanAccessDenied,
+  logger,
   missevanInfoStore,
   normalizeDramaCardUsageAction,
   normalizeIds,
@@ -96,7 +97,10 @@ export function registerMissevanRoutes(router, {
         accessDenied =
           accessDenied ||
           isMissevanAccessDenied(error);
-        console.error(`Failed to fetch Missevan drama card item=${item.raw}`, error);
+        void logger.error("missevan_drama_card_fetch_failed", error, {
+          platform: "missevan",
+          item: item.raw,
+        });
         if (item.type === "drama") {
           failedIds.push(Number(item.id));
         }
@@ -155,7 +159,10 @@ export function registerMissevanRoutes(router, {
         }
       } catch (error) {
         const accessDenied = isMissevanAccessDenied(error);
-        console.error(`Failed to fetch Missevan drama drama_id=${id}`, error);
+        void logger.error("missevan_drama_fetch_failed", error, {
+          platform: "missevan",
+          dramaId: id,
+        });
         results.push({ success: false, id, accessDenied });
         if (accessDenied) {
           stoppedByAccessDenied = true;
@@ -190,7 +197,10 @@ export function registerMissevanRoutes(router, {
         results.push(await fetchSoundSummary(soundId));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Failed to fetch Missevan sound summary sound_id=${soundId}`, error);
+        void logger.error("missevan_sound_summary_fetch_failed", error, {
+          platform: "missevan",
+          soundId,
+        });
         results.push({
           sound_id: Number(soundId),
           success: false,
@@ -250,7 +260,10 @@ export function registerMissevanRoutes(router, {
       return res.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to fetch reward summary drama_id=${dramaId}`, error);
+      void logger.error("missevan_reward_summary_fetch_failed", error, {
+        platform: "missevan",
+        dramaId,
+      });
       return res.json({
         success: false,
         drama_id: dramaId,
@@ -285,7 +298,10 @@ export function registerMissevanRoutes(router, {
       return res.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to fetch reward meta drama_id=${dramaId}`, error);
+      void logger.error("missevan_reward_meta_fetch_failed", error, {
+        platform: "missevan",
+        dramaId,
+      });
       return res.json({
         success: false,
         drama_id: dramaId,

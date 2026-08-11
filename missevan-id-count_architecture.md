@@ -4,7 +4,7 @@ Last updated: 2026-07-30
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.7.7
+- **Version**: 1.7.8
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
   - `server.js` as the stable backend facade, with `server/application.js` providing composition and `server/routes/` holding extracted route groups
@@ -76,7 +76,7 @@ This document describes the current implementation, not the historical evolution
 
 ### Data and Support Files
 - `scripts/`: developer utilities such as seed-building helpers
-- `logs/`: runtime usage logging output when present
+- `logs/`: categorized runtime JSON logs when present (`usage.log` for user/task events, `operations.log` for backend operations)
 - `runtime/`: mutable runtime JSON fallback storage when present
 
 ## Backend API Surface
@@ -125,7 +125,7 @@ The backend currently exposes these route families.
 
 ### Utility and Telemetry APIs
 - `GET /image-proxy`: controlled image proxy with hostname allowlist
-- `POST /usage-log`: append lightweight usage telemetry to `logs/usage.log`
+- `POST /usage-log`: accept frontend telemetry and route it to the structured `user_action`, `task_summary`, or `operation` category
 - `GET *`: serve `dist/index.html` for the SPA shell
 
 ## Frontend-Backend Contract
@@ -167,13 +167,20 @@ The backend currently exposes these route families.
 ## Data Stores and Persistence
 
 ### Mutable Runtime Locations
-- `logs/usage.log`: append-only usage telemetry
+- `logs/usage.log`: append-only structured `user_action` and `task_summary` telemetry
+- `logs/operations.log`: append-only structured backend operation telemetry
 - `runtime/manbo-drama-info.json`: Manbo info fallback storage
 - `runtime/missevan-drama-info.json`: Missevan info fallback storage
 - `runtime/new-drama-ids.json`: new-drama ID fallback storage
 - `runtime/stats-tasks.json`: local statistics task recovery snapshots
 
 These runtime locations resolve relative to `APP_DATA_DIR` when running in desktop mode, or the project directory in local server mode.
+
+### Logging Model
+- Every backend log is emitted to stdout/stderr as one JSON line with `timestamp`, `level`, `message`, `logSchemaVersion`, `category`, and `event` so Railway can index custom attributes.
+- `user_action` records primary interaction intent; `task_summary` records every completed, failed, or cancelled statistics task with its full result; `operation` contains external requests, cache/store activity, image proxy work, and other troubleshooting detail.
+- Request, task, and operation scopes propagate `requestId`, `taskId`, and `operationId`. A normal danmaku fetch produces one merged operation summary; anomalous attempts are nested under `attempts` instead of producing an unrelated second usage record.
+- On first use, a pre-schema `logs/usage.log` is archived as `logs/usage.legacy-<timestamp>.log` before new categorized records are appended.
 
 ### Persistent Store Model
 

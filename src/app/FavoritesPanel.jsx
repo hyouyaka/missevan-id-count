@@ -1633,13 +1633,28 @@ export function FavoritesPanel({
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function logFavoriteHistoryUsage(action, fields = {}) {
+    void fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...fields }),
+    }).catch((error) => {
+      console.warn(`Failed to log ${action}`, error);
+    });
+  }
+
   async function exportData() {
     try {
       const backup = await exportFavoritesData();
-      const blob = new Blob([JSON.stringify(buildFavoritesBackup(backup), null, 2)], {
+      const normalizedBackup = buildFavoritesBackup(backup);
+      const blob = new Blob([JSON.stringify(normalizedBackup, null, 2)], {
         type: "application/json",
       });
       downloadBlob(blob, `mm-toolkit-favorites-${new Date().toISOString().slice(0, 10)}.json`);
+      logFavoriteHistoryUsage("favorite_history_export", {
+        favoriteCount: normalizedBackup.favorites.length,
+        snapshotCount: normalizedBackup.snapshots.length,
+      });
       toast.success("收藏数据已导出。");
     } catch (error) {
       console.error("Failed to export favorites", error);
@@ -1658,6 +1673,10 @@ export function FavoritesPanel({
       new Blob([csv], { type: "text/csv;charset=utf-8" }),
       `mm-toolkit-favorites-history-${new Date().toISOString().slice(0, 10)}.csv`
     );
+    logFavoriteHistoryUsage("favorite_history_download", {
+      favoriteCount: selectedFavorites.length,
+      rowCount: rows.length,
+    });
     toast.success(`已下载 ${selectedFavorites.length} 部作品的历史数据。`);
   }
 
@@ -1671,6 +1690,10 @@ export function FavoritesPanel({
       setSettings(normalizeFavoriteSettings(imported?.settings));
       await reloadSnapshots();
       await onFavoritesChange?.();
+      logFavoriteHistoryUsage("favorite_history_import", {
+        favoriteCount: imported.favorites.length,
+        snapshotCount: imported.snapshots.length,
+      });
       toast.success("收藏数据导入完成。");
     } catch (error) {
       console.error("Failed to import favorites", error);

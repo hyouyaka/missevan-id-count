@@ -1061,6 +1061,36 @@ test("favorite usage log entries are accepted and sanitized", async () => {
   );
   assert.equal(buildFavoriteUsageLog({ platform: "manbo", action: "favorite_remove", dramaId: "1467142227078676553" }).action, "favorite_remove");
   assert.equal(buildFavoriteUsageLog({ platform: "missevan", action: "favorite_add", dramaId: "" }), null);
+  assert.deepEqual(
+    buildFavoriteUsageLog({
+      action: "favorite_history_import",
+      favoriteCount: 12,
+      snapshotCount: 34,
+    }),
+    {
+      action: "favorite_history_import",
+      source: "favorites",
+      format: "json",
+      favoriteCount: 12,
+      snapshotCount: 34,
+      success: true,
+    }
+  );
+  assert.deepEqual(
+    buildFavoriteUsageLog({
+      action: "favorite_history_download",
+      favoriteCount: 3,
+      rowCount: 28,
+    }),
+    {
+      action: "favorite_history_download",
+      source: "favorites",
+      format: "csv",
+      favoriteCount: 3,
+      rowCount: 28,
+      success: true,
+    }
+  );
 });
 
 test("stats task source is normalized for favorite refresh logs", async () => {
@@ -1072,9 +1102,136 @@ test("stats task source is normalized for favorite refresh logs", async () => {
   assert.equal(normalizeStatsTaskSource(""), "");
 });
 
-test("completed stats task usage logs preserve the full result and optional source", async () => {
+test("danmaku operation logs merge normal requests and retain anomalous attempts", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
-  const { buildStatsTaskCompletedUsageLog } = await import("./server.js");
+  const {
+    buildOperationTraceLog,
+    normalizeOperationAttemptLogFields,
+  } = await import("./server.js");
+  const entry = {
+    action: "danmaku_summary",
+    platform: "missevan",
+    soundId: 9169699,
+    success: true,
+    danmaku: 812,
+    userCount: 308,
+  };
+  const normal = buildOperationTraceLog({
+    event: "danmaku_summary",
+    fields: { platform: "missevan", soundId: 9169699 },
+    startedAt: 1000,
+    attempts: [{
+      endpoint: "sound/getdm",
+      attempt: 1,
+      status: 200,
+      durationMs: 559,
+      success: true,
+    }],
+  }, entry, 1600);
+
+  assert.equal(normal.level, "info");
+  assert.equal(normal.fields.attemptCount, 1);
+  assert.equal(normal.fields.endpoint, "sound/getdm");
+  assert.equal(normal.fields.danmaku, 812);
+  assert.equal(normal.fields.requestDurationMs, 559);
+  assert.equal(normal.fields.durationMs, 600);
+  assert.equal(normal.anomalousAttempts.length, 0);
+  assert.equal("attempts" in normal.fields, false);
+
+  const paginated = buildOperationTraceLog({
+    event: "danmaku_summary",
+    fields: { platform: "manbo", soundId: "2235647356781461610" },
+    startedAt: 1000,
+    attempts: [
+      { endpoint: "web_manbo/getDanmaKuPgList", attempt: 1, status: 200, durationMs: 200, success: true },
+      { endpoint: "web_manbo/getDanmaKuPgList", attempt: 1, status: 200, durationMs: 180, success: true },
+      { endpoint: "web_manbo/getDanmaKuPgList", attempt: 1, status: 200, durationMs: 160, success: true },
+    ],
+  }, {
+    action: "danmaku_summary",
+    platform: "manbo",
+    success: true,
+    danmaku: 430,
+  }, 1300);
+
+  assert.equal(paginated.level, "info");
+  assert.equal(paginated.fields.attemptCount, 3);
+  assert.equal(paginated.anomalousAttempts.length, 0);
+  assert.equal("attempts" in paginated.fields, false);
+
+  const fallback = buildOperationTraceLog({
+    event: "danmaku_summary",
+    fields: { platform: "missevan", soundId: 9169699 },
+    startedAt: 1000,
+    attempts: [
+      { endpoint: "sound/getdm", attempt: 1, status: 418, durationMs: 200, success: false },
+      {
+        endpoint: "sound/getdm",
+        attempt: 2,
+        status: 200,
+        durationMs: 400,
+        success: true,
+        fallbackUsed: true,
+        fallbackRoute: "render",
+        fallbackReason: "http_418",
+      },
+    ],
+  }, entry, 1800);
+
+  assert.equal(fallback.level, "warn");
+  assert.equal(fallback.fields.fallbackUsed, true);
+  assert.equal(fallback.fields.fallbackRoute, "render");
+  assert.equal(fallback.fields.attemptCount, 2);
+  assert.equal(fallback.fields.attempts.length, 2);
+  assert.equal(fallback.anomalousAttempts.length, 2);
+  assert.deepEqual(
+    normalizeOperationAttemptLogFields({
+      endpoint: "sound/getdm",
+      attempt: 1,
+      status: 418,
+      success: false,
+    }),
+    {
+      endpoint: "sound/getdm",
+      attempt: 1,
+      success: false,
+      httpStatus: 418,
+    }
+  );
+  assert.deepEqual(
+    normalizeOperationAttemptLogFields({ status: "timeout", success: false }),
+    { success: false, outcome: "timeout" }
+  );
+
+  const cancelled = buildOperationTraceLog({
+    event: "danmaku_summary",
+    fields: { platform: "missevan", soundId: 9169699 },
+    startedAt: 1000,
+    attempts: [{
+      endpoint: "sound/getdm",
+      attempt: 1,
+      status: "cancelled",
+      success: false,
+    }],
+  }, {
+    action: "danmaku_summary",
+    platform: "missevan",
+    status: "cancelled",
+    success: false,
+    cancelled: true,
+  }, 1200);
+
+  assert.equal(cancelled.level, "info");
+  assert.equal(cancelled.fields.outcome, "cancelled");
+  assert.equal(cancelled.fields.cancelled, true);
+});
+
+test("terminal stats task usage logs preserve the full result and optional source", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const {
+    buildStatsTaskCompletedUsageLog,
+    getStatsTaskSummaryLogLevel,
+  } = await import("./server.js");
   const result = {
     idResults: [{ dramaId: "12345", users: 8 }],
     totalUsers: 8,
@@ -1108,8 +1265,45 @@ test("completed stats task usage logs preserve the full result and optional sour
       result,
     }
   );
-  assert.equal(buildStatsTaskCompletedUsageLog({ status: "failed", result }), null);
-  assert.equal(buildStatsTaskCompletedUsageLog({ status: "cancelled", result }), null);
+  const failed = buildStatsTaskCompletedUsageLog({
+    platform: "manbo",
+    taskId: "failed-task",
+    taskType: "revenue",
+    status: "failed",
+    error: "boom",
+    result,
+  });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.success, false);
+  assert.equal(failed.errorMessage, "boom");
+  assert.equal(failed.result, result);
+
+  const cancelled = buildStatsTaskCompletedUsageLog({
+    platform: "missevan",
+    taskId: "cancelled-task",
+    taskType: "id",
+    status: "cancelled",
+    resultIncomplete: true,
+    result,
+  });
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(cancelled.resultIncomplete, true);
+  assert.equal(cancelled.result, result);
+  assert.equal(
+    getStatsTaskSummaryLogLevel({
+      outcome: "completed",
+      success: false,
+      failedCount: 0,
+      accessDenied: true,
+    }),
+    "warn"
+  );
+  assert.equal(
+    getStatsTaskSummaryLogLevel({ outcome: "completed", success: true, failedCount: 0 }),
+    "info"
+  );
+  assert.equal(getStatsTaskSummaryLogLevel({ outcome: "failed" }), "error");
 });
 
 test("desktop favorites read errors keep a JSON response payload with file path", async () => {

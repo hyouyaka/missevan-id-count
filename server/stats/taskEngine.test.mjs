@@ -348,6 +348,7 @@ test("pruning an active expired task does not persist it again after removal", a
   const started = deferred();
   const finish = deferred();
   const persistenceEvents = [];
+  const terminalSnapshots = [];
   const engine = createStatsTaskEngine({
     limits: {
       missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 1, maxQueuedPerClient: 1 },
@@ -361,6 +362,9 @@ test("pruning an active expired task does not persist it again after removal", a
       async remove(taskId) {
         persistenceEvents.push({ type: "remove", taskId });
       },
+    },
+    onTerminal(snapshot) {
+      terminalSnapshots.push(snapshot);
     },
     async execute() {
       started.resolve();
@@ -389,6 +393,10 @@ test("pruning an active expired task does not persist it again after removal", a
     type: "remove",
     taskId: task.taskId,
   });
+  assert.deepEqual(
+    terminalSnapshots.map((snapshot) => [snapshot.taskId, snapshot.status]),
+    [[task.taskId, "cancelled"]]
+  );
 });
 
 test("cancelling terminal tasks is idempotent", async () => {
@@ -555,8 +563,9 @@ test("final persistence does not hold the scheduler active slot", async () => {
   assert.equal(completionLogCalls, 1);
 });
 
-test("task engine skips onCompleted for failed, cancelled, and restored terminal tasks", async () => {
+test("task engine reports new failed and cancelled terminals while keeping onCompleted completed-only", async () => {
   const completedSnapshots = [];
+  const terminalSnapshots = [];
   const engine = createStatsTaskEngine({
     limits: {
       missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 3, maxQueuedPerClient: 3 },
@@ -569,6 +578,9 @@ test("task engine skips onCompleted for failed, cancelled, and restored terminal
     },
     onCompleted(snapshot) {
       completedSnapshots.push(snapshot);
+    },
+    onTerminal(snapshot) {
+      terminalSnapshots.push(snapshot);
     },
     async execute(task) {
       if (task.taskId === "failed-task") {
@@ -585,6 +597,76 @@ test("task engine skips onCompleted for failed, cancelled, and restored terminal
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(completedSnapshots, []);
+  assert.deepEqual(
+    terminalSnapshots.map((snapshot) => snapshot.status).sort(),
+    ["cancelled", "failed"]
+  );
+  assert.equal(terminalSnapshots.some((snapshot) => snapshot.taskId === "restored-complete"), false);
+});
+
+test("queued cancellation calls onTerminal exactly once", async () => {
+  const started = deferred();
+  const finish = deferred();
+  const terminalSnapshots = [];
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 2, maxQueuedPerClient: 2 },
+    },
+    onTerminal(snapshot) {
+      terminalSnapshots.push(snapshot);
+    },
+    async execute(task) {
+      if (task.taskId === "running-task") {
+        started.resolve();
+        await finish.promise;
+      }
+      return { status: "completed" };
+    },
+  });
+
+  engine.enqueue({ taskId: "running-task", platform: "missevan", clientKey: "same", status: "queued" });
+  await started.promise;
+  engine.enqueue({ taskId: "queued-task", platform: "missevan", clientKey: "same", status: "queued" });
+  engine.cancel("queued-task");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(terminalSnapshots.length, 1);
+  assert.equal(terminalSnapshots[0].taskId, "queued-task");
+  assert.equal(terminalSnapshots[0].status, "cancelled");
+  finish.resolve();
+});
+
+test("removing a terminal task allows a new task with the same id to notify", async () => {
+  const terminalSnapshots = [];
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 1, maxQueuedPerClient: 1 },
+    },
+    onTerminal(snapshot) {
+      terminalSnapshots.push(snapshot);
+    },
+    async execute() {
+      return { status: "completed" };
+    },
+  });
+  const createTask = () => ({
+    taskId: "reused-task-id",
+    platform: "missevan",
+    clientKey: "same-client",
+    status: "queued",
+  });
+
+  engine.enqueue(createTask());
+  await new Promise((resolve) => setImmediate(resolve));
+  await engine.remove("reused-task-id");
+  engine.enqueue(createTask());
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(terminalSnapshots.length, 2);
+  assert.deepEqual(
+    terminalSnapshots.map((snapshot) => snapshot.taskId),
+    ["reused-task-id", "reused-task-id"]
+  );
 });
 
 test("onCompleted errors do not change the completed task status", async () => {
@@ -660,6 +742,7 @@ test("task engine restores nonterminal tasks with the same id and a clean attemp
 test("task engine does not expose restored tasks that cannot be re-enqueued", async () => {
   const release = deferred();
   const restoredToLiveStore = [];
+  const terminalSnapshots = [];
   const engine = createStatsTaskEngine({
     limits: {
       missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 0, maxQueuedPerClient: 0 },
@@ -676,15 +759,23 @@ test("task engine does not expose restored tasks that cannot be re-enqueued", as
     onRestore(task) {
       restoredToLiveStore.push(task.taskId);
     },
+    onTerminal(snapshot) {
+      terminalSnapshots.push(snapshot);
+    },
     async execute() {
       await release.promise;
     },
   });
 
   const restored = await engine.restore();
+  await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(restored.map((task) => task.taskId), ["task-a"]);
   assert.deepEqual(restoredToLiveStore, ["task-a"]);
+  assert.deepEqual(
+    terminalSnapshots.map((snapshot) => [snapshot.taskId, snapshot.status]),
+    [["task-b", "failed"]]
+  );
   release.resolve();
 });
 

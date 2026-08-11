@@ -54,8 +54,17 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.7", () => {
-  assert.equal(packageJson.version, "1.7.7");
+test("package version is 1.7.8", () => {
+  assert.equal(packageJson.version, "1.7.8");
+});
+
+test("changelog contains the 1.7.8 favorites update", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.8");
+
+  assert.deepEqual(entry, {
+    version: "1.7.8",
+    changes: ["优化了收藏界面和功能"],
+  });
 });
 
 test("changelog contains all 1.7.7 CV profile and compare chart updates", () => {

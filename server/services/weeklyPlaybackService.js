@@ -143,6 +143,7 @@ function buildHistoryBundle(platform, ids, rawValues) {
 
 export function createWeeklyPlaybackStore({
   command,
+  logger = null,
   now = () => Date.now(),
   cacheTtlMs = WEEKLY_PLAYBACK_CACHE_TTL_MS,
   cacheMaxEntries = WEEKLY_PLAYBACK_CACHE_MAX_ENTRIES,
@@ -174,13 +175,13 @@ export function createWeeklyPlaybackStore({
       result = await command(parts);
       return result;
     } finally {
-      console.info(JSON.stringify({
+      void logger?.info("datastore_read", {
         source,
         key,
         bytes: getReadBytes(result),
         durationMs: Date.now() - startedAt,
         fallbackReason,
-      }));
+      });
     }
   }
 

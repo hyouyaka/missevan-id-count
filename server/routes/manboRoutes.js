@@ -17,6 +17,7 @@ export function registerManboRoutes(router, {
   getManboMainCvNames,
   hydrateManboSearchRecord,
   isAccessDeniedError,
+  logger,
   manboInfoStore,
   mapWithConcurrency,
   normalizeDramaCardUsageAction,
@@ -181,7 +182,10 @@ export function registerManboRoutes(router, {
         },
       });
     } catch (error) {
-      console.error(`Failed to search Manbo library keyword=${keyword}`, error);
+      void logger.error("manbo_library_search_failed", error, {
+        platform: "manbo",
+        keyword,
+      });
       return res.status(500).json({
         success: false,
         results: [],
@@ -264,7 +268,10 @@ export function registerManboRoutes(router, {
           accessDenied ||
           isAccessDeniedError(error) ||
           String(message).startsWith("ACCESS_DENIED_COOLDOWN:");
-        console.error(`Failed to fetch Manbo drama card input=${item.raw}`, error);
+        void logger.error("manbo_drama_card_fetch_failed", error, {
+          platform: "manbo",
+          item: item.raw,
+        });
         failedItems.push(item.raw);
       }
     }
@@ -310,7 +317,10 @@ export function registerManboRoutes(router, {
         const accessDenied =
           isAccessDeniedError(error) ||
           String(error?.message || error).startsWith("ACCESS_DENIED_COOLDOWN:");
-        console.error(`Failed to fetch Manbo drama drama_id=${id}`, error);
+        void logger.error("manbo_drama_fetch_failed", error, {
+          platform: "manbo",
+          dramaId: id,
+        });
         results.push({ success: false, id, accessDenied });
       }
     }
@@ -327,7 +337,10 @@ export function registerManboRoutes(router, {
         results.push(await fetchManboSetSummary(setId));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Failed to fetch Manbo set summary set_id=${setId}`, error);
+        void logger.error("manbo_set_summary_fetch_failed", error, {
+          platform: "manbo",
+          soundId: setId,
+        });
         results.push({
           sound_id: Number(setId),
           success: false,

@@ -92,7 +92,7 @@ async function seedFavorites(page) {
 
 test("favorites history switches between a scroll-free mobile timeline and desktop table", async ({ page }) => {
   await page.addInitScript(() => {
-    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.7");
+    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.8");
   });
   await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/tool?view=favorites");
@@ -306,7 +306,7 @@ test("favorite background task details wrap within a 377px viewport", async ({ p
   };
 
   await page.addInitScript(() => {
-    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.7");
+    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.8");
   });
   await page.route("**/getdramas**", async (route) => {
     await route.fulfill({
