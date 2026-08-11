@@ -2133,6 +2133,88 @@ export function normalizeStatsTaskSource(value) {
   return normalizeTextValue(value).slice(0, 40);
 }
 
+const STATS_TASK_RESULT_LIST_KEYS = Object.freeze({
+  id: "idResults",
+  play_count: "playCountResults",
+  revenue: "revenueResults",
+});
+
+export function buildStatsTaskKeywordText(taskType, result = null) {
+  const resultListKey = STATS_TASK_RESULT_LIST_KEYS[normalizeTextValue(taskType)];
+  if (!resultListKey) {
+    return "";
+  }
+  return normalizeStringArray(
+    (Array.isArray(result?.[resultListKey]) ? result[resultListKey] : [])
+      .map((item) => item?.title),
+    200
+  ).join(", ");
+}
+
+function normalizeNonNegativeIntegerText(value) {
+  if (value == null || String(value).trim() === "") {
+    return "";
+  }
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0
+    ? String(Math.floor(number))
+    : "";
+}
+
+function normalizeRevenueText(value) {
+  if (value == null || String(value).trim() === "") {
+    return "";
+  }
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0
+    ? number.toFixed(2)
+    : "";
+}
+
+export function buildStatsTaskKeyResultText(taskType, result = null) {
+  const normalizedTaskType = normalizeTextValue(taskType);
+  if (normalizedTaskType === "id") {
+    return normalizeNonNegativeIntegerText(result?.totalUsers);
+  }
+  if (normalizedTaskType === "play_count") {
+    return normalizeNonNegativeIntegerText(result?.playCountTotal);
+  }
+  if (normalizedTaskType !== "revenue") {
+    return "";
+  }
+
+  const summary = result?.revenueSummary;
+  const minRevenueText = summary?.minRevenueYuan == null
+    ? ""
+    : normalizeRevenueText(summary.minRevenueYuan);
+  const maxRevenueText = summary?.maxRevenueYuan == null
+    ? ""
+    : normalizeRevenueText(summary.maxRevenueYuan);
+  if (minRevenueText && maxRevenueText) {
+    return minRevenueText === maxRevenueText
+      ? minRevenueText
+      : `${minRevenueText}\u2013${maxRevenueText}`;
+  }
+  return normalizeRevenueText(summary?.estimatedRevenueYuan);
+}
+
+export function buildUserActionKeywordText(action, fields = {}) {
+  const normalizedAction = normalizeTextValue(action);
+  if (["search", "ranks", "ongoing"].includes(normalizedAction)) {
+    return normalizeTextValue(fields.keyword);
+  }
+  if (normalizedAction === "trend") {
+    return normalizeTextValue(fields.dramaName);
+  }
+  if (normalizedAction.endsWith("_open_search_result")) {
+    return normalizeStringArray(fields.titles, 200).join(", ");
+  }
+  if (["cv_profile_open", "cv_rank_open_profile"].includes(normalizedAction)) {
+    return normalizeTextValue(fields.cvName);
+  }
+  return "";
+}
+
 export function buildStatsTaskCompletedUsageLog(snapshot = {}) {
   const status = normalizeTextValue(snapshot?.status);
   if (!["completed", "failed", "cancelled"].includes(status)) {
@@ -2143,13 +2225,21 @@ export function buildStatsTaskCompletedUsageLog(snapshot = {}) {
   const accessDenied = Boolean(snapshot.accessDenied);
   const createdAt = Math.max(0, Number(snapshot.createdAt ?? 0) || 0);
   const updatedAt = Math.max(createdAt, Number(snapshot.updatedAt ?? 0) || 0);
+  const taskType = normalizeTextValue(snapshot.taskType);
+  const success = status === "completed" && !accessDenied && failedCount === 0;
+  const keywordText = buildStatsTaskKeywordText(taskType, snapshot.result);
+  const keyResultText = success
+    ? buildStatsTaskKeyResultText(taskType, snapshot.result)
+    : "";
   return {
     action: "calculate",
     platform: normalizeTextValue(snapshot.platform),
     taskId: normalizeTextValue(snapshot.taskId),
-    taskType: normalizeTextValue(snapshot.taskType),
+    taskType,
     status,
-    success: status === "completed" && !accessDenied && failedCount === 0,
+    success,
+    ...(keywordText ? { keywordText } : {}),
+    ...(keyResultText ? { keyResultText } : {}),
     ...(source ? { source } : {}),
     ...(updatedAt > createdAt ? { durationMs: updatedAt - createdAt } : {}),
     totalCount: Math.max(0, Math.floor(Number(snapshot.totalCount ?? 0) || 0)),
@@ -7270,8 +7360,15 @@ function normalizeUsageLogEvent(action) {
   return action || "usage_event";
 }
 
-function normalizeUsageLogFields(entry, action) {
-  const { action: _action, timestamp: _timestamp, status, ...fields } = entry || {};
+export function normalizeUsageLogFields(entry, action) {
+  const {
+    action: _action,
+    timestamp: _timestamp,
+    keywordText: _keywordText,
+    keyResultText: _keyResultText,
+    status,
+    ...fields
+  } = entry || {};
   if (action === "ranks_open_search_result" && !fields.source) {
     fields.source = "ranks";
   } else if (action === "ongoing_open_search_result" && !fields.source) {
@@ -7283,6 +7380,21 @@ function normalizeUsageLogFields(entry, action) {
     fields.httpStatus = status;
   } else if (status) {
     fields.outcome = status;
+  }
+  const keywordText = action === "calculate" || action === "stats_task_completed"
+    ? buildStatsTaskKeywordText(fields.taskType, fields.result)
+    : buildUserActionKeywordText(action, fields);
+  if (keywordText) {
+    fields.keywordText = keywordText;
+  }
+  if (
+    (action === "calculate" || action === "stats_task_completed") &&
+    fields.success === true
+  ) {
+    const keyResultText = buildStatsTaskKeyResultText(fields.taskType, fields.result);
+    if (keyResultText) {
+      fields.keyResultText = keyResultText;
+    }
   }
   return fields;
 }

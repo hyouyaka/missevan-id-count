@@ -25,6 +25,8 @@ const EXACT_SENSITIVE_FIELDS = new Set([
   "url",
 ]);
 const PRIMARY_DISPLAY_FIELDS = Object.freeze([
+  "keywordText",
+  "keyResultText",
   "dramaId",
   "dramaIds",
   "dramaName",

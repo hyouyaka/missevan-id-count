@@ -1230,10 +1230,14 @@ test("terminal stats task usage logs preserve the full result and optional sourc
   process.env.START_SERVER_ON_IMPORT = "false";
   const {
     buildStatsTaskCompletedUsageLog,
+    buildStatsTaskKeyResultText,
+    buildStatsTaskKeywordText,
+    buildUserActionKeywordText,
     getStatsTaskSummaryLogLevel,
+    normalizeUsageLogFields,
   } = await import("./server.js");
   const result = {
-    idResults: [{ dramaId: "12345", users: 8 }],
+    idResults: [{ dramaId: "12345", title: "剑名不奈何 第一季", users: 8 }],
     totalUsers: 8,
   };
 
@@ -1257,6 +1261,7 @@ test("terminal stats task usage logs preserve the full result and optional sourc
       taskType: "id",
       status: "completed",
       success: false,
+      keywordText: "剑名不奈何 第一季",
       source: "12345payID",
       totalCount: 3,
       completedCount: 2,
@@ -1265,6 +1270,25 @@ test("terminal stats task usage logs preserve the full result and optional sourc
       result,
     }
   );
+  const successful = buildStatsTaskCompletedUsageLog({
+    platform: "missevan",
+    taskId: "successful-task",
+    taskType: "id",
+    status: "completed",
+    result,
+  });
+  assert.equal(successful.success, true);
+  assert.equal(successful.keywordText, "剑名不奈何 第一季");
+  assert.equal(successful.keyResultText, "8");
+  assert.equal(successful.result, result);
+  assert.equal("keyResultText" in buildStatsTaskCompletedUsageLog({
+    platform: "missevan",
+    taskId: "partial-task",
+    taskType: "id",
+    status: "completed",
+    failedCount: 1,
+    result,
+  }), false);
   const failed = buildStatsTaskCompletedUsageLog({
     platform: "manbo",
     taskId: "failed-task",
@@ -1289,7 +1313,89 @@ test("terminal stats task usage logs preserve the full result and optional sourc
   assert.equal(cancelled.status, "cancelled");
   assert.equal(cancelled.cancelled, true);
   assert.equal(cancelled.resultIncomplete, true);
+  assert.equal(cancelled.keywordText, "剑名不奈何 第一季");
+  assert.equal("keyResultText" in cancelled, false);
   assert.equal(cancelled.result, result);
+  assert.equal(buildStatsTaskKeywordText("id", {
+    idResults: [
+      { title: " 剑名不奈何 第一季 " },
+      { title: "剑名不奈何 第二季" },
+      { title: "剑名不奈何 第一季" },
+      { title: "" },
+    ],
+  }), "剑名不奈何 第一季, 剑名不奈何 第二季");
+  assert.equal(buildStatsTaskKeywordText("play_count", {
+    playCountResults: [{ title: "播放量剧集" }],
+  }), "播放量剧集");
+  assert.equal(buildStatsTaskKeywordText("revenue", {
+    revenueResults: [{ title: "收益剧集" }],
+  }), "收益剧集");
+  assert.equal(buildStatsTaskKeyResultText("id", { totalUsers: 308 }), "308");
+  assert.equal(buildStatsTaskKeyResultText("play_count", { playCountTotal: 125600 }), "125600");
+  assert.equal(buildStatsTaskKeyResultText("revenue", {
+    revenueSummary: { estimatedRevenueYuan: 120.5 },
+  }), "120.50");
+  assert.equal(buildStatsTaskKeyResultText("revenue", {
+    revenueSummary: { minRevenueYuan: 120.5, maxRevenueYuan: 168 },
+  }), "120.50\u2013168.00");
+  assert.equal(buildStatsTaskKeyResultText("revenue", {
+    revenueSummary: { estimatedRevenueYuan: 0 },
+  }), "0.00");
+  assert.equal(buildStatsTaskKeyResultText("id", { totalUsers: null }), "");
+  assert.equal(buildUserActionKeywordText("search", { keyword: "  剑名不奈何  " }), "剑名不奈何");
+  assert.equal(buildUserActionKeywordText("trend", { dramaName: "剑名不奈何 第一季" }), "剑名不奈何 第一季");
+  assert.equal(buildUserActionKeywordText("ranks", { keyword: "猫耳付费榜" }), "猫耳付费榜");
+  assert.equal(buildUserActionKeywordText("ongoing", { keyword: "漫播一周内更新" }), "漫播一周内更新");
+  assert.equal(buildUserActionKeywordText("ranks_open_search_result", {
+    titles: ["你的雪人能活多久 第一季", "你的雪人能活多久 第二季", "你的雪人能活多久 第一季", ""],
+  }), "你的雪人能活多久 第一季, 你的雪人能活多久 第二季");
+  assert.equal(buildUserActionKeywordText("ongoing_open_search_result", {
+    titles: ["一周内更新剧集"],
+  }), "一周内更新剧集");
+  assert.equal(buildUserActionKeywordText("cv_profile_open_search_result", {
+    titles: ["CV 作品"],
+  }), "CV 作品");
+  assert.equal(buildUserActionKeywordText("ranks_open_search_result", { titles: [] }), "");
+  assert.equal(buildUserActionKeywordText("cv_profile_open", { cvName: " 倒霉死勒 " }), "倒霉死勒");
+  assert.equal(buildUserActionKeywordText("cv_rank_open_profile", { cvName: "倒霉死勒" }), "倒霉死勒");
+  assert.equal(buildUserActionKeywordText("favorite_add", { keyword: "不应出现" }), "");
+  assert.deepEqual(normalizeUsageLogFields({
+    action: "search",
+    keyword: "剑名不奈何",
+    keywordText: "客户端伪造内容",
+    keyResultText: "999",
+    success: true,
+  }, "search"), {
+    keyword: "剑名不奈何",
+    success: true,
+    keywordText: "剑名不奈何",
+  });
+  assert.deepEqual(normalizeUsageLogFields({
+    action: "ranks_open_search_result",
+    platform: "missevan",
+    titles: ["你的雪人能活多久 第一季"],
+    keywordText: "客户端伪造内容",
+    count: 1,
+  }, "ranks_open_search_result"), {
+    platform: "missevan",
+    titles: ["你的雪人能活多久 第一季"],
+    count: 1,
+    source: "ranks",
+    keywordText: "你的雪人能活多久 第一季",
+  });
+  assert.deepEqual(normalizeUsageLogFields({
+    action: "cv_profile_open",
+    platform: "missevan",
+    source: "ranks",
+    cvName: "倒霉死勒",
+    success: true,
+  }, "cv_profile_open"), {
+    platform: "missevan",
+    source: "ranks",
+    cvName: "倒霉死勒",
+    success: true,
+    keywordText: "倒霉死勒",
+  });
   assert.equal(
     getStatsTaskSummaryLogLevel({
       outcome: "completed",

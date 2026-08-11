@@ -73,6 +73,40 @@ test("logger serializes primary behavior fields before correlation and detail fi
   assert.ok(keys.indexOf("source") < keys.indexOf("durationMs"));
 });
 
+test("logger emits keyword columns at the front and applies the normal text limit", () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (line) => lines.push(line);
+  try {
+    createLogger().taskSummary("stats_task_finished", {
+      platform: "missevan",
+      keywordText: "剧".repeat(600),
+      keyResultText: "120.50\u2013168.00",
+      taskType: "revenue",
+      result: { revenueResults: [] },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const payload = JSON.parse(lines[0]);
+  assert.deepEqual(Object.keys(payload).slice(0, 9), [
+    "level",
+    "message",
+    "category",
+    "event",
+    "platform",
+    "keywordText",
+    "keyResultText",
+    "taskType",
+    "logSchemaVersion",
+  ]);
+  assert.equal(payload.keywordText, `${"剧".repeat(512)}…`);
+  assert.equal(payload.keyResultText, "120.50\u2013168.00");
+  assert.equal(payload.result.revenueResults.length, 0);
+  assert.equal(Object.keys(payload).at(-1), "timestamp");
+});
+
 test("logger preserves explicit warn level on stdout and inherits correlation context", async () => {
   const originalLog = console.log;
   const originalError = console.error;
