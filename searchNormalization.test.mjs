@@ -1346,6 +1346,9 @@ test("terminal stats task usage logs preserve the full result and optional sourc
   assert.equal(buildUserActionKeywordText("trend", { dramaName: "剑名不奈何 第一季" }), "剑名不奈何 第一季");
   assert.equal(buildUserActionKeywordText("ranks", { keyword: "猫耳付费榜" }), "猫耳付费榜");
   assert.equal(buildUserActionKeywordText("ongoing", { keyword: "漫播一周内更新" }), "漫播一周内更新");
+  assert.equal(buildUserActionKeywordText("compare", {
+    dramaTitles: ["情蛊", "奇洛李维斯回信", "情蛊", ""],
+  }), "情蛊, 奇洛李维斯回信");
   assert.equal(buildUserActionKeywordText("ranks_open_search_result", {
     titles: ["你的雪人能活多久 第一季", "你的雪人能活多久 第二季", "你的雪人能活多久 第一季", ""],
   }), "你的雪人能活多久 第一季, 你的雪人能活多久 第二季");
@@ -1395,6 +1398,18 @@ test("terminal stats task usage logs preserve the full result and optional sourc
     cvName: "倒霉死勒",
     success: true,
     keywordText: "倒霉死勒",
+  });
+  assert.deepEqual(normalizeUsageLogFields({
+    action: "compare",
+    dramaIds: ["86178", "85974"],
+    dramaTitles: ["情蛊", "奇洛李维斯回信"],
+    keywordText: "客户端伪造内容",
+    success: true,
+  }, "compare"), {
+    dramaIds: ["86178", "85974"],
+    dramaTitles: ["情蛊", "奇洛李维斯回信"],
+    success: true,
+    keywordText: "情蛊, 奇洛李维斯回信",
   });
   assert.equal(
     getStatsTaskSummaryLogLevel({

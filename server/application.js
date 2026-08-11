@@ -2206,6 +2206,9 @@ export function buildUserActionKeywordText(action, fields = {}) {
   if (normalizedAction === "trend") {
     return normalizeTextValue(fields.dramaName);
   }
+  if (normalizedAction === "compare") {
+    return normalizeStringArray(fields.dramaTitles, 200).join(", ");
+  }
   if (normalizedAction.endsWith("_open_search_result")) {
     return normalizeStringArray(fields.titles, 200).join(", ");
   }
