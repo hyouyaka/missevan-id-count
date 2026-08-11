@@ -9,6 +9,16 @@ const FAVORITES_STORE = "favorites";
 const SNAPSHOTS_STORE = "snapshots";
 const SETTINGS_STORE = "settings";
 const VALID_PLATFORMS = new Set(["missevan", "manbo"]);
+const FAVORITE_METRIC_KEYS = [
+  "viewCount",
+  "subscriptionCount",
+  "rewardCount",
+  "rewardTotal",
+  "giftTotal",
+  "paidOrListenCount",
+  "paidIdCount",
+];
+const VALID_SNAPSHOT_STATUSES = new Set(["success", "partial", "failed"]);
 const DEFAULT_SETTINGS = {
   deltaMetric: "viewCount",
   sortBy: "lastSnapshotAt",
@@ -34,6 +44,35 @@ export const FAVORITE_SORT_OPTIONS = [
   { key: "paidIdCount", label: "最高付费 ID" },
 ];
 
+export const FAVORITE_FILTER_OPTIONS = {
+  platforms: [
+    { key: "missevan", label: "猫耳" },
+    { key: "manbo", label: "漫播" },
+  ],
+  contentTypes: [
+    { key: "radioDrama", label: "广播剧" },
+    { key: "audioDrama", label: "有声剧" },
+  ],
+  payments: [
+    { key: "paid", label: "付费" },
+    { key: "free", label: "免费" },
+    { key: "member", label: "会员" },
+  ],
+};
+
+export const FAVORITES_HISTORY_CSV_COLUMNS = [
+  "标题",
+  "剧集ID",
+  "平台",
+  "类型",
+  "日期",
+  "播放量",
+  "猫耳追剧/漫播收藏人数",
+  "猫耳打赏人数/漫播付费（收听）人数",
+  "猫耳打赏榜总和/漫播总投喂（元）",
+  "付费ID",
+];
+
 function normalizePlatform(value) {
   const platform = String(value ?? "").trim();
   return VALID_PLATFORMS.has(platform) ? platform : "";
@@ -44,8 +83,14 @@ function normalizeString(value) {
 }
 
 function normalizeTimestamp(value, fallback = 0) {
+  const fallbackTimestamp = Number(fallback);
+  const safeFallback = Number.isFinite(fallbackTimestamp) && fallbackTimestamp > 0 && Number.isFinite(new Date(fallbackTimestamp).getTime())
+    ? Math.trunc(fallbackTimestamp)
+    : 0;
   const timestamp = Number(value ?? fallback);
-  return Number.isFinite(timestamp) && timestamp > 0 ? Math.trunc(timestamp) : fallback;
+  return Number.isFinite(timestamp) && timestamp > 0 && Number.isFinite(new Date(timestamp).getTime())
+    ? Math.trunc(timestamp)
+    : safeFallback;
 }
 
 function normalizeOptionalNumber(value) {
@@ -56,30 +101,152 @@ function normalizeOptionalNumber(value) {
   return Number.isFinite(number) ? Math.trunc(number) : null;
 }
 
-function normalizeMetricNumber(value) {
-  const number = normalizeOptionalNumber(value);
-  return number == null ? 0 : number;
-}
-
 function normalizeRewardSortYuan(platform, value) {
   const number = normalizeOptionalNumber(value);
   if (number == null) {
-    return 0;
+    return null;
   }
   return platform === "manbo" ? number / 100 : number / 10;
 }
 
+function normalizeFilterValues(values, validValues) {
+  const source = Array.isArray(values) ? values : values instanceof Set ? Array.from(values) : [];
+  return Array.from(new Set(source.map((value) => normalizeString(value)).filter((value) => validValues.has(value))));
+}
+
+function getFavoriteContentTypeFilterKey(value) {
+  const label = normalizeString(value);
+  if (label === "广播剧") {
+    return "radioDrama";
+  }
+  if (label === "有声剧" || label === "有声漫") {
+    return "audioDrama";
+  }
+  return "";
+}
+
+function getFavoritePaymentFilterKey(value) {
+  const label = normalizeString(value);
+  if (label === "付费") {
+    return "paid";
+  }
+  if (label === "免费") {
+    return "free";
+  }
+  if (label === "会员") {
+    return "member";
+  }
+  return "";
+}
+
+export function normalizeFavoriteFilters(filters = {}) {
+  const source = filters && typeof filters === "object" ? filters : {};
+  return {
+    query: normalizeString(source.query).toLocaleLowerCase("zh-Hans-CN"),
+    platforms: normalizeFilterValues(source.platforms, new Set(FAVORITE_FILTER_OPTIONS.platforms.map((item) => item.key))),
+    contentTypes: normalizeFilterValues(source.contentTypes, new Set(FAVORITE_FILTER_OPTIONS.contentTypes.map((item) => item.key))),
+    payments: normalizeFilterValues(source.payments, new Set(FAVORITE_FILTER_OPTIONS.payments.map((item) => item.key))),
+  };
+}
+
+export function filterFavorites(favorites = [], filters = {}) {
+  const normalizedFilters = normalizeFavoriteFilters(filters);
+  const platforms = new Set(normalizedFilters.platforms);
+  const contentTypes = new Set(normalizedFilters.contentTypes);
+  const payments = new Set(normalizedFilters.payments);
+
+  return (Array.isArray(favorites) ? favorites : [])
+    .map((item) => normalizeFavoriteRecord(item))
+    .filter(Boolean)
+    .filter((favorite) => {
+      const searchText = [favorite.title, favorite.dramaId, favorite.mainCvText]
+        .map((value) => normalizeString(value).toLocaleLowerCase("zh-Hans-CN"))
+        .join("\n");
+      return (
+        (!normalizedFilters.query || searchText.includes(normalizedFilters.query)) &&
+        (!platforms.size || platforms.has(favorite.platform)) &&
+        (!contentTypes.size || contentTypes.has(getFavoriteContentTypeFilterKey(favorite.contentTypeLabel))) &&
+        (!payments.size || payments.has(getFavoritePaymentFilterKey(favorite.paymentLabel)))
+      );
+    });
+}
+
+function getCsvMetricValue(value) {
+  return normalizeOptionalNumber(value);
+}
+
+function getCsvMoneyYuan(platform, value) {
+  const amount = normalizeOptionalNumber(value);
+  if (amount == null) {
+    return null;
+  }
+  return amount / (platform === "manbo" ? 100 : 10);
+}
+
+export function buildFavoritesHistoryCsvRows(favorites = [], snapshots = []) {
+  const normalizedSnapshots = (Array.isArray(snapshots) ? snapshots : [])
+    .map((item) => normalizeSnapshotRecord(item))
+    .filter((item) => item && item.status !== "failed");
+
+  return (Array.isArray(favorites) ? favorites : []).flatMap((item) => {
+    const favorite = normalizeFavoriteRecord(item);
+    if (!favorite) {
+      return [];
+    }
+    return normalizedSnapshots
+      .filter((snapshot) => snapshot.favoriteKey === favorite.key)
+      .sort((left, right) => Number(left.capturedAt) - Number(right.capturedAt))
+      .map((snapshot) => {
+        const isMissevan = favorite.platform === "missevan";
+        return [
+          favorite.title,
+          favorite.dramaId,
+          isMissevan ? "猫耳" : "漫播",
+          favorite.contentTypeLabel,
+          new Date(snapshot.capturedAt).toISOString(),
+          getCsvMetricValue(snapshot.metrics.viewCount),
+          getCsvMetricValue(snapshot.metrics.subscriptionCount),
+          getCsvMetricValue(isMissevan ? snapshot.metrics.rewardCount : snapshot.metrics.paidOrListenCount),
+          getCsvMoneyYuan(favorite.platform, isMissevan ? snapshot.metrics.rewardTotal : snapshot.metrics.giftTotal),
+          getCsvMetricValue(snapshot.metrics.paidIdCount),
+        ];
+      });
+  });
+}
+
+function escapeCsvCell(value) {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : "";
+  }
+  const raw = String(value);
+  const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return /[",\r\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+}
+
+export function serializeFavoritesHistoryCsv(rows = []) {
+  const dataRows = Array.isArray(rows) ? rows : [];
+  return `\uFEFF${[FAVORITES_HISTORY_CSV_COLUMNS, ...dataRows]
+    .map((row) => row.map((value) => escapeCsvCell(value)).join(","))
+    .join("\r\n")}`;
+}
+
 function normalizeMetrics(metrics = {}) {
   const source = metrics && typeof metrics === "object" ? metrics : {};
-  return {
-    viewCount: normalizeMetricNumber(source.viewCount),
-    subscriptionCount: normalizeMetricNumber(source.subscriptionCount),
-    rewardCount: normalizeOptionalNumber(source.rewardCount),
-    rewardTotal: normalizeOptionalNumber(source.rewardTotal),
-    giftTotal: normalizeOptionalNumber(source.giftTotal),
-    paidOrListenCount: normalizeOptionalNumber(source.paidOrListenCount),
-    paidIdCount: normalizeMetricNumber(source.paidIdCount),
-  };
+  return Object.fromEntries(
+    FAVORITE_METRIC_KEYS.map((key) => [key, normalizeOptionalNumber(source[key])])
+  );
+}
+
+function normalizeMetricErrors(metricErrors = {}) {
+  const source = metricErrors && typeof metricErrors === "object" ? metricErrors : {};
+  return Object.fromEntries(
+    FAVORITE_METRIC_KEYS
+      .map((key) => [key, normalizeString(source[key])])
+      .filter(([, message]) => Boolean(message))
+  );
 }
 
 export function createFavoriteKey(platform, dramaId) {
@@ -120,11 +287,16 @@ export function normalizeFavoriteRecord(record = {}, options = {}) {
 export function normalizeSnapshotRecord(record = {}, options = {}) {
   const platform = normalizePlatform(record.platform);
   const dramaId = normalizeString(record.dramaId ?? record.id);
-  const favoriteKey = normalizeString(record.favoriteKey) || createFavoriteKey(platform, dramaId);
-  if (!favoriteKey || !platform || !dramaId) {
+  const canonicalFavoriteKey = createFavoriteKey(platform, dramaId);
+  const providedFavoriteKey = normalizeString(record.favoriteKey);
+  if (!canonicalFavoriteKey || (providedFavoriteKey && providedFavoriteKey !== canonicalFavoriteKey)) {
     return null;
   }
-  const capturedAt = normalizeTimestamp(record.capturedAt, normalizeTimestamp(options.now, Date.now()));
+  const favoriteKey = canonicalFavoriteKey;
+  const capturedAt = normalizeTimestamp(record.capturedAt, normalizeTimestamp(options.now, 0));
+  if (!capturedAt) {
+    return null;
+  }
   const id = normalizeString(record.id) || `${favoriteKey}:${capturedAt}`;
   if (!id) {
     return null;
@@ -133,6 +305,12 @@ export function normalizeSnapshotRecord(record = {}, options = {}) {
   const errors = Array.isArray(record.errors)
     ? record.errors.map((item) => normalizeString(item)).filter(Boolean)
     : [];
+  const requestedStatus = normalizeString(record.status);
+  const status = VALID_SNAPSHOT_STATUSES.has(requestedStatus)
+    ? requestedStatus
+    : errors.length
+      ? "partial"
+      : "success";
 
   return {
     id,
@@ -140,8 +318,9 @@ export function normalizeSnapshotRecord(record = {}, options = {}) {
     platform,
     dramaId,
     capturedAt,
-    status: normalizeString(record.status) || (errors.length ? "partial" : "success"),
-    metrics: normalizeMetrics(record.metrics),
+    status,
+    metrics: normalizeMetrics(status === "failed" ? {} : record.metrics),
+    metricErrors: normalizeMetricErrors(record.metricErrors),
     errors,
   };
 }
@@ -279,6 +458,17 @@ export function getLatestSnapshot(favoriteKey, snapshots = []) {
   return getSnapshotsForFavorite(favoriteKey, snapshots)[0] || null;
 }
 
+export function getLatestMetricReading(favoriteKey, snapshots = [], metricKey = DEFAULT_SETTINGS.deltaMetric) {
+  const rows = getSnapshotsForFavorite(favoriteKey, snapshots);
+  const resolvedMetricKey = resolveFavoriteMetricKey(rows[0]?.platform, metricKey);
+  const snapshot = rows.find((item) => normalizeOptionalNumber(item?.metrics?.[resolvedMetricKey]) != null) || null;
+  return {
+    metricKey: resolvedMetricKey,
+    snapshot,
+    value: snapshot ? normalizeOptionalNumber(snapshot.metrics?.[resolvedMetricKey]) : null,
+  };
+}
+
 export function getSnapshotIdsForFavoriteRemoval(favoriteKey, snapshots = []) {
   const normalizedKey = normalizeString(favoriteKey);
   if (!normalizedKey) {
@@ -291,17 +481,15 @@ export function getSnapshotIdsForFavoriteRemoval(favoriteKey, snapshots = []) {
 }
 
 export function getFavoriteDelta(favoriteKey, snapshots = [], metricKey = DEFAULT_SETTINGS.deltaMetric) {
-  const sorted = getSnapshotsForFavorite(favoriteKey, snapshots);
-  if (sorted.length < 2) {
+  const rows = getSnapshotsForFavorite(favoriteKey, snapshots);
+  const resolvedMetricKey = resolveFavoriteMetricKey(rows[0]?.platform, metricKey);
+  const validValues = rows
+    .map((snapshot) => normalizeOptionalNumber(snapshot?.metrics?.[resolvedMetricKey]))
+    .filter((value) => value != null);
+  if (validValues.length < 2) {
     return null;
   }
-  const resolvedMetricKey = resolveFavoriteMetricKey(sorted[0]?.platform, metricKey);
-  const latest = normalizeOptionalNumber(sorted[0]?.metrics?.[resolvedMetricKey]);
-  const previous = normalizeOptionalNumber(sorted[1]?.metrics?.[resolvedMetricKey]);
-  if (latest == null || previous == null) {
-    return null;
-  }
-  return latest - previous;
+  return validValues[0] - validValues[1];
 }
 
 export function resolveFavoriteMetricKey(platform, metricKey) {
@@ -322,11 +510,10 @@ function getSortMetricValue(favorite, snapshots, sortBy) {
     return Number(latest?.capturedAt ?? favorite.lastSnapshotAt ?? 0) || 0;
   }
   if (sortBy === "rewardTotal") {
-    const rewardTotal = normalizeOptionalNumber(latest?.metrics?.rewardTotal);
-    const giftTotal = normalizeOptionalNumber(latest?.metrics?.giftTotal);
-    return normalizeRewardSortYuan(favorite.platform, favorite.platform === "manbo" ? giftTotal : rewardTotal);
+    const reading = getLatestMetricReading(favorite.key, snapshots, "rewardTotal");
+    return normalizeRewardSortYuan(favorite.platform, reading.value);
   }
-  return normalizeOptionalNumber(latest?.metrics?.[sortBy]) ?? 0;
+  return getLatestMetricReading(favorite.key, snapshots, sortBy).value;
 }
 
 export function sortFavoritesWithSnapshots(favorites = [], snapshots = [], sortBy = DEFAULT_SETTINGS.sortBy) {
@@ -337,7 +524,15 @@ export function sortFavoritesWithSnapshots(favorites = [], snapshots = [], sortB
     .map((item) => normalizeFavoriteRecord(item))
     .filter(Boolean)
     .sort((left, right) => {
-      const diff = getSortMetricValue(right, snapshots, normalizedSort) - getSortMetricValue(left, snapshots, normalizedSort);
+      const leftValue = getSortMetricValue(left, snapshots, normalizedSort);
+      const rightValue = getSortMetricValue(right, snapshots, normalizedSort);
+      if (leftValue == null && rightValue != null) {
+        return 1;
+      }
+      if (rightValue == null && leftValue != null) {
+        return -1;
+      }
+      const diff = (rightValue ?? 0) - (leftValue ?? 0);
       if (diff !== 0) {
         return diff;
       }
@@ -577,14 +772,6 @@ async function exportIndexedDbFavoritesData() {
   return buildFavoritesBackup({ favorites, snapshots, settings });
 }
 
-async function importIndexedDbFavoritesData(payload) {
-  const normalized = payload;
-  await Promise.all(normalized.favorites.map((favorite) => saveIndexedDbFavorite(favorite)));
-  await Promise.all(normalized.snapshots.map((snapshot) => saveIndexedDbSnapshot(snapshot)));
-  await saveIndexedDbFavoriteSettings(normalized.settings);
-  return normalized;
-}
-
 async function exportIndexedDbFavoritesDataIfAvailable() {
   try {
     return await exportIndexedDbFavoritesData();
@@ -665,6 +852,33 @@ function mergeSnapshotLists(existingSnapshots = [], incomingSnapshots = []) {
     }
   });
   return Array.from(snapshotsById.values());
+}
+
+function reconcileFavoriteSnapshotTimes(favorites = [], snapshots = []) {
+  const latestByFavoriteKey = new Map();
+  snapshots.forEach((snapshot) => {
+    const current = latestByFavoriteKey.get(snapshot.favoriteKey) ?? 0;
+    if (snapshot.capturedAt > current) {
+      latestByFavoriteKey.set(snapshot.favoriteKey, snapshot.capturedAt);
+    }
+  });
+  return favorites.map((favorite) => ({
+    ...favorite,
+    lastSnapshotAt: latestByFavoriteKey.get(favorite.key) ?? favorite.lastSnapshotAt,
+  }));
+}
+
+async function importIndexedDbFavoritesData(payload) {
+  const existingFavorites = await listIndexedDbFavorites();
+  const mergedFavorites = mergeFavoriteLists(existingFavorites, payload.favorites);
+  await Promise.all(mergedFavorites.map((favorite) => saveIndexedDbFavorite(favorite)));
+  await Promise.all(payload.snapshots.map((snapshot) => saveIndexedDbSnapshot(snapshot)));
+
+  const mergedSnapshots = await listIndexedDbSnapshots();
+  const reconciledFavorites = reconcileFavoriteSnapshotTimes(mergedFavorites, mergedSnapshots);
+  await Promise.all(reconciledFavorites.map((favorite) => saveIndexedDbFavorite(favorite)));
+  await saveIndexedDbFavoriteSettings(payload.settings);
+  return payload;
 }
 
 export async function listFavorites() {
@@ -829,10 +1043,17 @@ export async function importFavoritesData(payload) {
   if (!isDesktopFavoritesStorageEnabled()) {
     return importIndexedDbFavoritesData(normalized);
   }
-  await updateDesktopFavoritesBackup((current) => ({
-    favorites: mergeFavoriteLists(current.favorites, normalized.favorites),
-    snapshots: mergeSnapshotLists(current.snapshots, normalized.snapshots),
-    settings: normalizeFavoriteSettings(normalized.settings),
-  }));
+  await updateDesktopFavoritesBackup((current) => {
+    const snapshots = mergeSnapshotLists(current.snapshots, normalized.snapshots);
+    return {
+      ...current,
+      favorites: reconcileFavoriteSnapshotTimes(
+        mergeFavoriteLists(current.favorites, normalized.favorites),
+        snapshots
+      ),
+      snapshots,
+      settings: normalizeFavoriteSettings(normalized.settings),
+    };
+  });
   return normalized;
 }

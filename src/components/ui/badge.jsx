@@ -25,7 +25,7 @@ const badgeVariants = cva(
         member:
           "border-[color-mix(in_oklch,var(--accent-gold)_78%,var(--foreground))] bg-[var(--accent-gold)] text-[var(--accent-gold-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.24)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-gold)_90%,var(--card))]",
         paid:
-          "border-[color-mix(in_oklch,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))]",
+          "border-[color-mix(in_oklch,var(--accent-warm)_30%,transparent)] bg-[color-mix(in_oklch,var(--accent-warm)_86%,var(--foreground))] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-warm)_76%,var(--foreground))]",
         radioDrama:
           "border-[color-mix(in_oklch,var(--primary)_18%,transparent)] bg-primary text-primary-foreground shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--primary-hover)]",
         audioDrama:
@@ -66,4 +66,4 @@ function Badge({
   );
 }
 
-export { Badge }
+export { Badge, badgeVariants }

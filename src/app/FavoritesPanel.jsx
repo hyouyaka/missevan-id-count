@@ -2,20 +2,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownUpIcon,
   BeanIcon,
+  CheckIcon,
   ChevronDownIcon,
   CoinsIcon,
   DownloadIcon,
+  FileDownIcon,
+  FilterIcon,
   GemIcon,
   HeartIcon,
   MicIcon,
+  MoreHorizontalIcon,
   PlayCircleIcon,
   RefreshCwIcon,
+  SearchIcon,
   ShoppingCartIcon,
   StarIcon,
   TrendingUpIcon,
   Trash2Icon,
   UploadIcon,
   UsersRoundIcon,
+  XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,10 +39,14 @@ import {
 } from "@/app/app-utils";
 import {
   buildFavoritesBackup,
+  buildFavoritesHistoryCsvRows,
   exportFavoritesData,
   FAVORITE_DELTA_METRICS,
+  FAVORITE_FILTER_OPTIONS,
   FAVORITE_SORT_OPTIONS,
+  filterFavorites,
   getFavoriteByKey,
+  getLatestMetricReading,
   getLatestSnapshot,
   getSnapshotsForFavorite,
   importFavoritesData,
@@ -46,16 +56,22 @@ import {
   saveFavoriteSettings,
   saveSnapshot,
   resolveFavoriteMetricKey,
+  serializeFavoritesHistoryCsv,
   sortFavoritesWithSnapshots,
   updateFavoriteIfExists,
 } from "@/app/favoritesStorage";
+import { PlatformGlyph } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LazyImage } from "@/components/ui/lazy-image";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 const metricIconMap = {
@@ -78,7 +94,13 @@ const metricLabels = {
   paidIdCount: "付费 ID",
 };
 
-const SNAPSHOT_HISTORY_TABLE_MIN_WIDTH = "min-w-[46rem]";
+const SNAPSHOT_HISTORY_BATCH_SIZE = 5;
+const EMPTY_FAVORITE_FILTERS = {
+  query: "",
+  platforms: [],
+  contentTypes: [],
+  payments: [],
+};
 const favoriteCoverPaymentBadgeClassName =
   "absolute bottom-0 right-0 h-4 rounded-none rounded-tl-[calc(var(--radius)-0.18rem)] border-0! px-1 text-[0.54rem] leading-none shadow-none! lg:h-[1.05rem] lg:px-1.5 lg:text-[0.58rem]";
 
@@ -93,12 +115,70 @@ const favoriteTagVariants = {
   有声漫: "audioComic",
 };
 
+const favoriteFilterVisualMeta = {
+  missevan: {
+    badgeVariant: "missevanPlatform",
+    platform: "missevan",
+    softClassName:
+      "border-[color-mix(in_oklch,var(--platform-missevan)_28%,transparent)] bg-[var(--platform-missevan-soft)] text-[var(--platform-missevan)]",
+  },
+  manbo: {
+    badgeVariant: "manboPlatform",
+    platform: "manbo",
+    softClassName:
+      "border-[color-mix(in_oklch,var(--platform-manbo)_28%,transparent)] bg-[var(--platform-manbo-soft)] text-[var(--platform-manbo)]",
+  },
+  radioDrama: {
+    badgeVariant: "radioDrama",
+    softClassName:
+      "border-[color-mix(in_oklch,var(--accent-cool)_28%,transparent)] bg-[var(--accent-cool-soft)] text-[color-mix(in_oklch,var(--accent-cool)_84%,var(--foreground))]",
+  },
+  audioDrama: {
+    badgeVariant: "audioDrama",
+    softClassName:
+      "border-[color-mix(in_oklch,var(--accent-rose)_28%,transparent)] bg-[var(--accent-rose-soft)] text-[color-mix(in_oklch,var(--accent-rose)_84%,var(--foreground))]",
+  },
+  paid: {
+    badgeVariant: "paid",
+    softClassName:
+      "border-[color-mix(in_oklch,var(--accent-warm)_28%,transparent)] bg-[var(--accent-warm-soft)] text-[color-mix(in_oklch,var(--accent-warm)_82%,var(--foreground))]",
+  },
+  free: {
+    badgeVariant: "free",
+    softClassName:
+      "border-[color-mix(in_oklch,var(--accent-success)_28%,transparent)] bg-[var(--accent-success-soft)] text-[color-mix(in_oklch,var(--accent-success)_82%,var(--foreground))]",
+  },
+  member: {
+    badgeVariant: "member",
+    softClassName:
+      "border-[color-mix(in_oklch,var(--accent-gold)_45%,transparent)] bg-[var(--accent-gold-soft)] text-[var(--accent-gold-foreground)]",
+  },
+};
+
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
 }
 
 function isFavoriteMoneyMetric(metricKey) {
   return metricKey === "rewardTotal" || metricKey === "giftTotal";
+}
+
+function getNullableFavoriteMetric(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function addFavoriteMetricError(errors, metricErrors, metricKeys, message) {
+  const normalizedMessage = String(message ?? "").trim() || "指标未获取";
+  (Array.isArray(metricKeys) ? metricKeys : [metricKeys]).forEach((metricKey) => {
+    metricErrors[metricKey] = normalizedMessage;
+  });
+  if (!errors.includes(normalizedMessage)) {
+    errors.push(normalizedMessage);
+  }
 }
 
 function formatFavoriteMoneyYuan(value, platform) {
@@ -156,10 +236,6 @@ function getVisibleMetricKeys(platform) {
   return platform === "missevan"
     ? ["viewCount", "subscriptionCount", "rewardCount", "rewardTotal", "paidIdCount"]
     : ["viewCount", "subscriptionCount", "paidOrListenCount", "giftTotal", "paidIdCount"];
-}
-
-function getMetricValue(snapshot, key) {
-  return snapshot?.metrics?.[key] ?? null;
 }
 
 function formatFavoriteMainCvText(value) {
@@ -241,27 +317,275 @@ function getHistoryMetricColumns(platform, deltaMetric) {
       type: "delta",
       key: deltaMetric,
       label: `+${getDeltaMetricLabel(deltaMetric)}`,
-      headerClassName: "text-secondary",
-      cellClassName: "font-medium text-secondary",
+      headerClassName: "favorite-history-delta text-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))]",
+      cellClassName: "favorite-history-delta font-medium text-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))]",
     },
   ];
 }
 
+const favoriteSnapshotStatusMeta = {
+  success: {
+    label: "成功",
+    dotClassName: "bg-[var(--accent-success)]",
+  },
+  partial: {
+    label: "部分成功",
+    dotClassName: "bg-secondary",
+  },
+  failed: {
+    label: "失败",
+    dotClassName: "bg-destructive",
+  },
+};
+
+function getFavoriteFocusMetricKey(platform, deltaMetric) {
+  const visibleMetricKeys = getVisibleMetricKeys(platform);
+  const resolvedMetricKey = resolveFavoriteMetricKey(platform, deltaMetric);
+  return visibleMetricKeys.includes(resolvedMetricKey) ? resolvedMetricKey : "viewCount";
+}
+
+function getOlderMetricReading(rows, startIndex, metricKey) {
+  for (let index = startIndex + 1; index < rows.length; index += 1) {
+    const value = rows[index]?.metrics?.[metricKey];
+    if (value != null) {
+      return { snapshot: rows[index], value: Number(value) };
+    }
+  }
+  return { snapshot: null, value: null };
+}
+
+function getSnapshotMetricDelta(rows, index, metricKey) {
+  const currentValue = rows[index]?.metrics?.[metricKey];
+  if (currentValue == null) {
+    return null;
+  }
+  const previous = getOlderMetricReading(rows, index, metricKey);
+  return previous.value == null ? null : Number(currentValue) - previous.value;
+}
+
+function formatHistoryMetricValue(value, metricKey, platform) {
+  return value == null ? "未获取" : formatMetricValue(value, metricKey, platform);
+}
+
+function FavoriteSnapshotStatus({ status }) {
+  const meta = favoriteSnapshotStatusMeta[status] || favoriteSnapshotStatusMeta.success;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[0.68rem] font-medium text-foreground">
+      <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${meta.dotClassName}`} />
+      {meta.label}
+    </span>
+  );
+}
+
+function FavoriteHistoryTimeline({
+  favorite,
+  rows,
+  deltaMetric,
+  expandedSnapshotId,
+  onExpandedSnapshotChange,
+  regionId,
+  visibleCount,
+  onShowMore,
+}) {
+  const focusMetricKey = getFavoriteFocusMetricKey(favorite.platform, deltaMetric);
+  const visibleMetricKeys = getVisibleMetricKeys(favorite.platform);
+  const secondaryMetricKeys = visibleMetricKeys.filter((key) => key !== focusMetricKey);
+  const visibleRows = rows.slice(0, visibleCount);
+
+  if (!visibleRows.length) {
+    return <div className="px-3 py-4 text-xs text-muted-foreground">暂无快照数据</div>;
+  }
+
+  return (
+    <div className="favorite-history-timeline">
+      <ol className="divide-y divide-border/60">
+        {visibleRows.map((snapshot, index) => {
+          const expanded = expandedSnapshotId === snapshot.id;
+          const detailId = `${regionId}-snapshot-${String(snapshot.id).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+          const focusValue = snapshot.metrics?.[focusMetricKey];
+          const delta = getSnapshotMetricDelta(rows, index, focusMetricKey);
+          const metricErrorEntries = Object.entries(snapshot.metricErrors || {});
+          const metricErrorMessages = new Set(metricErrorEntries.map(([, message]) => message));
+          const generalErrors = (snapshot.errors || []).filter((message) => !metricErrorMessages.has(message));
+
+          return (
+            <li key={snapshot.id} className="min-w-0 odd:bg-background even:bg-muted/45">
+              <div className="grid gap-2 px-3 py-3">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <time className="min-w-0 text-xs text-muted-foreground" dateTime={new Date(snapshot.capturedAt).toISOString()}>
+                    {formatDeviceDateTime(snapshot.capturedAt)}
+                  </time>
+                  <FavoriteSnapshotStatus status={snapshot.status} />
+                </div>
+                <div className="flex min-w-0 items-end justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[0.68rem] text-muted-foreground">{metricLabels[focusMetricKey]}</div>
+                    <div className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
+                      {formatHistoryMetricValue(focusValue, focusMetricKey, favorite.platform)}
+                    </div>
+                  </div>
+                  <div className="favorite-history-delta shrink-0 text-sm font-medium tabular-nums text-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))]">
+                    {formatDeltaValue(delta, focusMetricKey, favorite.platform)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 text-left text-xs font-medium text-foreground transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                  aria-controls={detailId}
+                  aria-expanded={expanded}
+                  onClick={() => onExpandedSnapshotChange(expanded ? "" : snapshot.id)}
+                >
+                  <span>{expanded ? "收起指标" : snapshot.status === "failed" ? "查看失败详情" : "查看全部指标"}</span>
+                  <ChevronDownIcon
+                    aria-hidden="true"
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
+                  />
+                </button>
+              </div>
+
+              {expanded ? (
+                <div id={detailId} className="border-t border-border/55 px-3 py-3">
+                  <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-x-4 gap-y-3">
+                    {secondaryMetricKeys.map((metricKey) => (
+                      <div key={`${snapshot.id}-${metricKey}`} className="min-w-0">
+                        <dt className="text-[0.68rem] leading-4 text-muted-foreground">{metricLabels[metricKey]}</dt>
+                        <dd className="mt-0.5 break-words text-sm font-semibold tabular-nums text-foreground">
+                          {formatHistoryMetricValue(snapshot.metrics?.[metricKey], metricKey, favorite.platform)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+
+                  {metricErrorEntries.length || generalErrors.length ? (
+                    <div className="mt-3 grid gap-2 border-t border-border/55 pt-3 text-xs leading-5 text-foreground">
+                      {metricErrorEntries.map(([metricKey, message]) => {
+                        const fallback = getOlderMetricReading(rows, index, metricKey);
+                        return (
+                          <div key={`${snapshot.id}-error-${metricKey}`}>
+                            <div>{metricLabels[metricKey] || metricKey}：{message}</div>
+                            <div className="text-muted-foreground">
+                              {fallback.snapshot
+                                ? `卡片摘要沿用 ${formatDeviceDateTime(fallback.snapshot.capturedAt)} 的有效值`
+                                : "暂无可沿用的有效值"}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {generalErrors.map((message, errorIndex) => (
+                        <div key={`${snapshot.id}-general-error-${errorIndex}`}>{message}</div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+
+      {visibleCount < rows.length ? (
+        <button
+          type="button"
+          className="flex min-h-11 w-full cursor-pointer items-center justify-center border-t border-border/60 px-3 text-xs font-medium text-primary transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          onClick={onShowMore}
+        >
+          再显示 {Math.min(SNAPSHOT_HISTORY_BATCH_SIZE, rows.length - visibleCount)} 条
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function FavoriteHistoryTable({ favorite, rows, deltaMetric }) {
+  const columns = getHistoryMetricColumns(favorite.platform, deltaMetric);
+  const resolvedDeltaMetric = getFavoriteFocusMetricKey(favorite.platform, deltaMetric);
+
+  return (
+    <div className="favorite-history-table max-h-44 overflow-y-auto">
+      <table className="w-full table-fixed border-collapse text-[0.68rem]">
+        <thead className="sticky top-0 z-10 bg-background/95 text-muted-foreground">
+          <tr className="border-b border-border/70">
+            {columns.map((column, index) => (
+              <th
+                key={`header-${column.type}-${column.key}`}
+                className={`px-2 py-1.5 font-medium ${column.key === "time" ? "text-left" : "text-right"} ${column.columnClassName || ""}`}
+              >
+                <div className={`flex min-w-0 items-center gap-1 ${column.key === "time" ? "justify-start" : "justify-end"}`}>
+                  <MetricHeaderLabel
+                    label={column.label}
+                    subLabel={column.subLabel}
+                    className={column.key === "time" ? "text-left" : "text-right"}
+                    headerClassName={column.headerClassName}
+                  />
+                  {index === columns.length - 1 ? (
+                    <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 rotate-180 text-muted-foreground" />
+                  ) : null}
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? rows.map((snapshot, index) => {
+            const delta = getSnapshotMetricDelta(rows, index, resolvedDeltaMetric);
+            return (
+              <tr key={snapshot.id} className="border-b border-border/45 odd:bg-background even:bg-muted/45 last:border-b-0">
+                {columns.map((column) => {
+                  let value = "";
+                  if (column.type === "time") {
+                    value = formatDeviceDateTime(snapshot.capturedAt);
+                  } else if (column.type === "delta") {
+                    value = formatDeltaValue(delta, resolvedDeltaMetric, favorite.platform);
+                  } else {
+                    value = formatHistoryMetricValue(snapshot.metrics?.[column.key], column.key, favorite.platform);
+                  }
+
+                  return (
+                    <td
+                      key={`${snapshot.id}-${column.type}-${column.key}`}
+                      className={`px-2 py-1.5 tabular-nums ${column.key === "time" ? "text-left text-muted-foreground" : "text-right text-foreground"} ${column.columnClassName || ""} ${column.cellClassName || ""}`}
+                    >
+                      {column.type === "time" ? (
+                        <div className="grid gap-0.5">
+                          <span>{value}</span>
+                          <FavoriteSnapshotStatus status={snapshot.status} />
+                        </div>
+                      ) : value}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          }) : (
+            <tr>
+              <td colSpan={columns.length} className="px-2.5 py-3 text-xs text-muted-foreground">
+                暂无快照数据
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function SnapshotDetailsDisclosure({ favorite, snapshots, deltaMetric, expanded, onToggle }) {
   const rows = getSnapshotsForFavorite(favorite.key, snapshots).slice(0, 30);
-  const columns = getHistoryMetricColumns(favorite.platform, deltaMetric);
-  const resolvedDeltaMetric = resolveFavoriteMetricKey(favorite.platform, deltaMetric);
+  const [visibleCount, setVisibleCount] = useState(SNAPSHOT_HISTORY_BATCH_SIZE);
+  const [expandedSnapshotId, setExpandedSnapshotId] = useState("");
+  const regionId = `favorite-history-${String(favorite.key).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   if (!expanded) {
     return (
       <div className="min-w-0 overflow-hidden rounded-lg border border-border/70 bg-background/82">
         <button
           type="button"
-          className="flex w-full cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-left text-[0.78rem] font-medium text-foreground transition-colors hover:bg-muted/35"
+          className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-left text-[0.78rem] font-medium text-foreground transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          aria-controls={regionId}
           aria-expanded={expanded}
           onClick={onToggle}
         >
-          <span>数据明细</span>
+          <span>历史记录（{rows.length}）</span>
           <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground transition-transform" />
         </button>
       </div>
@@ -272,78 +596,26 @@ function SnapshotDetailsDisclosure({ favorite, snapshots, deltaMetric, expanded,
     <div className="min-w-0 overflow-hidden rounded-lg border border-border/70 bg-background/82">
       <button
         type="button"
-        className="flex min-h-9 w-full cursor-pointer items-center justify-between gap-2 border-b border-border/70 px-2.5 py-2 text-left text-[0.78rem] font-medium text-foreground transition-colors hover:bg-muted/35"
+        className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 border-b border-border/70 px-2.5 py-2 text-left text-[0.78rem] font-medium text-foreground transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        aria-controls={regionId}
         aria-expanded={expanded}
         onClick={onToggle}
       >
-        <span>收起数据明细</span>
+        <span>收起历史记录（{rows.length}）</span>
         <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 rotate-180 text-muted-foreground" />
       </button>
-      <div className="max-h-44 overflow-x-auto overflow-y-auto">
-        <table className={`${SNAPSHOT_HISTORY_TABLE_MIN_WIDTH} w-full table-fixed border-collapse text-[0.68rem]`}>
-          <thead className="sticky top-0 z-10 bg-background/95 text-muted-foreground">
-            <tr className="border-b border-border/70">
-              {columns.map((column, index) => (
-                <th
-                  key={`header-${column.type}-${column.key}`}
-                  className={`px-2 py-1.5 font-medium ${column.key === "time" ? "text-left" : "text-right"} ${column.columnClassName || ""}`}
-                >
-                  <div className={`flex min-w-0 items-center gap-1 ${column.key === "time" ? "justify-start" : "justify-end"}`}>
-                    <MetricHeaderLabel
-                      label={column.label}
-                      subLabel={column.subLabel}
-                      className={column.key === "time" ? "text-left" : "text-right"}
-                      headerClassName={column.headerClassName}
-                    />
-                    {index === columns.length - 1 ? (
-                      <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 rotate-180 text-muted-foreground transition-transform" />
-                    ) : null}
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length ? rows.map((snapshot, index) => {
-              const previous = rows[index + 1] || null;
-              const latestValue = snapshot.metrics?.[resolvedDeltaMetric];
-              const previousValue = previous?.metrics?.[resolvedDeltaMetric];
-              const delta =
-                latestValue == null || previousValue == null
-                  ? null
-                  : Number(latestValue) - Number(previousValue);
-              return (
-                <tr key={snapshot.id} className="border-b border-border/45 last:border-b-0">
-                  {columns.map((column) => {
-                    let value = "";
-                    if (column.type === "time") {
-                      value = formatDeviceDateTime(snapshot.capturedAt);
-                    } else if (column.type === "delta") {
-                      value = formatDeltaValue(delta, resolvedDeltaMetric, favorite.platform);
-                    } else {
-                      value = formatMetricValue(snapshot.metrics?.[column.key], column.key, favorite.platform);
-                    }
-
-                    return (
-                      <td
-                        key={`${snapshot.id}-${column.type}-${column.key}`}
-                        className={`px-2 py-1.5 tabular-nums ${column.key === "time" ? "text-left text-muted-foreground" : "text-right text-foreground"} ${column.columnClassName || ""} ${column.cellClassName || ""}`}
-                      >
-                        {value}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            }) : (
-              <tr>
-                <td colSpan={columns.length} className="px-2.5 py-3 text-xs text-muted-foreground">
-                  暂无快照数据
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div id={regionId} className="favorite-history-responsive min-w-0">
+        <FavoriteHistoryTimeline
+          favorite={favorite}
+          rows={rows}
+          deltaMetric={deltaMetric}
+          expandedSnapshotId={expandedSnapshotId}
+          onExpandedSnapshotChange={setExpandedSnapshotId}
+          regionId={regionId}
+          visibleCount={visibleCount}
+          onShowMore={() => setVisibleCount((current) => Math.min(rows.length, current + SNAPSHOT_HISTORY_BATCH_SIZE))}
+        />
+        <FavoriteHistoryTable favorite={favorite} rows={rows} deltaMetric={deltaMetric} />
       </div>
     </div>
   );
@@ -411,7 +683,30 @@ function createFavoriteAccessDeniedError(message) {
   return new FavoriteAccessDeniedError(message);
 }
 
-async function runStatsTask({ platform, taskType, payload, frontendVersion, handleVersionResponse }) {
+function clampFavoriteProgress(value, maximum = 100) {
+  const number = Number(value ?? 0);
+  return Math.max(0, Math.min(Number.isFinite(number) ? number : 0, maximum));
+}
+
+function getStatsTaskProgressSnapshot(snapshot) {
+  const queuePosition = Number(snapshot?.queuePosition ?? 0);
+  return {
+    ...snapshot,
+    progress: clampFavoriteProgress(snapshot?.progress),
+    currentAction: snapshot?.status === "queued" && queuePosition > 0
+      ? `任务排队中，前方 ${queuePosition} 个任务`
+      : snapshot?.currentAction || "统计中",
+  };
+}
+
+function getFavoriteBatchProgress(favoriteIndex, favoriteCount, favoriteProgress) {
+  const count = Math.max(1, Number(favoriteCount ?? 0) || 1);
+  const index = Math.max(0, Number(favoriteIndex ?? 0) || 0);
+  const itemProgress = clampFavoriteProgress(favoriteProgress);
+  return Math.min(99, Math.floor(((index + itemProgress / 100) / count) * 100));
+}
+
+async function runStatsTask({ platform, taskType, payload, frontendVersion, handleVersionResponse, onProgress }) {
   const created = await postJson("/stat-tasks", { platform, taskType, ...payload }, frontendVersion, handleVersionResponse);
   const taskId = String(created?.taskId ?? "").trim();
   if (!taskId) {
@@ -420,8 +715,10 @@ async function runStatsTask({ platform, taskType, payload, frontendVersion, hand
 
   let snapshot = created;
   for (let index = 0; index < 240; index += 1) {
+    const progressSnapshot = getStatsTaskProgressSnapshot(snapshot);
+    onProgress?.(progressSnapshot);
     if (platform === "missevan" && snapshot?.accessDenied) {
-      throw createFavoriteAccessDeniedError(snapshot.currentAction || snapshot.error || "猫耳访问受限");
+      throw createFavoriteAccessDeniedError(progressSnapshot.currentAction || snapshot.error || "猫耳访问受限");
     }
     if (snapshot.status === "completed") {
       return snapshot;
@@ -486,10 +783,13 @@ async function fetchFavoriteMainCvText(favorite, frontendVersion, handleVersionR
   return String(data?.mainCvText ?? data?.main_cv_text ?? "").trim();
 }
 
-async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp = false }) {
+async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp = false, onProgress }) {
   const capturedAt = Date.now();
   const errors = [];
+  const metricErrors = {};
+  onProgress?.({ progress: 0, currentAction: "读取作品详情" });
   const dramaInfo = await fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionResponse);
+  onProgress?.({ progress: 10, currentAction: "整理作品信息" });
   const drama = dramaInfo?.drama || {};
   const paidEpisodes = buildPaidEpisodePayload(favorite.platform, dramaInfo);
   let refreshedMainCvText = "";
@@ -506,7 +806,8 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
       console.warn("Failed to refresh favorite main CV", error);
     }
   }
-  let paidIdCount = 0;
+  onProgress?.({ progress: 15, currentAction: "准备统计指标" });
+  let paidIdCount = favorite.platform === "manbo" && paidEpisodes.length === 0 ? 0 : null;
 
   if (favorite.platform !== "missevan" && paidEpisodes.length > 0) {
     try {
@@ -516,17 +817,31 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
         payload: { episodes: paidEpisodes, source: "favorite" },
         frontendVersion,
         handleVersionResponse,
+        onProgress: (snapshot) => onProgress?.({
+          progress: 15 + Math.floor(clampFavoriteProgress(snapshot.progress) * 0.8),
+          currentAction: snapshot.currentAction,
+        }),
       });
-      const idResults = Array.isArray(idTask?.result?.idResults) ? idTask.result.idResults : [];
-      paidIdCount = idResults.reduce((sum, item) => sum + Number(item?.users ?? 0), 0);
+      if (Number(idTask?.failedCount ?? 0) > 0) {
+        throw new Error(idTask.currentAction || "付费 ID 统计部分失败");
+      }
+      if (!Array.isArray(idTask?.result?.idResults)) {
+        throw new Error("付费 ID 统计未返回结果");
+      }
+      const userCounts = idTask.result.idResults.map((item) => getNullableFavoriteMetric(item?.users));
+      if (userCounts.some((value) => value == null)) {
+        throw new Error("付费 ID 统计结果不完整");
+      }
+      paidIdCount = userCounts.reduce((sum, value) => sum + value, 0);
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      addFavoriteMetricError(errors, metricErrors, "paidIdCount", message);
     }
   }
 
   let rewardCount = null;
   let rewardTotal = null;
-  let giftTotal = Number(drama.diamond_value ?? 0) || null;
+  let giftTotal = getNullableFavoriteMetric(drama.diamond_value);
   let paidOrListenCount = null;
 
   if (favorite.platform === "missevan") {
@@ -537,28 +852,73 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
         payload: { dramaIds: [Number(favorite.dramaId)], source: "favorite" },
         frontendVersion,
         handleVersionResponse,
+        onProgress: (snapshot) => onProgress?.({
+          progress: 15 + Math.floor(clampFavoriteProgress(snapshot.progress) * 0.8),
+          currentAction: snapshot.currentAction,
+        }),
       });
-      const revenueResult = (Array.isArray(revenueTask?.result?.revenueResults) ? revenueTask.result.revenueResults : [])
+      if (!Array.isArray(revenueTask?.result?.revenueResults)) {
+        throw new Error("收益统计未返回结果");
+      }
+      const revenueResult = revenueTask.result.revenueResults
         .find((item) => String(item?.dramaId) === String(favorite.dramaId));
-      rewardCount = revenueResult?.rewardNum ?? null;
-      rewardTotal = revenueResult?.rewardCoinTotal ?? null;
-      paidIdCount = Number(revenueResult?.seasonPaidUserCount ?? revenueResult?.paidUserCount ?? 0) || 0;
+      if (!revenueResult) {
+        throw new Error("收益统计未返回当前作品数据");
+      }
+      if (revenueResult.failed || Number(revenueTask?.failedCount ?? 0) > 0) {
+        throw new Error(revenueResult.error || revenueTask.currentAction || "收益统计失败");
+      }
+      rewardCount = getNullableFavoriteMetric(revenueResult.rewardNum);
+      rewardTotal = getNullableFavoriteMetric(revenueResult.rewardCoinTotal);
+      paidIdCount = getNullableFavoriteMetric(
+        revenueResult.seasonPaidUserCount ?? revenueResult.paidUserCount
+      );
+      if (rewardCount == null) {
+        addFavoriteMetricError(errors, metricErrors, "rewardCount", "打赏人数未获取");
+      }
+      if (rewardTotal == null) {
+        addFavoriteMetricError(errors, metricErrors, "rewardTotal", "打赏榜总和未获取");
+      }
+      if (paidIdCount == null) {
+        addFavoriteMetricError(errors, metricErrors, "paidIdCount", "付费 ID 未获取");
+      }
     } catch (error) {
       if (isFavoriteAccessDeniedError(error)) {
         throw error;
       }
-      errors.push(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      addFavoriteMetricError(errors, metricErrors, ["rewardCount", "rewardTotal", "paidIdCount"], message);
     }
   } else {
-    giftTotal = Number(drama.diamond_value ?? 0) || null;
-    const payCount = Number(drama.pay_count ?? 0);
-    const listenCount = Number(drama.member_listen_count ?? 0);
-    paidOrListenCount = payCount > 0 ? payCount : listenCount > 0 ? listenCount : null;
+    const payCount = getNullableFavoriteMetric(drama.pay_count);
+    const listenCount = getNullableFavoriteMetric(drama.member_listen_count);
+    paidOrListenCount = payCount != null && payCount > 0
+      ? payCount
+      : listenCount != null && listenCount > 0
+        ? listenCount
+        : payCount === 0 || listenCount === 0
+          ? 0
+          : null;
+    if (giftTotal == null) {
+      addFavoriteMetricError(errors, metricErrors, "giftTotal", "总投喂未获取");
+    }
+    if (paidOrListenCount == null) {
+      addFavoriteMetricError(errors, metricErrors, "paidOrListenCount", "付费/收听人数未获取");
+    }
+  }
+
+  const viewCount = getNullableFavoriteMetric(drama.view_count);
+  const subscriptionCount = getNullableFavoriteMetric(drama.subscription_num);
+  if (viewCount == null) {
+    addFavoriteMetricError(errors, metricErrors, "viewCount", "播放量未获取");
+  }
+  if (subscriptionCount == null) {
+    addFavoriteMetricError(errors, metricErrors, "subscriptionCount", "追剧/收藏人数未获取");
   }
 
   const metrics = {
-    viewCount: Number(drama.view_count ?? 0) || 0,
-    subscriptionCount: Number(drama.subscription_num ?? 0) || 0,
+    viewCount,
+    subscriptionCount,
     rewardCount,
     rewardTotal,
     giftTotal,
@@ -566,6 +926,7 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
     paidIdCount,
   };
 
+  onProgress?.({ progress: 95, currentAction: "保存收藏历史" });
   const nextFavorite = await updateFavoriteIfExists(favorite.key, (activeFavorite) => ({
     ...activeFavorite,
     title: String(drama.name ?? activeFavorite.title ?? "").trim() || activeFavorite.title,
@@ -573,7 +934,6 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
     dramaUpdatedAt: String(drama.updated_at ?? drama.updatedAt ?? activeFavorite.dramaUpdatedAt ?? "").trim(),
     mainCvText: refreshedMainCvText || activeFavorite.mainCvText || "",
     updatedAt: capturedAt,
-    lastSnapshotAt: capturedAt,
   }));
   if (!nextFavorite) {
     return null;
@@ -587,9 +947,260 @@ async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersio
     capturedAt,
     status: errors.length ? "partial" : "success",
     metrics,
+    metricErrors,
     errors,
   });
+  if (!snapshot) {
+    return null;
+  }
+  onProgress?.({ progress: 100, currentAction: "收藏历史已保存" });
   return { favorite: nextFavorite, snapshot };
+}
+
+function FavoriteSearchControl({ value, onChange, className = "" }) {
+  return (
+    <label className={`relative block h-11 min-w-0 p-1 ${className}`}>
+      <span className="flex h-9 min-w-0 items-center gap-2 rounded-md border border-input bg-background px-2.5 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40">
+        <SearchIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        <input
+          aria-label="搜索收藏"
+          className="h-full min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+          placeholder="搜索收藏"
+          type="search"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </span>
+    </label>
+  );
+}
+
+function FavoriteMobileSearchControl({ value, onChange }) {
+  return (
+    <div className="relative h-11 min-w-11 flex-1 p-1" data-testid="favorite-mobile-search-control">
+      <div className="flex h-9 min-w-0 items-center overflow-hidden rounded-md border border-input bg-background pl-2 pr-11 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40">
+        <input
+          aria-label="搜索收藏"
+          className="h-full min-w-0 flex-1 appearance-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+          placeholder="搜索收藏"
+          type="search"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
+      <button
+        type="button"
+        aria-label="清除搜索"
+        title="清除搜索"
+        disabled={!String(value ?? "").length}
+        className="absolute right-0 top-0 flex size-11 items-center justify-center rounded-md bg-transparent text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-40"
+        onClick={() => onChange("")}
+      >
+        <XIcon aria-hidden="true" className="size-4" />
+      </button>
+    </div>
+  );
+}
+
+function FavoriteSingleSelect({
+  label,
+  value,
+  options,
+  onValueChange,
+  icon: Icon = null,
+  className = "",
+  visualClassName = "",
+  sizeToOptions = false,
+  fluidWidth = false,
+}) {
+  const selectedLabel = options.find((option) => option.key === value)?.label || options[0]?.label || "";
+  const longestLabelLength = Math.max(1, ...options.map((option) => Array.from(option.label).length));
+  const compactStyle = sizeToOptions && !fluidWidth
+    ? { width: `calc(${longestLabelLength}em + 1.625rem)` }
+    : undefined;
+  const compactContentStyle = sizeToOptions && fluidWidth
+    ? { minWidth: `max(var(--radix-select-trigger-width), calc(${longestLabelLength * 0.68}rem + 1.625rem))` }
+    : undefined;
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger
+        aria-label={`${label}：${selectedLabel}`}
+        title={`${label}：${selectedLabel}`}
+        style={compactStyle}
+        className={`relative h-11 min-w-0 border-0 bg-transparent p-1 shadow-none! hover:bg-transparent! focus-visible:ring-0 [&>svg]:pointer-events-none [&>svg]:absolute [&>svg]:top-1/2 [&>svg]:-translate-y-1/2 ${sizeToOptions ? `${fluidWidth ? "w-full" : "shrink-0"} text-[0.68rem] [&>svg]:right-1.5` : "[&>svg]:right-2.5"} ${className}`}
+      >
+        <span className={`pointer-events-none flex h-9 min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-md border border-input bg-background shadow-xs ${sizeToOptions ? "pl-1.5 pr-5 text-[0.68rem]" : "pl-2 pr-7 text-sm"} ${visualClassName}`}>
+          {Icon ? <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /> : null}
+          <SelectValue className="block min-w-0 truncate whitespace-nowrap" />
+        </span>
+      </SelectTrigger>
+      <SelectContent
+        align="end"
+        style={compactContentStyle}
+        className={sizeToOptions ? `w-[var(--radix-select-trigger-width)]! ${fluidWidth ? "max-w-none!" : "min-w-0!"}` : "min-w-48"}
+      >
+        {options.map((option) => (
+          <SelectItem key={option.key} value={option.key} className={`min-h-11 ${sizeToOptions ? "text-[0.68rem]" : ""}`}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function FavoriteFilterGroup({ label, options, selectedValues, onToggle }) {
+  const selected = new Set(selectedValues);
+  return (
+    <fieldset className="grid gap-1.5">
+      <legend className="px-1 text-xs font-semibold text-muted-foreground">{label}</legend>
+      <div className={`grid gap-1 ${options.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+        {options.map((option) => {
+          const active = selected.has(option.key);
+          const visualMeta = favoriteFilterVisualMeta[option.key];
+          return (
+            <button
+              key={option.key}
+              type="button"
+              aria-pressed={active}
+              className="relative h-11 min-w-0 rounded-md bg-transparent p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              onClick={() => onToggle(option.key)}
+            >
+              <span
+                data-variant={active ? visualMeta?.badgeVariant : undefined}
+                className={cn(
+                  active && visualMeta?.badgeVariant ? badgeVariants({ variant: visualMeta.badgeVariant }) : visualMeta?.softClassName,
+                  "pointer-events-none relative flex h-9 w-full min-w-0 items-center justify-center rounded-md border px-2 text-xs font-medium"
+                )}
+              >
+                <span className="flex min-w-0 items-center justify-center gap-1.5">
+                  {visualMeta?.platform ? (
+                    <PlatformGlyph platform={visualMeta.platform} tone="inherit" className="size-3.5" />
+                  ) : null}
+                  <span className="truncate">{option.label}</span>
+                </span>
+                {active ? <CheckIcon aria-hidden="true" className="absolute right-1.5 size-3.5 shrink-0" /> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function FavoriteFilterPanel({ filters, onToggle, onReset, id, className = "", panelRef = null }) {
+  const activeCount = filters.platforms.length + filters.contentTypes.length + filters.payments.length;
+  return (
+    <div ref={panelRef} id={id} className={`grid gap-2.5 rounded-lg border border-border/80 bg-surface-floating p-2.5 shadow-[var(--shadow-panel)] ${className}`}>
+      <div className="flex min-h-9 items-center justify-between gap-3 px-1">
+        <div className="text-sm font-semibold">筛选收藏{activeCount ? `（${activeCount}）` : ""}</div>
+        <Button type="button" variant="ghost" size="sm" className="h-11" disabled={!activeCount} onClick={onReset}>重置</Button>
+      </div>
+      <FavoriteFilterGroup label="平台" options={FAVORITE_FILTER_OPTIONS.platforms} selectedValues={filters.platforms} onToggle={(key) => onToggle("platforms", key)} />
+      <FavoriteFilterGroup label="类型" options={FAVORITE_FILTER_OPTIONS.contentTypes} selectedValues={filters.contentTypes} onToggle={(key) => onToggle("contentTypes", key)} />
+      <FavoriteFilterGroup label="付费" options={FAVORITE_FILTER_OPTIONS.payments} selectedValues={filters.payments} onToggle={(key) => onToggle("payments", key)} />
+    </div>
+  );
+}
+
+function MobileToolbarButton({ variant = "outline", children, visualClassName = "", ...props }) {
+  const visualVariantClassName = variant === "primary"
+    ? "border-[color-mix(in_oklch,var(--primary)_24%,transparent)] bg-primary text-primary-foreground shadow-[var(--shadow-control)] group-hover/button:bg-[var(--primary-hover)] group-aria-expanded/button:bg-[var(--primary-hover)]"
+    : variant === "secondary"
+      ? "border-secondary/35 bg-[color-mix(in_oklch,var(--secondary)_18%,var(--background))] text-foreground"
+      : "border-border/75 bg-background text-foreground";
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      data-touch="compact"
+      className="relative h-11 min-h-11 w-full min-w-0 bg-transparent! p-0 shadow-none! hover:bg-transparent! active:translate-y-0"
+      {...props}
+    >
+      <span className={`pointer-events-none absolute inset-x-1 top-1/2 flex h-9 min-w-0 -translate-y-1/2 items-center justify-center gap-1 rounded-md border px-1.5 text-xs font-medium ${visualVariantClassName} ${visualClassName}`}>
+        {children}
+      </span>
+    </Button>
+  );
+}
+
+function FavoriteFilterPopover({ label, group, filters, onToggle }) {
+  const options = FAVORITE_FILTER_OPTIONS[group];
+  const selectedLabels = options.filter((option) => filters[group].includes(option.key)).map((option) => option.label);
+  const summary = selectedLabels.length ? selectedLabels.join("、") : label;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          data-touch="compact"
+          aria-label={`${label}：${selectedLabels.length ? summary : "不限"}`}
+          title={`${label}：${selectedLabels.length ? summary : "不限"}`}
+          className="relative h-11 min-w-0 bg-transparent! p-1 shadow-none! hover:bg-transparent!"
+        >
+          <span className={`pointer-events-none flex h-9 min-w-0 flex-1 items-center justify-between gap-2 rounded-md border px-2.5 text-sm ${selectedLabels.length ? "border-primary/35 bg-accent/70 text-accent-foreground" : "border-border/75 bg-background text-foreground"}`}>
+            <span className="truncate">{summary}</span>
+            {selectedLabels.length > 1 ? <span className="shrink-0 text-xs tabular-nums">{selectedLabels.length}</span> : <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />}
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64">
+        <FavoriteFilterGroup label={label} options={options} selectedValues={filters[group]} onToggle={(key) => onToggle(group, key)} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function FavoriteMoreActions({ layout = "grid", disabled = false, downloadDisabled = false, onImport, onExport, onDownload }) {
+  return (
+    <div className={layout === "grid" ? "grid grid-cols-3 gap-1" : "grid gap-1"}>
+      <MobileToolbarButton disabled={disabled} onClick={onImport}>
+        <DownloadIcon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="truncate">导入历史</span>
+      </MobileToolbarButton>
+      <MobileToolbarButton onClick={onExport}>
+        <UploadIcon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="truncate">导出历史</span>
+      </MobileToolbarButton>
+      <MobileToolbarButton disabled={downloadDisabled} onClick={onDownload}>
+        <FileDownIcon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="truncate">下载数据</span>
+      </MobileToolbarButton>
+    </div>
+  );
+}
+
+function FavoriteMoreMenu({ disabled, downloadDisabled, onImport, onExport, onDownload }) {
+  const [open, setOpen] = useState(false);
+  function run(action) {
+    setOpen(false);
+    action();
+  }
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="ghost" data-touch="compact" className="relative h-11 bg-transparent! p-1 shadow-none! hover:bg-transparent!" aria-label="更多收藏操作">
+          <span className="pointer-events-none flex h-9 items-center gap-1.5 rounded-md border border-border/75 bg-background px-3 text-sm text-foreground">
+            <MoreHorizontalIcon aria-hidden="true" className="size-4" />
+            更多
+            <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-60" />
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-40 p-1.5">
+        <FavoriteMoreActions
+          layout="list"
+          disabled={disabled}
+          downloadDisabled={downloadDisabled}
+          onImport={() => run(onImport)}
+          onExport={() => run(onExport)}
+          onDownload={() => run(onDownload)}
+        />
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function FavoritesPanel({
@@ -612,14 +1223,22 @@ export function FavoritesPanel({
     isRunning: false,
     progress: 0,
     currentTitle: "",
+    currentAction: "",
   },
 }) {
   const [snapshots, setSnapshots] = useState([]);
   const [selectedKeys, setSelectedKeys] = useState(new Set());
   const [expandedKeys, setExpandedKeys] = useState(new Set());
   const [settings, setSettings] = useState(() => normalizeFavoriteSettings());
+  const [filters, setFilters] = useState(EMPTY_FAVORITE_FILTERS);
+  const [mobilePanel, setMobilePanel] = useState(null);
   const fileInputRef = useRef(null);
+  const mobileFilterTriggerRef = useRef(null);
+  const mobileFilterPanelRef = useRef(null);
+  const mobileMoreTriggerRef = useRef(null);
+  const mobileMorePanelRef = useRef(null);
   const backfilledCvKeysRef = useRef(new Set());
+  const refreshLockRef = useRef(false);
   const mountedRef = useRef(true);
 
   async function reloadSnapshots() {
@@ -702,6 +1321,54 @@ export function FavoritesPanel({
     () => sortFavoritesWithSnapshots(favorites, snapshots, settings.sortBy),
     [favorites, snapshots, settings.sortBy]
   );
+  const filteredFavorites = useMemo(
+    () => filterFavorites(sortedFavorites, filters),
+    [filters, sortedFavorites]
+  );
+  const filteredFavoriteKeys = useMemo(
+    () => new Set(filteredFavorites.map((favorite) => favorite.key)),
+    [filteredFavorites]
+  );
+  const selectedFavorites = useMemo(
+    () => filteredFavorites.filter((favorite) => selectedKeys.has(favorite.key)),
+    [filteredFavorites, selectedKeys]
+  );
+  const activeFilterCount = filters.platforms.length + filters.contentTypes.length + filters.payments.length;
+  const hasActiveSearchOrFilters = Boolean(filters.query.trim()) || activeFilterCount > 0;
+  const allFilteredSelected = filteredFavorites.length > 0 && selectedFavorites.length === filteredFavorites.length;
+
+  useEffect(() => {
+    setSelectedKeys((current) => {
+      const next = new Set(Array.from(current).filter((key) => filteredFavoriteKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
+  }, [filteredFavoriteKeys]);
+
+  useEffect(() => {
+    if (!mobilePanel) {
+      return undefined;
+    }
+    const triggerRef = mobilePanel === "filters" ? mobileFilterTriggerRef : mobileMoreTriggerRef;
+    const panelRef = mobilePanel === "filters" ? mobileFilterPanelRef : mobileMorePanelRef;
+    function closeOnOutsidePointer(event) {
+      if (panelRef.current?.contains(event.target) || triggerRef.current?.contains(event.target)) {
+        return;
+      }
+      setMobilePanel(null);
+    }
+    function closeOnEscape(event) {
+      if (event.key === "Escape") {
+        setMobilePanel(null);
+        window.requestAnimationFrame(() => triggerRef.current?.querySelector("button")?.focus());
+      }
+    }
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [mobilePanel]);
 
   function toggleSelected(key, checked) {
     setSelectedKeys((current) => {
@@ -713,6 +1380,30 @@ export function FavoritesPanel({
       }
       return next;
     });
+  }
+
+  function toggleAllFiltered(checked) {
+    setSelectedKeys(checked ? new Set(filteredFavorites.map((favorite) => favorite.key)) : new Set());
+  }
+
+  function toggleFilter(group, key) {
+    setFilters((current) => {
+      const values = new Set(current[group]);
+      if (values.has(key)) {
+        values.delete(key);
+      } else {
+        values.add(key);
+      }
+      return { ...current, [group]: Array.from(values) };
+    });
+  }
+
+  function resetFilters() {
+    setFilters((current) => ({ ...EMPTY_FAVORITE_FILTERS, query: current.query }));
+  }
+
+  function clearSearchAndFilters() {
+    setFilters(EMPTY_FAVORITE_FILTERS);
   }
 
   function toggleExpanded(key) {
@@ -759,6 +1450,9 @@ export function FavoritesPanel({
   }
 
   async function refreshMany(targetFavorites) {
+    if (refreshLockRef.current) {
+      return;
+    }
     if (statisticsActionsDisabled) {
       toast.warning("后台任务运行中，请等待完成后再刷新收藏。");
       return;
@@ -768,89 +1462,175 @@ export function FavoritesPanel({
       toast.warning("请先选择收藏作品。");
       return;
     }
-    onRefreshStateChange({ isRunning: true, progress: 0, currentTitle: "" });
-    onBackgroundTaskChange({
-      isRunning: true,
-      status: "running",
-      type: "favorites_refresh",
-      title: "收藏刷新",
-      description: "正在准备刷新收藏",
-      progress: 0,
-      action: "正在准备刷新收藏",
-      resultTarget: "favorites",
-      highlighted: true,
-    });
+    refreshLockRef.current = true;
     let failedCount = 0;
+    let partialCount = 0;
     let stoppedByAccessDenied = false;
+    let unexpectedFailure = false;
+    let latestProgress = 0;
+    let finalAction = "收藏刷新完成";
+    function reportFavoriteProgress(index, favorite, itemProgress, currentAction) {
+      latestProgress = Math.max(latestProgress, getFavoriteBatchProgress(index, queue.length, itemProgress));
+      const favoriteTitle = favorite.title || "收藏作品";
+      const action = currentAction || "正在刷新";
+      const description = action.includes(favoriteTitle) ? action : `${favoriteTitle} · ${action}`;
+      onRefreshStateChange({
+        isRunning: true,
+        progress: latestProgress,
+        currentTitle: favoriteTitle,
+        currentAction: action,
+      });
+      onBackgroundTaskChange({
+        isRunning: true,
+        status: "running",
+        type: "favorites_refresh",
+        title: "收藏刷新",
+        description,
+        progress: latestProgress,
+        action: description,
+        resultTarget: "favorites",
+        highlighted: true,
+      });
+    }
     try {
+      onRefreshStateChange({ isRunning: true, progress: 0, currentTitle: "", currentAction: "正在准备刷新收藏" });
+      onBackgroundTaskChange({
+        isRunning: true,
+        status: "running",
+        type: "favorites_refresh",
+        title: "收藏刷新",
+        description: "正在准备刷新收藏",
+        progress: 0,
+        action: "正在准备刷新收藏",
+        resultTarget: "favorites",
+        highlighted: true,
+      });
       for (let index = 0; index < queue.length; index += 1) {
         const favorite = queue[index];
-        onRefreshStateChange({
-          isRunning: true,
-          progress: Math.floor((index / queue.length) * 100),
-          currentTitle: favorite.title,
-        });
-        onBackgroundTaskChange({
-          isRunning: true,
-          status: "running",
-          type: "favorites_refresh",
-          title: "收藏刷新",
-          description: `正在刷新：${favorite.title || "收藏作品"}`,
-          progress: Math.floor((index / queue.length) * 100),
-          action: `正在刷新：${favorite.title || "收藏作品"}`,
-          resultTarget: "favorites",
-          highlighted: true,
-        });
+        reportFavoriteProgress(index, favorite, 0, "读取作品详情");
         try {
-          await refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp });
+          const refreshed = await refreshFavoriteSnapshot({
+            favorite,
+            frontendVersion,
+            handleVersionResponse,
+            isDesktopApp,
+            onProgress: ({ progress, currentAction }) => reportFavoriteProgress(index, favorite, progress, currentAction),
+          });
+          if (!refreshed) {
+            reportFavoriteProgress(index, favorite, 100, "收藏已移除，跳过保存");
+          } else if (refreshed.snapshot?.status === "partial") {
+            partialCount += 1;
+          }
         } catch (error) {
           if (isFavoriteAccessDeniedError(error)) {
             stoppedByAccessDenied = true;
+            finalAction = getFavoriteAccessDeniedText();
             console.warn("Stopped favorite refresh because Missevan access is denied", error);
             break;
           }
           const activeFavorite = await getFavoriteByKey(favorite.key).catch(() => null);
           if (!activeFavorite) {
+            reportFavoriteProgress(index, favorite, 100, "收藏已移除，跳过保存");
             continue;
           }
           failedCount += 1;
           console.error("Failed to refresh favorite", error);
-          await saveSnapshot({
-            id: `${favorite.key}:${Date.now()}`,
+          const failedCapturedAt = Date.now();
+          const failedSnapshot = await saveSnapshot({
+            id: `${favorite.key}:${failedCapturedAt}`,
             favoriteKey: favorite.key,
             platform: favorite.platform,
             dramaId: favorite.dramaId,
-            capturedAt: Date.now(),
+            capturedAt: failedCapturedAt,
             status: "failed",
             metrics: {},
+            metricErrors: {},
             errors: [error instanceof Error ? error.message : String(error)],
-          }).catch(() => {});
+          }).catch((saveError) => {
+            console.error("Failed to save favorite failure snapshot", saveError);
+            return null;
+          });
+          reportFavoriteProgress(
+            index,
+            favorite,
+            100,
+            failedSnapshot ? "刷新失败，已保存失败记录" : "刷新失败，失败记录未能保存"
+          );
         }
       }
       await reloadSnapshots();
       await onFavoritesChange?.();
       if (stoppedByAccessDenied) {
         toast.error(renderFavoriteAccessDeniedMessage());
-      } else if (failedCount > 0) {
-        toast.warning(`刷新完成，${failedCount} 部作品失败。`);
+      } else if (failedCount > 0 || partialCount > 0) {
+        const issueParts = [
+          failedCount > 0 ? `${failedCount} 部作品刷新失败` : "",
+          partialCount > 0 ? `${partialCount} 部作品部分指标未获取` : "",
+        ].filter(Boolean);
+        finalAction = `${issueParts.join("，")}。`;
+        toast.warning(`刷新完成，${finalAction}`);
       } else {
+        finalAction = "收藏统计记录已更新。";
         toast.success("收藏刷新完成。");
       }
+      if (!stoppedByAccessDenied) {
+        setSelectedKeys(new Set());
+      }
+      const terminalProgress = stoppedByAccessDenied ? latestProgress : 100;
       onBackgroundTaskChange({
         isRunning: false,
         status: stoppedByAccessDenied || failedCount > 0 ? "failed" : "completed",
         type: "favorites_refresh",
-        title: stoppedByAccessDenied ? "收藏刷新已停止" : failedCount > 0 ? "收藏刷新完成，部分失败" : "收藏刷新完成",
-        description: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
-        progress: 100,
-        action: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : failedCount > 0 ? `${failedCount} 部作品刷新失败。` : "收藏统计记录已更新。",
+        title: stoppedByAccessDenied
+          ? "收藏刷新已停止"
+          : failedCount > 0
+            ? "收藏刷新完成，部分失败"
+            : partialCount > 0
+              ? "收藏刷新完成，部分指标未获取"
+              : "收藏刷新完成",
+        description: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : finalAction,
+        progress: terminalProgress,
+        action: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : finalAction,
         resultTarget: "favorites",
         highlighted: true,
       });
       await onRefreshSettled?.();
+    } catch (error) {
+      unexpectedFailure = true;
+      finalAction = error instanceof Error ? error.message : "收藏刷新未能完成";
+      console.error("Favorite refresh queue stopped unexpectedly", error);
+      toast.error(`收藏刷新异常中止：${finalAction}`);
+      onBackgroundTaskChange({
+        isRunning: false,
+        status: "failed",
+        type: "favorites_refresh",
+        title: "收藏刷新异常中止",
+        description: finalAction,
+        progress: latestProgress,
+        action: finalAction,
+        resultTarget: "favorites",
+        highlighted: true,
+      });
     } finally {
-      onRefreshStateChange({ isRunning: false, progress: 100, currentTitle: "" });
+      refreshLockRef.current = false;
+      onRefreshStateChange({
+        isRunning: false,
+        progress: stoppedByAccessDenied || unexpectedFailure ? latestProgress : 100,
+        currentTitle: "",
+        currentAction: finalAction,
+      });
     }
+  }
+
+  function downloadBlob(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async function exportData() {
@@ -859,19 +1639,26 @@ export function FavoritesPanel({
       const blob = new Blob([JSON.stringify(buildFavoritesBackup(backup), null, 2)], {
         type: "application/json",
       });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `mm-toolkit-favorites-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(blob, `mm-toolkit-favorites-${new Date().toISOString().slice(0, 10)}.json`);
       toast.success("收藏数据已导出。");
     } catch (error) {
       console.error("Failed to export favorites", error);
       toast.error("导出收藏数据失败。");
     }
+  }
+
+  function downloadSelectedHistory() {
+    const rows = buildFavoritesHistoryCsvRows(selectedFavorites, snapshots);
+    if (!rows.length) {
+      toast.warning("所选作品暂无可下载的成功历史记录。");
+      return;
+    }
+    const csv = serializeFavoritesHistoryCsv(rows);
+    downloadBlob(
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+      `mm-toolkit-favorites-history-${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    toast.success(`已下载 ${selectedFavorites.length} 部作品的历史数据。`);
   }
 
   async function importFile(file) {
@@ -880,7 +1667,8 @@ export function FavoritesPanel({
     }
     try {
       const payload = JSON.parse(await file.text());
-      await importFavoritesData(payload);
+      const imported = await importFavoritesData(payload);
+      setSettings(normalizeFavoriteSettings(imported?.settings));
       await reloadSnapshots();
       await onFavoritesChange?.();
       toast.success("收藏数据导入完成。");
@@ -912,73 +1700,203 @@ export function FavoritesPanel({
         </AlertDescription>
       </Alert>
 
-      <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-        <div className="grid min-w-0 grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center">
-          <Button
-            type="button"
-            variant="secondary"
-            className="h-9 gap-1 px-2 text-sm sm:px-3"
-            disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || selectedKeys.size === 0}
-            onClick={() => refreshMany(favorites.filter((favorite) => selectedKeys.has(favorite.key)))}
+      <div
+        className={`favorite-mobile-toolbar relative lg:hidden ${mobilePanel ? "z-40" : ""}`}
+        data-testid="favorite-mobile-toolbar"
+      >
+        <div
+          className="grid overflow-visible rounded-lg border border-border/80 bg-card shadow-[var(--shadow-card)]"
+          data-testid="favorite-mobile-toolbar-rows"
+        >
+          <div className="flex h-11 min-w-0 flex-nowrap items-center" data-testid="favorite-mobile-toolbar-primary">
+            <FavoriteMobileSearchControl
+              value={filters.query}
+              onChange={(query) => setFilters((current) => ({ ...current, query }))}
+            />
+            <label className="relative block h-11 w-[4.6rem] shrink-0 p-1">
+              <span className="absolute inset-x-1 top-1/2 flex h-9 min-w-0 -translate-y-1/2 items-center justify-center gap-1.5 rounded-md border border-border/75 bg-background px-1 text-xs font-medium text-foreground">
+                <Switch
+                  aria-label="全选当前筛选结果"
+                  size="sm"
+                  checked={allFilteredSelected}
+                  disabled={!filteredFavorites.length}
+                  onCheckedChange={(checked) => toggleAllFiltered(Boolean(checked))}
+                />
+                <span>全选</span>
+              </span>
+            </label>
+            <div ref={mobileFilterTriggerRef} className="h-11 w-11 shrink-0">
+              <MobileToolbarButton
+                variant="primary"
+                aria-expanded={mobilePanel === "filters"}
+                aria-controls="favorite-mobile-filter-panel"
+                aria-label={activeFilterCount ? `筛选，已启用 ${activeFilterCount} 项` : "筛选"}
+                title={activeFilterCount ? `筛选，已启用 ${activeFilterCount} 项` : "筛选"}
+                onClick={() => setMobilePanel((current) => current === "filters" ? null : "filters")}
+              >
+                <FilterIcon aria-hidden="true" className="size-4 shrink-0" />
+              </MobileToolbarButton>
+            </div>
+          </div>
+          <div
+            className="favorite-mobile-toolbar-secondary grid h-11 min-w-0 items-center gap-0 border-t border-border/60"
+            data-testid="favorite-mobile-toolbar-secondary"
           >
-            <RefreshCwIcon data-icon="inline-start" className={refreshState.isRunning ? "animate-spin" : ""} />
-            {refreshState.isRunning ? "刷新中" : "选中"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 gap-1 px-2 text-sm sm:px-3"
-            disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || favorites.length === 0}
-            onClick={() => refreshMany(sortedFavorites)}
+            <div className="h-11 min-w-11">
+              <MobileToolbarButton
+                variant="secondary"
+                aria-label={refreshState.isRunning
+                  ? `刷新中 ${refreshState.progress}%${refreshState.currentAction ? `：${refreshState.currentAction}` : ""}`
+                  : `刷新所选 ${selectedFavorites.length} 部`}
+                title={refreshState.isRunning
+                  ? `刷新中 ${refreshState.progress}%${refreshState.currentAction ? `：${refreshState.currentAction}` : ""}`
+                  : `刷新所选 ${selectedFavorites.length} 部`}
+                disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || selectedFavorites.length === 0}
+                onClick={() => refreshMany(selectedFavorites)}
+              >
+                <RefreshCwIcon aria-hidden="true" className={refreshState.isRunning ? "size-3.5 shrink-0 animate-spin" : "size-3.5 shrink-0"} />
+                <span className="favorite-mobile-refresh-label">刷新</span>
+                <span className="tabular-nums">{refreshState.isRunning ? `${refreshState.progress}%` : selectedFavorites.length}</span>
+              </MobileToolbarButton>
+            </div>
+            <FavoriteSingleSelect
+              label="关注指标"
+              value={settings.deltaMetric}
+              options={FAVORITE_DELTA_METRICS}
+              sizeToOptions
+              fluidWidth
+              onValueChange={(deltaMetric) => updateSettings({ deltaMetric })}
+            />
+            <FavoriteSingleSelect
+              label="排序"
+              value={settings.sortBy}
+              options={FAVORITE_SORT_OPTIONS}
+              sizeToOptions
+              fluidWidth
+              onValueChange={(sortBy) => updateSettings({ sortBy })}
+            />
+            <div ref={mobileMoreTriggerRef} className="h-11 w-11 shrink-0">
+              <MobileToolbarButton
+                variant="primary"
+                aria-expanded={mobilePanel === "more"}
+                aria-controls="favorite-mobile-more-panel"
+                aria-label="更多收藏操作"
+                title="更多收藏操作"
+                onClick={() => setMobilePanel((current) => current === "more" ? null : "more")}
+              >
+                <MoreHorizontalIcon aria-hidden="true" className="size-4 shrink-0" />
+              </MobileToolbarButton>
+            </div>
+          </div>
+        </div>
+        {mobilePanel === "filters" ? (
+          <FavoriteFilterPanel
+            id="favorite-mobile-filter-panel"
+            panelRef={mobileFilterPanelRef}
+            className="absolute right-0 top-11 z-20 w-[16.875rem]"
+            filters={filters}
+            onToggle={toggleFilter}
+            onReset={resetFilters}
+          />
+        ) : null}
+        {mobilePanel === "more" ? (
+          <div
+            ref={mobileMorePanelRef}
+            id="favorite-mobile-more-panel"
+            className="absolute right-0 top-[calc(100%+0.25rem)] z-20 w-40 rounded-lg border border-border/80 bg-surface-floating p-1.5 shadow-[var(--shadow-panel)]"
           >
-            <RefreshCwIcon data-icon="inline-start" className={refreshState.isRunning ? "animate-spin" : ""} />
-            {refreshState.isRunning ? "刷新中" : "全部"}
-          </Button>
-          <Button type="button" variant="outline" className="h-9 gap-1 px-2 text-sm sm:px-3" disabled={favoriteActionsDisabled} onClick={() => fileInputRef.current?.click()} aria-label="导入数据" title="导入数据">
-            <DownloadIcon data-icon="inline-start" />
-            导入
-          </Button>
-          <Button type="button" variant="outline" className="h-9 gap-1 px-2 text-sm sm:px-3" onClick={exportData} aria-label="导出数据" title="导出数据">
-            <UploadIcon data-icon="inline-start" />
-            导出
-          </Button>
-          <input
-            ref={fileInputRef}
-            className="hidden"
-            type="file"
-            accept="application/json,.json"
-            onChange={(event) => importFile(event.target.files?.[0])}
+            <FavoriteMoreActions
+              layout="list"
+              disabled={favoriteActionsDisabled}
+              downloadDisabled={!selectedFavorites.length}
+              onImport={() => {
+                setMobilePanel(null);
+                fileInputRef.current?.click();
+              }}
+              onExport={() => {
+                setMobilePanel(null);
+                exportData();
+              }}
+              onDownload={() => {
+                setMobilePanel(null);
+                downloadSelectedHistory();
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="hidden gap-2 rounded-lg border border-border/75 bg-card p-2 lg:grid" data-testid="favorite-desktop-toolbar">
+        <div className="grid min-w-0 grid-cols-[minmax(12rem,1.4fr)_repeat(3,minmax(6rem,.7fr))_repeat(2,minmax(8rem,1fr))] items-center gap-1">
+          <FavoriteSearchControl
+            value={filters.query}
+            onChange={(query) => setFilters((current) => ({ ...current, query }))}
+          />
+          <FavoriteFilterPopover label="平台" group="platforms" filters={filters} onToggle={toggleFilter} />
+          <FavoriteFilterPopover label="类型" group="contentTypes" filters={filters} onToggle={toggleFilter} />
+          <FavoriteFilterPopover label="付费" group="payments" filters={filters} onToggle={toggleFilter} />
+          <FavoriteSingleSelect
+            label="关注指标"
+            value={settings.deltaMetric}
+            options={FAVORITE_DELTA_METRICS}
+            icon={TrendingUpIcon}
+            onValueChange={(deltaMetric) => updateSettings({ deltaMetric })}
+          />
+          <FavoriteSingleSelect
+            label="排序"
+            value={settings.sortBy}
+            options={FAVORITE_SORT_OPTIONS}
+            icon={ArrowDownUpIcon}
+            onValueChange={(sortBy) => updateSettings({ sortBy })}
           />
         </div>
-        <div className="grid min-w-0 grid-cols-2 gap-2 lg:flex lg:items-center lg:justify-end">
-          <label className="flex h-9 min-w-0 items-center gap-1.5 rounded-md border border-border/75 bg-background px-2.5 text-sm text-foreground">
-            <TrendingUpIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            <select
-              aria-label="关注指标"
-              className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
-              value={settings.deltaMetric}
-              onChange={(event) => updateSettings({ deltaMetric: event.target.value })}
-            >
-              {FAVORITE_DELTA_METRICS.map((option) => (
-                <option key={option.key} value={option.key}>{option.label}</option>
-              ))}
-            </select>
+        <div className="flex min-h-11 items-center gap-2 border-t border-border/60 px-1 pt-2">
+          <label className="relative flex h-11 items-center p-1">
+            <span className="flex h-9 items-center gap-2 rounded-md border border-border/75 bg-background px-2.5 text-sm font-medium">
+              <Switch
+                aria-label="全选当前筛选结果"
+                checked={allFilteredSelected}
+                disabled={!filteredFavorites.length}
+                onCheckedChange={(checked) => toggleAllFiltered(Boolean(checked))}
+              />
+              全选当前结果
+            </span>
           </label>
-          <label className="flex h-9 min-w-0 items-center gap-1.5 rounded-md border border-border/75 bg-background px-2.5 text-sm text-foreground">
-            <ArrowDownUpIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            <select
-              aria-label="排序"
-              className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
-              value={settings.sortBy}
-              onChange={(event) => updateSettings({ sortBy: event.target.value })}
-            >
-              {FAVORITE_SORT_OPTIONS.map((option) => (
-                <option key={option.key} value={option.key}>{option.label}</option>
-              ))}
-            </select>
-          </label>
+          <span className="text-xs text-muted-foreground tabular-nums">已选 {selectedFavorites.length} / 当前 {filteredFavorites.length}</span>
+          {hasActiveSearchOrFilters ? (
+            <Button type="button" variant="ghost" className="h-11 px-2 text-xs" onClick={clearSearchAndFilters}>清除搜索和筛选</Button>
+          ) : null}
+          <div className="flex-1" />
+          <Button
+            type="button"
+            variant="ghost"
+            data-touch="compact"
+            className="relative h-11 bg-transparent! p-1 shadow-none! hover:bg-transparent!"
+            disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || selectedFavorites.length === 0}
+            onClick={() => refreshMany(selectedFavorites)}
+          >
+            <span className="pointer-events-none flex h-9 items-center gap-1.5 rounded-md border border-secondary/35 bg-[color-mix(in_oklch,var(--secondary)_18%,var(--background))] px-3 text-sm font-medium text-foreground">
+              <RefreshCwIcon aria-hidden="true" className={refreshState.isRunning ? "size-4 animate-spin" : "size-4"} />
+              {refreshState.isRunning ? `刷新中 ${refreshState.progress}%` : `刷新所选${selectedFavorites.length ? `（${selectedFavorites.length}）` : ""}`}
+            </span>
+          </Button>
+          <FavoriteMoreMenu
+            disabled={favoriteActionsDisabled}
+            downloadDisabled={!selectedFavorites.length}
+            onImport={() => fileInputRef.current?.click()}
+            onExport={exportData}
+            onDownload={downloadSelectedHistory}
+          />
         </div>
       </div>
+
+      <input
+        ref={fileInputRef}
+        className="hidden"
+        type="file"
+        accept="application/json,.json"
+        onChange={(event) => importFile(event.target.files?.[0])}
+      />
 
       {refreshState.isRunning ? (
         <div className="grid gap-2 rounded-lg border border-border/80 bg-card p-3">
@@ -990,9 +1908,9 @@ export function FavoritesPanel({
         </div>
       ) : null}
 
-      {sortedFavorites.length ? (
+      {filteredFavorites.length ? (
         <div className="grid gap-3">
-          {sortedFavorites.map((favorite) => {
+          {filteredFavorites.map((favorite) => {
             const latest = getLatestSnapshot(favorite.key, snapshots);
             const expanded = expandedKeys.has(favorite.key);
             const coverUrl = buildProxyImageUrl(favorite.cover);
@@ -1000,13 +1918,26 @@ export function FavoritesPanel({
             const platformLabel = favorite.platform === "missevan" ? "猫耳" : "漫播";
             const paymentTag = favorite.paymentLabel;
             const titleTags = [platformLabel, favorite.contentTypeLabel].filter(Boolean);
+            const metricReadings = Object.fromEntries(
+              metricKeys.map((key) => [key, getLatestMetricReading(favorite.key, snapshots, key)])
+            );
+            const hasFallbackMetrics = Boolean(latest) && metricKeys.some((key) => {
+              const readingSnapshot = metricReadings[key]?.snapshot;
+              return readingSnapshot && readingSnapshot.id !== latest.id;
+            });
+            const latestRefreshIncomplete = latest?.status === "failed" || latest?.status === "partial";
 
             return (
               <Card key={favorite.key}>
                 <CardContent className="grid gap-3 p-3 sm:p-4">
                   <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3">
                     <div className="flex flex-col items-center gap-2 pt-1">
-                      <Checkbox checked={selectedKeys.has(favorite.key)} onCheckedChange={(checked) => toggleSelected(favorite.key, Boolean(checked))} />
+                      <Checkbox
+                        aria-label={`选择${favorite.title}`}
+                        className="after:-inset-3.5"
+                        checked={selectedKeys.has(favorite.key)}
+                        onCheckedChange={(checked) => toggleSelected(favorite.key, Boolean(checked))}
+                      />
                       <Button
                         type="button"
                         variant="ghost"
@@ -1050,16 +1981,23 @@ export function FavoritesPanel({
                         </div>
                         <div className="hidden grid-cols-5 gap-3 lg:grid">
                           {metricKeys.map((key) => (
-                            <MetricPill key={`${favorite.key}-${key}`} metricKey={key} value={getMetricValue(latest, key)} platform={favorite.platform} />
+                            <MetricPill key={`${favorite.key}-${key}`} metricKey={key} value={metricReadings[key]?.value} platform={favorite.platform} />
                           ))}
                         </div>
                       </div>
 
                       <div className="col-span-2 grid grid-cols-3 gap-2 lg:hidden">
                         {metricKeys.slice(0, 5).map((key) => (
-                          <MetricPill key={`${favorite.key}-mobile-${key}`} metricKey={key} value={getMetricValue(latest, key)} platform={favorite.platform} />
+                          <MetricPill key={`${favorite.key}-mobile-${key}`} metricKey={key} value={metricReadings[key]?.value} platform={favorite.platform} />
                         ))}
                       </div>
+
+                      {latestRefreshIncomplete ? (
+                        <div className="col-span-2 rounded-md bg-muted/45 px-2.5 py-2 text-xs leading-5 text-muted-foreground" role="status">
+                          {latest.status === "failed" ? "最近一次刷新失败" : "最近一次刷新部分成功"}
+                          {hasFallbackMetrics ? "，部分指标沿用上次有效数据。" : "，缺失指标暂不显示。"}
+                        </div>
+                      ) : null}
 
                       <div className="col-span-2">
                         <SnapshotDetailsDisclosure
@@ -1077,11 +2015,20 @@ export function FavoritesPanel({
             );
           })}
         </div>
+      ) : hasActiveSearchOrFilters && favorites.length ? (
+        <div className="grid justify-items-center gap-3 rounded-lg border border-dashed border-border/80 bg-card/72 px-4 py-10 text-center">
+          <div className="grid gap-1">
+            <div className="text-sm font-medium text-foreground">没有符合条件的收藏</div>
+            <div className="text-xs text-muted-foreground">调整关键词或筛选条件后再试。</div>
+          </div>
+          <Button type="button" variant="outline" className="h-11 px-4" onClick={clearSearchAndFilters}>清除搜索和筛选</Button>
+        </div>
       ) : (
         <div className="rounded-lg border border-dashed border-border/80 bg-card/72 px-4 py-10 text-center text-sm text-muted-foreground">
           暂无收藏作品。可以在搜索结果、更新页或榜单页点击星标加入收藏。
         </div>
       )}
+
     </div>
   );
 }

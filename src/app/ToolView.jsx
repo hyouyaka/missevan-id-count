@@ -163,15 +163,15 @@ function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) 
 
   function renderDetail({ allowRunningDismiss = false } = {}) {
     return (
-      <div className="grid gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
+      <div className="grid min-w-0 w-full gap-2">
+        <div className="flex min-w-0 w-full items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-foreground">{title}</div>
-            <div className="truncate text-xs text-muted-foreground">{action}</div>
+            <div className="whitespace-normal break-words text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">{action}</div>
           </div>
           <Badge variant={task.isRunning ? "default" : "secondary"} className="shrink-0">{statusText}</Badge>
         </div>
-        <Progress value={progress} className="h-2.5 rounded-full bg-muted" indicatorClassName="bg-primary" />
+        <Progress value={progress} className="h-2.5 min-w-0 max-w-full rounded-full bg-muted" indicatorClassName="bg-primary" />
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span className="tabular-nums">{progress}%</span>
           <div className="flex items-center gap-1.5">
@@ -222,7 +222,7 @@ function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) 
           </div>
         )}
       </div>
-      <div className="fixed mobile-fixed-bottom right-3 z-40 sm:hidden">
+      <div className="mobile-background-task-center fixed mobile-fixed-bottom right-3 z-40 sm:hidden">
         <Button
           type="button"
           variant={task.isRunning ? "secondary" : "outline"}
@@ -238,7 +238,7 @@ function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) 
           </span>
         </Button>
         {mobileOpen ? (
-          <div className="absolute bottom-12 right-0 w-[min(21rem,calc(100vw-1.5rem))] rounded-lg border border-border/80 bg-surface-floating p-3 shadow-[var(--shadow-panel)] backdrop-blur-xl">
+          <div className="absolute bottom-12 right-0 box-border min-w-0 w-[min(21rem,calc(100vw-1.5rem))] overflow-hidden rounded-lg border border-border/80 bg-surface-floating p-3 shadow-[var(--shadow-panel)] backdrop-blur-xl">
             {renderDetail()}
           </div>
         ) : null}
@@ -1068,6 +1068,7 @@ export function ToolView({ initialAppConfig }) {
     isRunning: false,
     progress: 0,
     currentTitle: "",
+    currentAction: "",
   });
   const [backgroundTask, setBackgroundTask] = useState(() => createIdleBackgroundTask());
   const [compareItems, setCompareItems] = useState([]);
