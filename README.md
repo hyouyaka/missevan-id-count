@@ -50,7 +50,7 @@ Railway 环境应使用 `MISSEVAN_COOLDOWN_KEY=missevan:cooldown:v1` 持久化�
 
 后端统一向 stdout/stderr 输出单行 JSON，不再使用 `[usage]` 文本前缀；`info`、`warn` 写入 stdout，`error` 写入 stderr。每条日志都包含 `timestamp`、`level`、`message`、`logSchemaVersion`、`category` 和 `event`；可按场景附带 `requestId`、`taskId`、`operationId`、`platform`、`outcome`、`durationMs` 等字段。
 
-Railway Columns 推荐添加 `category`、`event`、`platform`、`keywordText`、`keyResultText`、`taskType`、`source`。`keywordText` 汇总搜索词、趋势剧名、对比剧名、榜单/更新标题、从链接打开统计界面的剧名、CV 名称或统计任务剧名；`keyResultText` 仅记录成功统计任务的最终 ID 数、总播放量或收益数字，完整任务详情仍保留在 `result`。
+Railway Columns 推荐添加 `category`、`event`、`platform`、`keywordText`、`keyResultText`、`taskType`、`source`。`keywordText` 汇总搜索词、手动导入解析出的剧名、趋势/对比剧名、榜单/更新标题、从链接打开统计界面的剧名、收藏或外链作品名、CV 名称及统计任务剧名；`keyResultText` 仅记录成功统计任务的最终 ID 数、总播放量或收益数字，完整任务详情仍保留在 `result`。
 
 | `category` | 用途 | 本地文件 |
 |------|------|------|

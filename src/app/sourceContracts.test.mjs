@@ -1723,12 +1723,22 @@ test("external drama title jump includes titles in import usage logs", () => {
   assert.match(ongoingPanelSource, /titles: \[item\.name\]/);
   assert.match(missevanRouteSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, inputItems\.length\)/);
   assert.match(missevanRouteSource, /const usageSource = normalizeStatsTaskSource\(req\.body\?\.source\)/);
-  assert.match(missevanRouteSource, /\.\.\.\(usageTitles\.length \? \{ titles: usageTitles \} : \{\}\)/);
+  assert.match(missevanRouteSource, /const resolvedUsageTitles = normalizeStringArray\(\[[\s\S]*\.\.\.usageTitles,[\s\S]*\.\.\.dedupedResults\.map\(\(item\) => item\?\.name \?\? item\?\.title\)/);
+  assert.match(missevanRouteSource, /\.\.\.\(resolvedUsageTitles\.length \? \{ titles: resolvedUsageTitles \} : \{\}\)/);
   assert.match(missevanRouteSource, /\.\.\.\(usageSource \? \{ source: usageSource \} : \{\}\)/);
   assert.match(manboRouteSource, /const usageTitles = normalizeStringArray\(req\.body\?\.titles, items\.length\)/);
   assert.match(manboRouteSource, /const usageSource = normalizeStatsTaskSource\(req\.body\?\.source\)/);
-  assert.match(manboRouteSource, /\.\.\.\(usageTitles\.length \? \{ titles: usageTitles \} : \{\}\)/);
+  assert.match(manboRouteSource, /const resolvedUsageTitles = normalizeStringArray\(\[[\s\S]*\.\.\.usageTitles,[\s\S]*\.\.\.dedupedResults\.map\(\(item\) => item\?\.name \?\? item\?\.title\)/);
+  assert.match(manboRouteSource, /\.\.\.\(resolvedUsageTitles\.length \? \{ titles: resolvedUsageTitles \} : \{\}\)/);
   assert.match(manboRouteSource, /\.\.\.\(usageSource \? \{ source: usageSource \} : \{\}\)/);
+  assert.ok(
+    missevanRouteSource.indexOf("const resolvedUsageTitles") > missevanRouteSource.indexOf("const dedupedResults"),
+    "Missevan usage titles should be resolved after drama cards"
+  );
+  assert.ok(
+    manboRouteSource.indexOf("const resolvedUsageTitles") > manboRouteSource.indexOf("const dedupedResults"),
+    "Manbo usage titles should be resolved after drama cards"
+  );
 });
 
 test("Manbo drama card imports use the info store before external detail hydration", () => {

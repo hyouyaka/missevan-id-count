@@ -208,17 +208,6 @@ export function registerManboRoutes(router, {
     const failedItems = [];
     let accessDenied = false;
 
-    if (items.length) {
-      void writeUsageLog({
-        platform: "manbo",
-        action: usageAction,
-        items: items.map((item) => item.raw),
-        ...(usageTitles.length ? { titles: usageTitles } : {}),
-        ...(usageSource ? { source: usageSource } : {}),
-        count: items.length,
-      });
-    }
-
     await ensureInfoStoreLoaded(manboInfoStore);
     const newDramaIds = [];
     for (const item of items) {
@@ -279,6 +268,20 @@ export function registerManboRoutes(router, {
     const dedupedResults = Array.from(
       new Map(results.map((item) => [String(item.id), item])).values()
     );
+    if (items.length) {
+      const resolvedUsageTitles = normalizeStringArray([
+        ...usageTitles,
+        ...dedupedResults.map((item) => item?.name ?? item?.title),
+      ], items.length);
+      void writeUsageLog({
+        platform: "manbo",
+        action: usageAction,
+        items: items.map((item) => item.raw),
+        ...(resolvedUsageTitles.length ? { titles: resolvedUsageTitles } : {}),
+        ...(usageSource ? { source: usageSource } : {}),
+        count: items.length,
+      });
+    }
 
     if (newDramaIds.length > 0) {
       fireAndForget("Failed to append new Manbo drama ids", async () => {

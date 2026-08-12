@@ -43,22 +43,6 @@ export function registerMissevanRoutes(router, {
     const failedItems = [];
     let accessDenied = false;
 
-    if (inputItems.length) {
-      void writeUsageLog({
-        platform: "missevan",
-        action: usageAction,
-        dramaIds: inputItems
-          .filter((item) => item.type === "drama")
-          .map((item) => Number(item.id)),
-        soundIds: inputItems
-          .filter((item) => item.type === "sound")
-          .map((item) => Number(item.id)),
-        ...(usageTitles.length ? { titles: usageTitles } : {}),
-        ...(usageSource ? { source: usageSource } : {}),
-        count: inputItems.length,
-      });
-    }
-
     await ensureInfoStoreLoaded(missevanInfoStore);
     await refreshMissevanCooldownState();
     const newDramaIds = [];
@@ -121,6 +105,25 @@ export function registerMissevanRoutes(router, {
     }
 
     const dedupedResults = dedupeMissevanDramaCardResults(results);
+    if (inputItems.length) {
+      const resolvedUsageTitles = normalizeStringArray([
+        ...usageTitles,
+        ...dedupedResults.map((item) => item?.name ?? item?.title),
+      ], inputItems.length);
+      void writeUsageLog({
+        platform: "missevan",
+        action: usageAction,
+        dramaIds: inputItems
+          .filter((item) => item.type === "drama")
+          .map((item) => Number(item.id)),
+        soundIds: inputItems
+          .filter((item) => item.type === "sound")
+          .map((item) => Number(item.id)),
+        ...(resolvedUsageTitles.length ? { titles: resolvedUsageTitles } : {}),
+        ...(usageSource ? { source: usageSource } : {}),
+        count: inputItems.length,
+      });
+    }
 
     return res.json({
       success: dedupedResults.length > 0,

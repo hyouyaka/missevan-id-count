@@ -1359,9 +1359,15 @@ test("terminal stats task usage logs preserve the full result and optional sourc
     titles: ["CV 作品"],
   }), "CV 作品");
   assert.equal(buildUserActionKeywordText("ranks_open_search_result", { titles: [] }), "");
+  assert.equal(buildUserActionKeywordText("manual_import", {
+    titles: ["赤霞珠", "赤霞珠", ""],
+  }), "赤霞珠");
   assert.equal(buildUserActionKeywordText("cv_profile_open", { cvName: " 倒霉死勒 " }), "倒霉死勒");
   assert.equal(buildUserActionKeywordText("cv_rank_open_profile", { cvName: "倒霉死勒" }), "倒霉死勒");
-  assert.equal(buildUserActionKeywordText("favorite_add", { keyword: "不应出现" }), "");
+  assert.equal(buildUserActionKeywordText("favorite_add", { dramaName: " 沉浮事 " }), "沉浮事");
+  assert.equal(buildUserActionKeywordText("favorite_remove", { dramaName: "触礁" }), "触礁");
+  assert.equal(buildUserActionKeywordText("external_open", { title: "赤霞珠" }), "赤霞珠");
+  assert.equal(buildUserActionKeywordText("feedback_explanation_open", { keyword: "不应出现" }), "");
   assert.deepEqual(normalizeUsageLogFields({
     action: "search",
     keyword: "剑名不奈何",
@@ -1410,6 +1416,17 @@ test("terminal stats task usage logs preserve the full result and optional sourc
     dramaTitles: ["情蛊", "奇洛李维斯回信"],
     success: true,
     keywordText: "情蛊, 奇洛李维斯回信",
+  });
+  assert.deepEqual(normalizeUsageLogFields({
+    action: "manual_import",
+    platform: "missevan",
+    dramaIds: [95114],
+    titles: ["赤霞珠"],
+  }, "manual_import"), {
+    platform: "missevan",
+    dramaIds: [95114],
+    titles: ["赤霞珠"],
+    keywordText: "赤霞珠",
   });
   assert.equal(
     getStatsTaskSummaryLogLevel({

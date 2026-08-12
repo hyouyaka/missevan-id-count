@@ -2209,11 +2209,17 @@ export function buildUserActionKeywordText(action, fields = {}) {
   if (normalizedAction === "compare") {
     return normalizeStringArray(fields.dramaTitles, 200).join(", ");
   }
-  if (normalizedAction.endsWith("_open_search_result")) {
+  if (normalizedAction === "manual_import" || normalizedAction.endsWith("_open_search_result")) {
     return normalizeStringArray(fields.titles, 200).join(", ");
   }
   if (["cv_profile_open", "cv_rank_open_profile"].includes(normalizedAction)) {
     return normalizeTextValue(fields.cvName);
+  }
+  if (["favorite_add", "favorite_remove"].includes(normalizedAction)) {
+    return normalizeTextValue(fields.dramaName);
+  }
+  if (normalizedAction === "external_open") {
+    return normalizeTextValue(fields.title);
   }
   return "";
 }
