@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+const appVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+).version;
 
 const shortTitle = "虚拟偶像团综丨《一起再出发》";
 const longTitle = "全球进化后我站在食物链顶端第二季下篇特别广播剧";
@@ -92,9 +97,9 @@ const profileResponse = {
 };
 
 test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.8");
-  });
+  await page.addInitScript((version) => {
+    window.localStorage.setItem("missevan-changelog-seen-version", version);
+  }, appVersion);
   await page.route("**/cv-profile?**", (route) =>
     route.fulfill({
       status: 200,

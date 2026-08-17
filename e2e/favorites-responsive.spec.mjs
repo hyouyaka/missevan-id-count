@@ -1,5 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+const appVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+).version;
 
 const favorite = {
   key: "missevan:93038",
@@ -91,9 +96,9 @@ async function seedFavorites(page) {
 }
 
 test("favorites history switches between a scroll-free mobile timeline and desktop table", async ({ page }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.8");
-  });
+  await page.addInitScript((version) => {
+    window.localStorage.setItem("missevan-changelog-seen-version", version);
+  }, appVersion);
   await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/tool?view=favorites");
   await expect(page.locator("#app")).toBeVisible();
@@ -305,9 +310,9 @@ test("favorite background task details wrap within a 377px viewport", async ({ p
     currentAction: longAction,
   };
 
-  await page.addInitScript(() => {
-    window.localStorage.setItem("missevan-changelog-seen-version", "1.7.8");
-  });
+  await page.addInitScript((version) => {
+    window.localStorage.setItem("missevan-changelog-seen-version", version);
+  }, appVersion);
   await page.route("**/getdramas**", async (route) => {
     await route.fulfill({
       status: 200,

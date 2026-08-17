@@ -24,6 +24,7 @@ data/
 tmp-manbo-crypto.js
 tmp-manbo-json-method-note.md
 runtime/
+reports/
 cloudflare/**/.wrangler/
 
 # Editor directories and files

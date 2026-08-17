@@ -351,6 +351,53 @@ test("library search treats spaces as AND terms across searchable fields", async
   assert.deepEqual(results, ["201"]);
 });
 
+test("Missevan compound search treats exact content types as filters", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    { ...buildMissevanSearchRecord("你的雪人能活多久 第一季", "93787"), catalog: 89 },
+    { ...buildMissevanSearchRecord("你的雪人能活多久 有声版", "93788"), catalog: 93 },
+    { ...buildMissevanSearchRecord("伏特加与曼特宁", "92988"), catalog: 89 },
+    { ...buildMissevanSearchRecord("伏特加与曼特宁", "92968"), catalog: 93 },
+    { ...buildMissevanSearchRecord("无关广播剧", "94000"), catalog: 89 },
+    { ...buildMissevanSearchRecord("画中雪人", "95000"), catalog: 96 },
+  ];
+  const ids = (keyword) => searchMissevanLibraryRecords(records, keyword)
+    .map((item) => item.dramaId);
+
+  assert.deepEqual(ids("雪人 广播剧"), ["93787"]);
+  assert.deepEqual(ids("雪人，广播剧"), ["93787"]);
+  assert.deepEqual(ids("雪人,广播剧"), ["93787"]);
+  assert.deepEqual(ids("伏特加 广播剧"), ["92988"]);
+  assert.deepEqual(ids("伏特加，有声剧"), ["92968"]);
+  assert.deepEqual(ids("雪人，伏特加，广播剧"), ["92988", "93787"]);
+  assert.deepEqual(ids("雪人，广播剧，有声剧"), ["93788", "93787"]);
+  assert.deepEqual(ids("雪人 广播剧，伏特加 有声剧"), ["92968", "93787"]);
+  assert.deepEqual(ids("雪人 有声漫"), ["95000"]);
+  assert.deepEqual(ids("雪人，有声漫画"), ["95000"]);
+});
+
+test("Manbo compound search treats exact content types as filters", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchManboLibraryRecords } = await import("./server.js");
+  const records = [
+    { ...buildManboSearchRecord("雪人广播剧", "301"), catalogName: "广播剧" },
+    { ...buildManboSearchRecord("雪人有声版", "302"), catalogName: "有声剧" },
+    { ...buildManboSearchRecord("伏特加与曼特宁", "303"), catalogName: "广播剧" },
+    { ...buildManboSearchRecord("无关广播剧", "304"), catalogName: "广播剧" },
+    { ...buildManboSearchRecord("漫画雪人", "305"), catalogName: "有声漫画" },
+  ];
+  const ids = (keyword) => searchManboLibraryRecords(records, keyword)
+    .map((item) => item.dramaId);
+
+  assert.deepEqual(ids("雪人 广播剧"), ["301"]);
+  assert.deepEqual(ids("雪人，广播剧"), ["301"]);
+  assert.deepEqual(ids("雪人,有声剧"), ["302"]);
+  assert.deepEqual(ids("雪人，伏特加，广播剧"), ["303", "301"]);
+  assert.deepEqual(ids("雪人 有声漫"), ["305"]);
+  assert.deepEqual(ids("雪人，有声漫画"), ["305"]);
+});
+
 test("library search keeps season phrases as AND terms but skips comma-only season fragments", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords } = await import("./server.js");

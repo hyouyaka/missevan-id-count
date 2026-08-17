@@ -54,8 +54,17 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.8", () => {
-  assert.equal(packageJson.version, "1.7.8");
+test("package version is 1.7.9", () => {
+  assert.equal(packageJson.version, "1.7.9");
+});
+
+test("changelog contains the 1.7.9 search type update", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.7.9");
+
+  assert.deepEqual(entry, {
+    version: "1.7.9",
+    changes: ["优化搜索逻辑，“广播剧”“有声剧”可被识别为剧集类型，仅显示相应类型的搜索结果。"],
+  });
 });
 
 test("changelog contains the 1.7.8 favorites update", () => {

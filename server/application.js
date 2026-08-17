@@ -5450,6 +5450,17 @@ const CONTENT_TYPE_LABEL_BY_CATEGORY = Object.freeze({
   audio_comic: "有声漫",
 });
 
+function getExactSearchCategory(rawKeyword) {
+  const normalizedKeyword = normalizeSearchText(rawKeyword);
+  if (!normalizedKeyword) {
+    return null;
+  }
+
+  return SEARCH_CATEGORY_TERMS.find((category) =>
+    category.terms.some((term) => normalizeSearchText(term) === normalizedKeyword)
+  )?.key || null;
+}
+
 const MISSEVAN_CONTENT_TYPE_BY_CATALOG = Object.freeze(
   Object.fromEntries(
     Object.entries(MISSEVAN_CATEGORY_CATALOGS).flatMap(([category, catalogs]) =>
@@ -5686,13 +5697,37 @@ function buildCompoundScoredMatches(records, keyword, buildTermMatches) {
     return null;
   }
 
-  const merged = new Map();
-  expression.groups.forEach((group) => {
-    buildAndScoredMatches(records, group.terms, group.terms.join(" "), buildTermMatches)
-      .forEach((item) => mergeBestScoredItem(merged, item));
-  });
+  const globalCategoryGroups = expression.groups.filter(
+    (group) => group.terms.length === 1 && getExactSearchCategory(group.terms[0])
+  );
+  const regularGroups = expression.groups.filter(
+    (group) => group.terms.length !== 1 || !getExactSearchCategory(group.terms[0])
+  );
+  const mergeGroups = (groups) => {
+    const merged = new Map();
+    groups.forEach((group) => {
+      buildAndScoredMatches(records, group.terms, group.terms.join(" "), buildTermMatches)
+        .forEach((item) => mergeBestScoredItem(merged, item));
+    });
+    return merged;
+  };
 
-  return sortScoredDramaRecords(Array.from(merged.values()), keyword);
+  const regularMatches = mergeGroups(regularGroups);
+  if (!globalCategoryGroups.length) {
+    return sortScoredDramaRecords(Array.from(regularMatches.values()), keyword);
+  }
+
+  const categoryMatches = mergeGroups(globalCategoryGroups);
+  if (!regularGroups.length) {
+    return sortScoredDramaRecords(Array.from(categoryMatches.values()), keyword);
+  }
+
+  return sortScoredDramaRecords(
+    Array.from(regularMatches.entries())
+      .filter(([key]) => categoryMatches.has(key))
+      .map(([, item]) => item),
+    keyword
+  );
 }
 
 function recordTextIncludesAny(values, terms) {
@@ -5890,6 +5925,13 @@ function buildScoredMissevanLibraryMatches(records, keyword, category = null, op
 }
 
 function buildScoredManboLibraryTermMatches(records, keyword) {
+  const category = getExactSearchCategory(keyword);
+  if (category) {
+    return records
+      .filter((record) => matchesManboSearchCategory(record, category))
+      .map((record) => ({ record, score: 0 }));
+  }
+
   return buildSearchBranches(keyword)
     .flatMap((branch) => buildScoredManboLibraryMatches(
       records,
@@ -5900,6 +5942,13 @@ function buildScoredManboLibraryTermMatches(records, keyword) {
 }
 
 function buildScoredMissevanLibraryTermMatches(records, keyword) {
+  const category = getExactSearchCategory(keyword);
+  if (category) {
+    return records
+      .filter((record) => matchesMissevanSearchCategory(record, category))
+      .map((record) => ({ record, score: 0 }));
+  }
+
   return buildSearchBranches(keyword)
     .flatMap((branch) => buildScoredMissevanLibraryMatches(
       records,

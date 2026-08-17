@@ -4,6 +4,10 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.7.9",
+    changes: ["优化搜索逻辑，“广播剧”“有声剧”可被识别为剧集类型，仅显示相应类型的搜索结果。"],
+  },
+  {
     version: "1.7.8",
     changes: ["优化了收藏界面和功能"],
   },
