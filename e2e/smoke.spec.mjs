@@ -169,6 +169,13 @@ test("P1 search deep link, compact action hierarchy, and drawer work responsivel
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog", { name: "主菜单" })).toHaveCount(0);
     await expect(menuButton).toBeFocused();
+
+    await searchInput.fill("新的搜索词");
+    await searchInput.press("Enter");
+    await expect.poll(() => unifiedSearchRequests).toBe(2);
+    await page.waitForTimeout(750);
+    expect(unifiedSearchRequests).toBe(2);
+    expect(new URL(page.url()).searchParams.get("q")).toBe("新的搜索词");
   } finally {
     await context.close();
   }

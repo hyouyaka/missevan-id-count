@@ -1072,6 +1072,9 @@ export function ToolView({ initialAppConfig }) {
   const [searchMetricLegendOpen, setSearchMetricLegendOpen] = useState(false);
   const [globalSearchPending, setGlobalSearchPending] = useState(() => Boolean(initialToolRouteState.q));
   const [searchRouteRestoreGeneration, setSearchRouteRestoreGeneration] = useState(0);
+  const [searchRouteRestoreKeyword, setSearchRouteRestoreKeyword] = useState(() =>
+    initialToolRouteState.view === "search" ? initialToolRouteState.q : ""
+  );
   const [favoriteItems, setFavoriteItems] = useState([]);
   const [favoriteRefreshState, setFavoriteRefreshState] = useState({
     isRunning: false,
@@ -1216,7 +1219,8 @@ export function ToolView({ initialAppConfig }) {
 
   useEffect(() => {
     function handleToolViewPopState() {
-      applyCurrentPlatformFromUrl();
+      const nextRouteState = applyCurrentPlatformFromUrl();
+      setSearchRouteRestoreKeyword(nextRouteState.view === "search" ? nextRouteState.q : "");
       setSearchRouteRestoreGeneration((current) => current + 1);
     }
 
@@ -1361,13 +1365,14 @@ export function ToolView({ initialAppConfig }) {
 
   function applyCurrentPlatformFromUrl() {
     if (typeof window === "undefined") {
-      return;
+      return toolRouteStateRef.current;
     }
     const nextState = readToolRouteStateFromLocation(window.location, appConfigRef.current);
     pendingDetailRouteReplaceRef.current = false;
     toolRouteStateRef.current = nextState;
     currentPlatformRef.current = nextState.view;
     setToolRouteState(nextState);
+    return nextState;
   }
 
   function navigateToolRoute(patch, options = {}) {
@@ -3562,7 +3567,7 @@ export function ToolView({ initialAppConfig }) {
               exactMatch: Boolean(meta?.exactMatch),
               keyword: String(meta?.keyword ?? "").trim(),
             })}
-            restoreSearchRequest={toolRouteState.view === "search" && toolRouteState.q ? {
+            restoreSearchRequest={toolRouteState.view === "search" && toolRouteState.q && toolRouteState.q === searchRouteRestoreKeyword ? {
               keyword: toolRouteState.q,
               category: toolRouteState.platform,
               signature: `${searchRouteRestoreGeneration}:${toolRouteState.q}`,

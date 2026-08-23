@@ -1626,6 +1626,8 @@ test("global search input area supports header layout and compact controls", () 
   assert.match(searchPanelSource, /placeholder = "请输入关键词、ID、分享链接。"/);
   assert.match(searchPanelSource, /onSearchCommit/);
   assert.match(searchPanelSource, /onSearchPendingChange/);
+  assert.match(toolViewSource, /setSearchRouteRestoreKeyword\(nextRouteState\.view === "search" \? nextRouteState\.q : ""\)/);
+  assert.match(toolViewSource, /toolRouteState\.q === searchRouteRestoreKeyword/);
   assert.match(searchPanelSource, /type="submit"[\s\S]*aria-label="搜索"/);
   assert.match(searchPanelSource, /disabled=\{isSearchPending\}/);
   assert.doesNotMatch(searchPanelSource, /disabled=\{isSearchPending \|\| !hasKeyword\}/);
