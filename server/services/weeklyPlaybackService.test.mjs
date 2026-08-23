@@ -2,44 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createWeeklyPlaybackStore } from "./weeklyPlaybackService.js";
 
-test("weekly playback store reads one index and one batch of snapshots, then serves the cache", async () => {
+test("weekly playback store requires requested drama ids without reading Upstash", async () => {
   const calls = [];
-  let now = 1000;
   const store = createWeeklyPlaybackStore({
-    now: () => now,
-    cacheTtlMs: 300000,
     command: async (args) => {
       calls.push(args);
-      if (args[0] === "GET") {
-        return JSON.stringify({
-          version: 1,
-          platform: "missevan",
-          granularity: "weekly",
-          dates: ["2026-05-03", "2026-05-10"],
-        });
-      }
-      if (args[0] === "MGET") {
-        return args.slice(1).map((key) => JSON.stringify({
-          date: key.endsWith("05-03") ? "2026-05-03" : "2026-05-10",
-          dramas: { "93038": { view_count: key.endsWith("05-03") ? 100 : 110 } },
-        }));
-      }
-      throw new Error(`Unexpected command: ${args[0]}`);
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
     },
   });
 
-  const first = await store.getSnapshot("missevan");
-  const second = await store.getSnapshot("missevan");
-
-  assert.equal(first, second);
-  assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0], ["GET", "missevan:watchcount:index"]);
-  assert.equal(calls[1][0], "MGET");
-  assert.deepEqual(first.dates, ["2026-05-03", "2026-05-10"]);
-  assert.equal(first.snapshotsByDate["2026-05-10"].dramas["93038"].view_count, 110);
-  now += 300001;
-  await store.getSnapshot("missevan");
-  assert.equal(calls.length, 4);
+  assert.equal(await store.getSnapshot("missevan"), null);
+  assert.equal(await store.getSnapshot("missevan", { ids: [] }), null);
+  assert.deepEqual(calls, []);
 });
 
 test("weekly playback store reads requested drama history with one HMGET", async () => {
@@ -66,7 +40,7 @@ test("weekly playback store reads requested drama history with one HMGET", async
   assert.equal(bundle.snapshotsByDate["2026-06-26"].dramas["93038"].view_count, 125);
 });
 
-test("weekly playback history-only reads do not fall back when the hash has no record", async () => {
+test("weekly playback reads do not fall back when the history hash has no record", async () => {
   const calls = [];
   const store = createWeeklyPlaybackStore({
     command: async (args) => {
@@ -78,54 +52,12 @@ test("weekly playback history-only reads do not fall back when the hash has no r
     },
   });
 
-  const bundle = await store.getSnapshot("missevan", {
-    ids: ["93038"],
-    historyOnly: true,
-  });
-  const cachedBundle = await store.getSnapshot("missevan", {
-    ids: ["93038"],
-    historyOnly: true,
-  });
+  const bundle = await store.getSnapshot("missevan", { ids: ["93038"] });
+  const cachedBundle = await store.getSnapshot("missevan", { ids: ["93038"] });
 
   assert.equal(bundle, null);
   assert.equal(cachedBundle, null);
   assert.deepEqual(calls, [["HMGET", "missevan:watchcount:history", "93038"]]);
-});
-
-test("weekly playback history-only cache stays isolated from ordinary snapshot fallback", async () => {
-  const calls = [];
-  const store = createWeeklyPlaybackStore({
-    command: async (args) => {
-      calls.push(args);
-      if (args[0] === "HMGET") {
-        return [null];
-      }
-      if (args[0] === "GET") {
-        return JSON.stringify({
-          platform: "missevan",
-          granularity: "weekly",
-          dates: ["2026-05-10"],
-        });
-      }
-      if (args[0] === "MGET") {
-        return [JSON.stringify({
-          date: "2026-05-10",
-          dramas: { "93038": { view_count: 110 } },
-        })];
-      }
-      throw new Error(`Unexpected command: ${args[0]}`);
-    },
-  });
-
-  const historyOnly = await store.getSnapshot("missevan", {
-    ids: ["93038"],
-    historyOnly: true,
-  });
-  const ordinary = await store.getSnapshot("missevan", { ids: ["93038"] });
-
-  assert.equal(historyOnly, null);
-  assert.equal(ordinary.snapshotsByDate["2026-05-10"].dramas["93038"].view_count, 110);
-  assert.deepEqual(calls.map(([command]) => command), ["HMGET", "GET", "MGET"]);
 });
 
 test("weekly playback history version changes when same-date values are corrected", async () => {
@@ -260,40 +192,4 @@ test("weekly playback store bounds completed caches without dropping an oversize
   await store.getSnapshot("missevan", { ids: ["93038"] });
   assert.equal(calls.length, 2, "the oldest per-id history should be evicted at capacity");
   assert.ok(Object.keys(store.getCacheSnapshot()).length <= 2);
-});
-
-test("weekly playback store scans legacy daily keys when the weekly index is absent", async () => {
-  const calls = [];
-  const store = createWeeklyPlaybackStore({
-    command: async (args) => {
-      calls.push(args);
-      if (args[0] === "GET") {
-        return null;
-      }
-      if (args[0] === "SCAN") {
-        return ["0", [
-          "missevan:watchcount:2026-05-01",
-          "missevan:watchcount:2026-05-08",
-          "missevan:watchcount:metadata",
-        ]];
-      }
-      if (args[0] === "MGET") {
-        return [
-          JSON.stringify({ dramas: { "93038": { watch_count: 90 } } }),
-          JSON.stringify({ dramas: { "93038": { watch_count: 95 } } }),
-        ];
-      }
-      throw new Error(`Unexpected command: ${args[0]}`);
-    },
-  });
-
-  const bundle = await store.getSnapshot("missevan");
-  const cachedBundle = await store.getSnapshot("missevan");
-
-  assert.equal(cachedBundle, bundle);
-  assert.deepEqual(bundle.dates, ["2026-05-01", "2026-05-08"]);
-  assert.equal(bundle.source, "watchcount_scan");
-  assert.equal(bundle.snapshotsByDate["2026-05-08"].dramas["93038"].view_count, 95);
-  assert.equal(calls.filter(([command]) => command === "SCAN").length, 1);
-  assert.equal(calls.at(-1)[0], "MGET");
 });

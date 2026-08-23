@@ -1310,7 +1310,7 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(serverSource, /app\.get\("\/cv-profile"/);
   assert.match(serverSource, /hasCvProfileLibraryData\([\s\S]*missevanInfoStore\.records,[\s\S]*manboInfoStore\.records[\s\S]*res\.status\(503\)/);
   assert.match(serverSource, /resolveCvCatalogEntry\([\s\S]*requestedName,[\s\S]*requestedProfileId/);
-  assert.match(serverSource, /historyOnly: true/);
+  assert.match(serverSource, /getCachedWeeklyPlaybackSnapshot\("missevan", \{[\s\S]*ids: idsByPlatform\.missevan/);
   assert.match(serverSource, /results:\s*\{\s*missevan: missevanResult,\s*manbo: manboResult,\s*cv: cvResult,/);
   assert.match(serverSource, /"cvid-map:v1"/);
   assert.match(serverSource, /"cvid-map:meta:v1"/);
@@ -4027,13 +4027,13 @@ test("search result trend eligibility uses historical availability lookup", () =
   assert.doesNotMatch(searchResultsSource, /buildOngoingTrendEligibleIdSet/);
 });
 
-test("rank trend backend reads ordinary trends from aggregate platform keys", () => {
-  assert.match(serverSource, /RANK_TREND_AGGREGATE_KEYS/);
+test("rank trend backend reads ordinary trends from entity-scoped v2 hashes", () => {
+  assert.match(serverSource, /RANK_TREND_V2_KEYS/);
   assert.match(
     serverSource,
     /const rankTrendAggregateCache = new TtlLruCache\(\{ maxEntries: CACHE_MAX_ENTRIES \}\)/
   );
-  assert.match(serverSource, /readRankTrendAggregateSnapshot\(normalizedPlatform\)/);
+  assert.match(serverSource, /readRankTrendV2Snapshot\(normalizedPlatform, ids\)/);
   assert.match(serverSource, /getCachedRankTrendAggregateSnapshot/);
   assert.match(serverSource, /buildAggregatedRankTrendResponse/);
 
@@ -4041,7 +4041,7 @@ test("rank trend backend reads ordinary trends from aggregate platform keys", ()
   const primaryStart = serverSource.indexOf("async function getCachedRankTrendResponse");
   const primarySource = serverSource.slice(primaryStart, serverSource.indexOf("function normalizeMissevanSeasonRecord", primaryStart));
   assert.match(primarySource, /buildAggregatedRankTrendResponse/);
-  assert.match(primarySource, /MISSEVAN_PEAK_SERIES_TREND_KEY/);
+  assert.doesNotMatch(primarySource, /ranks:trend:peak:missevan(?!:v2)/);
   assert.match(
     primarySource,
     /await Promise\.resolve\(\);[\s\S]*rankTrendsCache\.get\(cacheKey\)\?\.loadPromise === loadPromise/,
@@ -4141,9 +4141,9 @@ test("rank trend backend supports five-sample classification and weekly playback
   assert.match(weeklyPlaybackUtilsSource, /export function buildWeeklyPlaybackTrendResponse/);
   assert.match(weeklyPlaybackUtilsSource, /kind: "weekly_playback"/);
   assert.match(weeklyPlaybackUtilsSource, /deltaValue/);
-  assert.match(weeklyPlaybackServiceSource, /WEEKLY_PLAYBACK_INDEX_KEY_SUFFIX/);
-  assert.match(weeklyPlaybackServiceSource, /\["MGET", \.\.\.keys\]/);
-  assert.match(weeklyPlaybackServiceSource, /SCAN/);
+  assert.match(weeklyPlaybackServiceSource, /WATCHCOUNT_HISTORY_KEY_SUFFIX/);
+  assert.match(weeklyPlaybackServiceSource, /"HMGET"/);
+  assert.doesNotMatch(weeklyPlaybackServiceSource, /"MGET"|"SCAN"/);
   assert.match(serverSource, /createWeeklyPlaybackStore/);
   assert.match(serverSource, /getCachedWeeklyPlaybackSnapshot/);
   assert.match(serverSource, /metricSampleCount < 5/);
@@ -4183,9 +4183,9 @@ test("rank trend availability route reads historical aggregate samples", () => {
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
 });
 
-test("Upstash v2 reads stay entity-scoped with legacy rollback paths", () => {
-  assert.match(serverSource, /UPSTASH_DATA_READ_MODE/);
-  assert.match(serverSource, /process\.env\.UPSTASH_DATA_READ_MODE \|\| "prefer-v2"/);
+test("Upstash runtime reads are v2-only and entity-scoped", () => {
+  assert.doesNotMatch(serverSource, /UPSTASH_DATA_READ_MODE/);
+  assert.doesNotMatch(envConfigSource, /INFO_STORE_SYNC_INTERVAL_MS/);
   assert.match(serverSource, /INFO_STORE_META_POLL_INTERVAL_MS/);
   assert.match(serverSource, /"missevan:info:meta:v2"/);
   assert.match(serverSource, /createHash\("sha1"\)/);
@@ -4198,7 +4198,23 @@ test("Upstash v2 reads stay entity-scoped with legacy rollback paths", () => {
   assert.match(weeklyPlaybackServiceSource, /"HMGET",[\s\S]*historyKey,[\s\S]*\.\.\.missingIds/);
   assert.match(weeklyPlaybackServiceSource, /const historyCache = new TtlLruCache/);
   assert.match(serverSource, /cacheMaxEntries: CACHE_MAX_ENTRIES/);
-  assert.match(serverSource, /if \(raw\) \{[\s\S]*return JSON\.parse\(raw\);[\s\S]*getInfoStoreReadFailureSnapshot\(store\)/);
+  assert.match(serverSource, /Buffer\.byteLength\(raw, "utf8"\) !== Number\(meta\.bytes\)/);
+  assert.doesNotMatch(serverSource, /"(?:missevan|manbo):info:v1"/);
+  assert.doesNotMatch(serverSource, /"ranks:trend:(?:missevan|manbo)"/);
+  assert.doesNotMatch(serverSource, /"ranks:trend:cv:(?:missevan|manbo)"/);
+  assert.doesNotMatch(serverSource, /"ranks:trend:peak:missevan"/);
+  assert.doesNotMatch(weeklyPlaybackServiceSource, /watchcount:(?:weekly:)?index|"SCAN"|"MGET"/);
+
+  const infoLoadStart = serverSource.indexOf("async function loadInfoStoresV2");
+  const infoLoadSource = serverSource.slice(
+    infoLoadStart,
+    serverSource.indexOf("async function ensureInfoStoreLoaded", infoLoadStart)
+  );
+  assert.match(
+    infoLoadSource,
+    /store\.contentSha1 === metas\[index\]\.contentSha1\)[\s\S]*store\.remoteAvailable = true;/
+  );
+  assert.match(infoLoadSource, /store\.remoteAvailable = store\.loaded;/);
 });
 
 test("ongoing backend combines rank metrics with cached info and batched weekly playback baselines", () => {
@@ -4213,9 +4229,12 @@ test("ongoing backend combines rank metrics with cached info and batched weekly 
   );
   assert.match(primarySource, /isRankTrendAggregateSnapshot\(aggregateSnapshot, normalizedPlatform\)/);
   assert.match(primarySource, /error\.status = 503/);
+  assert.match(
+    primarySource,
+    /if \(!ongoingIds\.length\) \{[\s\S]*buildOngoingResponse\(\{[\s\S]*ongoingIds: \[\],[\s\S]*metricSnapshotsByDate: \{\},[\s\S]*return response;/
+  );
   assert.match(primarySource, /buildMetricSnapshotsFromRankTrendAggregate\(aggregateSnapshot, normalizedPlatform\)/);
   assert.match(primarySource, /getCachedWeeklyPlaybackSnapshot\(normalizedPlatform, \{[\s\S]*ids: ongoingIds/);
-  assert.match(primarySource, /historyOnly: true/);
   assert.match(primarySource, /ensureInfoStoreLoaded\(infoStore, forceRefresh\)/);
   assert.match(primarySource, /createTimesById/);
   assert.match(primarySource, /const currentMonth = getBeijingYearMonth\(now\)/);

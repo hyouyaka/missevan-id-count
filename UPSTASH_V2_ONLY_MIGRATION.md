@@ -1,6 +1,6 @@
 # 消费端移除 v1 依赖，仅读取 v2 数据
 
-本文档用于未来把 `missevan-id-count` 从当前的 `prefer-v2 + v1 fallback` 切换为 v2-only。当前版本仍必须保留 v1 回退；只有全部前置条件满足并经过单独审批后，才执行本文档。
+本文档记录 `missevan-id-count` 与 `PersonalDramaDatabase` 的 v2-only 数据契约、部署验证和回滚边界。运行时代码不再读取或写入下列退役 key；旧数据仅作为人工回滚快照保留。
 
 ## 1. 范围定义
 
@@ -16,7 +16,7 @@
 
 - `ranks:latest`、`ranks:cv:latest`、`ranks:meta`。
 - `ongoing:missevan`、`ongoing:manbo`。
-- 周播 canonical 数据：`missevan:watchcount:history`、`manbo:watchcount:history`、`missevan:watchcount:index`、`manbo:watchcount:index` 及索引指向的快照 key。
+- 周播 canonical 数据：`missevan:watchcount:history`、`manbo:watchcount:history`；`{platform}:watchcount:latest` 仅表示当前快照。
 
 切换后的数据链路：
 
@@ -40,9 +40,8 @@
 | 条件 | 验收标准 |
 |---|---|
 | 消费端覆盖 | 所有仍受支持的网页端和桌面版均已包含 v2 读取能力 |
-| 双写稳定期 | PersonalDramaDatabase 的 v1/v2 双写连续稳定至少 30 天 |
 | 生产端错误 | 最近 14 天 v2 发布失败为 0 |
-| 消费端回退 | 最近 14 天 v1 fallback 为 0 |
+| 旧 key 命令 | 最近 14 天退役 key 的运行时读写命令为 0 |
 | 其他读取者 | 已检索其他仓库、定时任务和人工脚本，确认没有读取待停用 v1 key |
 | 备份与演练 | 已完成全部 v1 key 备份，并演练恢复 v1 双写和消费端回滚 |
 
@@ -78,7 +77,7 @@ python -c "import json; from sync_new_drama_ids import ROOT,load_env_file,upstas
 4. CV 趋势固定使用 `readCvRankTrendV2Snapshots()` 和 `buildCvRankTrendV2Snapshots()`；删除两平台 CV 聚合 String 的读取和回退。
 5. 巅峰趋势固定使用 `readPeakRankTrendV2Snapshot()`；删除巅峰聚合 String 的读取和回退。
 6. 改造 `readInitialRanksBatch()`：首次 `MGET` 只读取未版本化的 `ranks:latest`、`ranks:cv:latest` 和 `ranks:meta`；再根据当前榜单中的 CV/巅峰实体，通过对应 v2 Hash 的 `HMGET` 补齐榜单展示所需趋势摘要。不得继续把 `ranks:trend:cv:missevan`、`ranks:trend:cv:manbo` 或 `ranks:trend:peak:missevan` 放入冷启动批量读取。
-7. 周播保留 `{platform}:watchcount:history` 为主路径，保留 `{platform}:watchcount:index` + `MGET` 为 history 异常时的 canonical 回退；删除 `{platform}:watchcount:weekly:index` 和 `SCAN` 旧兼容分支。
+7. 周播固定使用 `{platform}:watchcount:history` 的实体级 `HMGET`；history 异常时返回缓存或空结果，不读取 index、日期快照，不执行 `SCAN`。
 8. 删除只服务于 v1 的解析器、缓存、环境变量和测试 fixture。HTTP API、当前 schema version 7 的响应字段、状态码与 ETag 计算必须保持兼容。
 
 测试环境应把所有 Upstash 命令记录下来，出现以下任一 key 即判定失败：
@@ -97,11 +96,10 @@ ranks:trend:peak:missevan
 
 严格按顺序执行，任一观察阶段出现异常即停止：
 
-1. 先发布并验证 v2-only 消费端，生产端仍维持 v1/v2 双写。
-2. 观察至少一个完整普通榜、周榜/CV 和 info 更新周期。
-3. 在 PersonalDramaDatabase 中把 v1 发布切换为“只告警、不删除”；v2 发布仍保持正常。
-4. 再观察 30 天，确认消费端、其他仓库和人工脚本均无 v1 读取。
-5. 最后停止 v1 写入。
+1. 先备份全部退役 key，并验证 info body/meta、三类趋势 Hash 与 watchcount history。
+2. 先发布生产端 v2-only，完成一个完整普通榜、周榜/CV、info 和 watchcount 更新周期。
+3. 确认退役 key 写入为 0 后发布消费端 v2-only。
+4. 观察至少 14 天，确认消费端、其他仓库和人工脚本均无退役 key 读取。
 
 删除 v1 key 不属于上述步骤。任何 `DEL`、过期时间设置或批量清理必须作为另一个显式审批任务单独执行。
 
@@ -141,10 +139,10 @@ npm run build
 
 回滚包固定为前置步骤创建的 `upstash-v1-compat` 标签。回滚流程：
 
-1. 从消费端 `upstash-v1-compat` 标签构建并部署，设置 `UPSTASH_DATA_READ_MODE=legacy`。
+1. 从消费端 `upstash-v1-compat` 标签构建并部署；该旧版本自身包含兼容读取逻辑。
 2. 从 `recovery_backups/upstash-v1-compat.json` 恢复上述 v1 String key；恢复后校验 JSON 可解析、记录数和更新时间。
 3. 从生产端 `upstash-v1-compat` 标签恢复 v1 双写代码，并保持 `$env:UPSTASH_V2_PUBLISH_MODE = "best-effort"`，避免回滚期间中断 v2。
-4. 运行三个 v2 回填命令，保证回滚期间 v2 仍持续可用。
+4. 运行标签版本中提供的 v2 回填命令，保证回滚期间 v2 仍持续可用。
 5. 验证搜索、榜单、趋势、CV、巅峰、在播和周播，再解除故障状态。
 
 可直接执行的回滚命令：
@@ -155,8 +153,6 @@ git switch --detach upstash-v1-compat
 npm ci
 npm run test
 npm run build
-$env:UPSTASH_DATA_READ_MODE = "legacy"
-
 Set-Location F:\VSProjects\PersonalDramaDatabase
 git switch --detach upstash-v1-compat
 $env:UPSTASH_V2_PUBLISH_MODE = "best-effort"

@@ -3,16 +3,9 @@ import { createHash } from "node:crypto";
 import { TtlLruCache } from "../../shared/ttlLruCache.js";
 import {
   normalizeWeeklyPlaybackDate,
-  normalizeWeeklyPlaybackIndex,
-  normalizeWeeklyPlaybackSnapshot,
-  normalizeWeeklyPlaybackBundle,
-  selectWeeklyPlaybackDates,
 } from "../../shared/weeklyPlaybackUtils.js";
 
-export const WEEKLY_PLAYBACK_INDEX_KEY_SUFFIX = ":watchcount:weekly:index";
-export const WATCHCOUNT_INDEX_KEY_SUFFIX = ":watchcount:index";
 export const WATCHCOUNT_HISTORY_KEY_SUFFIX = ":watchcount:history";
-export const WEEKLY_PLAYBACK_DAILY_KEY_PATTERN = "{platform}:watchcount:*";
 export const WEEKLY_PLAYBACK_CACHE_TTL_MS = 5 * 60 * 1000;
 export const WEEKLY_PLAYBACK_CACHE_MAX_ENTRIES = 500;
 
@@ -49,29 +42,6 @@ function getReadBytes(value) {
   } catch (_) {
     return 0;
   }
-}
-
-function getScanParts(result) {
-  if (Array.isArray(result)) {
-    return {
-      cursor: String(result[0] ?? "0"),
-      keys: Array.isArray(result[1]) ? result[1] : [],
-    };
-  }
-  return {
-    cursor: String(result?.cursor ?? result?.[0] ?? "0"),
-    keys: Array.isArray(result?.keys) ? result.keys : Array.isArray(result?.[1]) ? result[1] : [],
-  };
-}
-
-function getDateFromDailyKey(platform, key) {
-  const prefix = `${platform}:watchcount:`;
-  const normalizedKey = String(key ?? "").trim();
-  if (!normalizedKey.startsWith(prefix)) {
-    return "";
-  }
-  const suffix = normalizedKey.slice(prefix.length);
-  return normalizeWeeklyPlaybackDate(suffix);
 }
 
 function normalizeRequestedIds(value) {
@@ -147,9 +117,6 @@ export function createWeeklyPlaybackStore({
   now = () => Date.now(),
   cacheTtlMs = WEEKLY_PLAYBACK_CACHE_TTL_MS,
   cacheMaxEntries = WEEKLY_PLAYBACK_CACHE_MAX_ENTRIES,
-  maxWeeks = 32,
-  scanMaxPages = 64,
-  scanCount = 100,
 } = {}) {
   if (typeof command !== "function") {
     throw new TypeError("createWeeklyPlaybackStore requires a command function");
@@ -183,73 +150,6 @@ export function createWeeklyPlaybackStore({
         fallbackReason,
       });
     }
-  }
-
-  async function readJson(key, source, fallbackReason = "") {
-    return parseJsonValue(await readCommand(["GET", key], { source, key, fallbackReason }));
-  }
-
-  async function scanDailyIndex(platform) {
-    let cursor = "0";
-    let previousCursor = "";
-    const keys = new Set();
-    for (let page = 0; page < Math.max(1, Number(scanMaxPages) || 64); page += 1) {
-      const result = await readCommand([
-        "SCAN",
-        cursor,
-        "MATCH",
-        WEEKLY_PLAYBACK_DAILY_KEY_PATTERN.replace("{platform}", platform),
-        "COUNT",
-        String(Math.max(10, Number(scanCount) || 100)),
-      ], {
-        source: "watchcount_scan",
-        key: WEEKLY_PLAYBACK_DAILY_KEY_PATTERN.replace("{platform}", platform),
-        fallbackReason: "legacy_index_unavailable",
-      });
-      const parts = getScanParts(result);
-      parts.keys.forEach((key) => keys.add(String(key ?? "").trim()));
-      previousCursor = cursor;
-      cursor = parts.cursor;
-      if (cursor === "0" || cursor === previousCursor) {
-        break;
-      }
-    }
-
-    const dates = Array.from(keys)
-      .map((key) => ({ key, date: getDateFromDailyKey(platform, key) }))
-      .filter(({ date }) => date)
-      .sort((left, right) => left.date.localeCompare(right.date));
-    if (!dates.length) {
-      return null;
-    }
-    return {
-      version: "scan",
-      platform,
-      granularity: "daily",
-      dates: dates.map(({ date }) => date),
-      keys: Object.fromEntries(dates.map(({ date, key }) => [date, key])),
-      source: "watchcount_scan",
-    };
-  }
-
-  async function readIndex(platform) {
-    const canonicalIndexKey = `${platform}${WATCHCOUNT_INDEX_KEY_SUFFIX}`;
-    const canonicalIndex = await readJson(
-      canonicalIndexKey,
-      "watchcount_index",
-      "history_unavailable"
-    ).catch(() => null);
-    const normalizedCanonical = normalizeWeeklyPlaybackIndex(canonicalIndex, platform);
-    if (normalizedCanonical) {
-      return normalizedCanonical;
-    }
-    const legacyIndexKey = `${platform}${WEEKLY_PLAYBACK_INDEX_KEY_SUFFIX}`;
-    const legacyIndex = await readJson(
-      legacyIndexKey,
-      "watchcount_weekly_index",
-      "canonical_index_unavailable"
-    ).catch(() => null);
-    return normalizeWeeklyPlaybackIndex(legacyIndex, platform) || scanDailyIndex(platform);
   }
 
   async function readHistoryValues(platform, ids, force = false) {
@@ -341,31 +241,17 @@ export function createWeeklyPlaybackStore({
     return ids.map((id) => valuesById.get(id) ?? null);
   }
 
-  function resolveSnapshotKey(platform, index, date) {
-    if (index?.keys?.[date]) {
-      return index.keys[date];
-    }
-    const keyPrefix = String(index?.keyPrefix ?? "").trim();
-    if (keyPrefix) {
-      return `${keyPrefix}${date}`;
-    }
-    return `${platform}:watchcount:${date}`;
-  }
-
   async function load(platform, options = {}) {
     const normalizedPlatform = normalizePlatform(platform);
     if (!normalizedPlatform) {
       return null;
     }
     const force = options?.force === true;
-    const historyOnly = options?.historyOnly === true;
     const ids = normalizeRequestedIds(options?.ids);
-    if (historyOnly && !ids.length) {
+    if (!ids.length) {
       return null;
     }
-    const cacheKey = ids.length
-      ? `${normalizedPlatform}:${historyOnly ? "history-only:" : ""}${ids.join(",")}`
-      : normalizedPlatform;
+    const cacheKey = `${normalizedPlatform}:${ids.join(",")}`;
     const timestamp = Number(now()) || Date.now();
     const cached = cache.get(cacheKey);
     if (
@@ -381,53 +267,12 @@ export function createWeeklyPlaybackStore({
     }
 
     const loadPromise = (async () => {
-      if (ids.length) {
-        const rawHistory = await readHistoryValues(normalizedPlatform, ids, force);
-        const historyBundle = buildHistoryBundle(
-          normalizedPlatform,
-          ids,
-          Array.isArray(rawHistory) ? rawHistory : []
-        );
-        if (historyBundle) {
-          return historyBundle;
-        }
-      }
-      if (historyOnly) {
-        return null;
-      }
-      const index = await readIndex(normalizedPlatform);
-      if (!index) {
-        return null;
-      }
-      const dates = selectWeeklyPlaybackDates(index, maxWeeks);
-      const keys = dates.map((date) => resolveSnapshotKey(normalizedPlatform, index, date));
-      const rawSnapshots = keys.length
-        ? await readCommand(["MGET", ...keys], {
-            source: "watchcount_snapshots",
-            key: keys.join(","),
-            fallbackReason: "history_unavailable",
-          })
-        : [];
-      const values = Array.isArray(rawSnapshots) ? rawSnapshots : [];
-      const snapshotsByDate = {};
-      dates.forEach((date, indexPosition) => {
-        const snapshot = normalizeWeeklyPlaybackSnapshot(
-          values[indexPosition],
-          normalizedPlatform,
-          date
-        );
-        if (snapshot) {
-          snapshotsByDate[date] = snapshot;
-        }
-      });
-      return normalizeWeeklyPlaybackBundle({
-        platform: normalizedPlatform,
-        index: {
-          ...index,
-          dates,
-        },
-        snapshotsByDate,
-      });
+      const rawHistory = await readHistoryValues(normalizedPlatform, ids, force);
+      return buildHistoryBundle(
+        normalizedPlatform,
+        ids,
+        Array.isArray(rawHistory) ? rawHistory : []
+      );
     })();
 
     loadRequests.set(cacheKey, loadPromise);

@@ -186,13 +186,13 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 
 | Store | Primary backing | Fallback | Purpose |
 | --- | --- | --- | --- |
-| `manboInfoStore` | Upstash `manbo:info:meta:v2` + `manbo:info:v2`; fallback `manbo:info:v1` | `runtime/manbo-drama-info.json` | Searchable Manbo title metadata |
-| `missevanInfoStore` | Upstash `missevan:info:meta:v2` + `missevan:info:v2`; fallback `missevan:info:v1` | `runtime/missevan-drama-info.json` | Searchable Missevan title metadata |
+| `manboInfoStore` | Upstash `manbo:info:meta:v2` + `manbo:info:v2` | stale in-memory snapshot, then empty snapshot | Searchable Manbo title metadata |
+| `missevanInfoStore` | Upstash `missevan:info:meta:v2` + `missevan:info:v2` | stale in-memory snapshot, then empty snapshot | Searchable Missevan title metadata |
 | `cvInfoStore` | Upstash `cvid-map:meta:v1` + `cvid-map:v1` | stale in-memory snapshot, then empty snapshot | Canonical CV identities, explicit aliases, platform IDs, and avatars |
 | `newDramaIdsStore` | Upstash `new:dramaIDs` | `runtime/new-drama-ids.json` | Captured new IDs |
 | cooldown state | Upstash `missevan:cooldown:v1` | in-memory only when persistence disabled | Direct, Render fallback, and Deno fallback access-denial recovery state |
-| ranks and ongoing snapshots | Latest/common keys plus v2 Hash `ranks:trend:{platform}:v2`, `ranks:trend:cv:v2`, `ranks:trend:peak:missevan:v2`; fallback v1 aggregate Strings | none | Rank, trend, and ongoing APIs |
-| weekly playback snapshots | Upstash Hash `{platform}:watchcount:history` | canonical `{platform}:watchcount:index`, legacy weekly index, then `SCAN` | Weekly playback fallback for titles without five valid metric dates |
+| ranks and ongoing snapshots | Latest/common keys plus v2 Hash `ranks:trend:{platform}:v2`, `ranks:trend:cv:v2`, `ranks:trend:peak:missevan:v2` | stale entity cache or unavailable trend | Rank, trend, and ongoing APIs |
+| weekly playback snapshots | Upstash Hash `{platform}:watchcount:history` | none | Weekly playback fallback for titles without five valid metric dates |
 | statistics task snapshots | Per-instance Upstash Hash `stats:tasks:v2:{instanceId}`; one-way startup migration from `stats:tasks:v1:{instanceId}` | `runtime/stats-tasks.json` | Queued, running, and terminal task recovery snapshots |
 
 ### Missevan Cooldown State
@@ -257,9 +257,9 @@ This subsystem is backed by shared domain utilities and Upstash snapshot keys.
 - The frontend renders this data in `src/app/RanksPanel.jsx`.
 
 ### Trend System
-- `GET /ranks/trends` uses one `HMGET` to read only the requested entity from the v2 Hash: ordinary drama, CV name, or peak series. Missing or malformed v2 data falls back to the corresponding v1 aggregate String without changing the HTTP response schema.
+- `GET /ranks/trends` uses `HMGET` to read only requested entities from the v2 Hash. Missing or malformed entities produce unavailable/empty trend data without reading retired keys and without changing the HTTP response schema.
 - Ordinary metric trends are classified as `metric` only after at least five dates in the latest 30 calendar days contain a finite configured platform metric and are not repeated snapshots. Otherwise the backend loads weekly playback; at least two valid playback points are required before it returns `kind: "weekly_playback"` with playback-only 3/7/30-week windows.
-- The weekly consumer first reads requested drama IDs from `{platform}:watchcount:history` with one `HMGET`. Its fallback order is canonical `{platform}:watchcount:index` + `MGET`, legacy `{platform}:watchcount:weekly:index`, then `SCAN` + `MGET`; results and concurrent requests share a five-minute per-platform/per-ID cache.
+- The weekly consumer requires requested drama IDs and reads only `{platform}:watchcount:history` with one `HMGET`; partial hits are preserved and results/concurrent requests share a five-minute per-platform/per-ID cache.
 - A weekly response prefers watchcount values. When the compare flow explicitly requests `kind=weekly_playback`, same-date metric view counts fill missing weekly points so mixed comparisons share one real-date axis.
 - The backend tags trend and availability responses with schema version `7`; this version requires at least two valid weekly playback points and treats `无需抓取` paid-ID samples as unavailable current values.
 - Shared shaping logic lives in `shared/ranksTrendUtils.js` and `shared/weeklyPlaybackUtils.js`; the Upstash read/cache boundary lives in `server/services/weeklyPlaybackService.js`.
@@ -298,9 +298,9 @@ Snapshot values may expose `view_count`, `watch_count`, or `play_count` records 
 - backend exposure: `PORT`, `JSON_BODY_LIMIT`, `START_SERVER_ON_IMPORT`, `ENABLE_MISSEVAN`
 - feature links: `MISSEVAN_DESKTOP_APP_URL`, `FEATURE_SUGGESTION_URL`
 - persistence: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
-- Upstash read migration: `UPSTASH_DATA_READ_MODE` (`prefer-v2` by default, `legacy` for rollback), `INFO_STORE_META_POLL_INTERVAL_MS` (5 minutes by default)
+- Upstash v2 probes: `INFO_STORE_META_POLL_INTERVAL_MS` (5 minutes by default)
 - cooldown: `MISSEVAN_PERSISTENT_COOLDOWN`, `MISSEVAN_COOLDOWN_KEY`, `MISSEVAN_COOLDOWN_HOURS`
-- cache and sync tuning: `INFO_STORE_SYNC_INTERVAL_MS`, `RANKS_CACHE_TTL_MS`, `WEEKLY_PLAYBACK_CACHE_TTL_MS`
+- cache tuning: `RANKS_CACHE_TTL_MS`, `WEEKLY_PLAYBACK_CACHE_TTL_MS`
 - Manbo runtime tuning: `MANBO_FETCH_TIMEOUT_MS`, `MANBO_DANMAKU_PAGE_CONCURRENCY`, `MANBO_STATS_EPISODE_CONCURRENCY`
 - task persistence tuning: `STATS_TASK_PERSISTENCE_DEBOUNCE_MS` (10 seconds by default, clamped to 1–60 seconds)
 

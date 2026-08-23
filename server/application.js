@@ -169,8 +169,6 @@ const MANBO_API_BASE = "https://www.kilamanbo.com/web_manbo";
 const MANBO_API_V530_BASE = "https://api.kilamanbo.com/api/v530/radio/drama";
 const MANBO_SEARCH_API_BASE = "https://api.kilamanbo.com/api/v530/search/page/content/new";
 const MANBO_API_HOST = "www.kilamanbo.com";
-const MANBO_INFO_KEY = "manbo:info:v1";
-const MISSEVAN_INFO_KEY = "missevan:info:v1";
 const CV_INFO_KEY = "cvid-map:v1";
 const INFO_V2_KEYS = Object.freeze({
   manbo: "manbo:info:v2",
@@ -190,26 +188,13 @@ const INFO_META_SCHEMA_VERSIONS = Object.freeze({
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
 const CV_RANKS_KEY = "ranks:cv:latest";
-const MISSEVAN_PEAK_SERIES_TREND_KEY = "ranks:trend:peak:missevan";
-const RANK_TREND_AGGREGATE_KEYS = Object.freeze({
-  missevan: "ranks:trend:missevan",
-  manbo: "ranks:trend:manbo",
-});
 const RANK_TREND_V2_KEYS = Object.freeze({
   missevan: "ranks:trend:missevan:v2",
   manbo: "ranks:trend:manbo:v2",
 });
 const CV_RANK_TREND_V2_KEY = "ranks:trend:cv:v2";
 const MISSEVAN_PEAK_SERIES_TREND_V2_KEY = "ranks:trend:peak:missevan:v2";
-const CV_RANK_TREND_AGGREGATE_KEYS = Object.freeze({
-  missevan: "ranks:trend:cv:missevan",
-  manbo: "ranks:trend:cv:manbo",
-});
 const ONGOING_KEY_PREFIX = "ongoing";
-const INFO_STORE_SYNC_INTERVAL_MS = Math.max(
-  5000,
-  Number(process.env.INFO_STORE_SYNC_INTERVAL_MS ?? 30000) || 30000
-);
 const MANBO_INFO_FALLBACK_PATH = path.join(runtimeDir, "manbo-drama-info.json");
 const MISSEVAN_INFO_FALLBACK_PATH = path.join(runtimeDir, "missevan-drama-info.json");
 const NEW_DRAMA_IDS_FALLBACK_PATH = path.join(runtimeDir, "new-drama-ids.json");
@@ -224,9 +209,6 @@ const INFO_STORE_META_POLL_INTERVAL_MS = Math.max(
   60 * 1000,
   Number(process.env.INFO_STORE_META_POLL_INTERVAL_MS ?? 5 * 60 * 1000) || 5 * 60 * 1000
 );
-const UPSTASH_DATA_READ_MODE = String(
-  process.env.UPSTASH_DATA_READ_MODE || "prefer-v2"
-).trim().toLowerCase() === "legacy" ? "legacy" : "prefer-v2";
 const MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES = Math.max(
   0,
   Math.floor(
@@ -299,7 +281,7 @@ async function readUpstashData(command, { source, key, fallbackReason = "" }) {
 
 const manboInfoStore = {
   platform: "manbo",
-  key: MANBO_INFO_KEY,
+  key: INFO_V2_KEYS.manbo,
   fallbackPath: MANBO_INFO_FALLBACK_PATH,
   snapshot: null,
   records: [],
@@ -313,7 +295,7 @@ const manboInfoStore = {
 };
 const missevanInfoStore = {
   platform: "missevan",
-  key: MISSEVAN_INFO_KEY,
+  key: INFO_V2_KEYS.missevan,
   fallbackPath: MISSEVAN_INFO_FALLBACK_PATH,
   snapshot: null,
   records: [],
@@ -3339,11 +3321,34 @@ function getCvSnapshotUpdatedAt(snapshot) {
   return normalizeTextValue(snapshot?.generated_at ?? snapshot?.generatedAt);
 }
 
+function collectPeakSeriesNames(snapshot) {
+  const items = snapshot?.missevan?.ranks?.peak?.items;
+  return Array.from(new Set((Array.isArray(items) ? items : [])
+    .map((item) => normalizeTextValue(item?.name))
+    .filter(Boolean))).sort();
+}
+
+function collectCvRankNames(snapshot) {
+  const names = [];
+  ["rankings", "paidRankings"].forEach((sourceKey) => {
+    ["missevan", "manbo"].forEach((platform) => {
+      const items = snapshot?.[sourceKey]?.[platform];
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        const name = normalizeCvTrendFieldName(item?.cvName ?? item?.name);
+        if (name) {
+          names.push(name);
+        }
+      });
+    });
+  });
+  return Array.from(new Set(names)).sort();
+}
+
 async function readNormalRanksBundle() {
-  const [snapshot, peakTrendSnapshot] = await Promise.all([
-    readRanksSnapshot(),
-    readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY).catch(() => null),
-  ]);
+  const snapshot = await readRanksSnapshot();
+  const peakTrendSnapshot = await readPeakRankTrendV2Snapshots(
+    collectPeakSeriesNames(snapshot)
+  ).catch(() => null);
   return {
     snapshot,
     peakTrendSnapshot,
@@ -3356,20 +3361,10 @@ async function readCvRanksBundle(options = {}) {
   let cvSnapshot = null;
   let cvTrendSnapshots = null;
   try {
-    const [latestSnapshot, missevanTrendSnapshot, manboTrendSnapshot] = await Promise.all([
-      readRanksJsonKey(CV_RANKS_KEY),
-      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
-      readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
-    ]);
-    cvSnapshot = latestSnapshot;
-    cvTrendSnapshots = {
-      missevan: isCvRankTrendAggregateSnapshot(missevanTrendSnapshot, "missevan")
-        ? missevanTrendSnapshot
-        : null,
-      manbo: isCvRankTrendAggregateSnapshot(manboTrendSnapshot, "manbo")
-        ? manboTrendSnapshot
-        : null,
-    };
+    cvSnapshot = await readRanksJsonKey(CV_RANKS_KEY);
+    cvTrendSnapshots = await readCvRankTrendV2SnapshotsForNames(
+      collectCvRankNames(cvSnapshot)
+    );
   } catch (error) {
     if (!tolerateError) {
       throw error;
@@ -3404,30 +3399,25 @@ async function readInitialRanksBatch() {
   const values = await readUpstashData([
     "MGET",
     RANKS_KEY,
-    MISSEVAN_PEAK_SERIES_TREND_KEY,
     CV_RANKS_KEY,
-    CV_RANK_TREND_AGGREGATE_KEYS.missevan,
-    CV_RANK_TREND_AGGREGATE_KEYS.manbo,
     RANKS_META_KEY,
   ], {
     source: "ranks_cold_start",
     key: [
       RANKS_KEY,
-      MISSEVAN_PEAK_SERIES_TREND_KEY,
       CV_RANKS_KEY,
-      CV_RANK_TREND_AGGREGATE_KEYS.missevan,
-      CV_RANK_TREND_AGGREGATE_KEYS.manbo,
       RANKS_META_KEY,
     ].join(","),
   });
-  if (!Array.isArray(values) || values.length !== 6) {
+  if (!Array.isArray(values) || values.length !== 3) {
     throw new Error("Invalid initial ranks MGET response");
   }
   const snapshot = parseRanksBatchJson(values[0], {});
-  const peakTrendSnapshot = parseRanksBatchJson(values[1], null, { tolerateError: true });
-  const cvSnapshot = parseRanksBatchJson(values[2], null, { tolerateError: true });
-  const missevanCvTrend = parseRanksBatchJson(values[3], null, { tolerateError: true });
-  const manboCvTrend = parseRanksBatchJson(values[4], null, { tolerateError: true });
+  const cvSnapshot = parseRanksBatchJson(values[1], null, { tolerateError: true });
+  const [peakTrendSnapshot, cvTrendSnapshots] = await Promise.all([
+    readPeakRankTrendV2Snapshots(collectPeakSeriesNames(snapshot)).catch(() => null),
+    readCvRankTrendV2SnapshotsForNames(collectCvRankNames(cvSnapshot)).catch(() => null),
+  ]);
   return {
     normalBundle: {
       snapshot,
@@ -3436,13 +3426,10 @@ async function readInitialRanksBatch() {
     },
     cvBundle: {
       cvSnapshot,
-      cvTrendSnapshots: {
-        missevan: isCvRankTrendAggregateSnapshot(missevanCvTrend, "missevan") ? missevanCvTrend : null,
-        manbo: isCvRankTrendAggregateSnapshot(manboCvTrend, "manbo") ? manboCvTrend : null,
-      },
+      cvTrendSnapshots,
       updatedAt: getCvSnapshotUpdatedAt(cvSnapshot),
     },
-    meta: normalizeRanksMeta(parseRanksBatchJson(values[5], null, { tolerateError: true })),
+    meta: normalizeRanksMeta(parseRanksBatchJson(values[2], null, { tolerateError: true })),
   };
 }
 
@@ -4056,18 +4043,6 @@ function getRankTrendAggregateCacheKey(platform, ids = []) {
   return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${signature}`;
 }
 
-function getRankTrendAggregateUpstashKey(platform) {
-  return RANK_TREND_AGGREGATE_KEYS[String(platform ?? "").trim()] || "";
-}
-
-async function readRankTrendAggregateSnapshot(platform) {
-  const key = getRankTrendAggregateUpstashKey(platform);
-  if (!key) {
-    return null;
-  }
-  return readRanksJsonKey(key);
-}
-
 async function readRankTrendV2Snapshot(platform, ids) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedIds = normalizeRequestedTrendIds(ids);
@@ -4099,12 +4074,9 @@ async function readRankTrendV2Snapshot(platform, ids) {
         dramas[id] = record;
       }
     } catch (_) {
-      // Missing or malformed fields trigger the legacy aggregate fallback below.
+      // Missing or malformed entities are omitted without consulting retired keys.
     }
   });
-  if (Object.keys(dramas).length !== normalizedIds.length) {
-    return null;
-  }
   return {
     version: 2,
     platform: normalizedPlatform,
@@ -4115,75 +4087,12 @@ async function readRankTrendV2Snapshot(platform, ids) {
   };
 }
 
-async function getCachedLegacyRankTrendAggregateSnapshot(platform, options = {}) {
-  const normalizedPlatform = String(platform ?? "").trim();
-  const forceRefresh = options?.force === true;
-  const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform, []);
-  const now = Date.now();
-  const cached = rankTrendAggregateCache.get(cacheKey);
-  if (
-    !forceRefresh &&
-    cached &&
-    "snapshot" in cached &&
-    isRankDerivedCacheEntryFresh(cached.loadedAt, now)
-  ) {
-    return cached.snapshot;
-  }
-  if (cached?.loadPromise) {
-    return cached.loadPromise;
-  }
-
-  const loadPromise = (async () => {
-    const startedAt = Date.now();
-    const snapshot = await readRankTrendAggregateSnapshot(normalizedPlatform);
-    void logger.info("datastore_read", {
-      source: "rank_trend_v1",
-      key: getRankTrendAggregateUpstashKey(normalizedPlatform),
-      bytes: getStructuredReadBytes(snapshot),
-      durationMs: Date.now() - startedAt,
-      fallbackReason: UPSTASH_DATA_READ_MODE === "legacy" ? "legacy_mode" : "v2_unavailable",
-    });
-    if (!isRankTrendAggregateSnapshot(snapshot, normalizedPlatform)) {
-      const error = new Error("Rank trend aggregate is unavailable");
-      error.status = 503;
-      throw error;
-    }
-    rankTrendAggregateCache.set(cacheKey, {
-      snapshot,
-      loadedAt: Date.now(),
-      loadPromise: null,
-    });
-    return snapshot;
-  })();
-
-  rankTrendAggregateCache.set(cacheKey, {
-    snapshot: cached?.snapshot || null,
-    loadedAt: cached?.loadedAt || 0,
-    loadPromise,
-  });
-
-  try {
-    return await loadPromise;
-  } catch (error) {
-    if (cached?.snapshot) {
-      rankTrendAggregateCache.set(cacheKey, {
-        snapshot: cached.snapshot,
-        loadedAt: cached.loadedAt,
-        loadPromise: null,
-      });
-    } else {
-      rankTrendAggregateCache.delete(cacheKey);
-    }
-    throw error;
-  }
-}
-
 async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const forceRefresh = options?.force === true;
   const ids = normalizeRequestedTrendIds(options?.ids);
-  if (UPSTASH_DATA_READ_MODE === "legacy" || !ids.length) {
-    return getCachedLegacyRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh });
+  if (!ids.length) {
+    return null;
   }
   const cacheKey = getRankTrendAggregateCacheKey(normalizedPlatform, ids);
   const now = Date.now();
@@ -4213,8 +4122,9 @@ async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
       );
     }
     if (!snapshot) {
-      rankTrendAggregateCache.delete(cacheKey);
-      return getCachedLegacyRankTrendAggregateSnapshot(normalizedPlatform, { force: forceRefresh });
+      const error = new Error("Rank trend v2 is unavailable");
+      error.status = 503;
+      throw error;
     }
     if (!isRankTrendAggregateSnapshot(snapshot, normalizedPlatform)) {
       const error = new Error("Rank trend aggregate is unavailable");
@@ -4238,6 +4148,14 @@ async function getCachedRankTrendAggregateSnapshot(platform, options = {}) {
   try {
     return await loadPromise;
   } catch (error) {
+    if (cached?.snapshot) {
+      rankTrendAggregateCache.set(cacheKey, {
+        snapshot: cached.snapshot,
+        loadedAt: cached.loadedAt,
+        loadPromise: null,
+      });
+      return cached.snapshot;
+    }
     rankTrendAggregateCache.delete(cacheKey);
     throw error;
   }
@@ -4354,6 +4272,24 @@ async function getCachedOngoingResponse(platform, options = {}) {
   const loadPromise = (async () => {
     const ongoingIds = await readOngoingIds(normalizedPlatform);
     const infoStore = getInfoStore(normalizedPlatform);
+    if (!ongoingIds.length) {
+      const response = buildOngoingResponse({
+        platform: normalizedPlatform,
+        ongoingIds: [],
+        indexSnapshot: { platform: normalizedPlatform, dates: [] },
+        metricSnapshotsByDate: {},
+        createTimesById: {},
+        currentMonth,
+        weeklyPlaybackSnapshot: null,
+      });
+      response.schemaVersion = ONGOING_RESPONSE_SCHEMA_VERSION;
+      ongoingCache.set(cacheKey, {
+        response,
+        loadedAt: Date.now(),
+        loadPromise: null,
+      });
+      return response;
+    }
     const [aggregateSnapshot, weeklyPlaybackSnapshot] = await Promise.all([
       getCachedRankTrendAggregateSnapshot(normalizedPlatform, {
         force: forceRefresh,
@@ -4361,7 +4297,6 @@ async function getCachedOngoingResponse(platform, options = {}) {
       }),
       getCachedWeeklyPlaybackSnapshot(normalizedPlatform, {
         force: forceRefresh,
-        historyOnly: true,
         ids: ongoingIds,
       }).catch(() => null),
       ensureInfoStoreLoaded(infoStore, forceRefresh).catch(() => infoStore),
@@ -4425,22 +4360,71 @@ function normalizeCvTrendFieldName(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-async function readCvRankTrendV2Snapshots(cvName) {
-  const normalizedName = normalizeCvTrendFieldName(cvName);
-  if (!normalizedName) {
+async function readCvRankTrendV2SnapshotsForNames(cvNames) {
+  const normalizedNames = Array.from(new Set((Array.isArray(cvNames) ? cvNames : [cvNames])
+    .map(normalizeCvTrendFieldName)
+    .filter(Boolean))).sort();
+  if (!normalizedNames.length) {
     return null;
   }
+  const fields = normalizedNames.flatMap((name) => [
+    `missevan:${name}`,
+    `manbo:${name}`,
+  ]);
   const rawValues = await readUpstashData([
     "HMGET",
     CV_RANK_TREND_V2_KEY,
     "__meta__",
-    `missevan:${normalizedName}`,
-    `manbo:${normalizedName}`,
+    ...fields,
   ], {
     source: "cv_trend_v2",
     key: CV_RANK_TREND_V2_KEY,
   });
-  return buildCvRankTrendV2Snapshots(rawValues, normalizedName);
+  if (!Array.isArray(rawValues) || rawValues.length !== fields.length + 1) {
+    return null;
+  }
+  let meta;
+  try {
+    meta = JSON.parse(rawValues[0]);
+  } catch (_) {
+    return null;
+  }
+  if (Number(meta?.version) !== 2 || meta?.kind !== "cv") {
+    return null;
+  }
+  const snapshots = {};
+  ["missevan", "manbo"].forEach((platform, platformIndex) => {
+    const platformMeta = meta?.platforms?.[platform];
+    if (!platformMeta) {
+      snapshots[platform] = null;
+      return;
+    }
+    const cvs = {};
+    normalizedNames.forEach((name, nameIndex) => {
+      const raw = rawValues[1 + nameIndex * 2 + platformIndex];
+      try {
+        const record = raw ? JSON.parse(raw) : null;
+        if (record && typeof record === "object") {
+          cvs[name] = record;
+        }
+      } catch (_) {
+        // A malformed entity is omitted while the base CV ranks remain available.
+      }
+    });
+    snapshots[platform] = {
+      version: 2,
+      kind: "cv",
+      platform,
+      updated_at: String(platformMeta.updated_at ?? ""),
+      dates: Array.isArray(platformMeta.dates) ? platformMeta.dates : [],
+      cvs,
+    };
+  });
+  return snapshots;
+}
+
+async function readCvRankTrendV2Snapshots(cvName) {
+  return readCvRankTrendV2SnapshotsForNames([cvName]);
 }
 
 export function buildCvRankTrendV2Snapshots(rawValues, cvName) {
@@ -4487,24 +4471,45 @@ async function readPeakRankTrendV2Snapshot(seriesName) {
   if (!normalizedName) {
     return null;
   }
+  const snapshot = await readPeakRankTrendV2Snapshots([normalizedName]);
+  return snapshot?.series?.[normalizedName] ? snapshot : null;
+}
+
+async function readPeakRankTrendV2Snapshots(seriesNames) {
+  const normalizedNames = Array.from(new Set((Array.isArray(seriesNames) ? seriesNames : [seriesNames])
+    .map((name) => String(name ?? "").trim())
+    .filter(Boolean))).sort();
+  if (!normalizedNames.length) {
+    return null;
+  }
   const rawValues = await readUpstashData([
     "HMGET",
     MISSEVAN_PEAK_SERIES_TREND_V2_KEY,
     "__meta__",
-    normalizedName,
+    ...normalizedNames,
   ], {
     source: "peak_trend_v2",
     key: MISSEVAN_PEAK_SERIES_TREND_V2_KEY,
   });
-  if (!Array.isArray(rawValues) || rawValues.length !== 2 || !rawValues[1]) {
+  if (!Array.isArray(rawValues) || rawValues.length !== normalizedNames.length + 1) {
     return null;
   }
   try {
     const meta = JSON.parse(rawValues[0]);
-    const record = JSON.parse(rawValues[1]);
     if (Number(meta?.version) !== 2 || String(meta?.platform ?? "") !== "missevan") {
       return null;
     }
+    const series = {};
+    normalizedNames.forEach((name, index) => {
+      try {
+        const record = rawValues[index + 1] ? JSON.parse(rawValues[index + 1]) : null;
+        if (record && typeof record === "object") {
+          series[name] = record;
+        }
+      } catch (_) {
+        // A malformed entity is omitted while the base peak rank remains available.
+      }
+    });
     return {
       version: 2,
       platform: "missevan",
@@ -4512,7 +4517,7 @@ async function readPeakRankTrendV2Snapshot(seriesName) {
       metric: "view_count",
       updated_at: String(meta.updated_at ?? ""),
       dates: Array.isArray(meta.dates) ? meta.dates : [],
-      series: { [normalizedName]: record },
+      series,
     };
   } catch (_) {
     return null;
@@ -4521,7 +4526,7 @@ async function readPeakRankTrendV2Snapshot(seriesName) {
 
 async function getCachedCvRankTrendResponse(cvName) {
   const normalizedCvName = normalizeTextValue(cvName);
-  const cacheKey = getRankTrendCacheKey("cv", normalizedCvName, "", CV_RANK_TREND_AGGREGATE_KEYS.missevan);
+  const cacheKey = getRankTrendCacheKey("cv", normalizedCvName, "", CV_RANK_TREND_V2_KEY);
   const now = Date.now();
   const cached = rankTrendsCache.get(cacheKey);
   if (cached?.response && isRankDerivedCacheEntryFresh(cached.loadedAt, now)) {
@@ -4533,29 +4538,21 @@ async function getCachedCvRankTrendResponse(cvName) {
 
   const loadPromise = (async () => {
     let v2Snapshots = null;
-    if (UPSTASH_DATA_READ_MODE === "prefer-v2") {
-      try {
-        v2Snapshots = await readCvRankTrendV2Snapshots(normalizedCvName);
-      } catch (error) {
-        void logger.operation(
-          "cv_trend_v2_read_failed",
-          { cvName: normalizedCvName },
-          "warn",
-          error
-        );
-      }
+    try {
+      v2Snapshots = await readCvRankTrendV2Snapshots(normalizedCvName);
+    } catch (error) {
+      void logger.operation(
+        "cv_trend_v2_read_failed",
+        { cvName: normalizedCvName },
+        "warn",
+        error
+      );
     }
-    const [missevanTrendSnapshot, manboTrendSnapshot] = v2Snapshots
-      ? [v2Snapshots.missevan, v2Snapshots.manbo]
-      : await Promise.all([
-          readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.missevan).catch(() => null),
-          readRanksJsonKey(CV_RANK_TREND_AGGREGATE_KEYS.manbo).catch(() => null),
-        ]);
     const response = buildCvTrendResponse({
       id: normalizedCvName,
       trendSnapshots: {
-        missevan: missevanTrendSnapshot,
-        manbo: manboTrendSnapshot,
+        missevan: v2Snapshots?.missevan || null,
+        manbo: v2Snapshots?.manbo || null,
       },
     });
     if (response && typeof response === "object") {
@@ -4563,6 +4560,14 @@ async function getCachedCvRankTrendResponse(cvName) {
     }
     if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
       if (response.status === 503) {
+        if (cached?.response) {
+          rankTrendsCache.set(cacheKey, {
+            response: cached.response,
+            loadedAt: cached.loadedAt,
+            loadPromise: null,
+          });
+          return cached.response;
+        }
         rankTrendsCache.delete(cacheKey);
       } else {
         rankTrendsCache.set(cacheKey, {
@@ -4599,7 +4604,7 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
       normalizedPlatform,
       normalizedDramaId,
       "",
-      MISSEVAN_PEAK_SERIES_TREND_KEY
+      MISSEVAN_PEAK_SERIES_TREND_V2_KEY
     );
     const now = Date.now();
     const cached = rankTrendsCache.get(cacheKey);
@@ -4612,20 +4617,15 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
 
     const loadPromise = (async () => {
       let peakSnapshot = null;
-      if (UPSTASH_DATA_READ_MODE === "prefer-v2") {
-        try {
-          peakSnapshot = await readPeakRankTrendV2Snapshot(normalizedDramaId);
-        } catch (error) {
-          void logger.operation(
-            "peak_trend_v2_read_failed",
-            { dramaId: normalizedDramaId },
-            "warn",
-            error
-          );
-        }
-      }
-      if (!peakSnapshot) {
-        peakSnapshot = await readRanksJsonKey(MISSEVAN_PEAK_SERIES_TREND_KEY);
+      try {
+        peakSnapshot = await readPeakRankTrendV2Snapshot(normalizedDramaId);
+      } catch (error) {
+        void logger.operation(
+          "peak_trend_v2_read_failed",
+          { dramaId: normalizedDramaId },
+          "warn",
+          error
+        );
       }
       const response = buildPeakSeriesTrendResponse({
         id: normalizedDramaId,
@@ -4633,6 +4633,14 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
       });
       if (response && typeof response === "object") {
         response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
+      }
+      if (response?.status === 503 && cached?.response) {
+        rankTrendsCache.set(cacheKey, {
+          response: cached.response,
+          loadedAt: cached.loadedAt,
+          loadPromise: null,
+        });
+        return cached.response;
       }
       if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
         rankTrendsCache.set(cacheKey, {
@@ -4928,43 +4936,6 @@ export function getInfoStoreReadFailureSnapshot(store) {
   return null;
 }
 
-async function readLegacyInfoStoreSnapshot(store) {
-  if (store.platform === "cv") {
-    store.remoteAvailable = false;
-    return getInfoStoreReadFailureSnapshot(store) || createEmptyCvInfoSnapshot();
-  }
-  if (upstashClient.enabled) {
-    try {
-      const raw = await readUpstashData(["GET", store.key], {
-        source: "info_v1",
-        key: store.key,
-        fallbackReason: UPSTASH_DATA_READ_MODE === "legacy" ? "legacy_mode" : "v2_unavailable",
-      });
-      store.remoteAvailable = true;
-      if (raw) {
-        return JSON.parse(raw);
-      }
-      const fallbackSnapshot = getInfoStoreReadFailureSnapshot(store);
-      if (fallbackSnapshot) {
-        return fallbackSnapshot;
-      }
-    } catch (error) {
-      void logger.error("upstash_info_snapshot_read_failed", error, { key: store.key, platform: store.platform });
-      const fallbackSnapshot = getInfoStoreReadFailureSnapshot(store);
-      if (fallbackSnapshot) {
-        return fallbackSnapshot;
-      }
-      store.remoteAvailable = false;
-    }
-  } else {
-    store.remoteAvailable = false;
-  }
-
-  return store.platform === "manbo"
-    ? createEmptyManboInfoSnapshot()
-    : createEmptyMissevanInfoSnapshot();
-}
-
 function getInfoStores() {
   return [manboInfoStore, missevanInfoStore, cvInfoStore];
 }
@@ -4976,7 +4947,10 @@ function parseInfoV2Meta(raw, store) {
     if (
       Number(meta?.schemaVersion) !== INFO_META_SCHEMA_VERSIONS[store.platform] ||
       String(meta?.dataKey ?? "") !== expectedKey ||
-      !/^[a-f0-9]{40}$/i.test(String(meta?.contentSha1 ?? ""))
+      !/^[a-f0-9]{40}$/i.test(String(meta?.contentSha1 ?? "")) ||
+      !Number.isSafeInteger(Number(meta?.bytes)) ||
+      Number(meta?.bytes) < 0 ||
+      !normalizeTextValue(meta?.updatedAt)
     ) {
       return null;
     }
@@ -5028,7 +5002,7 @@ async function loadInfoStoresV2() {
   }
   infoStoresV2LoadPromise = (async () => {
     const stores = getInfoStores();
-    let pendingFallbacks = [];
+    let unavailableStores = [];
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const rawMetas = await readUpstashData([
         "MGET",
@@ -5056,7 +5030,11 @@ async function loadInfoStoresV2() {
       changedStores.forEach((store, index) => {
         const raw = rawSnapshots?.[index];
         const meta = metas[stores.indexOf(store)];
-        if (typeof raw !== "string" || getSha1(raw) !== meta.contentSha1) {
+        if (
+          typeof raw !== "string" ||
+          getSha1(raw) !== meta.contentSha1 ||
+          Buffer.byteLength(raw, "utf8") !== Number(meta.bytes)
+        ) {
           shouldRetry = true;
           return;
         }
@@ -5069,7 +5047,7 @@ async function loadInfoStoresV2() {
       if (shouldRetry && attempt === 0) {
         continue;
       }
-      pendingFallbacks = [];
+      unavailableStores = [];
       stores.forEach((store, index) => {
         const preparedEntry = prepared.get(store);
         if (preparedEntry) {
@@ -5086,18 +5064,17 @@ async function loadInfoStoresV2() {
         }
         if (metas[index] && store.loaded && store.contentSha1 === metas[index].contentSha1) {
           store.lastLoadedAt = Date.now();
+          store.remoteAvailable = true;
           return;
         }
-        pendingFallbacks.push(store);
+        store.remoteAvailable = store.loaded;
+        unavailableStores.push(store);
       });
       break;
     }
-    await Promise.all(pendingFallbacks.map(async (store) => {
-      const snapshot = await readLegacyInfoStoreSnapshot(store);
-      applyInfoStoreSnapshot(store, snapshot);
-      store.contentSha1 = "";
-      store.dataSource = "legacy";
-    }));
+    if (unavailableStores.length) {
+      throw new Error(`Info v2 unavailable: ${unavailableStores.map((store) => store.platform).join(", ")}`);
+    }
   })().finally(() => {
     infoStoresV2LoadPromise = null;
   });
@@ -5105,9 +5082,7 @@ async function loadInfoStoresV2() {
 }
 
 async function ensureInfoStoreLoaded(store, forceRefresh = false) {
-  const refreshIntervalMs = UPSTASH_DATA_READ_MODE === "prefer-v2"
-    ? INFO_STORE_META_POLL_INTERVAL_MS
-    : INFO_STORE_SYNC_INTERVAL_MS;
+  const refreshIntervalMs = INFO_STORE_META_POLL_INTERVAL_MS;
   if (
     store.loaded &&
     !forceRefresh &&
@@ -5123,24 +5098,10 @@ async function ensureInfoStoreLoaded(store, forceRefresh = false) {
 
   store.loadPromise = (async () => {
     try {
-      if (UPSTASH_DATA_READ_MODE === "prefer-v2" && upstashClient.enabled) {
-        try {
-          await loadInfoStoresV2();
-        } catch (error) {
-          void logger.warn("info_v2_fallback_used", {
-            platform: store.platform,
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
-          const snapshot = await readLegacyInfoStoreSnapshot(store);
-          applyInfoStoreSnapshot(store, snapshot);
-          store.contentSha1 = "";
-          store.dataSource = "legacy";
-        }
-      } else {
-        const snapshot = await readLegacyInfoStoreSnapshot(store);
-        applyInfoStoreSnapshot(store, snapshot);
-        store.dataSource = "legacy";
+      if (!upstashClient.enabled) {
+        throw new Error("Upstash Redis is not configured");
       }
+      await loadInfoStoresV2();
     } catch (error) {
       if (!store.loaded) {
         applyInfoStoreSnapshot(
@@ -5166,9 +5127,7 @@ async function ensureInfoStoreReadyForSearch(store) {
   if (!store.loaded) {
     return ensureInfoStoreLoaded(store);
   }
-  const refreshIntervalMs = UPSTASH_DATA_READ_MODE === "prefer-v2"
-    ? INFO_STORE_META_POLL_INTERVAL_MS
-    : INFO_STORE_SYNC_INTERVAL_MS;
+  const refreshIntervalMs = INFO_STORE_META_POLL_INTERVAL_MS;
   if (Date.now() - store.lastLoadedAt >= refreshIntervalMs && !store.loadPromise) {
     void ensureInfoStoreLoaded(store).catch((error) => {
       void logger.warn("info_store_background_refresh_failed", {
@@ -10504,13 +10463,11 @@ app.get("/cv-profile", expensiveDataLimiter, async (req, res) => {
       idsByPlatform.missevan.length
         ? getCachedWeeklyPlaybackSnapshot("missevan", {
             ids: idsByPlatform.missevan,
-            historyOnly: true,
           }).catch(() => null)
         : null,
       idsByPlatform.manbo.length
         ? getCachedWeeklyPlaybackSnapshot("manbo", {
             ids: idsByPlatform.manbo,
-            historyOnly: true,
           }).catch(() => null)
         : null,
     ]);
