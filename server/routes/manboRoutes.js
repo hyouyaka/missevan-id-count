@@ -204,6 +204,7 @@ export function registerManboRoutes(router, {
     const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
     const usageTitles = normalizeStringArray(req.body?.titles, items.length);
     const usageSource = normalizeStatsTaskSource(req.body?.source);
+    const suppressUsageLog = req.body?.suppressUsageLog === true;
     const results = [];
     const failedItems = [];
     let accessDenied = false;
@@ -268,7 +269,7 @@ export function registerManboRoutes(router, {
     const dedupedResults = Array.from(
       new Map(results.map((item) => [String(item.id), item])).values()
     );
-    if (items.length) {
+    if (items.length && !suppressUsageLog) {
       const resolvedUsageTitles = normalizeStringArray([
         ...usageTitles,
         ...dedupedResults.map((item) => item?.name ?? item?.title),

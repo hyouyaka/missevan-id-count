@@ -8,6 +8,30 @@ const topRankBadgeClassNames = {
 
 const fallbackRankBadgeClassName = "border-border/80 bg-background text-foreground";
 
+const rankWatermarkClassNames = {
+  1: "text-[var(--rank-gold)] opacity-[0.14]",
+  2: "text-[var(--rank-silver)] opacity-[0.14]",
+  3: "text-[var(--rank-bronze)] opacity-[0.14]",
+};
+
+export function RankWatermark({ rank, placement = "card", className = "" }) {
+  const colorClassName = rankWatermarkClassNames[Number(rank)] || "text-foreground opacity-[0.055]";
+  const placementClassName = placement === "row"
+    ? "right-1 top-1/2 -translate-y-1/2 text-[3.75rem] sm:text-[3.75rem]"
+    : "right-3 top-2 text-[4.75rem] sm:text-[5.5rem]";
+  return (
+    <>
+      <span className="sr-only">第{rank}名</span>
+      <span
+        aria-hidden="true"
+        className={`rank-watermark pointer-events-none absolute z-0 select-none font-bold leading-none tabular-nums ${placementClassName} ${colorClassName} ${className}`.trim()}
+      >
+        {rank}
+      </span>
+    </>
+  );
+}
+
 export function RankBadge({ rank, className = "" }) {
   const numericRank = Number(rank);
   const isTopRank = [1, 2, 3].includes(numericRank);

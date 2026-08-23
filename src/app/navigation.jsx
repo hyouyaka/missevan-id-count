@@ -16,6 +16,7 @@ import {
 import { PlatformIdIcon } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 const mainNavigationIconMap = {
   home: HouseIcon,
   search: CalculatorIcon,
@@ -72,8 +73,8 @@ function getDefaultRoutePatchForMenu(menu) {
 }
 
 export function getInitialDrawerExpandedRootKeys(currentRoute, isDesktopBrowser) {
-  if (isDesktopBrowser) {
-    return ["missevan", "manbo"];
+  if (isDesktopBrowser && (currentRoute?.platform === "missevan" || currentRoute?.platform === "manbo")) {
+    return [currentRoute.platform];
   }
   if ((currentRoute?.view === "ongoing" || currentRoute?.view === "ranks") && (currentRoute?.platform === "missevan" || currentRoute?.platform === "manbo")) {
     return [currentRoute.platform];
@@ -422,6 +423,7 @@ export function DesktopMainNavigationMenu({
 }
 
 export function MainNavigationDrawer({
+  open = false,
   platforms,
   currentRoute,
   ongoingMenu,
@@ -441,11 +443,7 @@ export function MainNavigationDrawer({
   desktopAppUrl,
 }) {
   const [expandedRootKeys, setExpandedRootKeys] = useState(() => new Set(defaultExpandedRootKeys));
-  const didRequestInitialDrawerRanksRef = useRef(false);
-  const initialRanksRequestRef = useRef({
-    defaultExpandedRootKeys,
-    onRequestRanksMenu,
-  });
+  const wasOpenRef = useRef(false);
   const rootItems = platforms.map((platform) => {
     if (platform.key === "missevan" || platform.key === "manbo") {
       return buildDrawerPlatformItem(platform);
@@ -491,22 +489,30 @@ export function MainNavigationDrawer({
   }
 
   useEffect(() => {
-    const initialRequest = initialRanksRequestRef.current;
-    if (!didRequestInitialDrawerRanksRef.current && initialRequest.defaultExpandedRootKeys.some((key) => key === "missevan" || key === "manbo")) {
-      didRequestInitialDrawerRanksRef.current = true;
-      initialRequest.onRequestRanksMenu?.();
+    if (open && !wasOpenRef.current) {
+      const nextExpandedRootKeys = new Set(defaultExpandedRootKeys);
+      setExpandedRootKeys(nextExpandedRootKeys);
+      const expandedPlatform = defaultExpandedRootKeys.find((key) => key === "missevan" || key === "manbo");
+      if (expandedPlatform) {
+        onRequestRanksMenu?.(expandedPlatform);
+      }
     }
-  }, []);
+    wasOpenRef.current = open;
+  }, [defaultExpandedRootKeys, onRequestRanksMenu, open]);
 
   function toggleRoot(key) {
-    if (key === "missevan" || key === "manbo") {
-      onRequestRanksMenu?.();
+    const isPlatformRoot = key === "missevan" || key === "manbo";
+    if (isPlatformRoot && !expandedRootKeys.has(key)) {
+      onRequestRanksMenu?.(key);
     }
     setExpandedRootKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) {
         next.delete(key);
       } else {
+        if (isPlatformRoot) {
+          next.delete(key === "missevan" ? "manbo" : "missevan");
+        }
         next.add(key);
       }
       return next;
@@ -580,10 +586,12 @@ export function MainNavigationDrawer({
   }
 
   return (
-    <div
+    <SheetContent
       id="main-navigation-drawer"
-      className="fixed right-0 top-0 z-50 h-dvh w-[230px] max-w-[calc(100vw-0.75rem)] overflow-y-auto overscroll-contain border-l border-border bg-background p-3 shadow-[var(--shadow-panel)] sm:w-[260px]"
+      className="pt-16"
     >
+      <SheetTitle className="sr-only">主菜单</SheetTitle>
+      <SheetDescription className="sr-only">选择工具页面、平台榜单或辅助功能。</SheetDescription>
       <div className="grid min-h-full content-start gap-1">
         {rootItems.map((item) => (
           <div key={item.key} className="grid gap-1">
@@ -633,6 +641,6 @@ export function MainNavigationDrawer({
           </Button>
         )}
       </div>
-    </div>
+    </SheetContent>
   );
 }

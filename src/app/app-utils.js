@@ -68,7 +68,7 @@ export function getDefaultAppConfig() {
     missevanEnabled: true,
     desktopApp: false,
     brandName: "MMTOOLKIT.APP",
-    titleZh: "小猫小狐数据分析",
+    titleZh: "小猫小狐工具箱",
     description: "支持 Missevan 与 Manbo 的作品导入、分集筛选、弹幕统计和数据汇总。",
     cooldownHours: 4,
     cooldownUntil: 0,
@@ -216,6 +216,7 @@ export function getScrollBehavior() {
 export const TOOL_VIEW_QUERY_PARAM = "view";
 export const TOOL_ROUTE_QUERY_PARAMS = {
   view: "view",
+  q: "q",
   platform: "platform",
   window: "window",
   category: "category",
@@ -243,6 +244,15 @@ export function normalizeToolView(value, options = {}) {
 
 export function normalizeToolPlatform(value) {
   return value === "manbo" ? "manbo" : "missevan";
+}
+
+export function normalizeSearchRoutePlatform(value) {
+  return ["missevan", "manbo", "cv"].includes(value) ? value : "missevan";
+}
+
+export function normalizeSearchRouteQuery(value, maxLength = 200) {
+  const normalizedMaxLength = Math.max(1, Number(maxLength) || 200);
+  return String(value ?? "").trim().slice(0, normalizedMaxLength);
 }
 
 export function normalizeCvPlatform(value) {
@@ -314,8 +324,11 @@ export function normalizeToolRouteState(routeState = {}, options = {}) {
   const view = normalizeToolView(routeState.view, options);
   return {
     view,
+    q: view === "search" ? normalizeSearchRouteQuery(routeState.q) : "",
     platform: view === "cv"
       ? normalizeCvPlatform(routeState.platform)
+      : view === "search"
+        ? normalizeSearchRoutePlatform(routeState.platform)
       : normalizeToolPlatform(routeState.platform),
     window: normalizeOngoingWindow(routeState.window),
     category: String(routeState.category || "").trim(),
@@ -331,6 +344,7 @@ export function normalizeToolRouteState(routeState = {}, options = {}) {
 
 const TOOL_ROUTE_STATE_COMPARISON_KEYS = [
   "view",
+  "q",
   "platform",
   "window",
   "category",
@@ -361,6 +375,7 @@ export function readToolRouteStateFromLocation(locationLike, options = {}) {
   return normalizeToolRouteState(
     {
       view: params.get(TOOL_ROUTE_QUERY_PARAMS.view),
+      q: params.get(TOOL_ROUTE_QUERY_PARAMS.q),
       platform: params.get(TOOL_ROUTE_QUERY_PARAMS.platform),
       window: params.get(TOOL_ROUTE_QUERY_PARAMS.window),
       category: params.get(TOOL_ROUTE_QUERY_PARAMS.category),
@@ -377,6 +392,7 @@ export function readToolRouteStateFromLocation(locationLike, options = {}) {
 }
 
 function deleteToolRouteDetailParams(params) {
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.q);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.platform);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.window);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.category);
@@ -409,7 +425,10 @@ export function buildToolRouteUrl(locationLike, routeState = {}, options = {}) {
     params.set(TOOL_ROUTE_QUERY_PARAMS.view, nextState.view);
   }
 
-  if (nextState.view === "ongoing") {
+  if (nextState.view === "search" && nextState.q) {
+    params.set(TOOL_ROUTE_QUERY_PARAMS.q, nextState.q);
+    params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
+  } else if (nextState.view === "ongoing") {
     if (nextState.platform === "missevan" && nextState.window === "7d") {
       deleteToolRouteDetailParams(params);
     } else {
@@ -1339,6 +1358,21 @@ export function formatRankCompactCount(value) {
     return `${(count / 10000).toFixed(2)}万`;
   }
   return `${(count / 100000000).toFixed(2)}亿`;
+}
+
+export function formatRankCardMetricValue(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return "0";
+  }
+  const absoluteValue = Math.abs(numericValue);
+  if (absoluteValue >= 100000000) {
+    return `${(numericValue / 100000000).toFixed(2)}亿`;
+  }
+  if (absoluteValue >= 10000) {
+    return `${(numericValue / 10000).toFixed(1)}万`;
+  }
+  return formatPlainNumber(numericValue);
 }
 
 export function formatPlayCountDisplay(value, failed) {

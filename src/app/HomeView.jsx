@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeftRightIcon,
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
   ChevronRightIcon,
+  HandCoinsIcon,
   MicIcon,
+  MoreHorizontalIcon,
   PlayCircleIcon,
   RefreshCwIcon,
+  StarIcon,
   TrendingUpIcon,
+  UserSearchIcon,
 } from "lucide-react";
 
 import {
   buildCvRankProfileId,
+  buildVersionedUrl,
   formatDeviceDateTime,
   formatPlainNumber,
   formatRankCompactCount,
@@ -18,8 +24,8 @@ import {
 } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
-import { PlatformTabLabel } from "@/app/platformTabLabel";
-import { RankBadge } from "@/app/RankBadge";
+import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
+import { RankWatermark } from "@/app/RankBadge";
 import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
 import {
   fetchRankTrendAvailabilityData,
@@ -36,6 +42,12 @@ import {
   CarouselPrevious,
 } from "@/components/ui/carousel";
 import { LazyImage } from "@/components/ui/lazy-image";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { sortOngoingItemsByWindowDelta } from "../../shared/ongoingUtils.js";
 
@@ -65,28 +77,8 @@ const homePillTabsListClassName = "inline-flex h-9 min-h-9 w-fit";
 const homePillTabClassName = "h-7 min-h-7 min-w-0 px-3 text-sm!";
 const homeRankItemTitleClassName =
   "min-w-0 truncate whitespace-nowrap text-base! font-semibold! leading-6! text-foreground";
-
-function HomeTrendCoverAction({ children, disabled = false, title = "", onClick }) {
-  if (disabled) {
-    return <div className="home-editorial-trend-cover-static">{children}</div>;
-  }
-  return (
-    <button
-      type="button"
-      className="home-editorial-trend-cover-action"
-      aria-label={`查看${title || "剧集"}趋势`}
-      title="查看趋势"
-      onClick={onClick}
-    >
-      {children}
-      <span aria-hidden="true" className="home-editorial-trend-cue">
-        <span className="home-editorial-trend-line" />
-        <TrendingUpIcon />
-        <span className="home-editorial-trend-line" />
-      </span>
-    </button>
-  );
-}
+const homeMoreButtonClassName =
+  "h-8 min-h-8 min-w-11 shrink-0 overflow-visible rounded-[calc(var(--radius)-0.12rem)] border-0 bg-transparent px-2 shadow-none hover:bg-accent hover:text-accent-foreground after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-['']";
 
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
@@ -186,10 +178,12 @@ function getRankByConfig(data, platform, rankConfig) {
 }
 
 function getHomeTrendLookup(item, platform, rankKey = "") {
+  const isCvRank = rankKey === "cv" && Boolean(item?.cvName);
   const isMissevanPeak = platform === "missevan" && (rankKey === "peak" || item?.type === "peak");
-  const id = String(isMissevanPeak ? item?.name : item?.id ?? "").trim();
+  const id = String(isCvRank ? item?.cvName : isMissevanPeak ? item?.name : item?.id ?? "").trim();
   return {
     id,
+    isCvRank,
     isMissevanPeak,
     canUseSeriesTrend: isMissevanPeak && Boolean(item?.daily_view_delta?.available),
   };
@@ -253,6 +247,125 @@ function HomeTextLink({ children, ariaLabel, onClick }) {
   );
 }
 
+function HomeMoreMenu({
+  item,
+  platform,
+  rankKey = "",
+  kind = "drama",
+  overlay = false,
+  canOpenTrend = false,
+  onOpenTrend,
+  openSearchResult,
+  favoriteKeys,
+  favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
+  onToggleFavorite,
+  onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
+  frontendVersion = "0.0.0",
+}) {
+  const [statisticsActionPending, setStatisticsActionPending] = useState("");
+  const statisticsActionLockRef = useRef(false);
+  const isPeakSeries = kind === "peak";
+  const isCv = kind === "cv";
+  const dramaId = String(item?.id ?? "").trim();
+  const title = String(isCv ? item?.cvName : item?.name ?? "").trim() || (isCv ? "未命名CV" : "未命名剧集");
+  const favoriteKey = dramaId ? `${platform}:${dramaId}` : "";
+  const isFavorite = Boolean(favoriteKey && favoriteKeys?.has?.(favoriteKey));
+
+  function openTrend() {
+    if (canOpenTrend) {
+      onOpenTrend?.({ item, platform, rankKey });
+    }
+  }
+
+  function addCompareItem() {
+    if (!canOpenTrend || isCv) return;
+    onAddCompareItem?.({
+      platform,
+      id: isPeakSeries ? title : dramaId,
+      title: isPeakSeries ? `系列：${title}` : title,
+      cover: item?.cover || "",
+      mainCvText: getMainCvText(item),
+      compareKind: isPeakSeries ? "peak_series" : "drama",
+      dramaIds: isPeakSeries ? (Array.isArray(item?.drama_ids) ? item.drama_ids : []) : [],
+    });
+  }
+
+  function toggleFavorite() {
+    if (!dramaId || favoriteActionsDisabled) return;
+    onToggleFavorite?.({
+      platform,
+      dramaId,
+      title,
+      cover: item?.cover || "",
+      paymentLabel: item?.payment_label || item?.paymentLabel || item?.payStatus || "",
+      contentTypeLabel: item?.content_type_label || item?.contentTypeLabel || "",
+      dramaUpdatedAt: item?.updated_at || "",
+      mainCvText: getMainCvText(item),
+      source: "homeview",
+    });
+  }
+
+  function logStatisticsMenuClick(action) {
+    fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform, action, dramaId, dramaName: title, source: "homeview", success: true }),
+      keepalive: true,
+    }).catch((error) => console.error("Failed to log home statistics action", error));
+  }
+
+  async function runStatisticsAction(action) {
+    if (statisticsActionsDisabled || statisticsActionLockRef.current || !dramaId || !openSearchResult) return;
+    const isPaidIdAction = action === "paid_id_click";
+    const startStatistics = isPaidIdAction ? onStartDramaPaidIdStatistics : onStartRevenueEstimate;
+    if (!startStatistics) return;
+    statisticsActionLockRef.current = true;
+    setStatisticsActionPending(action);
+    logStatisticsMenuClick(action);
+    try {
+      const opened = await openSearchResult({ suppressUsageLog: true });
+      if (!opened) return;
+      if (isPaidIdAction) await startStatistics(dramaId, { platform, source: `${dramaId}payID` });
+      else await startStatistics([dramaId], { platform, source: `${dramaId}earn` });
+    } finally {
+      statisticsActionLockRef.current = false;
+      setStatisticsActionPending("");
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          data-touch="compact"
+          className={`${homeMoreButtonClassName} ${overlay ? "absolute right-0 top-1/2 -translate-y-1/2 active:-translate-y-1/2" : "relative ml-auto active:translate-y-0"}`}
+          aria-label={`${title}更多操作`}
+          title="更多操作"
+        >
+          <MoreHorizontalIcon aria-hidden="true" className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={!canOpenTrend} onSelect={openTrend}><TrendingUpIcon aria-hidden="true" />趋势</DropdownMenuItem>
+        {!isCv ? <DropdownMenuItem disabled={!canOpenTrend || !onAddCompareItem} onSelect={addCompareItem}><ArrowLeftRightIcon aria-hidden="true" />对比</DropdownMenuItem> : null}
+        {kind === "drama" ? (
+          <>
+            <DropdownMenuItem disabled={favoriteActionsDisabled || !dramaId} onSelect={toggleFavorite}><StarIcon aria-hidden="true" className={isFavorite ? "fill-primary text-primary" : ""} />{isFavorite ? "取消收藏" : "收藏"}</DropdownMenuItem>
+            <DropdownMenuItem disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)} onSelect={() => runStatisticsAction("paid_id_click")}><UserSearchIcon aria-hidden="true" />付费ID</DropdownMenuItem>
+            <DropdownMenuItem disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)} onSelect={() => runStatisticsAction("revenue_click")}><HandCoinsIcon aria-hidden="true" />收益</DropdownMenuItem>
+            <DropdownMenuItem asChild><PlatformDramaLink appearance="menu" platform={platform} dramaId={dramaId} source="homeview" dramaTitle={title} frontendVersion={frontendVersion} /></DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function OngoingMiniItem({
   item,
   platform,
@@ -260,34 +373,39 @@ function OngoingMiniItem({
   onOpenTrend,
   canOpenTrend = false,
   featured = false,
+  favoriteKeys,
+  favoriteActionsDisabled,
+  statisticsActionsDisabled,
+  onToggleFavorite,
+  onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
+  frontendVersion,
 }) {
   const coverUrl = buildProxyImageUrl(item?.cover);
   const delta = getSevenDayViewDelta(item);
 
-  function openSearchResult() {
+  function openSearchResult(options = {}) {
     if (!platform || !item?.id) {
-      return;
+      return false;
     }
-    onOpenSearchResult?.({
+    return onOpenSearchResult?.({
       platform,
       id: item.id,
       titles: [item.name],
       name: item.name,
       paymentLabel: item.payment_label,
       contentTypeLabel: item.content_type_label,
-      usageAction: "ongoing_open_search_result",
+      usageAction: options.suppressUsageLog ? undefined : "ongoing_open_search_result",
       usageSource: "homeview",
+      suppressUsageLog: options.suppressUsageLog === true,
     });
   }
 
   return (
     <article className={`home-editorial-update-item ${featured ? "is-featured" : ""}`}>
       <div className="home-editorial-cover-stack">
-        <HomeTrendCoverAction
-          disabled={!canOpenTrend}
-          title={item?.name}
-          onClick={() => canOpenTrend && onOpenTrend?.({ item, platform, rankKey: "ongoing" })}
-        >
+        <div className="home-editorial-trend-cover-static">
           <div className="home-editorial-update-cover">
             {coverUrl ? (
               <LazyImage alt={item?.name || "剧集封面"} className="size-full object-cover" src={coverUrl} />
@@ -295,7 +413,7 @@ function OngoingMiniItem({
               <div className="flex size-full items-center justify-center text-xs text-muted-foreground">暂无封面</div>
             )}
           </div>
-        </HomeTrendCoverAction>
+        </div>
       </div>
       <div className="home-editorial-update-copy">
         <button
@@ -322,6 +440,23 @@ function OngoingMiniItem({
               <span className="home-editorial-delta">（{formatDelta(delta)}）</span>
             </span>
           </span>
+          <HomeMoreMenu
+            item={item}
+            platform={platform}
+            rankKey="ongoing"
+            overlay
+            canOpenTrend={canOpenTrend}
+            onOpenTrend={onOpenTrend}
+            openSearchResult={openSearchResult}
+            favoriteKeys={favoriteKeys}
+            favoriteActionsDisabled={favoriteActionsDisabled}
+            statisticsActionsDisabled={statisticsActionsDisabled}
+            onToggleFavorite={onToggleFavorite}
+            onAddCompareItem={onAddCompareItem}
+            onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+            onStartRevenueEstimate={onStartRevenueEstimate}
+            frontendVersion={frontendVersion}
+          />
         </div>
       </div>
     </article>
@@ -337,6 +472,7 @@ function OngoingPlatformList({
   onOpenSearchResult,
   canOpenTrend,
   onOpenTrend,
+  actionProps,
 }) {
   const [featuredItem, ...compactItems] = items;
 
@@ -363,6 +499,7 @@ function OngoingPlatformList({
               onOpenTrend={onOpenTrend}
               canOpenTrend={canOpenTrend(featuredItem, platform)}
               featured={true}
+              {...actionProps}
             />
             <div className="home-editorial-compact-list">
               {compactItems.map((item) => (
@@ -373,6 +510,7 @@ function OngoingPlatformList({
                   onOpenSearchResult={onOpenSearchResult}
                   onOpenTrend={onOpenTrend}
                   canOpenTrend={canOpenTrend(item, platform)}
+                  {...actionProps}
                 />
               ))}
             </div>
@@ -446,6 +584,7 @@ function RankDramaItem({
   onOpenSearchResult,
   onOpenTrend,
   canOpenTrend = false,
+  actionProps,
 }) {
   const coverUrl = buildProxyImageUrl(item?.cover);
   const isMissevanPeak = platform === "missevan" && item?.type === "peak";
@@ -456,11 +595,11 @@ function RankDramaItem({
       ? [item.id]
       : [];
 
-  function openSearchResult() {
+  function openSearchResult(options = {}) {
     if (!platform || !searchDramaIds.length) {
-      return;
+      return false;
     }
-    onOpenSearchResult?.({
+    return onOpenSearchResult?.({
       platform,
       id: searchDramaIds[0],
       ids: searchDramaIds,
@@ -468,20 +607,17 @@ function RankDramaItem({
       name: item.name,
       paymentLabel: item?.payment_label || item?.paymentLabel || item?.payStatus || "",
       contentTypeLabel: item?.content_type_label || item?.contentTypeLabel || "",
-      usageAction: "ranks_open_search_result",
+      usageAction: options.suppressUsageLog ? undefined : "ranks_open_search_result",
       usageSource: "homeview",
+      suppressUsageLog: options.suppressUsageLog === true,
     });
   }
 
   return (
-    <div className="grid min-w-0 grid-cols-[auto_4rem_minmax(0,1fr)] items-center gap-2">
-      <RankBadge rank={item?.rank} className="size-6 text-[0.68rem]" />
-      <div className="home-editorial-rank-cover-stack">
-        <HomeTrendCoverAction
-          disabled={!canOpenTrend}
-          title={item?.name}
-          onClick={() => canOpenTrend && onOpenTrend?.({ item, platform, rankKey })}
-        >
+    <div className="relative isolate grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] items-center gap-2 overflow-hidden">
+      <RankWatermark rank={item?.rank} placement="row" />
+      <div className="home-editorial-rank-cover-stack relative z-10">
+        <div className="home-editorial-trend-cover-static">
           <div className="size-16 overflow-hidden rounded-md border border-border bg-muted/55">
             {coverUrl ? (
               <LazyImage alt={item?.name || "剧集封面"} className="size-full object-cover" src={coverUrl} />
@@ -489,9 +625,9 @@ function RankDramaItem({
               <div className="flex size-full items-center justify-center text-[0.62rem] text-muted-foreground">暂无</div>
             )}
           </div>
-        </HomeTrendCoverAction>
+        </div>
       </div>
-      <div className="min-w-0">
+      <div className="relative z-10 min-w-0">
         {searchDramaIds.length ? (
           <button
             type="button"
@@ -511,50 +647,72 @@ function RankDramaItem({
           <span className="min-w-0 break-words">{getMainCvText(item)}</span>
         </div>
         <div
-          className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground"
+          className="relative mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 pr-12 text-xs leading-5 text-muted-foreground"
           title={`${isMissevanPeak ? "系列总播放量" : "播放量"}：${playCountText}`}
         >
-          <PlayCircleIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
           <span className="min-w-0 break-words tabular-nums">{playCountText}</span>
+          <HomeMoreMenu
+            item={item}
+            platform={platform}
+            rankKey={rankKey}
+            kind={isMissevanPeak ? "peak" : "drama"}
+            overlay
+            canOpenTrend={canOpenTrend}
+            onOpenTrend={onOpenTrend}
+            openSearchResult={openSearchResult}
+            {...actionProps}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function RankCvItem({ item, platform, rankKey, onOpenCv }) {
+function RankCvItem({ item, platform, rankKey, onOpenCv, onOpenTrend, canOpenTrend = false, actionProps }) {
   const avatarUrl = buildProxyImageUrl(item?.avatar);
   const playCountText = formatRankCompactCount(item?.totalViewCount);
   const topWorksText = getHomeCvWorksPreviewText(item?.topWorks || item?.works);
   return (
-    <div className="grid min-w-0 grid-cols-[auto_3.5rem_minmax(0,1fr)] items-center gap-2">
-      <RankBadge rank={item?.rank} className="size-6 text-[0.68rem]" />
-      <div className="size-14 overflow-hidden rounded-full border border-border/70 bg-muted/55">
+    <div className="relative isolate grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden">
+      <RankWatermark rank={item?.rank} placement="row" />
+      <div className="relative z-10 size-14 overflow-hidden rounded-full border border-border/70 bg-muted/55">
         {avatarUrl ? (
           <LazyImage alt={item?.cvName || "CV头像"} className="size-full object-cover" src={avatarUrl} />
         ) : (
           <div className="flex size-full items-center justify-center text-xs font-semibold text-muted-foreground">CV</div>
         )}
       </div>
-      <div className="min-w-0">
-        <button
-          type="button"
-          className="min-w-0 break-words rounded-sm text-left text-base! font-semibold! leading-6! text-foreground underline underline-offset-4 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          title={item?.cvName || "未命名CV"}
-          onClick={() => onOpenCv?.(item?.cvName, {
-            platform,
-            profileId: buildCvRankProfileId(platform, item),
-            source: "ranks",
-            rankKey,
-          })}
-        >
-          {item?.cvName || "未命名CV"}
-        </button>
+      <div className="relative z-10 min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <button
+            type="button"
+            className="min-w-0 break-words rounded-sm text-left text-base! font-semibold! leading-6! text-foreground underline underline-offset-4 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            title={item?.cvName || "未命名CV"}
+            onClick={() => onOpenCv?.(item?.cvName, {
+              platform,
+              profileId: buildCvRankProfileId(platform, item),
+              source: "ranks",
+              rankKey,
+            })}
+          >
+            {item?.cvName || "未命名CV"}
+          </button>
+          <HomeMoreMenu
+            item={item}
+            platform={platform}
+            rankKey={rankKey}
+            kind="cv"
+            canOpenTrend={canOpenTrend}
+            onOpenTrend={onOpenTrend}
+            {...actionProps}
+          />
+        </div>
         <div
-          className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground"
+          className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs leading-5 text-muted-foreground"
           title={`播放量：${playCountText}`}
         >
-          <PlayCircleIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
           <span className="min-w-0 break-words tabular-nums">{playCountText}</span>
         </div>
         <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground" title={topWorksText}>
@@ -575,6 +733,7 @@ function HomeRankCard({
   onOpenCv,
   canOpenTrend,
   onOpenTrend,
+  actionProps,
 }) {
   const items = (rank?.items || []).slice(0, 3);
   const isCvRank = rankConfig.itemType === "cv";
@@ -600,6 +759,9 @@ function HomeRankCard({
                   platform={platform}
                   rankKey={rankConfig.rankKey}
                   onOpenCv={onOpenCv}
+                  onOpenTrend={onOpenTrend}
+                  canOpenTrend={canOpenTrend(item, platform, rankConfig.rankKey)}
+                  actionProps={actionProps}
                 />
               ) : (
                 <RankDramaItem
@@ -610,6 +772,7 @@ function HomeRankCard({
                   onOpenSearchResult={onOpenSearchResult}
                   onOpenTrend={onOpenTrend}
                   canOpenTrend={canOpenTrend(item, platform, rankConfig.rankKey)}
+                  actionProps={actionProps}
                 />
               )
             )
@@ -641,6 +804,13 @@ export function HomeView({
   onNavigateRoute,
   onOpenSearchResult,
   onOpenCv,
+  favoriteKeys,
+  favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
+  onToggleFavorite,
+  onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
 }) {
   const handleVersionResponseRef = useRef(handleVersionResponse);
   const [selectedRankPlatform, setSelectedRankPlatform] = useState("missevan");
@@ -835,6 +1005,9 @@ export function HomeView({
     if (!lookup.id) {
       return false;
     }
+    if (lookup.isCvRank) {
+      return true;
+    }
     if (lookup.isMissevanPeak) {
       return lookup.canUseSeriesTrend;
     }
@@ -847,16 +1020,21 @@ export function HomeView({
       return;
     }
     const lookup = getHomeTrendLookup(item, platform, rankKey);
-    const trendItem = lookup.isMissevanPeak ? { ...item, id: lookup.id } : item;
+    const trendItem = lookup.isCvRank
+      ? { id: lookup.id, name: lookup.id }
+      : lookup.isMissevanPeak
+        ? { ...item, id: lookup.id }
+        : item;
+    const trendPlatform = lookup.isCvRank ? "cv" : platform;
     const requestId = trendRequestIdRef.current + 1;
     trendRequestIdRef.current = requestId;
-    setTrendDialog({ open: true, item: trendItem, platform, rankKey });
+    setTrendDialog({ open: true, item: trendItem, platform: trendPlatform, rankKey });
     logRankTrendOpen({
-      platform,
+      platform: trendPlatform,
       id: lookup.id,
-      name: item?.name,
+      name: lookup.isCvRank ? item?.cvName : item?.name,
       source: "homeview",
-      rankKey,
+      rankKey: lookup.isCvRank ? (item?.trendScope === "paid" ? "cv-paid" : "cv") : rankKey,
       frontendVersion,
     });
     setTrendState((current) => ({
@@ -866,8 +1044,9 @@ export function HomeView({
     }));
     try {
       const { response, data } = await fetchRankTrendData({
-        platform,
+        platform: lookup.isCvRank ? "" : platform,
         id: lookup.id,
+        kind: lookup.isCvRank ? "cv" : "",
         frontendVersion,
       });
       if (trendRequestIdRef.current !== requestId) {
@@ -913,7 +1092,7 @@ export function HomeView({
         <div className="home-editorial-section-header">
           <SectionHeader
             title="一周内更新"
-            description="按近七日播放量增量排列，点击封面可查看趋势"
+            description="按近七日播放量增量排列"
             sectionIcon={CalendarClockIcon}
           />
         </div>
@@ -928,6 +1107,7 @@ export function HomeView({
               onOpenSearchResult={onOpenSearchResult}
               canOpenTrend={canOpenHomeTrend}
               onOpenTrend={openHomeTrend}
+              actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion }}
             />
             <OngoingPlatformList
               platform="manbo"
@@ -938,6 +1118,7 @@ export function HomeView({
               onOpenSearchResult={onOpenSearchResult}
               canOpenTrend={canOpenHomeTrend}
               onOpenTrend={openHomeTrend}
+              actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion }}
             />
         </div>
       </section>
@@ -946,7 +1127,6 @@ export function HomeView({
         <div className="home-editorial-section-header home-editorial-ranks-header">
           <SectionHeader
             title="榜单速览"
-            description="点击封面可查看趋势"
             sectionIcon={ChartNoAxesColumnIcon}
           />
           <PlatformTabs value={selectedRankPlatform} onValueChange={setSelectedRankPlatform} ariaLabel="选择榜单平台" />
@@ -974,6 +1154,7 @@ export function HomeView({
                     onOpenCv={onOpenCv}
                     canOpenTrend={canOpenHomeTrend}
                     onOpenTrend={openHomeTrend}
+                    actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion }}
                   />
                 </CarouselItem>
               );

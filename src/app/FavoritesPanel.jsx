@@ -60,7 +60,7 @@ import {
   sortFavoritesWithSnapshots,
   updateFavoriteIfExists,
 } from "@/app/favoritesStorage";
-import { PlatformGlyph } from "@/app/platformTabLabel";
+import { PlatformGlyph, PlatformIdIcon } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1728,7 +1728,7 @@ export function FavoritesPanel({
         data-testid="favorite-mobile-toolbar"
       >
         <div
-          className="grid overflow-visible rounded-lg border border-border/80 bg-card shadow-[var(--shadow-card)]"
+          className="grid overflow-visible"
           data-testid="favorite-mobile-toolbar-rows"
         >
           <div className="flex h-11 min-w-0 flex-nowrap items-center" data-testid="favorite-mobile-toolbar-primary">
@@ -1762,7 +1762,7 @@ export function FavoritesPanel({
             </div>
           </div>
           <div
-            className="favorite-mobile-toolbar-secondary grid h-11 min-w-0 items-center gap-0 border-t border-border/60"
+            className="favorite-mobile-toolbar-secondary grid h-11 min-w-0 items-center gap-0"
             data-testid="favorite-mobile-toolbar-secondary"
           >
             <div className="h-11 min-w-11">
@@ -1996,7 +1996,14 @@ export function FavoritesPanel({
                               </Badge>
                             ))}
                           </div>
-                          <div className="mt-1 text-xs text-muted-foreground"># {favorite.dramaId}</div>
+                          <div
+                            className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+                            aria-label={`作品ID：${favorite.dramaId}`}
+                            title={`作品ID：${favorite.dramaId}`}
+                          >
+                            <PlatformIdIcon aria-hidden="true" className="size-3.5 shrink-0" platform={favorite.platform} tone="inherit" />
+                            <span className="min-w-0 break-all">{favorite.dramaId}</span>
+                          </div>
                           <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                             <MicIcon aria-label="主役CV" className="size-3.5 shrink-0" title="主役CV" />
                             <span className="min-w-0 truncate">{formatFavoriteMainCvText(favorite.mainCvText)}</span>

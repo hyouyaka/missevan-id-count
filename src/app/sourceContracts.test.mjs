@@ -24,6 +24,7 @@ const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.met
 const outputPanelSource = readFileSync(new URL("./OutputPanel.jsx", import.meta.url), "utf8");
 const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", import.meta.url), "utf8");
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
+const rankBadgeSource = readFileSync(new URL("./RankBadge.jsx", import.meta.url), "utf8");
 const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url), "utf8");
 const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
 const rankTrendActionsSource = readFileSync(new URL("./rankTrendActions.jsx", import.meta.url), "utf8");
@@ -34,6 +35,7 @@ const cvProfileUtilsSource = readFileSync(new URL("../../shared/cvProfileUtils.j
 const weeklyPlaybackUtilsSource = readFileSync(new URL("../../shared/weeklyPlaybackUtils.js", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.url), "utf8");
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
+const searchWorkspaceSource = readFileSync(new URL("./SearchWorkspace.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
 const navigationSource = readFileSync(new URL("./navigation.jsx", import.meta.url), "utf8");
 const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
@@ -66,6 +68,10 @@ const cardSource = readFileSync(new URL("../components/ui/card.jsx", import.meta
 const carouselSource = readSourceIfExists("../components/ui/carousel.jsx");
 const selectSource = readFileSync(new URL("../components/ui/select.jsx", import.meta.url), "utf8");
 const tabsSource = readFileSync(new URL("../components/ui/tabs.jsx", import.meta.url), "utf8");
+const checkboxSource = readFileSync(new URL("../components/ui/checkbox.jsx", import.meta.url), "utf8");
+const switchSource = readFileSync(new URL("../components/ui/switch.jsx", import.meta.url), "utf8");
+const dropdownMenuSource = readFileSync(new URL("../components/ui/dropdown-menu.jsx", import.meta.url), "utf8");
+const sheetSource = readFileSync(new URL("../components/ui/sheet.jsx", import.meta.url), "utf8");
 
 test("Manbo new ID registration preserves string identifiers", () => {
   assert.match(
@@ -151,7 +157,7 @@ test("semantic role colors keep the requested labels and actions distinct", () =
   assert.match(compareVariantSource, /text-\[var\(--accent-compare-foreground\)\]/);
   assert.match(compareVariantSource, /hover:bg-\[var\(--accent-compare-hover\)\]/);
 
-  for (const actionSource of [rankTrendUiSource, searchResultsSource]) {
+  for (const actionSource of [rankTrendUiSource]) {
     const compareActionStart = actionSource.indexOf("const compareActionButtonClassName");
     const compareActionEnd = actionSource.indexOf("const trendActionHitAreaClassName", compareActionStart);
     const compareActionSource = actionSource.slice(compareActionStart, compareActionEnd);
@@ -173,16 +179,19 @@ test("platform pills use globally distinct selected surfaces", () => {
   assert.match(tabsSource, /data-\[platform=manbo\]:data-\[state=active\]:bg-\[var\(--platform-manbo-soft\)\]/);
 });
 
-test("home headings, cards, and trend covers use the compact unified layout", () => {
+test("home headings, cards, and compact action rows use the unified layout", () => {
   assert.match(indexCssSource, /\.home-editorial-section-heading h2 \{[\s\S]*font-size: clamp\(1\.25rem, 2vw, 1\.65rem\)/);
   assert.match(indexCssSource, /\.home-editorial-section-icon \{[\s\S]*width: 1\.2rem;[\s\S]*height: 1\.2rem/);
   assert.doesNotMatch(homeViewSource, /五类榜单的前三名概览/);
   assert.doesNotMatch(indexCssSource, /\.home-editorial-rank-slot\[data-featured="true"\] \.home-editorial-rank-card \{[\s\S]*background:/);
   assert.match(indexCssSource, /\.home-editorial-cover-stack,[\s\S]*gap: 0/);
-  assert.match(indexCssSource, /\.home-editorial-trend-cover-action \{[\s\S]*display: flex/);
-  assert.match(indexCssSource, /\.home-editorial-trend-cue \{[\s\S]*color: var\(--home-success\)/);
+  assert.match(indexCssSource, /\.home-editorial-trend-cover-static \{[\s\S]*display: flex/);
+  assert.doesNotMatch(indexCssSource, /\.home-editorial-trend-cover-action/);
+  assert.doesNotMatch(homeViewSource, /home-editorial-trend-cue|home-editorial-trend-line/);
+  assert.doesNotMatch(indexCssSource, /\.home-editorial-trend-cue|\.home-editorial-trend-line/);
   assert.match(homeViewSource, /className="size-16 overflow-hidden rounded-md border border-border bg-muted\/55"/);
-  assert.match(homeViewSource, /grid-cols-\[auto_4rem_minmax\(0,1fr\)\]/);
+  assert.match(homeViewSource, /grid-cols-\[4rem_minmax\(0,1fr\)\]/);
+  assert.match(homeViewSource, /<RankWatermark rank=\{item\?\.rank\} placement="row"/);
   assert.match(indexCssSource, /\.home-editorial-update-meta \{[\s\S]*display: flex;[\s\S]*flex-wrap: wrap;/);
   assert.match(
     homeViewSource,
@@ -195,7 +204,7 @@ test("search result platform tabs avoid WebKit intrinsic grid sizing", () => {
   assert.match(searchResultsSource, /<TabsList className="h-9 max-w-full justify-start">/);
   assert.match(
     searchResultsSource,
-    /data-touch="compact"\s+data-platform=\{item\.key\}\s+className="h-7 min-w-\[3\.75rem\] flex-none px-1 text-xs sm:min-w-\[5\.25rem\] sm:px-2 sm:text-sm"/
+    /data-platform=\{item\.key\}\s+className="h-7 min-w-\[3\.75rem\] flex-none px-1 text-xs sm:min-w-\[5\.25rem\] sm:px-2 sm:text-sm"/
   );
   const resultsHeaderStart = searchResultsSource.indexOf("{showResultsHeader ? (");
   const resultsHeaderEnd = searchResultsSource.indexOf("{showingCvResults ? (", resultsHeaderStart);
@@ -277,24 +286,23 @@ test("platform labels tint mask icons by semantic platform color", () => {
   assert.match(indexCssSource, /\[data-platform="missevan"\][\s\S]*--platform-current:\s*var\(--platform-missevan\)/);
 });
 
-test("home drama covers expose availability-aware shared trend actions", () => {
+test("home drama covers stay static while more menus expose shared trend actions", () => {
   assert.match(homeViewSource, /fetchRankTrendAvailabilityData/);
   assert.match(homeViewSource, /fetchRankTrendData/);
-  assert.match(homeViewSource, /function HomeTrendCoverAction/);
-  assert.match(homeViewSource, /TrendingUpIcon/);
+  assert.doesNotMatch(homeViewSource, /function HomeTrendCoverAction/);
+  assert.match(homeViewSource, /<TrendingUpIcon aria-hidden="true" \/>趋势/);
   assert.match(homeViewSource, /RankTrendDialog/);
   assert.match(homeViewSource, /logRankTrendOpen/);
-  assert.match(homeViewSource, /className="home-editorial-trend-cover-action"/);
-  assert.match(homeViewSource, /if \(disabled\) \{[\s\S]*home-editorial-trend-cover-static/);
-  assert.doesNotMatch(homeViewSource, /disabled=\{disabled\}/);
-  assert.match(homeViewSource, /aria-label=\{`查看\$\{title \|\| "剧集"\}趋势`\}/);
-  assert.match(homeViewSource, /onClick=\{onClick\}/);
+  assert.match(homeViewSource, /className="home-editorial-trend-cover-static"/);
+  assert.doesNotMatch(homeViewSource, /home-editorial-trend-cover-action|查看\$\{title \|\| "剧集"\}趋势/);
   assert.doesNotMatch(homeViewSource, /RankTrendButton/);
 
   const cvItemStart = homeViewSource.indexOf("function RankCvItem");
   const cvItemEnd = homeViewSource.indexOf("function HomeRankCard", cvItemStart);
   assert.ok(cvItemStart >= 0 && cvItemEnd > cvItemStart);
-  assert.doesNotMatch(homeViewSource.slice(cvItemStart, cvItemEnd), /HomeTrendCoverAction|onOpenTrend/);
+  assert.doesNotMatch(homeViewSource.slice(cvItemStart, cvItemEnd), /HomeTrendCoverAction/);
+  assert.match(homeViewSource.slice(cvItemStart, cvItemEnd), /kind="cv"[\s\S]*onOpenTrend=\{onOpenTrend\}/);
+  assert.match(homeViewSource.slice(cvItemStart, cvItemEnd), /flex min-w-0 items-center gap-1\.5[\s\S]*kind="cv"[\s\S]*PlayCircleIcon/);
 });
 
 test("shared badges avoid component-level RGB and HEX color literals", () => {
@@ -374,7 +382,7 @@ test("search result cards show original author between ID and main CV with a dis
   assert.match(searchResultsSource, /const originalAuthorText = String\(item\.author \?\? ""\)\.trim\(\);/);
   assert.match(searchResultsSource, /originalAuthorText \|\| "暂无"/);
 
-  const idRowIndex = searchResultsSource.indexOf("idLabel={idLabel}");
+  const idRowIndex = searchResultsSource.indexOf('aria-label={`${idLabel}: ${item.id}`}');
   const authorRowIndex = searchResultsSource.indexOf('aria-label="原作名"');
   const cvRowIndex = searchResultsSource.indexOf('aria-label="主要CV"');
 
@@ -383,110 +391,122 @@ test("search result cards show original author between ID and main CV with a dis
   assert.ok(cvRowIndex > authorRowIndex, "CV row should render below author");
 });
 
-test("mobile search result actions stay in one fixed four-column row", () => {
-  assert.match(
-    searchResultsSource,
-    /const mobileResultActionsClass = "grid w-fit max-w-full grid-cols-\[max-content_max-content_max-content_max-content\]/,
-    "mobile result actions should use content-sized columns instead of stretching across the card"
-  );
-  assert.doesNotMatch(
-    searchResultsSource,
-    /mobileResultActionsClass = "[^"]*mx-auto/,
-    "mobile result actions should stay left-aligned instead of centering themselves"
-  );
-  assert.match(
-    searchResultsSource,
-    /className=\{mobileResultActionsClass\}/,
-    "mobile result actions should use the dedicated mobile row class"
-  );
-  assert.match(
-    searchResultsSource,
-    /const mobileResultActionShortTextClass = "\[font-size:clamp\(0\.6rem,2\.7vw,0\.75rem\)\]!\s+\[line-height:1\]!";/,
-    "short mobile result action labels should restore up to 12px"
-  );
-  assert.match(
-    searchResultsSource,
-    /const mobileResultActionLongTextClass = "\[font-size:clamp\(0\.6rem,3\.15vw,0\.875rem\)\]!\s+\[line-height:1\]!";/,
-    "long mobile result action labels should restore up to 14px"
-  );
-  assert.match(
-    searchResultsSource,
-    /\[height:clamp\(1\.75rem,7vw,2rem\)\]!/,
-    "mobile result action buttons should restore height when width allows"
-  );
-  assert.match(
-    searchResultsSource,
-    /\[padding-inline:clamp\(0\.125rem,1\.55vw,0\.375rem\)\]!/,
-    "mobile result action buttons should restore horizontal padding when width allows"
-  );
-  assert.match(
-    searchResultsSource,
-    /const mobileResultActionButtonClass = `relative min-w-0 overflow-visible[\s\S]*after:inset-x-0 after:-inset-y-2[\s\S]*after:content-\[''\]/,
-    "mobile result stat buttons should keep compact visuals with a vertical-only hidden hit area"
-  );
-  assert.match(
-    searchResultsSource,
-    /variant="secondary"\s+data-touch="compact"\s+className=\{mobileResultActionButtonClass\}/,
-    "mobile result stat buttons should opt out of the global coarse-pointer visual min-height"
-  );
-  assert.doesNotMatch(
-    searchResultsSource,
-    /mobileResultActionsClass = "grid grid-cols-4/,
-    "mobile result actions should not stretch each column to one quarter of the row"
-  );
-  assert.doesNotMatch(
-    searchResultsSource,
-    /mobileResultActionTextClass/,
-    "mobile result actions should not share one font cap across short and long labels"
-  );
-  assert.doesNotMatch(
-    searchResultsSource,
-    /mobileResultAction(?:Control|Button)Class = "[^"]*text-\[clamp/,
-    "mobile result action text should not use text-[clamp(...)] because it does not generate a font-size rule"
-  );
-  assert.doesNotMatch(
-    searchResultsSource,
-    /<div className="flex flex-wrap gap-1\.5 lg:hidden">/,
-    "mobile result actions should not wrap into multiple rows"
-  );
+test("search result data actions use intrinsic-width responsive controls and reveal selection toggles only after import", () => {
+  assert.match(searchResultsSource, /function SearchResultActionLayout\(\{ imported, children, \.\.\.props \}\)/);
+  assert.match(searchResultsSource, /const actionCount = imported \? 6 : 4;/);
+  assert.match(searchResultsSource, /const minimumSingleLineWidth = actionCount \* 44 \+ \(actionCount - 1\) \* 4;/);
+  assert.match(searchResultsSource, /shouldWrap \? "flex-wrap gap-y-3" : "flex-nowrap gap-y-1\.5"/);
+  assert.match(searchResultsSource, /<SearchResultActionLayout data-search-card-actions="true" imported=\{Boolean\(importedDrama\)\}>/);
+  assert.doesNotMatch(searchResultsSource, /max-\[360px\]:flex-wrap|data-search-card-actions[\s\S]{0,240}(?:overflow-x-auto|overflow-y-auto|no-scrollbar)/);
+  assert.match(searchResultsSource, /resultActionButtonClass = "relative h-8 min-w-11 shrink justify-center[\s\S]*lg:min-w-0"/);
+  assert.match(searchResultsSource, /variant=\{importedDrama \? "outline" : "default"\}/);
+  assert.match(searchResultsSource, /\{importedDrama \? <Button[\s\S]*aria-pressed=\{allEpisodesSelected\}[\s\S]*>全选<\/span>/);
+  assert.match(searchResultsSource, /\{importedDrama \? <Button[\s\S]*aria-pressed=\{paidEpisodesSelected\}[\s\S]*>付费<\/span>/);
+  assert.match(searchResultsSource, /importedDrama && "hidden lg:inline"/);
+  assert.match(searchResultsSource, /min-w-0 truncate whitespace-nowrap/);
+  assert.match(searchResultsSource, /className=\{trendResultActionButtonClass\}[\s\S]*趋势[\s\S]*variant="secondary"[\s\S]*付费ID/);
+  assert.match(searchResultsSource, /resultActionButtonClass[\s\S]*after:-inset-y-1\.5/);
+  assert.match(searchResultsSource, /data-touch="compact"[\s\S]*className=\{trendResultActionButtonClass\}/);
+  assert.match(searchResultsSource, /data-touch="compact"[\s\S]*variant="secondary"[\s\S]*className=\{resultActionButtonClass\}/);
+  assert.doesNotMatch(searchResultsSource, /const resultActionControlClass/);
 });
 
-test("search result card rail orders checkbox, favorite, then import", () => {
-  const railStart = searchResultsSource.indexOf('<div className="flex w-8 shrink-0 flex-col items-center gap-2 pt-0.5">');
-  assert.notEqual(railStart, -1, "search result card should keep a narrow left action rail");
-  const railEnd = searchResultsSource.indexOf('<div className="relative size-20', railStart);
-  assert.notEqual(railEnd, -1, "search result action rail should end before the cover");
-  const railSource = searchResultsSource.slice(railStart, railEnd);
+test("search result metrics stay compact below the CV row without inflating the action rail", () => {
+  assert.match(searchResultsSource, /<CardContent className="relative flex min-w-0 flex-col gap-2/);
+  assert.match(searchResultsSource, /flex min-w-0 flex-nowrap items-center gap-x-2 text-xs sm:gap-x-3/);
+  assert.match(searchResultsSource, /min-w-0 whitespace-nowrap font-medium tabular-nums/);
+  const metricTypographyStart = searchResultsSource.indexOf('flex min-w-0 flex-nowrap items-center gap-x-2 text-xs');
+  const metricTypographyEnd = searchResultsSource.indexOf('{metricsFailed ? (', metricTypographyStart);
+  assert.notEqual(metricTypographyStart, -1);
+  assert.notEqual(metricTypographyEnd, -1);
+  assert.doesNotMatch(searchResultsSource.slice(metricTypographyStart, metricTypographyEnd), /text-\[0\.7rem\]|sm:text-sm/);
+  assert.equal(searchResultsSource.match(/text-xs leading-5 text-muted-foreground/g)?.length ?? 0, 3);
+  assert.doesNotMatch(searchResultsSource, /grid min-w-0 grid-cols-3 items-center/);
 
-  const checkboxIndex = railSource.indexOf("<Checkbox");
-  const favoriteIndex = railSource.indexOf("<StarIcon");
-  const importIndex = railSource.indexOf("<ImportIcon");
-  assert.ok(checkboxIndex >= 0, "search result action rail should include checkbox first");
-  assert.ok(favoriteIndex > checkboxIndex, "favorite action should sit below checkbox");
-  assert.ok(importIndex > favoriteIndex, "import action should sit below favorite");
+  const cvRowIndex = searchResultsSource.indexOf('aria-label="主要CV"');
+  const metricsRowIndex = searchResultsSource.indexOf('flex min-w-0 flex-nowrap items-center gap-x-2', cvRowIndex);
+  assert.ok(metricsRowIndex > cvRowIndex, "metrics should render immediately after the top information grid");
 });
 
-test("ongoing and rank cards place favorite below the rank badge", () => {
-  assert.match(
-    ongoingPanelSource,
-    /<div className="flex shrink-0 flex-col items-center gap-2">[\s\S]*?<RankBadge rank=\{rank\} \/>[\s\S]*?<Button[\s\S]*?aria-label=\{isFavorite \? "取消收藏" : "加入收藏"\}/,
-    "ongoing favorite action should live below the rank badge"
-  );
-  assert.doesNotMatch(
-    ongoingPanelSource,
-    /<div className="flex min-w-0 items-start gap-2">[\s\S]*?<Button[\s\S]*?aria-label=\{isFavorite \? "取消收藏" : "加入收藏"\}/,
-    "ongoing title row should not keep the favorite button"
-  );
-  assert.match(
-    ranksPanelSource,
-    /<div className="flex shrink-0 flex-col items-center gap-2">[\s\S]*?<RankBadge rank=\{item\.rank\} \/>[\s\S]*?<Button[\s\S]*?aria-label=\{isFavorite \? "取消收藏" : "加入收藏"\}/,
-    "rank favorite action should live below the rank badge"
-  );
-  assert.doesNotMatch(
-    ranksPanelSource,
-    /<div className="flex gap-3">[\s\S]*?<div className="flex min-w-0 flex-1 flex-col gap-1">[\s\S]*?<\/div>\s*<Button[\s\S]*?aria-label=\{isFavorite \? "取消收藏" : "加入收藏"\}/,
-    "rank title/content row should not keep the favorite button on the right"
-  );
+test("search card selection covers non-action card space while selected cards gain a strong blue border", () => {
+  assert.match(searchResultsSource, /data-selected=\{item\.checked \? "true" : "false"\}/);
+  assert.match(searchResultsSource, /item\.checked \? "border-2 border-primary" : "border-border"/);
+  assert.match(searchResultsSource, /aria-label=\{`\$\{item\.checked \? "取消选择" : "选择"\}\$\{item\.name\}`\}/);
+  assert.match(searchResultsSource, /aria-pressed=\{Boolean\(item\.checked\)\}/);
+  assert.match(searchResultsSource, /event\.target\.closest\("button, a, input, label, select, textarea, \[role='menuitem'\], \[role='switch'\], \[data-search-card-actions\]"\)/);
+  assert.match(searchResultsSource, /className="pointer-events-none absolute inset-0 z-0 rounded-\[inherit\]/);
+  assert.equal(searchResultsSource.match(/onClick=\{\(\) => updateResultChecked\(item\.id, !item\.checked\)\}/g)?.length ?? 0, 1);
+  assert.doesNotMatch(searchResultsSource, /<Checkbox aria-label=\{`选择\$\{item\.name\}`\}/);
+  assert.match(searchResultsSource, /grid-cols-\[6rem_minmax\(0,1fr\)\] items-start/);
+  assert.match(searchResultsSource, /relative size-24 shrink-0 self-center overflow-hidden/);
+  assert.doesNotMatch(searchResultsSource, /grid-cols-\[5rem_minmax\(0,1fr\)\]|lg:size-\[6rem\]/);
+});
+
+test("search result card gives metadata full width and moves all actions beside the metrics", () => {
+  const titleSelectionStart = searchResultsSource.indexOf('aria-pressed={Boolean(item.checked)}');
+  const titleStart = searchResultsSource.indexOf('<SearchResultTitle', titleSelectionStart);
+  const metadataStart = searchResultsSource.indexOf('<div data-search-card-metadata className="min-w-0">', titleStart);
+  const actionStart = searchResultsSource.indexOf('data-search-card-actions', metadataStart);
+  assert.notEqual(titleSelectionStart, -1, "search card should expose an accessible selection control");
+  assert.notEqual(titleStart, -1, "search result title should remain above metadata");
+  assert.notEqual(metadataStart, -1, "search result metadata should use its complete content width");
+  assert.ok(actionStart > metadataStart, "search result actions should move below metadata beside the metrics");
+  assert.match(searchResultsSource.slice(titleStart, metadataStart), /titleClassName=\{getTitleClassName\(item\.name\)\}/);
+  assert.match(searchResultsSource, /function SearchResultTitle\(/);
+  assert.match(searchResultsSource, /className=\{cn\("min-w-0", hasTags \? "block overflow-hidden" : "line-clamp-2"\)\}/);
+  assert.doesNotMatch(searchResultsSource, /<span className="line-clamp-2 min-w-0">/);
+  assert.match(searchResultsSource, /data-search-card-title-tags className="ml-1\.5 inline-flex shrink-0 items-center gap-1 whitespace-nowrap align-middle"/);
+  assert.match(searchResultsSource, /fitsWithinTwoLines/);
+  assert.match(searchResultsSource, /new ResizeObserver\(scheduleUpdate\)/);
+  assert.doesNotMatch(searchResultsSource, /data-search-card-title className="flex min-w-0/);
+  assert.doesNotMatch(searchResultsSource, /data-search-card-metadata className="relative min-w-0 pr-/);
+  assert.doesNotMatch(searchResultsSource, /absolute right-0 top-1\/2 flex shrink-0 -translate-y-1\/2 flex-col/);
+  const actionEnd = searchResultsSource.indexOf('</DropdownMenu>', actionStart);
+  assert.notEqual(actionEnd, -1, "search result action row should end after the more menu");
+  const actionSource = searchResultsSource.slice(actionStart, actionEnd);
+
+  const importIndex = actionSource.indexOf("<ImportIcon");
+  const selectAllIndex = actionSource.indexOf(">全选</span>");
+  const paidIndex = actionSource.indexOf(">付费</span>");
+  const trendIndex = actionSource.indexOf("<TrendingUpIcon");
+  const paidIdIndex = actionSource.indexOf("<UserSearchIcon");
+  const moreIndex = actionSource.indexOf("<MoreHorizontalIcon");
+  const favoriteIndex = actionSource.indexOf("<StarIcon");
+  const compareIndex = actionSource.indexOf("<ArrowLeftRightIcon");
+  const revenueIndex = actionSource.indexOf("<HandCoinsIcon");
+  const listenIndex = actionSource.indexOf("<PlatformDramaLink");
+  assert.doesNotMatch(actionSource, /<Switch|<Checkbox/, "card actions should use compact buttons instead of switches or checkboxes");
+  assert.ok(importIndex >= 0, "import action should start the action row");
+  assert.ok(selectAllIndex > importIndex, "select-all should follow import after a drama is imported");
+  assert.ok(paidIndex > selectAllIndex, "paid selection should follow select-all");
+  assert.ok(trendIndex > paidIndex, "trend should follow selection controls");
+  assert.ok(paidIdIndex > trendIndex, "paid ID should follow trend");
+  assert.ok(moreIndex > paidIdIndex, "more should finish the visible action row");
+  assert.ok(favoriteIndex > moreIndex, "favorite should live inside the more menu");
+  assert.ok(compareIndex > favoriteIndex, "compare should follow favorite in the more menu");
+  assert.ok(revenueIndex > compareIndex, "revenue should follow compare in the more menu");
+  assert.ok(listenIndex > revenueIndex, "listen jump should be the last more-menu action");
+  assert.match(actionSource, /data-touch="compact"/);
+  assert.match(actionSource, /variant="outline"[\s\S]*MoreHorizontalIcon/);
+  assert.doesNotMatch(searchResultsSource.slice(titleStart, actionEnd), /<Separator|border-b|border-t/);
+});
+
+test("ongoing and rank cards share the rank watermark while favorites live in more", () => {
+  assert.match(rankBadgeSource, /export function RankWatermark\(\{ rank/);
+  assert.match(rankBadgeSource, /<span className="sr-only">第\{rank\}名<\/span>/);
+  assert.match(rankBadgeSource, /placement === "row"[\s\S]*right-3 top-2[\s\S]*rank-watermark[\s\S]*\{rank\}/);
+  assert.match(rankBadgeSource, /font-bold leading-none tabular-nums/);
+  assert.match(indexCssSource, /@import "@fontsource-variable\/geist-mono\/wght-italic\.css"/);
+  assert.match(indexCssSource, /\.rank-watermark \{[\s\S]*font-family: "Geist Mono Variable"[\s\S]*font-style: italic;[\s\S]*font-weight: 700;/);
+  assert.match(packageSource, /"@fontsource-variable\/geist-mono": "\^5\.3\.0"/);
+  assert.doesNotMatch(packageSource, /@fontsource\/kalam/);
+  assert.match(rankBadgeSource, /rankWatermarkClassNames = \{[\s\S]*--rank-gold[\s\S]*--rank-silver[\s\S]*--rank-bronze/);
+  assert.doesNotMatch(ongoingPanelSource, /<RankBadge rank=\{rank\}/);
+  assert.match(ongoingPanelSource, /<RankWatermark rank=\{rank\} \/>/);
+  assert.match(ranksPanelSource, /<RankWatermark rank=\{item\.rank\} \/>/);
+  assert.match(ongoingPanelSource, /<DropdownMenuItem disabled=\{favoriteActionsDisabled\} onSelect=\{toggleFavorite\}>[\s\S]*<StarIcon/);
+  assert.match(ranksPanelSource, /<DropdownMenuItem disabled=\{favoriteActionsDisabled\} onSelect=\{toggleFavorite\}>[\s\S]*<StarIcon/);
+  assert.doesNotMatch(ranksPanelSource, /<RankBadge rank=\{item\.rank\}/);
 });
 
 test("Missevan peak rank cards do not expose favorite actions", () => {
@@ -497,13 +517,13 @@ test("Missevan peak rank cards do not expose favorite actions", () => {
   );
   assert.match(
     ranksPanelSource,
-    /if \(!canToggleFavorite\) \{[\s\S]*?return;[\s\S]*?\}/,
+    /if \(!canToggleFavorite\) return;/,
     "rank favorite handler should no-op for peak aggregate cards"
   );
   assert.match(
     ranksPanelSource,
-    /\{canToggleFavorite \? \([\s\S]*?aria-label=\{isFavorite \? "取消收藏" : "加入收藏"\}[\s\S]*?\) : null\}/,
-    "rank favorite button should only render for concrete single-drama rank cards"
+    /isMissevanPeak \? <PeakRankFourthRow[\s\S]*: \([\s\S]*renderNormalActions/,
+    "peak aggregate cards should not render the normal more menu"
   );
 });
 
@@ -517,7 +537,7 @@ test("web navigation keeps platform drawer roots and favorites with statistics l
   assert.match(navigationSource, /CalculatorIcon/);
   assert.match(navigationSource, /search: CalculatorIcon/);
   assert.match(navigationSource, /favorites: StarIcon/);
-  assert.match(platformSource, /\{ key: "search", label: "统计" \}/);
+  assert.match(platformSource, /\{ key: "search", label: "计算与统计" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "search", label: "搜索" \}/);
   assert.match(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
   assert.match(platformSource, /\{ key: "manbo", label: "漫播" \}/);
@@ -546,7 +566,7 @@ test("home navigation appears before statistics on web only and uses the House i
 
   assert.match(navigationSource, /HouseIcon/);
   assert.match(navigationSource, /home: HouseIcon/);
-  assert.ok(webSource.indexOf('{ key: "home", label: "首页" }') < webSource.indexOf('{ key: "search", label: "统计" }'));
+  assert.ok(webSource.indexOf('{ key: "home", label: "首页" }') < webSource.indexOf('{ key: "search", label: "计算与统计" }'));
   assert.doesNotMatch(desktopSource, /\{ key: "home", label: "首页" \}/);
   assert.match(toolViewSource, /<HomeView[\s\S]*onNavigateRoute=\{navigateHomeRoute\}/);
   assert.match(toolViewSource, /function openHomeFromHeader\(\)/);
@@ -593,11 +613,11 @@ test("home drama titles open the shared statistics result flow", () => {
   assert.match(toolViewSource, /<HomeView[\s\S]*onOpenSearchResult=\{openDramaInSearch\}/);
   assert.match(homeViewSource, /export function HomeView\(\{[\s\S]*onOpenSearchResult[\s\S]*\}\)/);
   assert.match(ongoingItemSource, /function OngoingMiniItem\(\{[\s\S]*onOpenSearchResult,[\s\S]*featured = false/);
-  assert.match(ongoingItemSource, /usageAction: "ongoing_open_search_result"/);
+  assert.match(ongoingItemSource, /usageAction: options\.suppressUsageLog \? undefined : "ongoing_open_search_result"/);
   assert.match(ongoingItemSource, /usageSource: "homeview"/);
   assert.match(rankItemSource, /function RankDramaItem\(\{[\s\S]*item,[\s\S]*platform,[\s\S]*onOpenSearchResult/);
   assert.match(rankItemSource, /const searchDramaIds = isMissevanPeak[\s\S]*item\.drama_ids[\s\S]*\[item\.id\]/);
-  assert.match(rankItemSource, /usageAction: "ranks_open_search_result"/);
+  assert.match(rankItemSource, /usageAction: options\.suppressUsageLog \? undefined : "ranks_open_search_result"/);
   assert.match(rankItemSource, /usageSource: "homeview"/);
   assert.match(homeViewSource, /onOpenSearchResult=\{onOpenSearchResult\}/);
   assert.match(homeViewSource, /underline underline-offset-4 hover:text-primary/);
@@ -607,8 +627,43 @@ test("home drama titles open the shared statistics result flow", () => {
 test("home title and trend logs keep homeview while CV rank links use ranks", () => {
   assert.match(homeViewSource, /usageSource: "homeview"/);
   assert.match(homeViewSource, /logRankTrendOpen\(\{[\s\S]*source: "homeview"/);
+  assert.match(homeViewSource, /name: lookup\.isCvRank \? item\?\.cvName : item\?\.name/);
   assert.match(homeViewSource, /onOpenCv\?\.\([\s\S]*source: "ranks"/);
   assert.match(homeViewSource, /profileId: buildCvRankProfileId\(platform, item\)/);
+  assert.match(serverSource, /export function buildTrendOpenUsageLog/);
+  assert.match(serverSource, /platform === "cv" && \["cv", "cv-paid"\]\.includes\(rankKey\)/);
+  assert.match(serverSource, /if \(action === "trend"\) \{[\s\S]*buildTrendOpenUsageLog\(payload\)[\s\S]*await writeUsageLog\(entry\)/);
+});
+
+test("home compact more menus reuse rank actions with homeview logging", () => {
+  const menuStart = homeViewSource.indexOf("function HomeMoreMenu");
+  const menuEnd = homeViewSource.indexOf("function OngoingMiniItem", menuStart);
+  const menuSource = homeViewSource.slice(menuStart, menuEnd);
+  assert.ok(menuStart >= 0 && menuEnd > menuStart);
+  const trendIndex = menuSource.indexOf("<TrendingUpIcon");
+  const compareIndex = menuSource.indexOf("<ArrowLeftRightIcon");
+  const favoriteIndex = menuSource.indexOf("<StarIcon");
+  const paidIdIndex = menuSource.indexOf("<UserSearchIcon");
+  const revenueIndex = menuSource.indexOf("<HandCoinsIcon");
+  const listenIndex = menuSource.indexOf("<PlatformDramaLink");
+  assert.ok(trendIndex >= 0 && compareIndex > trendIndex);
+  assert.ok(favoriteIndex > compareIndex && paidIdIndex > favoriteIndex);
+  assert.ok(revenueIndex > paidIdIndex && listenIndex > revenueIndex);
+  assert.match(menuSource, /kind === "drama"/);
+  assert.match(menuSource, /!isCv \? <DropdownMenuItem[\s\S]*对比/);
+  assert.match(menuSource, /source: "homeview", success: true/);
+  assert.match(menuSource, /source="homeview"/);
+  assert.match(menuSource, /const opened = await openSearchResult\(\{ suppressUsageLog: true \}\);[\s\S]*if \(!opened\) return;/);
+  assert.match(menuSource, /source: `\$\{dramaId\}payID`/);
+  assert.match(menuSource, /source: `\$\{dramaId\}earn`/);
+  assert.match(homeViewSource, /homeMoreButtonClassName[\s\S]*h-8 min-h-8 min-w-11[\s\S]*after:-inset-y-1\.5/);
+  assert.match(homeViewSource, /homeMoreButtonClassName[\s\S]*border-0 bg-transparent[\s\S]*hover:bg-accent/);
+  assert.match(menuSource, /variant="ghost"[\s\S]*homeMoreButtonClassName/);
+  assert.match(menuSource, /overlay = false[\s\S]*overlay \? "absolute right-0 top-1\/2 -translate-y-1\/2[\s\S]*"relative ml-auto/);
+  assert.match(homeViewSource, /home-editorial-update-meta[\s\S]*rankKey="ongoing"[\s\S]*overlay/);
+  assert.match(homeViewSource, /relative mt-0\.5 flex min-w-0 flex-wrap items-center[\s\S]*pr-12[\s\S]*kind=\{isMissevanPeak \? "peak" : "drama"\}[\s\S]*overlay/);
+  assert.match(indexCssSource, /\.home-editorial-update-meta \{[\s\S]*position: relative;[\s\S]*padding-right: 3rem;/);
+  assert.match(toolViewSource, /<HomeView[\s\S]*favoriteKeys=\{favoriteKeySet\}[\s\S]*onAddCompareItem=\{addDramaToCompareBasket\}[\s\S]*onStartDramaPaidIdStatistics=\{startDramaPaidIdStatistics\}[\s\S]*onStartRevenueEstimate=\{startRevenueEstimate\}/);
 });
 
 test("home section subtitles show platform and shared rank refresh times", () => {
@@ -761,12 +816,9 @@ test("home section hints stay intact and wrap as complete units", () => {
   );
   assert.match(
     homeViewSource,
-    /title="一周内更新"[\s\S]*description="按近七日播放量增量排列，点击封面可查看趋势"/
+    /title="一周内更新"[\s\S]*description="按近七日播放量增量排列"/
   );
-  assert.match(
-    homeViewSource,
-    /title="榜单速览"[\s\S]*description="点击封面可查看趋势"/
-  );
+  assert.doesNotMatch(homeViewSource, /点击封面可查看趋势/);
   assert.doesNotMatch(homeViewSource, /<p>按近七日播放增量排列<\/p>/);
   assert.match(
     indexCssSource,
@@ -875,7 +927,7 @@ test("desktop navigation keeps statistics and favorites", () => {
   const platformSource = toolViewSource.slice(platformStart, platformEnd);
 
   assert.match(toolViewSource, /appConfig\.desktopApp \? desktopPlatforms : webPlatforms/);
-  assert.match(platformSource, /\{ key: "search", label: "统计" \}/);
+  assert.match(platformSource, /\{ key: "search", label: "计算与统计" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "home", label: "首页" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "search", label: "搜索" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
@@ -894,17 +946,20 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /function openDrawerFeedback\(\)/);
   assert.match(toolViewSource, /navigateToolRoute\(\{ view: "feedback" \}\)/);
   assert.doesNotMatch(toolViewSource, /window\.open\(appConfig\.featureSuggestionUrl/);
-  assert.match(toolViewSource, /window\.addEventListener\("keydown", handleMainDrawerKeyDown\)/);
-  assert.match(toolViewSource, /event\.key === "Escape"/);
+  assert.doesNotMatch(toolViewSource, /handleMainDrawerKeyDown/);
+  assert.match(toolViewSource, /<Sheet open=\{mainDrawerOpen\} onOpenChange=\{setMainDrawerOpen\}>/);
+  assert.equal((toolViewSource.match(/<SheetTrigger asChild>/g) || []).length, 1);
+  assert.match(navigationSource, /<SheetContent[\s\S]*<SheetTitle[\s\S]*主菜单/);
+  assert.match(sheetSource, /DialogPrimitive\.Root/);
+  assert.match(sheetSource, /DialogPrimitive\.Portal/);
+  assert.match(sheetSource, /DialogPrimitive\.Overlay/);
+  assert.match(sheetSource, /DialogPrimitive\.Content/);
   assert.match(toolViewSource, /setMainDrawerOpen\(false\)/);
-  assert.match(toolViewSource, /aria-expanded=\{mainDrawerOpen\}/);
   assert.match(toolViewSource, /aria-controls="main-navigation-drawer"/);
   assert.match(toolViewSource, /const mainMenuButtonLabel = mainDrawerOpen \? "关闭菜单" : "打开菜单";/);
   assert.match(toolViewSource, /aria-label=\{mainMenuButtonLabel\}/);
-  assert.match(toolViewSource, /className="sm:hidden fixed/);
-  assert.match(toolViewSource, /right-\[max\(0\.75rem,env\(safe-area-inset-right\)\)\]/);
-  assert.match(toolViewSource, /top-\[max\(0\.75rem,env\(safe-area-inset-top\)\)\]/);
-  assert.match(toolViewSource, /className="hidden shrink-0 sm:inline-flex/);
+  assert.match(toolViewSource, /sticky top-\[env\(safe-area-inset-top\)\][\s\S]*grid-cols-\[minmax\(0,1fr\)_auto\]/);
+  assert.match(toolViewSource, /className="shrink-0 bg-background sm:inline-flex sm:col-start-3 sm:row-start-1"/);
   assert.match(toolViewSource, /<MenuIcon aria-hidden="true"/);
   assert.match(navigationSource, /id="main-navigation-drawer"/);
   assert.match(toolViewSource, /<MainNavigationDrawer/);
@@ -915,10 +970,14 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.doesNotMatch(toolViewSource, /expandedMobileRootKey/);
   assert.doesNotMatch(toolViewSource, /defaultExpandedRootKeys\.join\("\|"\)/);
   assert.doesNotMatch(toolViewSource, /setExpandedRootKeys\(new Set\(defaultExpandedRootKeys\)\)/);
-  assert.match(navigationSource, /const didRequestInitialDrawerRanksRef = useRef\(false\)/);
-  assert.match(navigationSource, /const initialRanksRequestRef = useRef\(\{/);
-  assert.match(navigationSource, /if \(!didRequestInitialDrawerRanksRef\.current && initialRequest\.defaultExpandedRootKeys\.some/);
-  assert.match(navigationSource, /didRequestInitialDrawerRanksRef\.current = true/);
+  assert.match(navigationSource, /const wasOpenRef = useRef\(false\)/);
+  assert.match(navigationSource, /if \(open && !wasOpenRef\.current\)/);
+  assert.match(navigationSource, /if \(isPlatformRoot && !expandedRootKeys\.has\(key\)\) \{\s*onRequestRanksMenu\?\.\(key\);\s*\}/);
+  const drawerToggleStart = navigationSource.indexOf("function toggleRoot(key)");
+  const drawerUpdaterStart = navigationSource.indexOf("setExpandedRootKeys((current) => {", drawerToggleStart);
+  const drawerRequestStart = navigationSource.indexOf("onRequestRanksMenu?.(key);", drawerToggleStart);
+  assert.ok(drawerToggleStart >= 0 && drawerRequestStart > drawerToggleStart && drawerRequestStart < drawerUpdaterStart);
+  assert.match(navigationSource, /next\.delete\(key === "missevan" \? "manbo" : "missevan"\)/);
   assert.doesNotMatch(toolViewSource, /<DesktopMainNavigationMenu/);
   assert.doesNotMatch(toolViewSource, /<MobileMainNavigationMenu/);
   assert.doesNotMatch(toolViewSource, /buildMobileRankNavigationItems/);
@@ -939,10 +998,10 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /const drawerRootItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /const drawerChildItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /const drawerUtilityItemClassName = appConfig\.desktopApp/);
-  assert.match(toolViewSource, /fixed inset-0 z-40 bg-black\/20 backdrop-blur-\[2px\]/);
-  assert.match(navigationSource, /fixed right-0 top-0 z-50 h-dvh w-\[230px\]/);
-  assert.match(navigationSource, /sm:w-\[260px\]/);
-  assert.match(navigationSource, /border-l border-border bg-background p-3 shadow-\[var\(--shadow-panel\)\]/);
+  assert.doesNotMatch(toolViewSource, /fixed inset-0 z-40 bg-black\/20 backdrop-blur-\[2px\]/);
+  assert.match(sheetSource, /fixed right-0 top-0 z-50 h-dvh w-\[230px\]/);
+  assert.match(sheetSource, /sm:w-\[260px\]/);
+  assert.match(sheetSource, /border-l border-border bg-background p-3 shadow-\[var\(--shadow-panel\)\]/);
 });
 
 test("web feedback route initializes the npm Twikoo client inside its own view", () => {
@@ -972,7 +1031,11 @@ test("web feedback route initializes the npm Twikoo client inside its own view",
   assert.match(feedbackViewSource, /lang: "zh-CN"/);
   assert.match(feedbackViewSource, /建议反馈暂未启用/);
   assert.match(feedbackViewSource, /反馈区加载失败，请稍后刷新重试。/);
-  assert.match(feedbackViewSource, /可以提交Bug、数据异常、新功能建议等，我的回复也会显示在这里。/);
+  assert.match(feedbackViewSource, /可以提交Bug、数据异常、新功能建议等，我的回复也会显示在这里。也可私信小红书账号/);
+  assert.match(
+    feedbackViewSource,
+    /href="https:\/\/xhslink\.cn\/m\/53LZBGOylUC"[\s\S]*target="_blank"[\s\S]*rel="noreferrer"[\s\S]*MMToolkit/
+  );
   assert.doesNotMatch(feedbackViewSource, /可以匿名提交 Bug、数据异常、新功能建议/);
   assert.match(feedbackViewSource, />参考提交格式<\/h2>/);
   assert.doesNotMatch(feedbackViewSource, />建议提交格式<\/h2>/);
@@ -1045,21 +1108,24 @@ test("header uses plain version text, full-width desktop search, and no desktop 
   assert.match(headerSource, /<span className="[^"]*text-muted-foreground[^"]*">\s*v\{appConfig\.frontendVersion\}/);
   assert.doesNotMatch(headerSource, /renderHeaderAccessHint/);
   assert.doesNotMatch(headerSource, />桌面版</);
-  assert.match(headerSource, /sm:grid sm:grid-cols-\[auto_minmax\(0,1fr\)_auto\]/);
+  assert.match(headerSource, /sm:grid[^"]*sm:grid-cols-\[auto_minmax\(0,1fr\)_auto\]/);
   assert.match(headerSource, /className="[^"]*sm:col-start-2[^"]*sm:w-full/);
   assert.doesNotMatch(headerSource, /sm:min-w-\[16rem\]/);
   assert.doesNotMatch(headerSource, /sm:w-\[26rem\]/);
-  assert.match(headerSource, /className="hidden shrink-0 sm:inline-flex/);
+  assert.match(headerSource, /sticky top-\[env\(safe-area-inset-top\)\][\s\S]*sm:static sm:contents/);
   assert.doesNotMatch(headerSource, /fixed right-3 top-3 z-40/);
   assert.match(toolViewSource, /className="app-shell[\s\S]*sm:pt-\[6\.5rem\]/);
   assert.doesNotMatch(toolViewSource, /sm:pt-\[8\.75rem\]/);
-  assert.match(headerSource, /<h1 className="mt-1 min-w-0 text-\[22px\] font-semibold leading-tight tracking-tight sm:text-xl lg:text-2xl">/);
+  assert.match(headerSource, /<h1 className="mt-1 min-w-0 text-\[1\.625rem\] font-semibold leading-tight tracking-tight">/);
+  assert.match(headerSource, /px-3 pb-3 pt-0[\s\S]*sm:py-3/);
 });
 
 test("app icon appears in page titles and browser chrome", () => {
   assert.match(indexHtmlSource, /<link rel="icon" type="image\/x-icon" href="\/favicon\.ico" \/>/);
   assert.match(indexHtmlSource, /<link rel="apple-touch-icon" href="\/icon\.png" \/>/);
-  assert.match(indexHtmlSource, /<title>小猫小狐数据分析<\/title>/);
+  assert.match(indexHtmlSource, /<title>小猫小狐工具箱<\/title>/);
+  assert.match(appUtilsSource, /titleZh: "小猫小狐工具箱"/);
+  assert.match(serverSource, /titleZh: missevanEnabled \? "小猫小狐工具箱" : "小狐分析"/);
   assert.match(appUtilsSource, /brandName: "MMTOOLKIT\.APP"/);
   assert.match(appUtilsSource, /brandName && brandName !== "M&M Toolkit" \? brandName : defaults\.brandName/);
   assert.match(serverSource, /brandName: (?:MISSEVAN_ENABLED|missevanEnabled) \? "MMTOOLKIT\.APP" : "Manbo Toolkit"/);
@@ -1069,12 +1135,12 @@ test("app icon appears in page titles and browser chrome", () => {
   assert.match(appIconSource, /rounded-lg/);
   assert.match(appIconSource, /alt=""/);
   assert.match(toolViewSource, /document\.title = appConfig\.titleZh \|\| appConfig\.brandName/);
-  assert.match(toolViewSource, /<h1 className="mt-1 min-w-0 text-\[22px\] font-semibold leading-tight tracking-tight sm:text-xl lg:text-2xl">/);
+  assert.match(toolViewSource, /<h1 className="mt-1 min-w-0 text-\[1\.625rem\] font-semibold leading-tight tracking-tight">/);
   assert.match(toolViewSource, /const headerHomeLabel = appConfig\.desktopApp \? "返回统计页" : "返回首页";/);
   assert.match(toolViewSource, /aria-label=\{headerHomeLabel\}/);
   assert.match(toolViewSource, /onClick=\{openHomeFromHeader\}/);
-  assert.match(toolViewSource, /className="inline-flex min-w-0 text-left text-inherit leading-tight/);
-  assert.match(toolViewSource, /<AppIcon className="size-14 self-center rounded-xl sm:size-12" \/>/);
+  assert.match(toolViewSource, /className="relative flex min-w-0 items-start gap-3[\s\S]*className="absolute inset-0 z-10[\s\S]*<AppIcon[\s\S]*\{appConfig\.brandName\}[\s\S]*\{appConfig\.titleZh\}/);
+  assert.match(toolViewSource, /<AppIcon className="pointer-events-none size-14 self-center rounded-xl sm:size-12" \/>/);
   assert.match(toolViewSource, /<span className="min-w-0">\{appConfig\.titleZh\}<\/span>/);
 });
 
@@ -1090,11 +1156,12 @@ test("motion-sensitive users get reduced scrolling and animation", () => {
   assert.match(indexCssSource, /\[class\*="animate-spin"\]/);
 });
 
-test("mobile touch targets use real layout space instead of overlapping hit overlays", () => {
+test("mobile compact controls preserve visual density with non-layout hit areas", () => {
   assert.match(indexCssSource, /@media \(pointer: coarse\)/);
   assert.match(indexCssSource, /\[data-slot="button"\]:not\(\[data-touch="compact"\]\)/);
   assert.match(indexCssSource, /min-height: 2\.75rem/);
   assert.match(indexCssSource, /\[data-slot="tabs-trigger"\]:not\(\[data-touch="compact"\]\)/);
+  assert.match(indexCssSource, /min-height: 2\.5rem/);
   assert.match(buttonSource, /data-slot="button"/);
   assert.match(tabsSource, /data-slot="tabs-trigger"/);
   assert.match(ranksPanelSource, /const mobilePlatformTabsListClassName =\s*\n\s*"inline-flex h-9 min-h-9 w-fit max-w-full justify-start"/);
@@ -1103,37 +1170,35 @@ test("mobile touch targets use real layout space instead of overlapping hit over
   assert.doesNotMatch(ranksPanelSource, /mobilePlatformTabsListClassName =\s*\n\s*"[^"]*justify-stretch/);
   assert.match(ranksPanelSource, /const mobilePlatformTabClassName =\s*\n\s*"relative h-7 min-h-7 min-w-0 px-3 text-sm!"/);
   assert.match(ranksPanelSource, /data-platform=\{platform\.key\}/);
-  assert.match(ranksPanelSource, /data-touch="compact"[\s\S]*className=\{`\$\{mobilePlatformTabClassName\}/);
+  assert.match(ranksPanelSource, /data-touch="compact"[\s\S]*data-platform=\{platform\.key\}/);
   assert.match(ranksPanelSource, /const mobileTextTabsListClassName =\s*\n\s*"grid h-9 min-h-9/);
   assert.match(ongoingPanelSource, /const mobileOngoingTextTabsListClassName =\s*\n\s*"grid h-9 min-h-9/);
-  assert.match(ranksPanelSource, /const mobileCategoryTabClassName =\s*\n\s*"h-7 min-h-7/);
-  assert.match(ranksPanelSource, /const mobileRankTabClassName =\s*\n\s*"h-7 min-h-7/);
-  assert.match(ranksPanelSource, /data-touch="compact"[\s\S]*className=\{`\$\{mobileCategoryTabClassName\}/);
-  assert.match(ranksPanelSource, /data-touch="compact"[\s\S]*className=\{`\$\{mobileRankTabClassName\}/);
+  assert.match(ranksPanelSource, /const mobileCategoryTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center/);
+  assert.match(ranksPanelSource, /const mobileRankTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center/);
   assert.match(ranksPanelSource, /className="grid gap-1 lg:hidden"/);
-  assert.match(ranksPanelSource, /className="flex min-h-8 items-center justify-between gap-2 border-t border-border\/60 pt-1"/);
-  assert.match(ranksPanelSource, /className="min-w-0 basis-\[min\(13\.75rem,58vw\)\] shrink-0 gap-0"/);
+  assert.match(ranksPanelSource, /className="flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border\/60 pt-1"/);
+  assert.match(ranksPanelSource, /className="w-fit max-w-full shrink-0 gap-0"/);
+  assert.match(ranksPanelSource, /className=\{`\$\{mobileTextTabsListClassName\} w-fit`\}/);
+  assert.match(ranksPanelSource, /className="ml-auto w-fit shrink-0 items-end gap-0"/);
   assert.doesNotMatch(ranksPanelSource, /className="flex h-9 items-center gap-2 px-1\.5"/);
   assert.match(ongoingPanelSource, /const mobileOngoingPlatformTabClassName =\s*\n\s*"h-7 min-h-7/);
-  assert.match(ongoingPanelSource, /const mobileOngoingWindowTabClassName =\s*\n\s*"h-7 min-h-7/);
+  assert.match(ongoingPanelSource, /const mobileOngoingWindowTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center/);
   assert.match(ongoingPanelSource, /data-platform=\{platform\}/);
-  assert.match(ongoingPanelSource, /data-touch="compact"[\s\S]*className=\{`\$\{mobileOngoingPlatformTabClassName\}/);
-  assert.match(ongoingPanelSource, /data-touch="compact"[\s\S]*className=\{`\$\{mobileOngoingWindowTabClassName\}/);
+  assert.match(ongoingPanelSource, /data-touch="compact"[\s\S]*data-platform=\{platform\}/);
   assert.match(ongoingPanelSource, /className="flex min-h-8 items-center justify-between gap-3 sm:hidden"/);
   assert.doesNotMatch(ongoingPanelSource, /className="flex h-\[2\.375rem\] items-center gap-1\.5 px-1\.5"/);
   assert.doesNotMatch(ranksPanelSource, /grid gap-0 overflow-hidden rounded-lg border border-border\/80 bg-card\/80 shadow-sm lg:hidden/);
   assert.doesNotMatch(ongoingPanelSource, /grid gap-0 overflow-hidden rounded-lg border border-border\/80 bg-card\/80 shadow-sm sm:hidden/);
   assert.match(rankTrendUiSource, /const trendActionHitAreaClassName =\s*\n\s*"h-11 min-h-11 w-\[58px\]/);
-  assert.match(rankTrendUiSource, /const trendActionInlineClassName =\s*\n\s*"relative h-\[22px\] min-h-\[22px\] w-\[50px\]/);
-  assert.match(rankTrendUiSource, /after:inset-x-0 after:-inset-y-\[11px\]/);
-  assert.doesNotMatch(rankTrendUiSource, /after:-inset-x-1/);
-  assert.match(rankTrendUiSource, /after:content-\[''\]/);
+  assert.match(rankTrendUiSource, /const trendActionInlineClassName =\s*\n\s*"relative h-\[22px\][^"]*after:-inset-y-\[11px\]/);
   assert.match(rankTrendUiSource, /density === "inline" \? trendActionInlineClassName : trendActionHitAreaClassName/);
-  assert.match(rankTrendUiSource, /data-touch="compact"[\s\S]*hitAreaClassName/);
+  assert.match(rankTrendUiSource, /data-touch="compact"/);
   assert.match(rankTrendUiSource, /const trendActionVisualClassName =\s*\n\s*"pointer-events-none inline-flex/);
+  assert.match(checkboxSource, /size-4[^"]*after:-inset-x-3 after:-inset-y-2/);
+  assert.match(switchSource, /after:-inset-x-3 after:-inset-y-2/);
 });
 
-test("running statistics cancel keeps compact visuals with a 44px touch target", () => {
+test("running statistics cancel keeps a compact visual with an expanded hit area", () => {
   assert.match(
     outputPanelSource,
     /<Button[\s\S]*variant="secondary"[\s\S]*size="sm"[\s\S]*data-touch="compact"[\s\S]*after:-inset-y-1\.5[\s\S]*onClick=\{onCancelStatistics\}/
@@ -1220,21 +1285,15 @@ test("search page owns compact platform result tabs", () => {
   assert.match(toolViewSource, /activeSearchPlatform/);
   assert.match(toolViewSource, /setActiveSearchPlatform/);
 
-  const searchResultsStart = toolViewSource.indexOf("<SearchResults");
-  const searchPageStart = toolViewSource.lastIndexOf('<div className="grid gap-4 sm:gap-5">', searchResultsStart);
-  assert.notEqual(searchResultsStart, -1, "SearchResults should render in the search page");
-  assert.notEqual(searchPageStart, -1, "Search page wrapper should exist before SearchResults");
-  const searchResultsEnd = toolViewSource.indexOf("/>", searchResultsStart);
-  const beforeSearchResults = toolViewSource.slice(searchPageStart, searchResultsStart);
-  const searchResultsProps = toolViewSource.slice(searchResultsStart, searchResultsEnd);
-  assert.doesNotMatch(beforeSearchResults, /<SearchPanel/, "search page should rely on the global header search panel");
-  assert.doesNotMatch(beforeSearchResults, /<Tabs value=\{activeBrowsePlatform\}/, "platform tabs should not render as a standalone ToolView row");
-  assert.match(searchResultsProps, /platformTabs=\{visibleSearchCategories\}/);
-  assert.match(searchResultsProps, /activePlatform=\{activeSearchCategory\}/);
-  assert.match(searchResultsProps, /onPlatformChange=\{changeSearchCategory\}/);
-  assert.match(searchResultsProps, /platformResultCounts=\{searchResultCounts\}/);
-  assert.match(searchResultsProps, /cvResults=\{cvSearchState\.results\}/);
-  assert.match(searchResultsProps, /onOpenCv=\{openCvProfile\}/);
+  assert.match(toolViewSource, /const SearchWorkspace = lazy\(\(\) => import\("@\/app\/SearchWorkspace"\)\)/);
+  assert.match(searchWorkspaceSource, /<SearchResults/);
+  assert.doesNotMatch(searchWorkspaceSource, /<SearchPanel/);
+  assert.match(toolViewSource, /platformTabs: visibleSearchCategories/);
+  assert.match(toolViewSource, /activePlatform: activeSearchCategory/);
+  assert.match(toolViewSource, /onPlatformChange: changeSearchCategory/);
+  assert.match(toolViewSource, /platformResultCounts: searchResultCounts/);
+  assert.match(toolViewSource, /cvResults: cvSearchState\.results/);
+  assert.match(toolViewSource, /onOpenCv: openCvProfile/);
 });
 
 test("CV search and profile stay library-backed and route-driven", () => {
@@ -1243,7 +1302,7 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.doesNotMatch(toolViewSource, /<CvSearchResults/);
   assert.match(searchResultsSource, /import \{ CvSearchResults \} from "@\/app\/CvSearchResults";/);
   assert.match(searchResultsSource, /showingCvResults \? \(\s*<CvSearchResults/);
-  assert.doesNotMatch(cvSearchResultsSource, /<Card|<Tabs/);
+  assert.match(cvSearchResultsSource, /results\.map[\s\S]*<Card[\s\S]*<CardContent/);
   assert.match(toolViewSource, /<CvProfileView/);
   assert.match(toolViewSource, /view: "cv",[\s\S]*cv: cvName,[\s\S]*cvKey:[\s\S]*platform: "all",[\s\S]*payment: "all"/);
   assert.doesNotMatch(toolViewSource, /payment: "all",\s*sort:/);
@@ -1305,7 +1364,7 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(indexCssSource, /\.cv-profile-work-grid > article,[\s\S]*\.cv-profile-work-grid > article:last-child \{[\s\S]*border: 1px solid[\s\S]*border-radius:[\s\S]*background: var\(--card\)[\s\S]*box-shadow: var\(--shadow-card\)/);
   assert.match(platformTabLabelSource, /text-foreground\/70/);
   assert.match(cvProfileViewSource, /加载更多/);
-  assert.match(cvProfileViewSource, /data-touch="compact"\s+className="h-8 min-h-8 rounded-full px-4 text-sm! leading-none"/);
+  assert.match(cvProfileViewSource, /className="h-8 min-h-8 rounded-full px-4 text-sm! leading-none"/);
   assert.doesNotMatch(cvProfileViewSource, /sortOrder|plays_asc|ArrowDownIcon|ArrowUpIcon/);
   assert.doesNotMatch(cvProfileViewSource, /双平台总播放量|全部库内作品|<Table|dataDate/);
   assert.match(toolViewSource, /resetSearchFlow\("manbo"\);\s*clearCvSearchResults\(\);/);
@@ -1382,6 +1441,49 @@ test("merged search import branch is protected by pending state", () => {
   assert.match(submitSource, /finally \{\s*setSearchPending\(false\);\s*\}/);
 });
 
+test("unified search distinguishes backend failures from valid empty results", () => {
+  assert.match(searchPanelSource, /if \(!response\.ok\) \{\s*throw new Error/);
+
+  const unifiedStart = searchPanelSource.indexOf("async function queryUnifiedKeywordSearch");
+  const unifiedEnd = searchPanelSource.indexOf("async function runMergedSearch", unifiedStart);
+  const unifiedSource = searchPanelSource.slice(unifiedStart, unifiedEnd);
+  const failedIndex = unifiedSource.indexOf('showBlockingNotice("搜索失败"');
+  const emptyIndex = unifiedSource.indexOf("未找到结果，可尝试导入作品ID或链接。");
+
+  assert.notEqual(failedIndex, -1, "backend failure notice should exist");
+  assert.notEqual(emptyIndex, -1, "valid empty-result notice should remain");
+  assert.ok(failedIndex < emptyIndex, "backend failures should be handled before valid empty results");
+  assert.match(unifiedSource, /\.every\(\s*\(result\) => !result\?\.success && !result\?\.accessDenied\s*\)/);
+});
+
+test("route-restored searches wait for the active request instead of being discarded", () => {
+  const restoreEffectStart = searchPanelSource.indexOf("useEffect(() => {", searchPanelSource.indexOf("const restoreSearchCategory"));
+  assert.notEqual(restoreEffectStart, -1, "route restore effect should exist");
+  const restoreEffectEnd = searchPanelSource.indexOf("async function runMergedSearch", restoreEffectStart);
+  assert.notEqual(restoreEffectEnd, -1, "route restore effect should end before the submit handler");
+  const restoreEffectSource = searchPanelSource.slice(restoreEffectStart, restoreEffectEnd);
+
+  assert.match(restoreEffectSource, /isSearchPending\s*\|\|\s*searchPendingRef\.current/);
+  assert.match(restoreEffectSource, /lastRestoredSearchSignatureRef\.current = restoreSearchSignature/);
+  assert.match(restoreEffectSource, /\[isSearchPending, restoreSearchCategory, restoreSearchKeyword, restoreSearchSignature\]/);
+  assert.ok(
+    restoreEffectSource.indexOf("isSearchPending") < restoreEffectSource.indexOf("lastRestoredSearchSignatureRef.current = restoreSearchSignature"),
+    "pending route restores must not be marked complete before they can run",
+  );
+});
+
+test("programmatic drama opens keep the search route platform aligned with injected results", () => {
+  const openPlatformStart = toolViewSource.indexOf("function openSearchPlatform");
+  const openPlatformEnd = toolViewSource.indexOf("function changeSearchCategory", openPlatformStart);
+  assert.notEqual(openPlatformStart, -1, "search platform opener should exist");
+  assert.notEqual(openPlatformEnd, -1, "search platform opener should end before category changes");
+  const openPlatformSource = toolViewSource.slice(openPlatformStart, openPlatformEnd);
+
+  assert.match(openPlatformSource, /navigateToolRoute\(\{ view: "search", q: "", platform: normalizedPlatform \}\)/);
+  assert.doesNotMatch(openPlatformSource, /navigateCurrentPlatform\("search"\)/);
+  assert.doesNotMatch(toolViewSource, /navigateToolRoute\(\{ view: "search" \}\);\s*openSearchPlatform/);
+});
+
 test("backend unified search uses coupled API fallback and library card details", () => {
   const routeStart = serverSource.indexOf('app.get("/unified-search"');
   assert.notEqual(routeStart, -1, "unified search route should exist");
@@ -1453,7 +1555,7 @@ test("search cards refresh active-platform metrics without blocking actions", ()
   assert.match(toolViewSource, /\/search-card-metrics/);
   assert.match(viteConfigSource, /"\/unified-search": backendTarget/);
   assert.match(viteConfigSource, /"\/search-card-metrics": backendTarget/);
-  assert.match(toolViewSource, /onRetryMetrics=\{retrySearchCardMetrics\}/);
+  assert.match(toolViewSource, /onRetryMetrics: retrySearchCardMetrics/);
   assert.match(searchResultsSource, /metrics_status/);
   assert.match(searchResultsSource, /正在获取/);
   assert.match(searchResultsSource, /获取失败/);
@@ -1478,18 +1580,20 @@ test("unified search panels are unframed", () => {
   assert.match(searchResultsSource, /TabsList className="h-9 max-w-full justify-start"/);
 });
 
-test("search result platform tabs live in the result card header with counts", () => {
+test("search result platform tabs live directly on the page background with counts", () => {
   assert.match(searchResultsSource, /platformTabs = \[\]/);
   assert.match(searchResultsSource, /activePlatform = platform/);
   assert.match(searchResultsSource, /platformResultCounts = \{\}/);
   assert.match(searchResultsSource, /onPlatformChange/);
   assert.match(searchResultsSource, /function getPlatformResultCountText\(nextPlatform\)/);
-  assert.match(searchResultsSource, /<Card[\s\S]*className="[^"]*pt-2\.5[\s\S]*pb-4/);
-  assert.match(searchResultsSource, /<CardContent className="pt-0">/);
+  assert.doesNotMatch(searchResultsSource, /<Card className="min-w-0 py-0 pt-2\.5 pb-4">/);
+  assert.match(searchResultsSource, /<div className="mb-3">[\s\S]*<Tabs className="w-fit max-w-full shrink-0"/);
   assert.match(searchResultsSource, /<Tabs className="w-fit max-w-full shrink-0" value=\{activePlatform\} onValueChange=\{onPlatformChange\}/);
   assert.match(searchResultsSource, /PlatformTabLabel platform=\{item\.key\} iconClassName="size-3\.5"/);
   assert.match(searchResultsSource, /getPlatformResultCountText\(item\.key\)/);
-  assert.match(searchResultsSource, /border-b border-border\/75 pb-1\.5/);
+  assert.doesNotMatch(searchResultsSource, /border-b border-border\/75 pb-1\.5/);
+  assert.match(searchResultsSource, /<div className="grid gap-3 sm:gap-4">[\s\S]*<Card[\s\S]*key=\{item\.id\}[\s\S]*data-search-result-id/);
+  assert.doesNotMatch(searchResultsSource, /showResultsHeader \? "mt-3 divide-y divide-border\/75"/);
   const platformTabsStart = searchResultsSource.indexOf('<Tabs className="w-fit max-w-full shrink-0" value={activePlatform}');
   const platformTabsEnd = searchResultsSource.indexOf("</Tabs>", platformTabsStart);
   assert.notEqual(platformTabsStart, -1, "platform tabs should render inside SearchResults");
@@ -1505,13 +1609,17 @@ test("global search input area supports header layout and compact controls", () 
   assert.doesNotMatch(searchPanelSource, /搜索 \/ 导入/);
   assert.match(searchPanelSource, /Popover/);
   assert.match(searchPanelSource, /searchHelpText/);
-  assert.match(searchPanelSource, /空格表示 AND ，逗号表示 OR ，例如：/);
+  assert.match(
+    searchPanelSource,
+    /空格表示 AND ，逗号表示 OR；非单独出现的“广播剧”“有声剧”可被识别为剧集类型。例如：/
+  );
+  assert.match(searchPanelSource, /“回信 广播剧” = 包含 “回信” 且类型为广播剧/);
   assert.match(searchPanelSource, /function blurSearchControl\(formElement\)/);
-  assert.match(searchPanelSource, /function openSearchHelp\(\)/);
-  assert.match(searchPanelSource, /if \(isDesktopApp\) \{\s*return;\s*\}/);
-  assert.match(searchPanelSource, /onFocus=\{openSearchHelp\}/);
-  assert.doesNotMatch(searchPanelSource, /onFocus=\{\(\) => setSearchHelpOpen\(true\)\}/);
-  assert.match(searchPanelSource, /onBlur=\{\(\) => setSearchHelpOpen\(false\)\}/);
+  assert.doesNotMatch(searchPanelSource, /function openSearchHelp\(\)/);
+  assert.doesNotMatch(searchPanelSource, /onFocus=\{[^}]*SearchHelp/);
+  assert.match(searchPanelSource, /<Popover open=\{searchHelpOpen\} onOpenChange=\{setSearchHelpOpen\}>/);
+  assert.match(searchPanelSource, /<PopoverTrigger asChild>[\s\S]*aria-label="搜索语法说明"[\s\S]*aria-expanded=\{searchHelpOpen\}[\s\S]*aria-controls="search-syntax-help"[\s\S]*>\s*\?/);
+  assert.match(searchPanelSource, /<PopoverContent[\s\S]*id="search-syntax-help"/);
   assert.match(searchPanelSource, /className = ""/);
   assert.doesNotMatch(searchPanelSource, /descriptionClassName = ""/);
   assert.doesNotMatch(searchPanelSource, /showDescription = true/);
@@ -1524,7 +1632,7 @@ test("global search input area supports header layout and compact controls", () 
   assert.match(searchPanelSource, /<SearchIcon className="size-5" \/>/);
   assert.match(searchPanelSource, /hasKeyword \? \(/);
   assert.match(searchPanelSource, /type="button"[\s\S]*aria-label="清空输入"[\s\S]*<XIcon className="size-5" \/>/);
-  assert.match(searchPanelSource, /<input[\s\S]*className="h-12 w-full rounded-lg border border-border\/80 bg-white pl-11 pr-11 text-sm!/);
+  assert.match(searchPanelSource, /<input[\s\S]*className=\{`h-12 w-full rounded-lg border border-border\/80 bg-white pl-11 \$\{hasKeyword \? "pr-\[5\.25rem\]" : "pr-11"\}/);
   assert.doesNotMatch(searchPanelSource, /const searchDescription = /);
   assert.doesNotMatch(toolViewSource, /fullSearchPlaceholder/);
   assert.match(toolViewSource, /placeholder="请输入关键词、ID、分享链接。"/);
@@ -1542,35 +1650,53 @@ test("mobile batch action menu separates 44px hit areas from compact visuals", (
   assert.match(searchResultsSource, /const mobileManagementVisualClass = "border-border\/70 bg-background\/84/);
   assert.match(searchResultsSource, /const mobileBatchTextClass = "text-xs! font-medium"/);
   assert.match(searchResultsSource, /function MobileBatchButton\(\{ variant = "outline", visualClassName = "", children, \.\.\.props \}\)/);
-  assert.match(searchResultsSource, /data-touch="compact"[\s\S]*cn\(buttonVariants\(\{ variant, size: "sm" \}\), mobileActionVisualClass, visualClassName\)/);
+  assert.match(searchResultsSource, /cn\(buttonVariants\(\{ variant, size: "sm" \}\), mobileActionVisualClass, visualClassName\)/);
   assert.match(searchResultsSource, /grid gap-0 rounded-lg/);
   assert.match(searchResultsSource, /className="grid grid-cols-4 gap-1"/);
+  assert.doesNotMatch(searchResultsSource, /hasImportedResults|importedResults|importedDramaIdSet/);
+  assert.match(searchResultsSource, /<span>作品<\/span>[\s\S]*<span>付费<\/span>[\s\S]*清空[\s\S]*导入/);
   assert.match(searchResultsSource, /className="grid grid-cols-3 gap-1"/);
   assert.equal(searchResultsSource.match(/visualClassName=\{mobileManagementVisualClass\}/g)?.length ?? 0, 2);
   assert.match(searchResultsSource, /function ActionPanel\(\{ variant = "desktop" \}\)/);
 });
 
 test("ongoing titles keep content type badges visible while truncating long names", () => {
-  const titleButtonStart = ongoingPanelSource.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
+  const ongoingTitleStart = ongoingPanelSource.indexOf("function OngoingTitle");
+  const ongoingTitleEnd = ongoingPanelSource.indexOf("function buildProxyImageUrl", ongoingTitleStart);
+  const ongoingTitleSource = ongoingPanelSource.slice(ongoingTitleStart, ongoingTitleEnd);
+  const titleButtonStart = ongoingTitleSource.search(/<button\s+type="button"[\s\S]*?onClick=\{onClick\}/);
   assert.notEqual(titleButtonStart, -1, "title button markup should exist");
-  const titleButtonEnd = ongoingPanelSource.indexOf("</button>", titleButtonStart);
+  const titleButtonEnd = ongoingTitleSource.indexOf("</button>", titleButtonStart);
   assert.notEqual(titleButtonEnd, -1, "title button should have a closing tag");
-  const titleButtonMarkup = ongoingPanelSource.slice(titleButtonStart, titleButtonEnd);
+  const titleButtonMarkup = ongoingTitleSource.slice(titleButtonStart, titleButtonEnd);
 
   assert.doesNotMatch(ongoingPanelSource, /text-lg! font-semibold! leading-6!/);
   assert.match(ongoingPanelSource, /text-base! font-semibold! leading-5!/);
   assert.doesNotMatch(ongoingPanelSource, /grid-cols-\[minmax\(0,1fr\)_auto\]/);
-  assert.doesNotMatch(titleButtonMarkup, /line-clamp-2/);
-  assert.match(titleButtonMarkup, /className="break-words rounded-sm[\s\S]*underline underline-offset-4/);
+  assert.match(ongoingTitleSource, /className="relative min-w-0 max-h-\[42px\] overflow-hidden"/);
+  assert.match(titleButtonMarkup, /className="block w-full rounded-sm[\s\S]*underline underline-offset-4/);
+  assert.match(ongoingTitleSource, /measure\.style\.width = `\$\{container\.clientWidth\}px`/);
+  assert.match(ongoingTitleSource, /const maxHeight = lineHeight \* 2 \+ 2/);
+  assert.match(ongoingTitleSource, /const fitsWithinTwoLines = \(candidate\) =>/);
+  assert.match(ongoingTitleSource, /measure\.getBoundingClientRect\(\)\.height <= maxHeight/);
+  assert.match(ongoingTitleSource, /invisible absolute left-0 top-0 block whitespace-normal/);
+  assert.match(ongoingTitleSource, /if \(fitsWithinTwoLines\(normalizedTitle\)\)[\s\S]*setVisibleTitle/);
+  assert.match(ongoingTitleSource, /new ResizeObserver\(scheduleUpdate\)/);
+  assert.match(ongoingTitleSource, /document\.fonts\?\.ready/);
+  assert.match(ongoingTitleSource, /const titleCharacters = Array\.from\(normalizedTitle\)/);
+  assert.match(ongoingTitleSource, /const truncatedTitle = `\$\{titleCharacters\.slice\(0, low\)\.join\(""\)\.trimEnd\(\)\}…`/);
   assert.doesNotMatch(ongoingPanelSource, /ongoingTitleUnderlineClassName/);
   assert.doesNotMatch(ongoingPanelSource, /\[background-size:100%_2px\]/);
   assert.doesNotMatch(ongoingPanelSource, /\[box-decoration-break:clone\]/);
-  assert.match(ongoingPanelSource, /getInlineTaggedTitleDisplayText/);
+  assert.doesNotMatch(ongoingPanelSource, /getInlineTaggedTitleDisplayText/);
   assert.match(ranksPanelSource, /getInlineTaggedTitleDisplayText/);
   assert.match(appUtilsSource, /export function getInlineTaggedTitleDisplayText/);
   assert.match(ongoingPanelSource, /titleTags\.map/);
   assert.match(ongoingPanelSource, /ml-1 inline-flex/);
   assert.match(ongoingPanelSource, /shrink-0/);
+  assert.match(ongoingPanelSource, /<span className="min-w-0 break-words">\{String\(item\.main_cv_text/);
+  assert.doesNotMatch(ongoingPanelSource, /line-clamp-2 min-w-0 break-words/);
+  assert.match(ongoingPanelSource, /<MicIcon aria-label="主要CV" className="mt-\[3px\] size-3\.5 shrink-0"/);
 });
 
 test("title display truncation does not replace original search payload names", () => {
@@ -1583,7 +1709,7 @@ test("title display truncation does not replace original search payload names", 
 test("ongoing mobile filter tabs use compact borderless pills", () => {
   assert.match(ongoingPanelSource, /const mobileOngoingTextTabsListClassName =\s*\n\s*"grid h-9 min-h-9 w-fit/);
   assert.match(ongoingPanelSource, /const mobileOngoingPlatformTabClassName =\s*\n\s*"h-7 min-h-7 min-w-0 px-3 text-sm!"/);
-  assert.match(ongoingPanelSource, /const mobileOngoingWindowTabClassName =\s*\n\s*"h-7 min-h-7 min-w-10 px-2 text-xs!"/);
+  assert.match(ongoingPanelSource, /const mobileOngoingWindowTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center px-2 text-xs!"/);
   assert.match(ongoingPanelSource, /variant="line"[\s\S]*className=\{`\$\{mobileOngoingTextTabsListClassName\} grid-cols-2`\}/);
   assert.match(ongoingPanelSource, /variant="line"[\s\S]*className=\{`\$\{mobileOngoingTextTabsListClassName\} grid-cols-3 justify-end`\}/);
   assert.match(ongoingPanelSource, /data-platform=\{platform\}/);
@@ -1623,24 +1749,25 @@ test("batch action counters remain scoped to the active result platform", () => 
   assert.match(searchResultsSource, /const selectedDramaCount = actionResults\.filter/);
   assert.match(searchResultsSource, /const selectedEpisodeCount = selectedEpisodes\.length/);
   assert.doesNotMatch(searchResultsSource, /const importedDramaCount/);
+  assert.match(searchResultsSource, /function areAllResultsSelected\(\) \{\s*return results\.length > 0 && results\.every\(\(result\) => result\.checked\);/);
+  assert.match(searchResultsSource, /function setAllResultsChecked\(checked\)[\s\S]*nextResults\.forEach\(\(result\) => \{\s*result\.checked = Boolean\(checked\);/);
+  assert.match(searchResultsSource, /<span>作品全选<\/span>[\s\S]*<span>付费全选<\/span>/);
+  assert.doesNotMatch(searchResultsSource, /\{hasImportedResults \? <div className="grid gap-2">/);
 
-  const searchResultsStart = toolViewSource.indexOf("<SearchResults");
-  const outputPanelStart = toolViewSource.indexOf("<OutputPanel");
-  const searchResultsProps = toolViewSource.slice(searchResultsStart, outputPanelStart);
-  assert.match(searchResultsProps, /dramas=\{currentBrowseState\?\.dramas \|\| \[\]\}/);
-  assert.match(searchResultsProps, /allResults=\{getAllSearchResults\(currentBrowseState\)\}/);
-  assert.match(searchResultsProps, /selectedEpisodes=\{currentBrowseState\?\.selectedEpisodesSnapshot \|\| \[\]\}/);
-  assert.match(searchResultsProps, /platform=\{activeBrowsePlatform\}/);
+  assert.match(toolViewSource, /dramas: currentBrowseState\?\.dramas \|\| \[\]/);
+  assert.match(toolViewSource, /allResults: getAllSearchResults\(currentBrowseState\)/);
+  assert.match(toolViewSource, /selectedEpisodes: currentBrowseState\?\.selectedEpisodesSnapshot \|\| \[\]/);
+  assert.match(toolViewSource, /platform: activeBrowsePlatform/);
 });
 
 test("search metric legend is permanent on web and toggled on mobile", () => {
   assert.match(searchResultsSource, /export function MetricLegend/);
-  assert.match(toolViewSource, /import \{ SearchResults, MetricLegend \} from "@\/app\/SearchResults";/);
+  assert.match(searchWorkspaceSource, /import \{ MetricLegend, SearchResults \} from "@\/app\/SearchResults";/);
   assert.match(toolViewSource, /const \[searchMetricLegendOpen, setSearchMetricLegendOpen\] = useState\(false\)/);
-  assert.match(toolViewSource, /<div className="hidden sm:block">\s*<MetricLegend \/>/);
-  assert.match(toolViewSource, /searchMetricLegendOpen \? \(\s*<div id="search-metric-legend" className="sm:hidden">\s*<MetricLegend \/>/);
-  assert.match(toolViewSource, /metricLegendOpen=\{searchMetricLegendOpen\}/);
-  assert.match(toolViewSource, /onToggleMetricLegend=\{\(\) => setSearchMetricLegendOpen\(\(open\) => !open\)\}/);
+  assert.match(searchWorkspaceSource, /<div className="hidden sm:block">\s*<MetricLegend \/>/);
+  assert.match(searchWorkspaceSource, /legend\.open \? \(\s*<div id="search-metric-legend" className="sm:hidden">\s*<MetricLegend \/>/);
+  assert.match(searchWorkspaceSource, /metricLegendOpen=\{legend\.open\}/);
+  assert.match(searchWorkspaceSource, /onToggleMetricLegend=\{legend\.onToggle\}/);
   assert.doesNotMatch(searchPanelSource, /aria-controls="search-metric-legend"/);
   assert.match(searchResultsSource, /aria-controls="search-metric-legend"/);
   assert.match(searchResultsSource, /aria-expanded=\{metricLegendOpen\}/);
@@ -1650,14 +1777,14 @@ test("search metric legend is permanent on web and toggled on mobile", () => {
   assert.match(searchResultsSource, /const showResultsHeader = platformTabs\.length > 1 \|\| canToggleMetricLegend/);
 
   const searchPanelIndex = toolViewSource.indexOf("<SearchPanel");
-  const searchPageStart = toolViewSource.indexOf('<div className="grid gap-4 sm:gap-5">', searchPanelIndex);
-  assert.notEqual(searchPageStart, -1, "search page wrapper should exist");
-  assert.notEqual(searchPanelIndex, -1, "global search panel should render before search page branch");
-  const legendIndex = toolViewSource.indexOf("<MetricLegend", searchPageStart);
-  const searchResultsIndex = toolViewSource.indexOf("<SearchResults", legendIndex);
+  const workspaceIndex = toolViewSource.indexOf("<SearchWorkspace");
+  assert.notEqual(workspaceIndex, -1, "search workspace should render");
+  assert.notEqual(searchPanelIndex, -1, "global search panel should render before search workspace");
+  const legendIndex = searchWorkspaceSource.indexOf("<MetricLegend");
+  const searchResultsIndex = searchWorkspaceSource.indexOf("<SearchResults", legendIndex);
   assert.notEqual(legendIndex, -1, "metric legend should render in search page branch");
   assert.notEqual(searchResultsIndex, -1, "search results should render after the metric legend");
-  assert.ok(searchPanelIndex < searchPageStart, "search panel should live above the search page branch");
+  assert.ok(searchPanelIndex < workspaceIndex, "search panel should live above the lazy search workspace");
   assert.ok(legendIndex < searchResultsIndex, "metric legend should render above search results");
 
   assert.doesNotMatch(searchResultsSource, /results\.length \? <MetricLegend className="lg:hidden"/);
@@ -1687,8 +1814,8 @@ test("external drama title jump clears both search result panes before injecting
   assert.match(openSource, /updateSearchFormForPlatform\(targetPlatform, \{[\s\S]*keyword: visibleImportInput,[\s\S]*manualInput,/);
   assert.doesNotMatch(openSource, /keyword: String\(name \?\? ""\)\.trim\(\)/);
   assert.match(openSource, /setManualSearchResults\(targetPlatform, results, \{ limit: dramaIds\.length, scroll: false \}\)/);
-  assert.match(openSource, /navigateToolRoute\(\{ view: "search" \}\)/);
   assert.match(openSource, /openSearchPlatform\(targetPlatform\)/);
+  assert.doesNotMatch(openSource, /navigateToolRoute\(\{ view: "search" \}\)/);
   assert.doesNotMatch(toolViewSource, /openDramaResultDialog/);
   assert.doesNotMatch(toolViewSource, /resultDialog/);
 });
@@ -1816,11 +1943,11 @@ test("SearchResults keeps only page layout after dialog rollback", () => {
   assert.match(searchResultsSource, /className="fixed inset-x-3 mobile-fixed-bottom z-40 lg:hidden"/);
 });
 
-test("batch summaries omit imported count and both import actions share ImportIcon", () => {
+test("batch summaries omit imported count and all import actions share ImportIcon", () => {
   assert.match(searchResultsSource, /grid grid-cols-2 gap-2 lg:grid-cols-1/);
   assert.match(searchResultsSource, /grid-cols-\[repeat\(2,minmax\(0,1fr\)\)_auto\]/);
   assert.match(searchResultsSource, /flex h-11 min-w-0 items-center justify-center gap-1/);
-  assert.equal(searchResultsSource.match(/<ImportIcon data-icon="inline-start" \/>/g)?.length ?? 0, 2);
+  assert.equal(searchResultsSource.match(/<ImportIcon data-icon="inline-start" \/>/g)?.length ?? 0, 3);
   assert.doesNotMatch(searchResultsSource, /<ListChecksIcon/);
   assert.match(searchResultsSource, /<ImportIcon data-icon="inline-start" \/>\s*导入/);
 });
@@ -1850,7 +1977,7 @@ test("web drawer typography is one step larger without changing the desktop app"
   );
 });
 
-test("work id rows use shared platform external links instead of HashIcon", () => {
+test("search cards keep a non-link work ID with its platform icon and move the shared link into the more menu", () => {
   assert.match(appUtilsSource, /https:\/\/www\.missevan\.com\/mdrama\/\$\{encodedDramaId\}/);
   assert.match(appUtilsSource, /https:\/\/manbo\.kilaaudio\.com\/Activecard\/radioplay\?id=\$\{encodedDramaId\}/);
   assert.match(platformTabLabelSource, /SquareArrowOutUpRightIcon/);
@@ -1863,11 +1990,17 @@ test("work id rows use shared platform external links instead of HashIcon", () =
   assert.match(platformTabLabelSource, /inline-flex w-fit max-w-full[\s\S]*self-start/);
   assert.match(platformTabLabelSource, /-mt-0\.5 -mb-2[\s\S]*pt-0\.5 pb-2/);
   assert.match(searchResultsSource, /<PlatformDramaLink[\s\S]*dramaId=\{item\.id\}[\s\S]*source="search"[\s\S]*dramaTitle=\{item\.name\}[\s\S]*frontendVersion=\{frontendVersion\}/);
-  assert.match(ongoingPanelSource, /<PlatformDramaLink[\s\S]*dramaId=\{item\.id\}[\s\S]*source="ongoing"[\s\S]*dramaTitle=\{item\.name\}[\s\S]*frontendVersion=\{frontendVersion\}/);
+  assert.match(searchResultsSource, /aria-label=\{`\$\{idLabel\}: \$\{item\.id\}`\}[\s\S]*<PlatformIdIcon[\s\S]*platform=\{platform\}[\s\S]*>\{item\.id\}<\/span>/);
+  assert.match(searchResultsSource, /appearance="menu"[\s\S]*platform=\{platform\}[\s\S]*source="search"/);
+  assert.match(platformTabLabelSource, /<PlatformGlyph platform=\{key\}[\s\S]*tone="inherit"[\s\S]*`\$\{meta\.label\}收听`/);
+  assert.match(platformTabLabelSource, /appearance === "menu"[\s\S]*hover:bg-accent[\s\S]*data-\[highlighted\]:bg-accent/);
+  assert.match(ongoingPanelSource, /aria-label=\{`\$\{platformLabels\[platform\] \|\| "平台"\}作品ID：\$\{item\.id\}`\}[\s\S]*<PlatformIdIcon[\s\S]*>\{item\.id\}<\/span>/);
+  assert.match(ongoingPanelSource, /<PlatformDramaLink[\s\S]*appearance="menu"[\s\S]*dramaId=\{item\.id\}[\s\S]*source="ongoing"/);
   assert.match(
     ranksPanelSource,
-    /<PlatformDramaLink[\s\S]*dramaId=\{searchDramaIds\[0\]\}[\s\S]*displayId=\{detailIdText\}[\s\S]*source="ranks"[\s\S]*dramaTitle=\{item\.name\}[\s\S]*在猫耳打开首个作品ID/
+    /aria-label=\{`作品ID：\$\{detailIdText\}`\}[\s\S]*<PlatformIdIcon[\s\S]*platform=\{platform\}[\s\S]*\{detailIdText\}/
   );
+  assert.match(ranksPanelSource, /appearance="menu" platform=\{platform\} dramaId=\{favoriteDramaId\} source="ranks"/);
   assert.match(
     ranksPanelSource,
     /<PlatformDramaLink[\s\S]*dramaId=\{work\.dramaId\}[\s\S]*source="ranks_cv"[\s\S]*dramaTitle=\{work\.title\}[\s\S]*frontendVersion=\{frontendVersion\}[\s\S]*textClassName="truncate text-foreground"/
@@ -1889,7 +2022,7 @@ test("platform drama links log a validated external-open action without blocking
   assert.match(platformTabLabelSource, /buildDramaExternalUsagePayload\(key, normalizedDramaId, source, dramaTitle\)/);
   assert.match(platformTabLabelSource, /fetch\(buildVersionedUrl\("\/usage-log", frontendVersion\)/);
   assert.match(platformTabLabelSource, /keepalive: true/);
-  assert.match(platformTabLabelSource, /onClick=\{logExternalOpen\}/);
+  assert.match(platformTabLabelSource, /onClick=\{handleExternalOpen\}/);
   assert.doesNotMatch(platformTabLabelSource, /preventDefault/);
   assert.match(serverSource, /if \(action === "external_open"\)/);
   assert.match(serverSource, /if \(!isNumericId\(dramaId\)\)/);
@@ -1897,6 +2030,20 @@ test("platform drama links log a validated external-open action without blocking
   assert.match(serverSource, /normalizeTextValue\(payload\.title\)\.slice\(0, 200\)/);
   assert.match(serverSource, /message: "Missing external drama title"/);
   assert.match(serverSource, /action,[\s\S]*dramaId,[\s\S]*source,[\s\S]*title,[\s\S]*success: true/);
+});
+
+test("platform listening links preserve Radix menu semantics and composed events", () => {
+  assert.match(platformTabLabelSource, /children,\s*onClick,\s*\.\.\.anchorProps/);
+  assert.match(platformTabLabelSource, /<a\s*\{\.\.\.anchorProps\}/);
+  assert.match(platformTabLabelSource, /function handleExternalOpen\(event\)[\s\S]*onClick\?\.\(event\)[\s\S]*event\?\.defaultPrevented/);
+  assert.match(platformTabLabelSource, /onClick=\{handleExternalOpen\}/);
+});
+
+test("shared dropdown menu items keep mobile-safe touch targets", () => {
+  assert.match(dropdownMenuSource, /dropdown-menu-item[\s\S]*min-h-11/);
+  assert.match(dropdownMenuSource, /dropdown-menu-checkbox-item[\s\S]*min-h-11/);
+  assert.match(dropdownMenuSource, /dropdown-menu-sub-trigger[\s\S]*min-h-11/);
+  assert.match(platformTabLabelSource, /appearance === "menu" \? "flex min-h-11/);
 });
 
 test("search empty state uses concise shared copy", () => {
@@ -1910,22 +2057,19 @@ test("search empty state uses concise shared copy", () => {
 });
 
 test("search form is shared while tabs only switch result panes", () => {
-  assert.match(toolViewSource, /const \[sharedSearchForm, setSharedSearchForm\] = useState\(\{\s*keyword: "",\s*manualInput: "",\s*\}\)/);
-  assert.match(toolViewSource, /const \[globalSearchPending, setGlobalSearchPending\] = useState\(false\)/);
+  assert.match(toolViewSource, /const \[sharedSearchForm, setSharedSearchForm\] = useState\(\{\s*keyword: initialToolRouteState\.q,\s*manualInput: "",\s*\}\)/);
+  assert.match(toolViewSource, /const \[globalSearchPending, setGlobalSearchPending\] = useState\(\(\) => Boolean\(initialToolRouteState\.q\)\)/);
   assert.match(toolViewSource, /function updateSharedSearchForm\(patch\)/);
   assert.match(toolViewSource, /formState=\{sharedSearchForm\}/);
   assert.match(toolViewSource, /onUpdateFormState=\{updateSharedSearchForm\}/);
   assert.doesNotMatch(toolViewSource, /formState=\{currentBrowseState\?\.searchForm\}/);
   assert.doesNotMatch(toolViewSource, /onUpdatePlatformFormState=\{updateSearchFormForPlatform\}/);
 
-  const searchResultsStart = toolViewSource.indexOf("<SearchResults");
-  const outputPanelStart = toolViewSource.indexOf("<OutputPanel");
-  assert.notEqual(searchResultsStart, -1, "SearchResults should render");
-  assert.notEqual(outputPanelStart, -1, "OutputPanel should render");
-  const searchResultsProps = toolViewSource.slice(searchResultsStart, outputPanelStart);
-  assert.match(searchResultsProps, /results=\{currentBrowseState\?\.searchResults \|\| \[\]\}/);
-  assert.match(searchResultsProps, /isSearchPending=\{globalSearchPending\}/);
-  assert.match(searchResultsProps, /platform=\{activeBrowsePlatform\}/);
+  assert.match(searchWorkspaceSource, /<SearchResults/);
+  assert.match(searchWorkspaceSource, /<OutputPanel/);
+  assert.match(toolViewSource, /results: currentBrowseState\?\.searchResults \|\| \[\]/);
+  assert.match(toolViewSource, /isSearchPending: globalSearchPending/);
+  assert.match(toolViewSource, /platform: activeBrowsePlatform/);
 });
 
 test("output stats and history are shared across platform tab switching", () => {
@@ -1937,18 +2081,14 @@ test("output stats and history are shared across platform tab switching", () => 
   assert.match(toolViewSource, /platformLabel: \(entry\.platform \|\| platform\) === "manbo" \? "漫播" : "猫耳"/);
   assert.match(toolViewSource, /setSharedOutputPlatform\(platform\)/);
 
-  const outputStart = toolViewSource.indexOf("<OutputPanel");
-  assert.notEqual(outputStart, -1, "OutputPanel should render");
-  const outputEnd = toolViewSource.indexOf("/>", outputStart);
-  assert.notEqual(outputEnd, -1, "OutputPanel props should end");
-  const outputProps = toolViewSource.slice(outputStart, outputEnd);
-  assert.match(outputProps, /historyEntries=\{sharedHistoryEntries\}/);
-  assert.match(outputProps, /platform=\{sharedOutputPlatform\}/);
-  assert.match(outputProps, /currentAction=\{sharedStatsState\?\.currentAction\}/);
-  assert.doesNotMatch(outputProps, /currentBrowseState\?\.historyEntries/);
-  assert.doesNotMatch(outputProps, /currentStatsState/);
-  assert.match(outputProps, /onClearHistory=\{clearAllHistoryEntries\}/);
-  assert.match(outputProps, /onDeleteHistoryEntry=\{\(entry\) => deleteHistoryEntry\(entry\.platform, entry\.id\)\}/);
+  assert.match(searchWorkspaceSource, /<OutputPanel \{\.\.\.output\} \/>/);
+  assert.match(toolViewSource, /historyEntries: sharedHistoryEntries/);
+  assert.match(toolViewSource, /platform: sharedOutputPlatform/);
+  assert.match(toolViewSource, /currentAction: sharedStatsState\?\.currentAction/);
+  assert.doesNotMatch(toolViewSource, /currentBrowseState\?\.historyEntries/);
+  assert.doesNotMatch(toolViewSource, /currentStatsState/);
+  assert.match(toolViewSource, /onClearHistory: clearAllHistoryEntries/);
+  assert.match(toolViewSource, /onDeleteHistoryEntry: \(entry\) => deleteHistoryEntry\(entry\.platform, entry\.id\)/);
 });
 
 test("statistics output uses a compact completed state and semantic metric grid", () => {
@@ -2211,7 +2351,10 @@ test("favorites panel uses a static mobile two-row toolbar and a desktop two-row
   assert.match(favoritesPanelSource, /width: `calc\(\$\{longestLabelLength\}em \+ 1\.625rem\)`/);
   assert.match(favoritesPanelSource, /data-testid="favorite-mobile-toolbar-primary"/);
   assert.match(favoritesPanelSource, /data-testid="favorite-mobile-toolbar-secondary"/);
-  assert.match(favoritesPanelSource, /favorite-mobile-toolbar-secondary grid h-11 min-w-0 items-center gap-0 border-t/);
+  assert.match(favoritesPanelSource, /data-testid="favorite-mobile-toolbar-rows"/);
+  assert.match(favoritesPanelSource, /className="grid overflow-visible"/);
+  assert.match(favoritesPanelSource, /favorite-mobile-toolbar-secondary grid h-11 min-w-0 items-center gap-0/);
+  assert.doesNotMatch(favoritesPanelSource, /favorite-mobile-toolbar-secondary grid[^"\n]*border-t/);
   assert.match(favoritesPanelSource, /relative block h-11 w-\[4\.6rem\] shrink-0 p-1/);
   assert.match(favoritesPanelSource, /className="h-11 w-11 shrink-0"/);
   assert.match(favoritesPanelSource, /fluidWidth = false/);
@@ -2256,16 +2399,21 @@ test("favorites payment badge sits on the cover instead of after the title", () 
   );
   assert.match(favoritesPanelSource, /\{paymentTag \? \([\s\S]*?favoriteCoverPaymentBadgeClassName[\s\S]*?\{paymentTag\}/);
   assert.match(favoritesPanelSource, /titleTags\.map/);
+  assert.match(favoritesPanelSource, /PlatformGlyph, PlatformIdIcon/);
+  assert.match(favoritesPanelSource, /aria-label=\{`作品ID：\$\{favorite\.dramaId\}`\}[\s\S]*<PlatformIdIcon[\s\S]*platform=\{favorite\.platform\}[\s\S]*\{favorite\.dramaId\}/);
+  assert.doesNotMatch(favoritesPanelSource, /># \{favorite\.dramaId\}</);
 });
 
 test("favorite filter controls reuse badge variants, platform glyphs, and semantic soft colors", () => {
   assert.match(badgeSource, /export \{ Badge, badgeVariants \}/);
-  assert.match(favoritesPanelSource, /import \{ PlatformGlyph \} from "@\/app\/platformTabLabel"/);
+  assert.match(favoritesPanelSource, /import \{ PlatformGlyph, PlatformIdIcon \} from "@\/app\/platformTabLabel"/);
   assert.match(favoritesPanelSource, /import \{ Badge, badgeVariants \} from "@\/components\/ui\/badge"/);
   assert.match(favoritesPanelSource, /const favoriteFilterVisualMeta = \{/);
   for (const variant of ["missevanPlatform", "manboPlatform", "radioDrama", "audioDrama", "paid", "free", "member"]) {
     assert.match(favoritesPanelSource, new RegExp(`badgeVariant: "${variant}"`));
   }
+
+  assert.match(searchResultsSource, /<DropdownMenuItem[\s\S]*<ArrowLeftRightIcon[\s\S]*对比/);
   assert.match(favoritesPanelSource, /<PlatformGlyph platform=\{visualMeta\.platform\} tone="inherit"/);
   assert.match(favoritesPanelSource, /badgeVariants\(\{ variant: visualMeta\.badgeVariant \}\)/);
   for (const token of ["accent-cool-soft", "accent-warm-soft", "accent-success-soft", "accent-rose-soft", "accent-gold-soft"]) {
@@ -2451,7 +2599,7 @@ test("favorite actions are disabled globally during favorite refresh", () => {
   assert.match(toolViewSource, /<RanksPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
   assert.match(toolViewSource, /<OngoingPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
   assert.match(toolViewSource, /<FavoritesPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
-  assert.match(toolViewSource, /<SearchResults[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
+  assert.match(toolViewSource, /results=\{\{[\s\S]*?favoriteActionsDisabled,/);
   assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| statisticsActionsDisabled \|\| selectedFavorites\.length === 0\}/);
   assert.match(favoritesPanelSource, /disabled=\{favoriteActionsDisabled\}/);
   assert.match(favoritesPanelSource, /onClick=\{\(\) => refreshMany\(selectedFavorites\)\}/);
@@ -2460,11 +2608,11 @@ test("favorite actions are disabled globally during favorite refresh", () => {
   assert.match(favoritesPanelSource, /finally \{[\s\S]*?refreshLockRef\.current = false;/);
   assert.match(favoritesPanelSource, /刷新所选/);
   assert.match(searchResultsSource, /favoriteActionsDisabled = false/);
-  assert.match(searchResultsSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onClick=\{\(\) => onToggleFavorite\?\./);
+  assert.match(searchResultsSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onSelect=\{\(\) => onToggleFavorite\?\./);
   assert.match(ranksPanelSource, /favoriteActionsDisabled = false/);
-  assert.match(ranksPanelSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onClick=\{toggleFavorite\}/);
+  assert.match(ranksPanelSource, /<DropdownMenuItem disabled=\{favoriteActionsDisabled\} onSelect=\{toggleFavorite\}>/);
   assert.match(ongoingPanelSource, /favoriteActionsDisabled = false/);
-  assert.match(ongoingPanelSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onClick=\{toggleFavorite\}/);
+  assert.match(ongoingPanelSource, /disabled=\{favoriteActionsDisabled\} onSelect=\{toggleFavorite\}/);
 });
 
 test("favorite refresh skips writes when the favorite was removed mid-refresh", () => {
@@ -2865,19 +3013,25 @@ test("favorites backup format stays versioned and tool-readable", () => {
 test("merged search input submits through the single-line form", () => {
   assert.match(searchPanelSource, /<form[\s\S]*onSubmit=\{\(event\) => \{/);
   assert.match(searchPanelSource, /event\.preventDefault\(\);[\s\S]*runMergedSearch\(\);/);
+  assert.match(toolViewSource, /toolRouteState\.view !== "search" \|\| !toolRouteState\.q[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\);[\s\S]*\[toolRouteState\.q, toolRouteState\.view\]/);
+  assert.match(searchPanelSource, /await queryUnifiedKeywordSearch\(nextClassified\.keyword\);[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\);/);
   assert.doesNotMatch(searchPanelSource, /event\.key === "Enter"/);
   assert.doesNotMatch(searchPanelSource, /shiftKey/);
 });
 
 test("ongoing title content-type badge is rendered inside the title button", () => {
-  const titleButtonStart = ongoingPanelSource.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
+  const ongoingTitleStart = ongoingPanelSource.indexOf("function OngoingTitle");
+  const ongoingTitleEnd = ongoingPanelSource.indexOf("function buildProxyImageUrl", ongoingTitleStart);
+  const ongoingTitleSource = ongoingPanelSource.slice(ongoingTitleStart, ongoingTitleEnd);
+  const titleButtonStart = ongoingTitleSource.search(/<button\s+type="button"[\s\S]*?onClick=\{onClick\}/);
   assert.notEqual(titleButtonStart, -1, "title button markup should exist");
 
-  const titleButtonEnd = ongoingPanelSource.indexOf("</button>", titleButtonStart);
+  const titleButtonEnd = ongoingTitleSource.indexOf("</button>", titleButtonStart);
   assert.notEqual(titleButtonEnd, -1, "title button should have a closing tag");
 
-  const titleButtonMarkup = ongoingPanelSource.slice(titleButtonStart, titleButtonEnd);
-  assert.match(titleButtonMarkup, /titleTags\.map/, "title tags should be part of the title button inline flow");
+  const titleButtonMarkup = ongoingTitleSource.slice(titleButtonStart, titleButtonEnd);
+  assert.match(ongoingTitleSource, /const renderTags = \(\) => titleTags\.map/);
+  assert.match(titleButtonMarkup, /\{renderTags\(\)\}/, "title tags should be part of the title button inline flow");
 });
 
 test("ongoing refresh timestamp uses device timezone display", () => {
@@ -2942,7 +3096,7 @@ test("ongoing paid ID metric displays full numbers while playback stays compact"
   );
 });
 
-test("changelog dialog keeps header and footer fixed while entries scroll", () => {
+test("changelog dialog uses a compact latest-version summary and scrollable history", () => {
   assert.match(
     changelogDialogSource,
     /<AlertDialogDescription[\s\S]*asChild[\s\S]*className="!\[text-wrap:wrap\] md:!\[text-wrap:wrap\]"/,
@@ -2950,8 +3104,8 @@ test("changelog dialog keeps header and footer fixed while entries scroll", () =
   );
   assert.match(
     changelogDialogSource,
-    /h-\[min\(80dvh,34rem\)\]/,
-    "changelog dialog should cap its own height for mobile-friendly reading"
+    /mode === "summary" \? "max-h-\[min\(80dvh,34rem\)\]" : "h-\[min\(80dvh,34rem\)\]"/,
+    "the update summary should size to its content while full history keeps a scrollable height"
   );
   assert.match(
     changelogDialogSource,
@@ -2965,47 +3119,28 @@ test("changelog dialog keeps header and footer fixed while entries scroll", () =
   assert.notEqual(footerStart, -1, "changelog footer should render after the scroll region");
   const scrollRegionSource = changelogDialogSource.slice(scrollRegionStart, footerStart);
 
-  assert.match(scrollRegionSource, /CHANGELOG_ENTRIES\.map/);
+  assert.match(scrollRegionSource, /visibleEntries\.map/);
+  assert.match(changelogDialogSource, /const latestVersion = visibleEntries\[0\]\?\.version \?\? ""/);
+  assert.match(changelogDialogSource, /<AlertDialogTitle>更新日志 v\{latestVersion\}<\/AlertDialogTitle>/);
+  assert.match(changelogDialogSource, /data-changelog-mode=\{mode\}/);
+  assert.match(changelogDialogSource, /mode === "summary"[\s\S]*查看完整日志/);
+  assert.match(
+    changelogDialogSource,
+    /<Button[^>]*size="sm"[^>]*className="h-8 w-fit px-4"[\s\S]*查看完整日志[\s\S]*<AlertDialogAction[^>]*size="sm"[^>]*className="h-8 w-fit px-4"/
+  );
   assert.doesNotMatch(scrollRegionSource, /<AlertDialogFooter/);
   assert.match(changelogDialogSource, /min-h-0/);
   assert.match(changelogDialogSource, /overscroll-contain/);
   assert.match(changelogDialogSource, /\[-webkit-overflow-scrolling:touch\]/);
 });
 
-test("rank desktop title content-type badge is rendered inside the clickable title", () => {
-  const desktopTitleStart = ranksPanelSource.indexOf('<div className="hidden min-w-0 lg:block">');
-  assert.notEqual(desktopTitleStart, -1, "desktop title row markup should exist");
-
-  const desktopTitleEnd = ranksPanelSource.indexOf('<div className="min-w-0 lg:hidden">', desktopTitleStart);
-  assert.notEqual(desktopTitleEnd, -1, "desktop title row should end before mobile title row");
-
-  const desktopTitleMarkup = ranksPanelSource.slice(desktopTitleStart, desktopTitleEnd);
-  const titleButtonStart = desktopTitleMarkup.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
-  assert.notEqual(titleButtonStart, -1, "desktop clickable title button should exist");
-
-  const titleButtonEnd = desktopTitleMarkup.indexOf("</button>", titleButtonStart);
-  assert.notEqual(titleButtonEnd, -1, "desktop clickable title button should have a closing tag");
-
-  const titleButtonMarkup = desktopTitleMarkup.slice(titleButtonStart, titleButtonEnd);
-  assert.match(titleButtonMarkup, /titleTags\.map/, "desktop title tags should be part of the clickable title inline flow");
-});
-
-test("rank mobile title content-type badge is rendered inside the clickable title", () => {
-  const mobileTitleStart = ranksPanelSource.indexOf('<div className="min-w-0 lg:hidden">');
-  assert.notEqual(mobileTitleStart, -1, "mobile title row markup should exist");
-
-  const mobileTitleEnd = ranksPanelSource.indexOf("{detailIdText ? (", mobileTitleStart);
-  assert.notEqual(mobileTitleEnd, -1, "mobile title row should end before detail id row");
-
-  const mobileTitleMarkup = ranksPanelSource.slice(mobileTitleStart, mobileTitleEnd);
-  const titleButtonStart = mobileTitleMarkup.search(/<button\s+type="button"[\s\S]*?onClick=\{openSearchResult\}/);
-  assert.notEqual(titleButtonStart, -1, "mobile clickable title button should exist");
-
-  const titleButtonEnd = mobileTitleMarkup.indexOf("</button>", titleButtonStart);
-  assert.notEqual(titleButtonEnd, -1, "mobile clickable title button should have a closing tag");
-
-  const titleButtonMarkup = mobileTitleMarkup.slice(titleButtonStart, titleButtonEnd);
-  assert.match(titleButtonMarkup, /titleTags\.map/, "mobile title tags should be part of the clickable title inline flow");
+test("rank title keeps content type badges inside one two-line clickable flow", () => {
+  const titleStart = ranksPanelSource.indexOf("function renderTitle()");
+  const titleEnd = ranksPanelSource.indexOf("function renderTrendButton", titleStart);
+  const titleSource = ranksPanelSource.slice(titleStart, titleEnd);
+  assert.match(titleSource, /titleTags\.map/);
+  assert.match(titleSource, /line-clamp-2/);
+  assert.match(titleSource, /onClick=\{\(\) => openSearchResult\(\)\}/);
 });
 
 test("peak rank titles pass all available drama ids to search result jump", () => {
@@ -3141,7 +3276,7 @@ test("CV rank TOP3 row uses one accordion-style disclosure trigger", () => {
   assert.match(cvItemSource, /const worksRegionId = useId\(\)/);
   assert.match(
     cvItemSource,
-    /<button[\s\S]*className="[^"]*col-start-2[^"]*col-span-2[^"]*w-\[calc\(100%\+0\.75rem\)\][^"]*"[\s\S]*aria-expanded=\{isExpanded\}[\s\S]*aria-controls=\{worksRegionId\}[\s\S]*\{topWorksText\}[\s\S]*<ChevronDownIcon/
+    /<button[\s\S]*className="[^"]*col-span-2[^"]*w-full[^"]*"[\s\S]*aria-expanded=\{isExpanded\}[\s\S]*aria-controls=\{worksRegionId\}[\s\S]*\{topWorksText\}[\s\S]*<ChevronDownIcon/
   );
   assert.match(cvItemSource, /group-aria-expanded:rotate-180/);
   assert.match(cvItemSource, /id=\{worksRegionId\}[\s\S]*<CvWorksList/);
@@ -3175,11 +3310,11 @@ test("CV rank card aligns actions with the CV name and TOP3 with the rank edge",
   assert.doesNotMatch(cvItemSource, /sm:row-span-3/);
   assert.match(
     cvItemSource,
-    /<div className="col-start-3 min-w-0 text-sm">[\s\S]*<CvRankActions/
+    /<div className="col-start-2 min-w-0 text-sm">[\s\S]*<CvRankActions/
   );
   assert.match(
     cvItemSource,
-    /className="group col-start-2 col-span-2 -ml-3 flex w-\[calc\(100%\+0\.75rem\)\][^"]*"/
+    /className="group col-span-2 flex w-full[^"]*"/
   );
 });
 
@@ -3200,11 +3335,11 @@ test("CV rank action items use compact spacing without shrinking the trend touch
 test("paid ID-equivalent tasks and revenue actions pass ID-scoped stats sources", () => {
   assert.equal(
     searchResultsSource.match(/source: `\$\{getResultDramaId\(item\)\}payID`/g)?.length ?? 0,
-    2
+    1
   );
   assert.equal(
     searchResultsSource.match(/source: `\$\{getResultDramaId\(item\)\}earn`/g)?.length ?? 0,
-    2
+    1
   );
   assert.match(
     toolViewSource,
@@ -3223,6 +3358,94 @@ test("paid ID-equivalent tasks and revenue actions pass ID-scoped stats sources"
     toolViewSource,
     /startStatsTask\(\s*platform,\s*"revenue",\s*\{ dramaIds, source: options\?\.source \}/
   );
+});
+
+test("ongoing more menu keeps the requested action order and platform listening link", () => {
+  const menuStart = ongoingPanelSource.indexOf('<DropdownMenuContent align="end" side="bottom">');
+  const menuEnd = ongoingPanelSource.indexOf("</DropdownMenuContent>", menuStart);
+  assert.notEqual(menuStart, -1, "ongoing more menu should exist");
+  assert.notEqual(menuEnd, -1, "ongoing more menu should close");
+  const menuSource = ongoingPanelSource.slice(menuStart, menuEnd);
+  const trendIndex = menuSource.indexOf('<TrendingUpIcon aria-hidden="true"');
+  const compareIndex = menuSource.indexOf('<ArrowLeftRightIcon aria-hidden="true"');
+  const favoriteIndex = menuSource.indexOf("<StarIcon");
+  const paidIdIndex = menuSource.indexOf("<UserSearchIcon");
+  const revenueIndex = menuSource.indexOf("<HandCoinsIcon");
+  const listenIndex = menuSource.indexOf("<PlatformDramaLink");
+  assert.ok(trendIndex >= 0, "collapsed trend should be available as the first menu action");
+  assert.ok(compareIndex > trendIndex, "collapsed compare should follow trend");
+  assert.ok(favoriteIndex > compareIndex, "favorite should follow responsive actions");
+  assert.ok(paidIdIndex > favoriteIndex, "paid ID should follow favorite");
+  assert.ok(revenueIndex > paidIdIndex, "revenue should follow paid ID");
+  assert.ok(listenIndex > revenueIndex, "platform listening should be last");
+  assert.match(menuSource, /actionMode === "more-only"/);
+  assert.match(menuSource, /actionMode !== "all"/);
+  assert.match(menuSource, /disabled=\{!canOpenTrend\} onSelect=\{openTrendDialog\}/);
+  assert.match(menuSource, /disabled=\{!canOpenTrend \|\| !onAddCompareItem\} onSelect=\{addCompareItem\}/);
+  assert.match(menuSource, /statisticsActionsDisabled \|\| Boolean\(statisticsActionPending\)/);
+  assert.match(platformTabLabelSource, /children \|\| `\$\{meta\.label\}收听`/);
+  assert.match(platformTabLabelSource, /<PlatformGlyph platform=\{key\}[\s\S]*tone="inherit"/);
+});
+
+test("ongoing paid ID and revenue shortcuts log once, suppress jump logs, and start only after a successful jump", () => {
+  assert.match(ongoingPanelSource, /const statisticsActionLockRef = useRef\(false\)/);
+  assert.match(ongoingPanelSource, /statisticsActionLockRef\.current = true;[\s\S]*statisticsActionLockRef\.current = false;/);
+  assert.match(ongoingPanelSource, /action === "paid_id_click"/);
+  assert.match(ongoingPanelSource, /source: "ongoing",[\s\S]*success: true/);
+  assert.match(ongoingPanelSource, /suppressUsageLog: true/);
+  assert.match(ongoingPanelSource, /const opened = await onOpenSearchResult[\s\S]*if \(!opened\) \{[\s\S]*return;[\s\S]*\}/);
+  assert.match(ongoingPanelSource, /source: `\$\{item\.id\}payID`/);
+  assert.match(ongoingPanelSource, /source: `\$\{item\.id\}earn`/);
+  assert.match(toolViewSource, /suppressUsageLog = false/);
+  assert.match(toolViewSource, /suppressUsageLog === true \? \{ suppressUsageLog: true \} : \{\}/);
+  assert.match(toolViewSource, /scrollToPanel\(resultsPanelRef\);\s*return true;/);
+  assert.equal(toolViewSource.match(/return false;/g)?.length >= 3, true);
+  assert.match(missevanRoutesSource, /const suppressUsageLog = req\.body\?\.suppressUsageLog === true/);
+  assert.match(missevanRoutesSource, /if \(inputItems\.length && !suppressUsageLog\)/);
+  assert.match(manboRoutesSource, /const suppressUsageLog = req\.body\?\.suppressUsageLog === true/);
+  assert.match(manboRoutesSource, /if \(items\.length && !suppressUsageLog\)/);
+  assert.match(serverSource, /\["paid_id_click", "revenue_click"\]\.includes\(action\)/);
+  assert.match(serverSource, /!\["ongoing", "ranks", "homeview"\]\.includes\(source\)/);
+  assert.match(serverSource, /payload\.success !== true/);
+  assert.match(serverSource, /platform,[\s\S]*action,[\s\S]*dramaId,[\s\S]*dramaName,[\s\S]*source,[\s\S]*success: true/);
+});
+
+test("rank drama cards use responsive actions, plain IDs, compact metrics, and statistics shortcuts", () => {
+  const cardStart = ranksPanelSource.indexOf("function RankItemCard");
+  const cardEnd = ranksPanelSource.indexOf("function getCvWorksPreviewText", cardStart);
+  const cardSource = ranksPanelSource.slice(cardStart, cardEnd);
+  assert.match(cardSource, /grid-cols-\[6rem_minmax\(0,1fr\)\]/);
+  assert.match(cardSource, /size-24/);
+  assert.match(cardSource, /<PlatformIdIcon[\s\S]*\{detailIdText\}/);
+  assert.doesNotMatch(cardSource, /displayId=\{detailIdText\}/);
+  assert.match(cardSource, /\["付费集弹幕ID数", "购买人数\/收听人数"\]\.includes\(metric\.label\) \? formatPlainNumber\(rawValue\) : formatRankCardMetricValue\(rawValue\)/);
+  assert.match(cardSource, /aria-label=\{`\$\{metric\.label\}: \$\{formatPlainNumber\(rawValue\)\}`\}/);
+  assert.match(ranksPanelSource, /const \[mode, setMode\] = useState\(peak \? "more-icon" : "more-only"\)/);
+  assert.match(ranksPanelSource, /if \(typeof ResizeObserver === "undefined"\)/);
+  assert.match(ranksPanelSource, /new ResizeObserver\(measure\)/);
+  assert.match(ranksPanelSource, /"all"[\s\S]*"trend-more"[\s\S]*"more-only"/);
+  assert.match(cardSource, /mode === "more-only"[\s\S]*TrendingUpIcon[\s\S]*mode !== "all"[\s\S]*ArrowLeftRightIcon/);
+  assert.match(cardSource, /StarIcon[\s\S]*UserSearchIcon[\s\S]*HandCoinsIcon[\s\S]*appearance="menu"/);
+  assert.match(cardSource, /source: "ranks", success: true/);
+  assert.match(cardSource, /suppressUsageLog: true/);
+  assert.match(cardSource, /source: `\$\{favoriteDramaId\}payID`/);
+  assert.match(cardSource, /source: `\$\{favoriteDramaId\}earn`/);
+  assert.match(toolViewSource, /<RanksPanel[\s\S]*statisticsActionsDisabled=\{statisticsActionsDisabled\}[\s\S]*onStartDramaPaidIdStatistics=\{startDramaPaidIdStatistics\}[\s\S]*onStartRevenueEstimate=\{startRevenueEstimate\}/);
+  assert.match(serverSource, /!\["ongoing", "ranks", "homeview"\]\.includes\(source\)/);
+});
+
+test("Missevan peak and CV ranks use the shared responsive visual language", () => {
+  assert.match(ranksPanelSource, /function PeakRankFourthRow/);
+  assert.match(ranksPanelSource, /formatRankCardMetricValue\(item\.view_count\)/);
+  assert.match(ranksPanelSource, /mode !== "more-icon"[\s\S]*更多/);
+  assert.match(ranksPanelSource, /className="hidden lg:flex"/);
+  assert.match(ranksPanelSource, /className="mt-3 lg:hidden"/);
+  assert.match(ranksPanelSource, /<RankWatermark rank=\{item\.rank\} \/>/);
+  assert.match(rankTrendActionsSource, /h-8 min-h-8 min-w-11/);
+  assert.match(ranksPanelSource, /<RankTrendButton[\s\S]*appearance="link"[\s\S]*<CompareActionButton[\s\S]*appearance="link"/);
+  assert.match(rankTrendActionsSource, /border-0 bg-transparent[\s\S]*hover:underline[\s\S]*text-\[var\(--accent-success\)\][\s\S]*text-\[var\(--accent-compare\)\]/);
+  assert.match(rankTrendActionsSource, /variant=\{isLink \? "ghost" : "outline"\}/);
+  assert.match(cvSearchResultsSource, /results\.map[\s\S]*<Card[\s\S]*<CardContent[\s\S]*<button/);
 });
 
 test("all terminal stats tasks write one full-result summary through the engine hook", () => {
@@ -3505,34 +3728,44 @@ test("favorite refresh maps live task progress into each batch item", () => {
   assert.match(favoritesPanelSource, /if \(!stoppedByAccessDenied\) \{[\s\S]*?setSelectedKeys\(new Set\(\)\);[\s\S]*?\}/);
 });
 
-test("inline compare actions appear beside every trend action", () => {
+test("search keeps trend visible while compare moves into the more menu", () => {
   assert.match(rankTrendUiSource, /export function CompareActionButton/);
   assert.match(rankTrendUiSource, /ArrowLeftRightIcon/);
   assert.doesNotMatch(rankTrendUiSource, /GitCompareArrowsIcon/);
   assert.doesNotMatch(toolViewSource, /GitCompareArrowsIcon/);
-  assert.match(searchResultsSource, /<RankTrendButton[\s\S]*<CompareActionButton/);
-  assert.match(ongoingPanelSource, /<RankTrendButton[\s\S]*<CompareActionButton/);
+  assert.match(searchResultsSource, /className=\{trendResultActionButtonClass\}[\s\S]*趋势/);
+  assert.match(searchResultsSource, /<DropdownMenuItem disabled=\{!canShowTrend \|\| \(canAddCompareItem[\s\S]*对比/);
+  assert.match(ongoingPanelSource, /ongoingTrendButtonClassName[\s\S]*<TrendingUpIcon[\s\S]*趋势/);
+  assert.match(ongoingPanelSource, /ongoingCompareButtonClassName[\s\S]*<ArrowLeftRightIcon[\s\S]*对比/);
   assert.match(ranksPanelSource, /<RankTrendButton[\s\S]*<CompareActionButton/);
-  assert.match(ongoingPanelSource, /className="relative size-\[5\.35rem\] shrink-0 overflow-hidden/);
-  assert.match(ongoingPanelSource, /absolute right-0 top-\[5rem\] flex h-11 w-max items-center justify-end/);
-  assert.doesNotMatch(ongoingPanelSource, /absolute left-1\/2 top-\[5rem\] flex h-11 w-max -translate-x-1\/2/);
-  assert.doesNotMatch(ongoingPanelSource, /sm:left-1\/2/);
-  assert.doesNotMatch(ongoingPanelSource, /sm:-translate-x-1\/2/);
-  assert.doesNotMatch(ongoingPanelSource, /min-h-11 w-full items-center justify-end overflow-visible/);
-  assert.match(ongoingPanelSource, /w-max flex-nowrap items-center justify-end gap-2/);
+  assert.match(ongoingPanelSource, /grid-cols-\[116px_minmax\(0,1fr\)\] items-stretch/);
+  assert.match(ongoingPanelSource, /relative size-\[116px\] shrink-0 self-center/);
+  assert.doesNotMatch(ongoingPanelSource, /sm:size-28|sm:grid-cols-\[7rem/);
+  assert.match(ongoingPanelSource, /const \[actionMode, setActionMode\] = useState\("more-only"\)/);
+  assert.match(ongoingPanelSource, /window\.getComputedStyle\(container\)\.columnGap/);
+  assert.match(ongoingPanelSource, /const allActionsWidth = trendWidth \+ compareWidth \+ moreWidth \+ gap \* 2/);
+  assert.match(ongoingPanelSource, /const trendAndMoreWidth = trendWidth \+ moreWidth \+ gap/);
+  assert.match(ongoingPanelSource, /availableWidth \+ 0\.5 >= allActionsWidth[\s\S]*"all"[\s\S]*availableWidth \+ 0\.5 >= trendAndMoreWidth[\s\S]*"trend-more"[\s\S]*"more-only"/);
+  assert.match(ongoingPanelSource, /resizeObserver\.observe\(container\)[\s\S]*resizeObserver\.observe\(trendButton\)[\s\S]*resizeObserver\.observe\(compareButton\)[\s\S]*resizeObserver\.observe\(moreButton\)/);
+  assert.match(ongoingPanelSource, /document\.fonts\?\.ready\?\.then\(updateActionMode\)/);
+  assert.match(ongoingPanelSource, /className="relative flex w-full min-w-0 flex-nowrap items-center justify-end/);
+  assert.doesNotMatch(ongoingPanelSource, /minimumSingleLineWidth|shouldWrap|flex-wrap gap-y-3/);
+  assert.match(ongoingPanelSource, /h-8 min-w-11 shrink-0 justify-center/);
+  assert.match(ongoingPanelSource, /aria-hidden=\{showTrendButton \? undefined : true\}[\s\S]*tabIndex=\{showTrendButton \? undefined : -1\}/);
+  assert.match(ongoingPanelSource, /aria-hidden=\{showCompareButton \? undefined : true\}[\s\S]*tabIndex=\{showCompareButton \? undefined : -1\}/);
+  assert.match(ongoingPanelSource, /ref=\{moreButtonRef\}[\s\S]*<span className="whitespace-nowrap">更多<\/span>/);
+  assert.match(ongoingPanelSource, /after:-inset-y-1\.5/);
   assert.doesNotMatch(ranksPanelSource, /function MobileRankActionLayer/);
   assert.doesNotMatch(ranksPanelSource, /absolute bottom-3 right-3\.5 flex h-11 w-max items-center justify-end gap-2 lg:hidden/);
-  assert.match(ranksPanelSource, /mt-3 flex flex-wrap items-center gap-x-2 gap-y-1\.5/);
+  assert.match(ranksPanelSource, /mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1\.5/);
   assert.doesNotMatch(ranksPanelSource, /mt-3 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-2/);
   assert.doesNotMatch(ranksPanelSource, /className="(?:lg|sm):h-11 (?:lg|sm):min-h-11 (?:lg|sm):w-\[58px\] (?:lg|sm):min-w-\[58px\]"/);
   assert.doesNotMatch(searchResultsSource, /<RankTrendButton(?![\s\S]*density="inline")[\s\S]*aria-label=\{`查看\$\{item\.name\}趋势`\}/);
   assert.match(ranksPanelSource, /<RankTrendButton[\s\S]*density="inline"[\s\S]*aria-label=\{`查看\$\{item\.name\}趋势`\}/);
   assert.match(ranksPanelSource, /<CompareActionButton[\s\S]*density="inline"[\s\S]*aria-label=\{`加入\$\{item\.name\}对比`\}/);
   assert.match(ranksPanelSource, /<RankTrendButton[\s\S]*density="inline"[\s\S]*aria-label=\{`查看\$\{item\.cvName\}趋势`\}/);
-  assert.match(ongoingPanelSource, /<RankTrendButton[\s\S]*density="inline"[\s\S]*aria-label=\{`查看\$\{item\.name\}趋势`\}/);
-  assert.match(ongoingPanelSource, /<CompareActionButton[\s\S]*density="inline"[\s\S]*aria-label=\{`加入\$\{item\.name\}对比`\}/);
-  assert.match(searchResultsSource, /<RankTrendButton[\s\S]*density="inline"[\s\S]*aria-label=\{`查看\$\{item\.name\}趋势`\}/);
-  assert.match(searchResultsSource, /<CompareActionButton[\s\S]*density="inline"[\s\S]*aria-label=\{`加入\$\{item\.name\}对比`\}/);
+  assert.doesNotMatch(ongoingPanelSource, /<RankTrendButton|<CompareActionButton/);
+  assert.doesNotMatch(searchResultsSource, /<RankTrendButton|<CompareActionButton/);
   assert.doesNotMatch(ranksPanelSource, /showTrendButton/);
   assert.match(rankTrendUiSource, /data-touch="compact"/);
   assert.match(rankTrendUiSource, /trendActionVisualClassName/);
@@ -3891,7 +4124,7 @@ test("Manbo peak rank items reuse ordinary trend and compare actions when daily 
   );
   assert.match(
     ranksPanelSource,
-    /!isMissevanPeak && canShowTrend[\s\S]*<RankTrendButton[\s\S]*<CompareActionButton/
+    /function renderNormalActions\(\)[\s\S]*renderTrendButton[\s\S]*renderCompareButton/
   );
   assert.match(
     ranksPanelSource,
@@ -4000,11 +4233,13 @@ test("rank-derived runtime has no dated shard reads or fixed CV baseline", () =>
   assert.doesNotMatch(architectureSource, /ranks:index|ranks:metrics:\*|ranks:list:\*/);
 });
 
-test("server compresses JSON responses but skips images", () => {
+test("server negotiates all compressible responses and skips precompressed media", () => {
   assert.match(serverSource, /import compression from "compression"/);
   assert.match(serverSource, /app\.use\(compression\(/);
   assert.match(serverSource, /threshold: 1024/);
-  assert.match(serverSource, /type\.includes\("application\/json"\)/);
+  assert.doesNotMatch(serverSource, /type\.includes\("application\/json"\)/);
+  assert.match(serverSource, /app\.use\("\/assets", express\.static[\s\S]*immutable: true[\s\S]*maxAge: "1y"/);
+  assert.match(serverSource, /app\.get\("\*"[\s\S]*Cache-Control", "no-store"/);
   assert.doesNotMatch(serverSource, /type\.startsWith\("image\/"\)[\s\S]*return true/);
 });
 

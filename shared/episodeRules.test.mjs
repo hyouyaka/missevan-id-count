@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { orderDetectedOverflowEpisodeKeys } from "./episodeRules.js";
+import {
+  isMissevanLikelyDanmakuOverflow,
+  orderDetectedOverflowEpisodeKeys,
+} from "./episodeRules.js";
+
+test("Missevan danmaku overflow switches from the 12000 cap to the 25000 cap after 15 minutes", () => {
+  const minuteMs = 60 * 1000;
+
+  assert.equal(
+    isMissevanLikelyDanmakuOverflow({ durationMs: 15 * minuteMs, danmaku: 12000 }),
+    true
+  );
+  assert.equal(
+    isMissevanLikelyDanmakuOverflow({ durationMs: 15 * minuteMs, danmaku: 25000 }),
+    false
+  );
+  assert.equal(
+    isMissevanLikelyDanmakuOverflow({ durationMs: 15 * minuteMs + 1, danmaku: 12000 }),
+    false
+  );
+  assert.equal(
+    isMissevanLikelyDanmakuOverflow({ durationMs: 15 * minuteMs + 1, danmaku: 25000 }),
+    true
+  );
+});
 
 test("overflow episode keys follow source order instead of concurrent completion order", () => {
   const sourceOrder = [4, 5, 6, 7, 8].map((episode) => `drama-第${episode}集`);

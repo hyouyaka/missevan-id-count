@@ -32,16 +32,16 @@ const trendMetricColors = {
   manbo_total_view_count: "var(--chart-2)",
   manbo_paid_view_count: "var(--chart-4)",
 };
-const actionHitArea =
-  "h-11 min-h-11 w-[58px] min-w-[58px] border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0";
-const actionInline =
-  "relative h-[22px] min-h-[22px] w-[50px] min-w-[50px] overflow-visible border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0 after:absolute after:inset-x-0 after:-inset-y-[11px] after:rounded-md after:content-['']";
-const actionVisual =
-  "pointer-events-none inline-flex items-center justify-center gap-1 rounded-[calc(var(--radius)-0.18rem)] border";
-const trendVisual =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))]";
-const compareVisual =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-compare)_34%,transparent)] bg-[var(--accent-compare)] px-1 text-xs! text-[var(--accent-compare-foreground)] shadow-[0_12px_24px_-16px_var(--accent-compare)]";
+const actionButton =
+  "relative h-8 min-h-8 min-w-11 shrink-0 justify-center gap-1 overflow-visible rounded-[calc(var(--radius)-0.12rem)] px-2 text-xs! after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-[''] active:translate-y-0";
+const trendButton =
+  "border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]";
+const compareButton =
+  "border-[color-mix(in_oklch,var(--accent-compare)_34%,transparent)] bg-[var(--accent-compare)] text-[var(--accent-compare-foreground)] shadow-[0_12px_24px_-16px_var(--accent-compare)] hover:bg-[var(--accent-compare-hover)] hover:text-[var(--accent-compare-foreground)]";
+const actionLink =
+  "border-0 bg-transparent px-1.5 shadow-none underline-offset-4 hover:border-0 hover:bg-transparent hover:underline focus-visible:border-0 focus-visible:bg-transparent disabled:border-0 disabled:bg-transparent";
+const trendLink = "text-[var(--accent-success)] hover:text-[var(--accent-success)]";
+const compareLink = "text-[var(--accent-compare)] hover:text-[var(--accent-compare)]";
 
 function getNumber(value) {
   if (value == null || String(value).trim() === "") {
@@ -105,21 +105,20 @@ export function RankTrendDeltaBadge({ metric, children, className = "" }) {
   );
 }
 
-function ActionButton({ kind, density = "default", className = "", ...props }) {
+function ActionButton({ kind, density: _density = "default", appearance = "button", className = "", ...props }) {
   const isTrend = kind === "trend";
+  const isLink = appearance === "link";
   const Icon = isTrend ? TrendingUpIcon : ArrowLeftRightIcon;
   return (
     <Button
       type="button"
-      variant="ghost"
+      variant={isLink ? "ghost" : "outline"}
       data-touch="compact"
-      className={`${density === "inline" ? actionInline : actionHitArea} ${className}`.trim()}
+      className={`${actionButton} ${isLink ? actionLink : ""} ${isLink ? (isTrend ? trendLink : compareLink) : (isTrend ? trendButton : compareButton)} ${className}`.trim()}
       {...props}
     >
-      <span className={`${actionVisual} ${isTrend ? trendVisual : compareVisual}`}>
-        <Icon data-icon="inline-start" />
-        {isTrend ? "趋势" : "对比"}
-      </span>
+      <Icon data-icon="inline-start" />
+      <span className="whitespace-nowrap">{isTrend ? "趋势" : "对比"}</span>
     </Button>
   );
 }

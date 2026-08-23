@@ -1,18 +1,23 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeftRightIcon,
   BeanIcon,
   ChevronDownIcon,
   CoinsIcon,
   GemIcon,
+  HandCoinsIcon,
   HeartIcon,
   InfoIcon,
   MicIcon,
+  MoreHorizontalIcon,
   PlayCircleIcon,
   RefreshCwIcon,
   ScrollTextIcon,
   ShoppingCartIcon,
   StarIcon,
+  TrendingUpIcon,
   TrophyIcon,
+  UserSearchIcon,
   UsersRoundIcon,
 } from "lucide-react";
 
@@ -22,13 +27,14 @@ import {
   buildVersionedUrl,
   formatDeviceDateTime,
   formatPlainNumber,
+  formatRankCardMetricValue,
   formatRankCompactCount,
   getBackendVersionFromResponse,
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
-import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformDramaLink, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
-import { RankBadge } from "@/app/RankBadge";
+import { RankWatermark } from "@/app/RankBadge";
 import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
 import {
   fetchRankTrendAvailabilityData,
@@ -50,6 +56,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -65,9 +77,9 @@ const mobilePlatformTabClassName =
 const mobileTextTabsListClassName =
   "grid h-9 min-h-9 w-full justify-stretch";
 const mobileCategoryTabClassName =
-  "h-7 min-h-7 min-w-0 px-2 text-sm!";
+  "h-7 min-h-7 min-w-11 justify-center px-2 text-sm!";
 const mobileRankTabClassName =
-  "h-7 min-h-7 min-w-0 px-2 text-xs!";
+  "h-7 min-h-7 min-w-11 justify-center px-2 text-xs!";
 const mobileSelectedTabClassName = "";
 const mobileSelectedPlatformTabClassName = "";
 const desktopTextTabsListClassName =
@@ -309,6 +321,95 @@ function getRankMetrics(platform, item, rankKey = "") {
   return metrics;
 }
 
+const rankActionButtonClassName =
+  "relative h-8 min-h-8 min-w-11 shrink-0 justify-center gap-1 rounded-[calc(var(--radius)-0.12rem)] px-2 text-xs! after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-['']";
+
+function useMeasuredActionMode({ peak = false } = {}) {
+  const containerRef = useRef(null);
+  const trendButtonRef = useRef(null);
+  const compareButtonRef = useRef(null);
+  const moreButtonRef = useRef(null);
+  const [mode, setMode] = useState(peak ? "more-icon" : "more-only");
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const trend = trendButtonRef.current;
+    const compare = compareButtonRef.current;
+    const more = moreButtonRef.current;
+    if (!container || !trend || !compare || !more) return undefined;
+    let cancelled = false;
+    const measure = () => {
+      if (cancelled) return;
+      const available = container.getBoundingClientRect().width;
+      const gap = Number.parseFloat(window.getComputedStyle(container).columnGap) || 0;
+      const allWidth = trend.getBoundingClientRect().width + compare.getBoundingClientRect().width + gap;
+      const moreWidth = more.getBoundingClientRect().width;
+      const next = peak
+        ? available + 0.5 >= allWidth ? "all" : available + 0.5 >= moreWidth ? "more-label" : "more-icon"
+        : available + 0.5 >= allWidth + moreWidth + gap ? "all" : available + 0.5 >= trend.getBoundingClientRect().width + moreWidth + gap ? "trend-more" : "more-only";
+      setMode((current) => current === next ? current : next);
+    };
+    requestAnimationFrame(measure);
+    document.fonts?.ready?.then(() => {
+      if (!cancelled) measure();
+    });
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const observer = new ResizeObserver(measure);
+    [container, trend, compare, more].forEach((node) => observer.observe(node));
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [peak]);
+
+  return { containerRef, trendButtonRef, compareButtonRef, moreButtonRef, mode };
+}
+
+function PeakRankFourthRow({ item, canShowTrend, onOpenTrend, onAddCompareItem, className = "" }) {
+  const layout = useMeasuredActionMode({ peak: true });
+  const mode = layout.mode;
+  const dailyMetric = {
+    key: "view_count",
+    available: Boolean(item.daily_view_delta?.available),
+    delta: item.daily_view_delta?.delta ?? null,
+  };
+  return (
+    <div className={`flex min-w-0 items-center gap-2 text-xs ${className}`.trim()}>
+      <div className="flex shrink-0 items-center gap-1 text-foreground" aria-label={`系列总播放量: ${formatPlainNumber(item.view_count)}`} title={`系列总播放量: ${formatPlainNumber(item.view_count)}`}>
+        <PlayCircleIcon aria-hidden="true" className={metaIconClassName} />
+        <span className="tabular-nums">{formatRankCardMetricValue(item.view_count)}</span>
+      </div>
+      <RankTrendDeltaBadge metric={dailyMetric} className="h-6 shrink-0 px-1.5 text-[0.68rem]">
+        日增：{formatRankTrendDelta(dailyMetric)}
+      </RankTrendDeltaBadge>
+      <div ref={layout.containerRef} className="relative flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2">
+        <span ref={layout.moreButtonRef} aria-hidden="true" className={`${rankActionButtonClassName} pointer-events-none invisible absolute inline-flex items-center`}>
+          <MoreHorizontalIcon className="size-4" />
+          <span className="whitespace-nowrap">更多</span>
+        </span>
+        <RankTrendButton ref={layout.trendButtonRef} appearance="link" density="inline" className={mode === "all" ? "" : "pointer-events-none invisible absolute"} disabled={!canShowTrend} aria-hidden={mode === "all" ? undefined : true} tabIndex={mode === "all" ? undefined : -1} onClick={onOpenTrend} aria-label={`查看${item.name}趋势`} title={canShowTrend ? "查看趋势" : "暂无趋势数据"} />
+        <CompareActionButton ref={layout.compareButtonRef} appearance="link" density="inline" className={mode === "all" ? "" : "pointer-events-none invisible absolute"} disabled={!canShowTrend || !onAddCompareItem} aria-hidden={mode === "all" ? undefined : true} tabIndex={mode === "all" ? undefined : -1} onClick={onAddCompareItem} aria-label={`加入${item.name}对比`} title={canShowTrend ? "加入对比" : "暂无趋势数据"} />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="outline" data-touch="compact" className={`${rankActionButtonClassName} ${mode === "all" ? "pointer-events-none invisible absolute" : ""}`} aria-hidden={mode === "all" ? true : undefined} tabIndex={mode === "all" ? -1 : undefined} aria-label={`${item.name}更多操作`} title="更多操作">
+              <MoreHorizontalIcon data-icon="inline-start" />
+              {mode !== "more-icon" ? <span className="whitespace-nowrap">更多</span> : null}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem disabled={!canShowTrend} onSelect={onOpenTrend}><TrendingUpIcon aria-hidden="true" />趋势</DropdownMenuItem>
+            <DropdownMenuItem disabled={!canShowTrend || !onAddCompareItem} onSelect={onAddCompareItem}><ArrowLeftRightIcon aria-hidden="true" />对比</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
+
 function RankItemCard({
   item,
   platform,
@@ -318,123 +419,57 @@ function RankItemCard({
   onOpenSearchResult,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
   trendAvailable = false,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
-  const metrics = getRankMetrics(platform, item, rankKey);
   const isMissevanPeak = platform === "missevan" && item.type === "peak";
+  const metrics = isMissevanPeak ? [] : getRankMetrics(platform, item, rankKey);
   const dramaIdText = Array.isArray(item.drama_ids) && item.drama_ids.length ? item.drama_ids.join("，") : "";
-  const recentUpdatedDate = isMissevanPeak ? "" : formatRankUpdatedDate(item.updated_at);
+  const detailIdText = isMissevanPeak ? dramaIdText : String(item.id ?? "");
   const paymentTag = getRankPaymentTag(item);
   const titleTags = getRankTitleTags(item);
-  const mobileDisplayTitle = getInlineTaggedTitleDisplayText(item.name, {
-    hasTags: titleTags.length > 0,
-    viewport: "mobile",
-  });
-  const desktopDisplayTitle = getInlineTaggedTitleDisplayText(item.name, {
-    hasTags: titleTags.length > 0,
-    viewport: "desktop",
-  });
-  const detailIdText = isMissevanPeak ? dramaIdText : item.id;
+  const displayTitle = getInlineTaggedTitleDisplayText(item.name, { hasTags: titleTags.length > 0, viewport: "desktop" });
+  const searchDramaIds = isMissevanPeak ? (Array.isArray(item.drama_ids) ? item.drama_ids : []) : item.id != null ? [item.id] : [];
   const trendLookupId = isMissevanPeak ? item.name : item.id;
-  const trendItemBase = paymentTag ? { ...item, payment_label: paymentTag, payStatus: paymentTag } : item;
-  const trendItem = isMissevanPeak ? { ...trendItemBase, id: trendLookupId } : trendItemBase;
-  const searchDramaIds = isMissevanPeak
-    ? (Array.isArray(item.drama_ids) ? item.drama_ids : [])
-    : item.id != null
-      ? [item.id]
-      : [];
-  const canOpenSearchResult = Boolean(onOpenSearchResult && platform && searchDramaIds.length);
   const favoriteDramaId = String(searchDramaIds[0] ?? item.id ?? "").trim();
-  const canToggleFavorite = !isMissevanPeak && Boolean(favoriteDramaId);
   const favoriteKey = favoriteDramaId ? `${platform}:${favoriteDramaId}` : "";
-  const isFavorite = Boolean(canToggleFavorite && favoriteKey && favoriteKeys?.has?.(favoriteKey));
+  const isFavorite = Boolean(favoriteKey && favoriteKeys?.has?.(favoriteKey));
+  const canToggleFavorite = !isMissevanPeak && Boolean(favoriteDramaId);
+  const canOpenSearchResult = Boolean(onOpenSearchResult && searchDramaIds.length);
+  const canShowTrend = canShowRankTrend({ platform, rankKey, item, isMissevanPeak, detailIdText: trendLookupId }) && (isMissevanPeak || trendAvailable);
   const mainCvText = String(item.main_cv_text ?? "").replace(/^主要CV：/, "");
-  const peakPlayMetric = isMissevanPeak
-    ? { label: "系列总播放量", iconLabel: "总播放量", value: formatPlainNumber(item.view_count) }
-    : null;
-  const peakDailyDeltaMetric = isMissevanPeak
-    ? {
-        key: "view_count",
-        label: "系列总播放量",
-        available: Boolean(item.daily_view_delta?.available),
-        delta: item.daily_view_delta?.delta ?? null,
-      }
-    : null;
-  const displayMetrics = isMissevanPeak ? [] : metrics;
-  const canShowTrend = canShowRankTrend({
-    platform,
-    rankKey,
-    item,
-    isMissevanPeak,
-    detailIdText: trendLookupId,
-  }) && (isMissevanPeak || trendAvailable);
+  const trendItem = isMissevanPeak ? { ...item, id: trendLookupId } : item;
   const [isTrendOpen, setIsTrendOpen] = useState(false);
-  const [trendState, setTrendState] = useState({
-    isLoading: false,
-    error: "",
-    data: null,
-  });
+  const [statisticsActionPending, setStatisticsActionPending] = useState("");
+  const statisticsActionLockRef = useRef(false);
+  const [trendState, setTrendState] = useState({ isLoading: false, error: "", data: null });
+  const normalLayout = useMeasuredActionMode();
 
   async function openTrendDialog() {
-    if (!canShowTrend) {
-      return;
-    }
+    if (!canShowTrend) return;
     setIsTrendOpen(true);
-    logRankTrendOpen({
-      platform,
-      id: trendLookupId,
-      name: item.name,
-      source: "ranks",
-      rankKey,
-      frontendVersion,
-    });
-    setTrendState((current) => ({
-      ...current,
-      isLoading: !current.data,
-      error: "",
-    }));
+    logRankTrendOpen({ platform, id: trendLookupId, name: item.name, source: "ranks", rankKey, frontendVersion });
+    setTrendState((current) => ({ ...current, isLoading: !current.data, error: "" }));
     try {
-      const { response, data } = await fetchSharedRankTrendData({
-        platform,
-        id: trendLookupId,
-        frontendVersion,
-      });
-      handleVersionResponse?.({
-        ...data,
-        backendVersion: getBackendVersionFromResponse(response, data),
-        frontendVersion,
-      });
-      if (!response.ok || !data?.success) {
-        setTrendState({
-          isLoading: false,
-          error: data?.message || "趋势数据暂不可用。",
-          data: null,
-        });
-        return;
-      }
-      setTrendState({
-        isLoading: false,
-        error: "",
-        data,
-      });
+      const { response, data } = await fetchSharedRankTrendData({ platform, id: trendLookupId, frontendVersion });
+      handleVersionResponse?.({ ...data, backendVersion: getBackendVersionFromResponse(response, data), frontendVersion });
+      setTrendState(response.ok && data?.success
+        ? { isLoading: false, error: "", data }
+        : { isLoading: false, error: data?.message || "趋势数据暂不可用。", data: null });
     } catch (error) {
       console.error("Failed to load rank trend", error);
-      setTrendState({
-        isLoading: false,
-        error: "趋势数据暂不可用。",
-        data: null,
-      });
+      setTrendState({ isLoading: false, error: "趋势数据暂不可用。", data: null });
     }
   }
 
-  function openSearchResult() {
-    if (!canOpenSearchResult) {
-      return;
-    }
-    onOpenSearchResult?.({
+  function openSearchResult(options = {}) {
+    if (!canOpenSearchResult) return false;
+    return onOpenSearchResult?.({
       platform,
       id: searchDramaIds[0],
       ids: searchDramaIds,
@@ -442,237 +477,113 @@ function RankItemCard({
       name: item.name,
       paymentLabel: paymentTag,
       contentTypeLabel: titleTags[0],
-      usageAction: "ranks_open_search_result",
+      usageAction: options.suppressUsageLog ? undefined : "ranks_open_search_result",
+      suppressUsageLog: options.suppressUsageLog === true,
     });
   }
 
   function toggleFavorite() {
-    if (!canToggleFavorite) {
-      return;
-    }
-    onToggleFavorite?.({
-      platform,
-      dramaId: favoriteDramaId,
-      title: item.name,
-      cover: item.cover || "",
-      paymentLabel: paymentTag,
-      contentTypeLabel: titleTags[0] || "",
-      dramaUpdatedAt: item.updated_at || "",
-      mainCvText: item.main_cv_text || "",
-      source: "ranks",
-    });
+    if (!canToggleFavorite) return;
+    onToggleFavorite?.({ platform, dramaId: favoriteDramaId, title: item.name, cover: item.cover || "", paymentLabel: paymentTag, contentTypeLabel: titleTags[0] || "", dramaUpdatedAt: item.updated_at || "", mainCvText: item.main_cv_text || "", source: "ranks" });
   }
 
   function addCompareItem() {
-    if (!canShowTrend) {
-      return;
+    if (!canShowTrend) return;
+    onAddCompareItem?.({ platform, id: String(trendLookupId ?? "").trim(), title: isMissevanPeak ? `系列：${item.name || ""}` : item.name || "", cover: item.cover || "", mainCvText: item.main_cv_text || "", compareKind: isMissevanPeak ? "peak_series" : "drama", dramaIds: isMissevanPeak ? searchDramaIds : [] });
+  }
+
+  function logStatisticsMenuClick(action) {
+    fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform, action, dramaId: favoriteDramaId, dramaName: item.name || "", source: "ranks", success: true }),
+      keepalive: true,
+    }).catch((error) => console.error("Failed to log rank statistics action", error));
+  }
+
+  async function runStatisticsAction(action) {
+    if (statisticsActionsDisabled || statisticsActionLockRef.current || !canOpenSearchResult) return;
+    const isPaidIdAction = action === "paid_id_click";
+    const startStatistics = isPaidIdAction ? onStartDramaPaidIdStatistics : onStartRevenueEstimate;
+    if (!startStatistics) return;
+    statisticsActionLockRef.current = true;
+    setStatisticsActionPending(action);
+    logStatisticsMenuClick(action);
+    try {
+      const opened = await openSearchResult({ suppressUsageLog: true });
+      if (!opened) return;
+      if (isPaidIdAction) await startStatistics(favoriteDramaId, { platform, source: `${favoriteDramaId}payID` });
+      else await startStatistics([favoriteDramaId], { platform, source: `${favoriteDramaId}earn` });
+    } finally {
+      statisticsActionLockRef.current = false;
+      setStatisticsActionPending("");
     }
-    onAddCompareItem?.({
-      platform,
-      id: String(trendLookupId ?? "").trim(),
-      title: isMissevanPeak ? `系列：${item.name || ""}` : item.name || "",
-      cover: item.cover || "",
-      mainCvText: item.main_cv_text || "",
-      compareKind: isMissevanPeak ? "peak_series" : "drama",
-      dramaIds: isMissevanPeak ? searchDramaIds : [],
-    });
+  }
+
+  function renderTitle() {
+    const content = <><span>{displayTitle}</span>{titleTags.map((label) => <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>{label}</Badge>)}</>;
+    return canOpenSearchResult ? (
+      <button type="button" className={`line-clamp-2 min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`} onClick={() => openSearchResult()} title={item.name}>{content}</button>
+    ) : <div className={`line-clamp-2 min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`} title={item.name}>{content}</div>;
+  }
+
+  function renderTrendButton(ref, visible = true) {
+    return <RankTrendButton ref={ref} density="inline" className={visible ? "" : "pointer-events-none invisible absolute"} disabled={!canShowTrend} aria-hidden={visible ? undefined : true} tabIndex={visible ? undefined : -1} onClick={openTrendDialog} aria-label={`查看${item.name}趋势`} title={canShowTrend ? "查看趋势" : "暂无趋势数据"} />;
+  }
+
+  function renderCompareButton(ref, visible = true) {
+    return <CompareActionButton ref={ref} density="inline" className={visible ? "" : "pointer-events-none invisible absolute"} disabled={!canShowTrend || !onAddCompareItem} aria-hidden={visible ? undefined : true} tabIndex={visible ? undefined : -1} onClick={addCompareItem} aria-label={`加入${item.name}对比`} title={canShowTrend ? "加入对比" : "暂无趋势数据"} />;
+  }
+
+  function renderNormalActions() {
+    const mode = normalLayout.mode;
+    return (
+      <div ref={normalLayout.containerRef} className="relative flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2">
+        {renderTrendButton(normalLayout.trendButtonRef, mode !== "more-only")}
+        {renderCompareButton(normalLayout.compareButtonRef, mode === "all")}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button ref={normalLayout.moreButtonRef} type="button" variant="outline" data-touch="compact" className={rankActionButtonClassName} aria-label={`${item.name}更多操作`} title="更多操作"><MoreHorizontalIcon data-icon="inline-start" /><span className="whitespace-nowrap">更多</span></Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {mode === "more-only" ? <DropdownMenuItem disabled={!canShowTrend} onSelect={openTrendDialog}><TrendingUpIcon aria-hidden="true" />趋势</DropdownMenuItem> : null}
+            {mode !== "all" ? <DropdownMenuItem disabled={!canShowTrend || !onAddCompareItem} onSelect={addCompareItem}><ArrowLeftRightIcon aria-hidden="true" />对比</DropdownMenuItem> : null}
+            <DropdownMenuItem disabled={favoriteActionsDisabled} onSelect={toggleFavorite}><StarIcon aria-hidden="true" className={isFavorite ? "fill-primary text-primary" : ""} />{isFavorite ? "取消收藏" : "收藏"}</DropdownMenuItem>
+            <DropdownMenuItem disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)} onSelect={() => runStatisticsAction("paid_id_click")}><UserSearchIcon aria-hidden="true" />付费ID</DropdownMenuItem>
+            <DropdownMenuItem disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)} onSelect={() => runStatisticsAction("revenue_click")}><HandCoinsIcon aria-hidden="true" />收益</DropdownMenuItem>
+            <DropdownMenuItem asChild><PlatformDramaLink appearance="menu" platform={platform} dramaId={favoriteDramaId} source="ranks" dramaTitle={item.name} frontendVersion={frontendVersion} /></DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
   }
 
   return (
-    <Card className="py-3">
-      <CardContent className="relative px-3.5">
-        <div className="flex gap-3">
-          <div className="flex shrink-0 flex-col items-center gap-2">
-            <RankBadge rank={item.rank} />
-            {canToggleFavorite ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="bg-background/84"
-                disabled={favoriteActionsDisabled}
-                onClick={toggleFavorite}
-                aria-label={isFavorite ? "取消收藏" : "加入收藏"}
-                title={isFavorite ? "取消收藏" : "加入收藏"}
-              >
-                <StarIcon className={isFavorite ? "fill-primary text-primary" : ""} />
-              </Button>
-            ) : null}
+    <Card className="relative isolate overflow-hidden py-3">
+      <RankWatermark rank={item.rank} />
+      <CardContent className="relative z-10 px-3.5">
+        <div className={`grid min-w-0 items-center gap-3 ${isMissevanPeak ? "grid-cols-[5rem_minmax(0,1fr)] lg:grid-cols-[6rem_minmax(0,1fr)]" : "grid-cols-[6rem_minmax(0,1fr)]"}`}>
+          <div className={`relative shrink-0 self-center overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 ${isMissevanPeak ? "size-20 lg:size-24" : "size-24"}`}>
+            {coverUrl ? <LazyImage alt={item.name} className="size-full object-cover" src={coverUrl} /> : <div className="flex size-full items-center justify-center text-xs text-muted-foreground">暂无封面</div>}
+            {paymentTag ? <Badge variant={rankTagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>{paymentTag}</Badge> : null}
           </div>
-          <div className="relative size-20 shrink-0 overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
-            {coverUrl ? (
-              <LazyImage alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
-            ) : (
-              <div className="flex aspect-square size-20 items-center justify-center text-xs text-muted-foreground lg:size-[6rem]">
-                暂无封面
-              </div>
-            )}
-            {paymentTag ? (
-              <Badge variant={rankTagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>
-                {paymentTag}
-              </Badge>
-            ) : null}
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="hidden min-w-0 lg:block">
-              {canOpenSearchResult ? (
-                <button
-                  type="button"
-                  className={`min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
-                  onClick={openSearchResult}
-                >
-                  <span>{desktopDisplayTitle}</span>
-                  {titleTags.map((label) => (
-                    <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
-                      {label}
-                    </Badge>
-                  ))}
-                </button>
-              ) : (
-                <span className={`min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`}>
-                  <span>{desktopDisplayTitle}</span>
-                  {titleTags.map((label) => (
-                    <Badge key={`${item.rank}-${item.id || item.name}-desktop-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
-                      {label}
-                    </Badge>
-                  ))}
-                </span>
-              )}
-            </div>
-            <div className="min-w-0 lg:hidden">
-              {canOpenSearchResult ? (
-                <button
-                  type="button"
-                  className={`break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`}
-                  onClick={openSearchResult}
-                >
-                  <span>{mobileDisplayTitle}</span>
-                  {titleTags.map((label) => (
-                    <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
-                      {label}
-                    </Badge>
-                  ))}
-                </button>
-              ) : (
-                <span className={`break-words text-foreground ${getTitleClassName(item.name)}`}>
-                  <span>{mobileDisplayTitle}</span>
-                  {titleTags.map((label) => (
-                    <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
-                      {label}
-                    </Badge>
-                  ))}
-                </span>
-              )}
-            </div>
-            {detailIdText ? (
-              <PlatformDramaLink
-                platform={platform}
-                dramaId={searchDramaIds[0]}
-                displayId={detailIdText}
-                idLabel={isMissevanPeak ? "包含作品ID" : "作品ID"}
-                source="ranks"
-                dramaTitle={item.name}
-                frontendVersion={frontendVersion}
-                ariaLabel={
-                  isMissevanPeak
-                    ? `在猫耳打开首个作品ID ${String(searchDramaIds[0] ?? "").trim()}（新窗口）`
-                    : undefined
-                }
-                iconClassName={metaIconClassName}
-              />
-            ) : null}
-            <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
-              <span className="min-w-0 break-words">{mainCvText || "暂无"}</span>
-            </div>
-            {peakPlayMetric ? (
-              <div
-                aria-label={`${peakPlayMetric.label}: ${peakPlayMetric.value}`}
-                title={`${peakPlayMetric.label}: ${peakPlayMetric.value}`}
-                className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                <MetricIcon label={peakPlayMetric.iconLabel} className={metaIconClassName} />
-                <span className="min-w-0 break-all font-medium tabular-nums text-foreground">{peakPlayMetric.value}</span>
-                <RankTrendDeltaBadge
-                  metric={peakDailyDeltaMetric}
-                  className="h-[1.35rem] px-1.5 text-[0.68rem]"
-                >
-                  日增：{formatRankTrendDelta(peakDailyDeltaMetric)}
-                </RankTrendDeltaBadge>
-                {canShowTrend ? (
-                  <>
-                    <RankTrendButton
-                      density="inline"
-                      onClick={openTrendDialog}
-                      aria-label={`查看${item.name}趋势`}
-                      title="查看趋势"
-                    />
-                    <CompareActionButton
-                      density="inline"
-                      onClick={addCompareItem}
-                      aria-label={`加入${item.name}对比`}
-                      title="加入对比"
-                    />
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-            {recentUpdatedDate ? (
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <RefreshCwIcon aria-label="最近更新" className={metaIconClassName} title="最近更新" />
-                <span className="min-w-0 break-all">{recentUpdatedDate}</span>
-              </div>
-            ) : null}
+          <div className="flex min-w-0 flex-col gap-1.5">
+            {renderTitle()}
+            {detailIdText ? <div className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground" aria-label={`作品ID：${detailIdText}`} title={`作品ID：${detailIdText}`}><PlatformIdIcon aria-hidden="true" className={`${metaIconClassName} mt-[3px]`} platform={platform} tone="inherit" /><span className="min-w-0 break-all">{detailIdText}</span></div> : null}
+            <div className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground"><MicIcon aria-label="主要CV" className={`${metaIconClassName} mt-[3px]`} title="主要CV" /><span className="min-w-0 break-words">{mainCvText || "暂无"}</span></div>
+            {!isMissevanPeak && formatRankUpdatedDate(item.updated_at) ? <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground"><RefreshCwIcon aria-label="最近更新" className={metaIconClassName} title="最近更新" /><span>{formatRankUpdatedDate(item.updated_at)}</span></div> : null}
+            {isMissevanPeak ? <PeakRankFourthRow item={item} canShowTrend={canShowTrend} onOpenTrend={openTrendDialog} onAddCompareItem={addCompareItem} className="hidden lg:flex" /> : null}
           </div>
         </div>
-
-        {displayMetrics.length || (!isMissevanPeak && canShowTrend) ? (
-          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm lg:ml-10 lg:min-h-11 lg:gap-y-2">
-            {displayMetrics.map((metric) => (
-                <div
-                  key={`${item.id}-${metric.label}`}
-                  aria-label={`${metric.label}: ${metric.value}`}
-                  title={`${metric.label}: ${metric.value}`}
-                  className="max-w-full text-foreground"
-                >
-                  <span className="flex max-w-full items-center gap-1">
-                    <MetricIcon label={metric.iconLabel || metric.label} className="size-3.5 shrink-0 text-muted-foreground" />
-                    {metric.iconLabel === "排行值" && metric.label !== "排行值" ? (
-                      <span className="shrink-0 text-[0.68rem] text-muted-foreground">{metric.label}</span>
-                    ) : null}
-                    <span className="max-w-full break-all text-[0.74rem] font-medium tabular-nums sm:text-sm">{metric.value}</span>
-                  </span>
-                </div>
-              ))}
-            {!isMissevanPeak && canShowTrend ? (
-              <>
-                <RankTrendButton
-                  density="inline"
-                  onClick={openTrendDialog}
-                  aria-label={`查看${item.name}趋势`}
-                  title="查看趋势"
-                />
-                <CompareActionButton
-                  density="inline"
-                  onClick={addCompareItem}
-                  aria-label={`加入${item.name}对比`}
-                  title="加入对比"
-                />
-              </>
-            ) : null}
-          </div>
-        ) : null}
-        {canShowTrend && isTrendOpen ? (
-          <LazyRankTrendDialog
-            open={isTrendOpen}
-            onOpenChange={setIsTrendOpen}
-            item={trendItem}
-            platform={platform}
-            trendState={trendState}
-            frontendVersion={frontendVersion}
-            handleVersionResponse={handleVersionResponse}
-          />
-        ) : null}
+        {isMissevanPeak ? <PeakRankFourthRow item={item} canShowTrend={canShowTrend} onOpenTrend={openTrendDialog} onAddCompareItem={addCompareItem} className="mt-3 lg:hidden" /> : (
+          <>
+            {metrics.length ? <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">{metrics.map((metric) => {
+              const rawValue = metric.label === "总播放量" ? item.view_count : metric.label === "追剧数" || metric.label === "收藏数" ? item.subscription_num : metric.label === "打赏人数" ? item.reward_num : metric.label === "打赏榜总和" ? item.reward_total : metric.label === "付费集弹幕ID数" ? item.danmaku_uid_count : metric.label === "投喂总数" ? item.diamond_value : metric.label === "购买人数/收听人数" ? item.pay_count : item.rank_value;
+              const displayValue = ["付费集弹幕ID数", "购买人数/收听人数"].includes(metric.label) ? formatPlainNumber(rawValue) : formatRankCardMetricValue(rawValue);
+              return <div key={`${item.id}-${metric.label}`} className="flex min-w-0 items-center gap-1 text-foreground" aria-label={`${metric.label}: ${formatPlainNumber(rawValue)}`} title={`${metric.label}: ${formatPlainNumber(rawValue)}`}><MetricIcon label={metric.iconLabel || metric.label} className="size-3.5 shrink-0 text-muted-foreground" />{metric.iconLabel === "排行值" && metric.label !== "排行值" ? <span className="shrink-0 text-[0.68rem] text-muted-foreground">{metric.label}</span> : null}<span className="tabular-nums">{displayValue}</span></div>;
+            })}</div> : null}
+            <div className="mt-2 flex min-h-8 min-w-0 justify-end">{renderNormalActions()}</div>
+          </>
+        )}
+        {canShowTrend && isTrendOpen ? <LazyRankTrendDialog open={isTrendOpen} onOpenChange={setIsTrendOpen} item={trendItem} platform={platform} trendState={trendState} frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} /> : null}
       </CardContent>
     </Card>
   );
@@ -857,6 +768,7 @@ function CvRankActions({ item, canShowTrend, onOpenTrend, className }) {
       </RankTrendDeltaBadge>
       {canShowTrend ? (
         <RankTrendButton
+          appearance="link"
           density="inline"
           onClick={onOpenTrend}
           aria-label={`查看${item.cvName}趋势`}
@@ -889,10 +801,10 @@ function CvRankItemCard({
   const topWorksText = getCvWorksPreviewText(item.topWorks || item.works);
 
   return (
-    <Card className="py-3">
-      <CardContent className="px-3.5">
-        <div className="grid grid-cols-[auto_3.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[auto_4.25rem_minmax(0,1fr)]">
-          <RankBadge rank={item.rank} />
+    <Card className="relative isolate overflow-hidden py-3">
+      <RankWatermark rank={item.rank} />
+      <CardContent className="relative z-10 px-3.5">
+        <div className="grid grid-cols-[3.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 sm:grid-cols-[4.25rem_minmax(0,1fr)]">
           <div className="row-span-2 size-[3.75rem] overflow-hidden rounded-full border border-border/70 bg-muted/45 sm:size-[4.25rem]">
             {avatarUrl ? (
               <LazyImage alt={item.cvName} className="size-full object-cover" src={avatarUrl} />
@@ -902,7 +814,7 @@ function CvRankItemCard({
               </div>
             )}
           </div>
-          <div className="col-start-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <button
               type="button"
               className="min-w-0 rounded-sm text-left text-base font-semibold leading-6 text-foreground underline underline-offset-4 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-lg"
@@ -925,7 +837,7 @@ function CvRankItemCard({
               <span className="tabular-nums">{formatRankCompactCount(item.totalViewCount)}</span>
             </div>
           </div>
-          <div className="col-start-3 min-w-0 text-sm">
+          <div className="col-start-2 min-w-0 text-sm">
             <CvRankActions
               item={item}
               canShowTrend={canShowTrend}
@@ -935,7 +847,7 @@ function CvRankItemCard({
           </div>
           <button
             type="button"
-            className="group col-start-2 col-span-2 -ml-3 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-sm text-left text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-sm"
+            className="group col-span-2 flex w-full min-w-0 items-center gap-2 rounded-sm text-left text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-sm"
             onClick={() => setIsExpanded((current) => !current)}
             aria-expanded={isExpanded}
             aria-controls={worksRegionId}
@@ -1035,8 +947,11 @@ function RankColumn({
   onOpenSearchResult,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
   trendAvailableIds = new Set(),
 }) {
   const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
@@ -1068,8 +983,11 @@ function RankColumn({
               onOpenSearchResult={onOpenSearchResult}
               favoriteKeys={favoriteKeys}
               favoriteActionsDisabled={favoriteActionsDisabled}
+              statisticsActionsDisabled={statisticsActionsDisabled}
               onToggleFavorite={onToggleFavorite}
               onAddCompareItem={onAddCompareItem}
+              onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+              onStartRevenueEstimate={onStartRevenueEstimate}
               trendAvailable={trendAvailableIds.has(String(item.id))}
             />
           ))}
@@ -1108,8 +1026,11 @@ export function RanksPanel({
   onOpenCv,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
 }) {
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -1505,15 +1426,15 @@ export function RanksPanel({
                 {renderMobileMetricLegendToggle()}
               </div>
               {platformData?.categories?.length ? (
-                <div className="flex min-h-8 items-center justify-between gap-2 border-t border-border/60 pt-1">
+                <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border/60 pt-1">
                   <Tabs
                     value={category?.key || ""}
                     onValueChange={updateCategory}
-                    className="min-w-0 basis-[min(13.75rem,58vw)] shrink-0 gap-0"
+                    className="w-fit max-w-full shrink-0 gap-0"
                   >
                     <TabsList
                       variant="line"
-                      className={mobileTextTabsListClassName}
+                      className={`${mobileTextTabsListClassName} w-fit`}
                       style={getRankTabsGridStyle(platformData.categories.length)}
                     >
                       {platformData.categories.map((item) => (
@@ -1534,7 +1455,7 @@ export function RanksPanel({
                     <Tabs
                       value={activeRank?.key || ""}
                       onValueChange={updateRank}
-                      className="min-w-0 flex-1 items-end gap-0"
+                      className="ml-auto w-fit shrink-0 items-end gap-0"
                     >
                       <TabsList
                         variant="line"
@@ -1589,8 +1510,11 @@ export function RanksPanel({
                   onOpenSearchResult={onOpenSearchResult}
                   favoriteKeys={favoriteKeys}
                   favoriteActionsDisabled={favoriteActionsDisabled}
+                  statisticsActionsDisabled={statisticsActionsDisabled}
                   onToggleFavorite={onToggleFavorite}
                   onAddCompareItem={onAddCompareItem}
+                  onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+                  onStartRevenueEstimate={onStartRevenueEstimate}
                   trendAvailableIds={availableTrendIds}
                 />
               ))
@@ -1620,8 +1544,11 @@ export function RanksPanel({
                 onOpenSearchResult={onOpenSearchResult}
                 favoriteKeys={favoriteKeys}
                 favoriteActionsDisabled={favoriteActionsDisabled}
+                statisticsActionsDisabled={statisticsActionsDisabled}
                 onToggleFavorite={onToggleFavorite}
                 onAddCompareItem={onAddCompareItem}
+                onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+                onStartRevenueEstimate={onStartRevenueEstimate}
                 trendAvailableIds={availableTrendIds}
               />
             ) : null}

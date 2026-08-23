@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SearchIcon, XIcon } from "lucide-react";
 
 import {
@@ -10,13 +10,14 @@ import {
   MISSEVAN_DESKTOP_ACCESS_HINT,
   normalizeVersion,
 } from "@/app/app-utils";
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const searchHelpText = [
-  "空格表示 AND ，逗号表示 OR ，例如：",
+  "空格表示 AND ，逗号表示 OR；非单独出现的“广播剧”“有声剧”可被识别为剧集类型。例如：",
   "“魔道，天官” = 包含 “魔道” 或 “天官”",
   "“路知行 魏超 墨香” = “路知行” “魏超” “墨香” 全都包含",
   "“priest 阿杰， 将进酒” = “priest” “阿杰” 都包含 或 包含 “将进酒”",
+  "“回信 广播剧” = 包含 “回信” 且类型为广播剧",
 ];
 
 function blurSearchControl(formElement) {
@@ -49,12 +50,15 @@ export function SearchPanel({
   onNotice,
   onSearchCommit,
   onSearchPendingChange,
+  restoreSearchRequest,
   placeholder = "请输入关键词、ID、分享链接。",
 }) {
   const searchGenerationRef = useRef(0);
   const [isSearchPending, setIsSearchPending] = useState(false);
   const [searchHelpOpen, setSearchHelpOpen] = useState(false);
   const searchPendingRef = useRef(false);
+  const lastRestoredSearchSignatureRef = useRef("");
+  const restoreSearchHandlerRef = useRef(null);
   const keywordValue = formState?.keyword ?? "";
   const hasKeyword = String(keywordValue).trim().length > 0;
 
@@ -139,13 +143,6 @@ export function SearchPanel({
     });
   }
 
-  function openSearchHelp() {
-    if (isDesktopApp) {
-      return;
-    }
-    setSearchHelpOpen(true);
-  }
-
   function showKeywordTooShortNotice() {
     showBlockingNotice("关键词太短", "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。");
   }
@@ -182,6 +179,9 @@ export function SearchPanel({
         )
       );
       const data = await parseVersionedJson(response);
+      if (!response.ok) {
+        throw new Error(data?.error || `Unified search failed with status ${response.status}`);
+      }
       return {
         missevan: normalizeUnifiedPlatformResult(data?.results?.missevan, keyword),
         manbo: normalizeUnifiedPlatformResult(data?.results?.manbo, keyword),
@@ -237,7 +237,14 @@ export function SearchPanel({
     });
   }
 
-  function selectFirstPlatformWithResults(resultsByPlatform) {
+  function selectFirstPlatformWithResults(resultsByPlatform, preferredCategory = "") {
+    if (["missevan", "manbo", "cv"].includes(preferredCategory) && hasPlatformMatches(resultsByPlatform[preferredCategory])) {
+      if (preferredCategory !== "cv") {
+        onSelectPlatform?.(preferredCategory);
+      }
+      onSelectCategory?.(preferredCategory);
+      return;
+    }
     if (hasPlatformMatches(resultsByPlatform.cv) && resultsByPlatform.cv?.meta?.exactMatch) {
       onSelectCategory?.("cv");
       return;
@@ -257,7 +264,7 @@ export function SearchPanel({
     }
   }
 
-  async function queryUnifiedKeywordSearch(keyword) {
+  async function queryUnifiedKeywordSearch(keyword, preferredCategory = "") {
     if (searchPendingRef.current) {
       return;
     }
@@ -276,7 +283,7 @@ export function SearchPanel({
       const finalResults = await queryBackendUnifiedSearch(keyword);
 
       publishUnifiedSearchResults(finalResults, "search", searchGeneration);
-      selectFirstPlatformWithResults(finalResults);
+      selectFirstPlatformWithResults(finalResults, preferredCategory);
 
       if (finalResults.missevan?.accessDenied) {
         const config = await fetchAppConfig();
@@ -289,6 +296,12 @@ export function SearchPanel({
           showMissevanCooldownNotice(config || { cooldownHours, cooldownUntil });
         }
       } else if (
+        [finalResults.missevan, finalResults.manbo, finalResults.cv].every(
+          (result) => !result?.success && !result?.accessDenied
+        )
+      ) {
+        showBlockingNotice("搜索失败", "暂时无法获取搜索结果，请稍后重试。");
+      } else if (
         !finalResults.missevan?.accessDenied &&
         !hasPlatformMatches(finalResults.missevan) &&
         !hasPlatformMatches(finalResults.manbo) &&
@@ -300,6 +313,25 @@ export function SearchPanel({
       setSearchPending(false);
     }
   }
+
+  restoreSearchHandlerRef.current = queryUnifiedKeywordSearch;
+  const restoreSearchSignature = String(restoreSearchRequest?.signature ?? "");
+  const restoreSearchKeyword = String(restoreSearchRequest?.keyword ?? "").trim();
+  const restoreSearchCategory = String(restoreSearchRequest?.category ?? "");
+
+  useEffect(() => {
+    if (
+      isSearchPending
+      || searchPendingRef.current
+      || !restoreSearchSignature
+      || !restoreSearchKeyword
+      || lastRestoredSearchSignatureRef.current === restoreSearchSignature
+    ) {
+      return;
+    }
+    lastRestoredSearchSignatureRef.current = restoreSearchSignature;
+    void restoreSearchHandlerRef.current?.(restoreSearchKeyword, restoreSearchCategory);
+  }, [isSearchPending, restoreSearchCategory, restoreSearchKeyword, restoreSearchSignature]);
 
   async function runMergedSearch() {
     if (searchPendingRef.current) {
@@ -335,6 +367,11 @@ export function SearchPanel({
 
       onSearchCommit?.({ action: "search", keyword: nextClassified.keyword });
       await queryUnifiedKeywordSearch(nextClassified.keyword);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        });
+      });
     }
 
     if (classified.action === "empty") {
@@ -355,7 +392,7 @@ export function SearchPanel({
         runMergedSearch();
       }}
     >
-      <Popover open={searchHelpOpen}>
+      <Popover open={searchHelpOpen} onOpenChange={setSearchHelpOpen}>
         <PopoverAnchor asChild>
           <div className="relative">
             <button
@@ -367,26 +404,38 @@ export function SearchPanel({
               <SearchIcon className="size-5" />
             </button>
             <input
-              className="h-12 w-full rounded-lg border border-border/80 bg-white pl-11 pr-11 text-sm! text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+              className={`h-12 w-full rounded-lg border border-border/80 bg-white pl-11 ${hasKeyword ? "pr-[5.25rem]" : "pr-11"} text-sm! text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40`}
               placeholder={placeholder}
               value={keywordValue}
-              onFocus={openSearchHelp}
-              onBlur={() => setSearchHelpOpen(false)}
               onChange={(event) => setKeyword(event.target.value)}
             />
             {hasKeyword ? (
               <button
                 type="button"
                 aria-label="清空输入"
-                className="absolute right-2 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-primary"
+                className="absolute right-11 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-primary"
                 onClick={clearManualInput}
               >
                 <XIcon className="size-5" />
               </button>
             ) : null}
+            {!isDesktopApp ? (
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="搜索语法说明"
+                  aria-expanded={searchHelpOpen}
+                  aria-controls="search-syntax-help"
+                  className="absolute right-2 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-base font-semibold text-muted-foreground transition-colors hover:text-primary"
+                >
+                  ?
+                </button>
+              </PopoverTrigger>
+            ) : null}
           </div>
         </PopoverAnchor>
         <PopoverContent
+          id="search-syntax-help"
           align="start"
           side="bottom"
           sideOffset={6}

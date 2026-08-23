@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
   BeanIcon,
@@ -15,6 +15,7 @@ import {
   ImportIcon,
   LoaderCircleIcon,
   MicIcon,
+  MoreHorizontalIcon,
   PlayCircleIcon,
   ShoppingCartIcon,
   StarIcon,
@@ -27,6 +28,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -37,7 +44,7 @@ import {
   fetchRankTrendData,
   logRankTrendOpen,
 } from "@/app/rankTrendData";
-import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformDramaLink, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { CvSearchResults } from "@/app/CvSearchResults";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
@@ -133,53 +140,6 @@ const rankTrendTagVariants = {
   有声漫: "audioComic",
 };
 
-const trendActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] px-1 text-xs! text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]";
-const compareActionButtonClassName =
-  "h-[22px] w-[50px] min-w-[50px] border-[color-mix(in_oklch,var(--accent-compare)_34%,transparent)] bg-[var(--accent-compare)] px-1 text-xs! text-[var(--accent-compare-foreground)] shadow-[0_12px_24px_-16px_var(--accent-compare)] hover:bg-[var(--accent-compare-hover)] hover:text-[var(--accent-compare-foreground)]";
-const trendActionHitAreaClassName =
-  "h-11 min-h-11 w-[58px] min-w-[58px] border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0";
-const trendActionInlineClassName =
-  "relative h-[22px] min-h-[22px] w-[50px] min-w-[50px] overflow-visible border-transparent! bg-transparent! p-0 text-inherit shadow-none! hover:bg-transparent! hover:text-inherit active:translate-y-0 after:absolute after:inset-x-0 after:-inset-y-[11px] after:rounded-md after:content-['']";
-const trendActionVisualClassName =
-  "pointer-events-none inline-flex items-center justify-center gap-1 rounded-[calc(var(--radius)-0.18rem)] border";
-
-function RankTrendButton({ className = "", density = "default", ...props }) {
-  const hitAreaClassName = density === "inline" ? trendActionInlineClassName : trendActionHitAreaClassName;
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      data-touch="compact"
-      className={`${hitAreaClassName} ${className}`.trim()}
-      {...props}
-    >
-      <span className={`${trendActionVisualClassName} ${trendActionButtonClassName}`}>
-        <TrendingUpIcon data-icon="inline-start" />
-        趋势
-      </span>
-    </Button>
-  );
-}
-
-function CompareActionButton({ className = "", density = "default", ...props }) {
-  const hitAreaClassName = density === "inline" ? trendActionInlineClassName : trendActionHitAreaClassName;
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      data-touch="compact"
-      className={`${hitAreaClassName} ${className}`.trim()}
-      {...props}
-    >
-      <span className={`${trendActionVisualClassName} ${compareActionButtonClassName}`}>
-        <ArrowLeftRightIcon data-icon="inline-start" />
-        对比
-      </span>
-    </Button>
-  );
-}
-
 const searchResultTagVariants = {
   猫耳: rankTrendTagVariants.猫耳,
   漫播: rankTrendTagVariants.漫播,
@@ -218,10 +178,143 @@ function getSearchResultTitleTags(item) {
 }
 
 const metaBadgeClassName = "h-[1.05rem] px-1.5 text-[0.6rem] leading-none";
-const mobileInlineBadgeClassName = `${metaBadgeClassName} ml-1 -translate-y-px align-middle`;
+const mobileInlineBadgeClassName = `${metaBadgeClassName} -translate-y-px align-middle`;
 const coverPaymentBadgeClassName =
   "absolute bottom-0 right-0 h-4 rounded-none rounded-tl-[calc(var(--radius)-0.18rem)] border-0! px-1 text-[0.54rem] leading-none shadow-none! lg:h-[1.05rem] lg:px-1.5 lg:text-[0.58rem]";
 const metaIconClassName = "size-3.5 shrink-0 text-muted-foreground";
+
+function SearchResultTitle({ imported, itemId, title, titleClassName, titleTags }) {
+  const containerRef = useRef(null);
+  const measureRef = useRef(null);
+  const measureTitleRef = useRef(null);
+  const [visibleTitle, setVisibleTitle] = useState(title);
+  const hasTags = titleTags.length > 0 || imported;
+  const titleTagsKey = titleTags.join("\u0001");
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const measure = measureRef.current;
+    const measureTitle = measureTitleRef.current;
+    if (!container || !measure || !measureTitle) return undefined;
+
+    let animationFrameId = 0;
+    let cancelled = false;
+
+    const updateVisibleTitle = () => {
+      const fullTitle = String(title ?? "");
+      if (!hasTags) {
+        setVisibleTitle((current) => (current === fullTitle ? current : fullTitle));
+        return;
+      }
+
+      measure.style.width = `${container.clientWidth}px`;
+      const lineHeight = Number.parseFloat(window.getComputedStyle(measureTitle).lineHeight) || 24;
+      const maxHeight = lineHeight * 2 + 0.5;
+      const fitsWithinTwoLines = (candidate) => {
+        measureTitle.textContent = candidate;
+        return measure.getBoundingClientRect().height <= maxHeight;
+      };
+
+      if (fitsWithinTwoLines(fullTitle)) {
+        setVisibleTitle((current) => (current === fullTitle ? current : fullTitle));
+        return;
+      }
+
+      let low = 0;
+      let high = fullTitle.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const candidate = `${fullTitle.slice(0, middle).trimEnd()}…`;
+        if (fitsWithinTwoLines(candidate)) low = middle;
+        else high = middle - 1;
+      }
+
+      const truncatedTitle = `${fullTitle.slice(0, low).trimEnd()}…`;
+      setVisibleTitle((current) => (current === truncatedTitle ? current : truncatedTitle));
+    };
+
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(animationFrameId);
+      animationFrameId = window.requestAnimationFrame(updateVisibleTitle);
+    };
+
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdate);
+    resizeObserver?.observe(container);
+    updateVisibleTitle();
+    document.fonts?.ready.then(() => {
+      if (!cancelled) scheduleUpdate();
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(animationFrameId);
+      resizeObserver?.disconnect();
+    };
+  }, [hasTags, imported, title, titleClassName, titleTagsKey]);
+
+  const renderTags = () => hasTags ? (
+    <span data-search-card-title-tags className="ml-1.5 inline-flex shrink-0 items-center gap-1 whitespace-nowrap align-middle">
+      {titleTags.map((label) => (
+        <Badge key={`${itemId}-${label}`} variant={searchResultTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
+          {label}
+        </Badge>
+      ))}
+      {imported ? <Badge variant="imported" className={mobileInlineBadgeClassName}>已导入</Badge> : null}
+    </span>
+  ) : null;
+
+  return (
+    <div ref={containerRef} data-search-card-title className="relative min-w-0 py-0.5" title={title}>
+      <span className={cn("min-w-0", hasTags ? "block overflow-hidden" : "line-clamp-2")}>
+        <span className={`break-words ${titleClassName}`}>{visibleTitle}</span>
+        {renderTags()}
+      </span>
+      <span ref={measureRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 block whitespace-normal">
+        <span ref={measureTitleRef} className={`break-words ${titleClassName}`}>{title}</span>
+        {renderTags()}
+      </span>
+    </div>
+  );
+}
+
+function SearchResultActionLayout({ imported, children, ...props }) {
+  const containerRef = useRef(null);
+  const [shouldWrap, setShouldWrap] = useState(false);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    const actionCount = imported ? 6 : 4;
+    const minimumSingleLineWidth = actionCount * 44 + (actionCount - 1) * 4;
+    const updateWrapping = (width) => {
+      const nextShouldWrap = width + 0.5 < minimumSingleLineWidth;
+      setShouldWrap((current) => (current === nextShouldWrap ? current : nextShouldWrap));
+    };
+
+    updateWrapping(container.getBoundingClientRect().width);
+    if (typeof ResizeObserver === "undefined") return undefined;
+
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      updateWrapping(entry?.contentRect?.width ?? container.getBoundingClientRect().width);
+    });
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [imported]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn(
+        "relative z-10 flex w-full min-w-0 items-center justify-end gap-x-1 lg:w-auto lg:flex-nowrap lg:gap-y-1.5",
+        shouldWrap ? "flex-wrap gap-y-3" : "flex-nowrap gap-y-1.5"
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function SearchResults({
   platform = "missevan",
@@ -259,6 +352,7 @@ export function SearchResults({
   statisticsActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  canAddCompareItem,
   onRetryMetrics,
 }) {
   const idLabel = "作品ID";
@@ -287,6 +381,7 @@ export function SearchResults({
   }, [allResults, results]);
   const trendLookupKey = trendLookupIds.join("|");
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const [importingDramaIds, setImportingDramaIds] = useState(() => new Set());
   const [trendEligibility, setTrendEligibility] = useState({
     platform: "",
     ids: new Set(),
@@ -612,14 +707,6 @@ export function SearchResults({
     return selectedEpisodes.map((episode) => episode.sound_id);
   }
 
-  function selectAllResults() {
-    setResultsMutator((nextResults) => {
-      nextResults.forEach((result) => {
-        result.checked = true;
-      });
-    });
-  }
-
   function clearAllResults() {
     setResultsMutator((nextResults) => {
       nextResults.forEach((result) => {
@@ -641,10 +728,31 @@ export function SearchResults({
   }
 
   function setAllResultsChecked(checked) {
-    if (checked) {
-      selectAllResults();
-    } else {
-      clearAllResults();
+    setResultsMutator((nextResults) => {
+      nextResults.forEach((result) => {
+        result.checked = Boolean(checked);
+      });
+    });
+  }
+
+  async function importOrToggleDrama(item) {
+    const dramaId = String(item?.id ?? "");
+    if (!dramaId || importingDramaIds.has(dramaId)) {
+      return;
+    }
+    if (getImportedDrama(dramaId)) {
+      toggleDrama(dramaId);
+      return;
+    }
+    setImportingDramaIds((current) => new Set(current).add(dramaId));
+    try {
+      await onAddDramas?.([item.id], { autoCheck: true, expandImported: true, preserveScroll: true });
+    } finally {
+      setImportingDramaIds((current) => {
+        const next = new Set(current);
+        next.delete(dramaId);
+        return next;
+      });
     }
   }
 
@@ -847,15 +955,9 @@ export function SearchResults({
   const batchSwitchHitAreaClass = "relative block h-11 min-h-11 w-full min-w-0";
   const batchSwitchVisualClass = "absolute inset-x-0 top-1/2 flex h-9 w-full min-w-0 -translate-y-1/2 items-center justify-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2 sm:text-xs";
   const desktopBatchControlClass = "flex h-9 w-full items-center justify-start gap-2 rounded-md border border-border/75 bg-background px-2.5 text-[14px]! font-medium";
-  const resultActionControlClass = "flex h-8 items-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1.5 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2.5 sm:text-xs";
-  const resultActionButtonClass = "h-8 gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-[0.7rem] sm:gap-1.5 sm:px-2.5 sm:text-xs";
-  const mobileResultActionsClass = "grid w-fit max-w-full grid-cols-[max-content_max-content_max-content_max-content] justify-start gap-1 lg:hidden";
-  const mobileResultActionShortTextClass = "[font-size:clamp(0.6rem,2.7vw,0.75rem)]! [line-height:1]!";
-  const mobileResultActionLongTextClass = "[font-size:clamp(0.6rem,3.15vw,0.875rem)]! [line-height:1]!";
-  const mobileResultActionChromeClass = "[height:clamp(1.75rem,7vw,2rem)]! gap-[clamp(0.125rem,0.85vw,0.25rem)]! [padding-inline:clamp(0.125rem,1.55vw,0.375rem)]!";
-  const mobileResultActionControlClass = `flex min-w-0 items-center justify-center rounded-[calc(var(--radius)-0.16rem)] border border-border/70 bg-background/84 font-medium text-foreground ${mobileResultActionChromeClass} ${mobileResultActionShortTextClass}`;
-  const mobileResultActionButtonClass = `relative min-w-0 overflow-visible rounded-[calc(var(--radius)-0.16rem)] leading-none after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-[''] [&>svg]:[height:clamp(0.625rem,3.15vw,0.875rem)]! [&>svg]:[width:clamp(0.625rem,3.15vw,0.875rem)]! ${mobileResultActionChromeClass} ${mobileResultActionLongTextClass}`;
-
+  const resultActionButtonClass = "relative h-8 min-w-11 shrink justify-center gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-center text-[0.7rem] after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-[''] sm:gap-1.5 sm:px-2.5 sm:text-xs lg:min-w-0";
+  const resultSelectionActionClass = `${resultActionButtonClass} border-border/70 bg-background/84 text-foreground aria-pressed:border-2 aria-pressed:border-primary aria-pressed:bg-primary/8 aria-pressed:font-semibold aria-pressed:text-primary hover:bg-surface-hover`;
+  const trendResultActionButtonClass = `${resultActionButtonClass} border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]`;
   function runMobileAction(callback) {
     setMobileActionsOpen(false);
     callback?.();
@@ -1054,10 +1156,9 @@ export function SearchResults({
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_150px] lg:items-start">
-      <Card className="min-w-0 py-0 pt-2.5 pb-4">
-        <CardContent className="pt-0">
+      <div className="min-w-0">
         {showResultsHeader ? (
-          <div className="border-b border-border/75 pb-1.5">
+          <div className="mb-3">
             <div className="flex items-center justify-between gap-2">
               {platformTabs.length > 1 ? (
                 <Tabs className="w-fit max-w-full shrink-0" value={activePlatform} onValueChange={onPlatformChange}>
@@ -1100,7 +1201,7 @@ export function SearchResults({
             onOpenCv={onOpenCv}
           />
         ) : results.length ? (
-          <div className={showResultsHeader ? "mt-3 divide-y divide-border/75" : "divide-y divide-border/75"}>
+          <div className="grid gap-3 sm:gap-4">
             {visibleResults.map((item) => {
               const importedDrama = getImportedDrama(item.id);
               const coverUrl = buildProxyImageUrl(item.cover);
@@ -1112,156 +1213,174 @@ export function SearchResults({
               const metricsStatus = String(item?.metrics_status || "ready");
               const metricsFailed = metricsStatus === "error" || metricsStatus === "access_denied";
               const canShowTrend = canShowSearchTrend(item);
+              const allEpisodesSelected = importedDrama ? areAllEpisodesSelected(item.id) : false;
+              const paidEpisodesSelected = importedDrama ? arePaidEpisodesSelected(item.id) : false;
+              const importingDrama = importingDramaIds.has(String(item.id));
+              const importActionLabel = importingDrama
+                ? "正在导入分集"
+                : importedDrama
+                  ? (importedDrama.expanded ? "收起分集" : "展开分集")
+                  : "导入分集";
+              const importActionText = importingDrama
+                ? "导入中"
+                : importedDrama
+                  ? (importedDrama.expanded ? "收起" : "展开")
+                  : "导入";
 
               return (
-                <div key={item.id} data-search-result-id={String(item.id)} className="px-0 py-3.5 first:pt-0 last:pb-0 sm:py-4">
-                  <div className="flex flex-col gap-2.5">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex w-8 shrink-0 flex-col items-center gap-2 pt-0.5">
-                          <Checkbox checked={Boolean(item.checked)} onCheckedChange={(checked) => updateResultChecked(item.id, Boolean(checked))} />
-                          <Button
-                            aria-label={isFavorite(item) ? "取消收藏" : "加入收藏"}
-                            title={isFavorite(item) ? "取消收藏" : "加入收藏"}
-                            variant="ghost"
-                            size="icon-sm"
-                            className="bg-background/84"
-                            disabled={favoriteActionsDisabled}
-                            onClick={() => onToggleFavorite?.(buildFavoritePayload(item))}
-                          >
-                            <StarIcon className={isFavorite(item) ? "fill-primary text-primary" : ""} />
-                          </Button>
-                          {importedDrama ? (
-                            <Button variant="ghost" size="icon-sm" className="bg-background/84" onClick={() => toggleDrama(item.id)}>
-                              {importedDrama.expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
-                            </Button>
-                          ) : (
-                            <Button
-                              aria-label="导入分集"
-                              title="导入分集"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="bg-background/84"
-                              onClick={() => onAddDramas?.([item.id], { autoCheck: true, expandImported: true, preserveScroll: true })}
-                            >
-                              <ImportIcon />
-                            </Button>
-                          )}
-                        </div>
-                        <div className="relative size-20 shrink-0 self-center overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50 lg:size-[6rem]">
-                          {coverUrl ? (
-                            <LazyImage alt={item.name} className="aspect-square size-20 object-cover lg:size-[6rem]" src={coverUrl} />
-                          ) : (
-                            <div className="flex aspect-square size-20 items-center justify-center text-xs text-muted-foreground lg:size-[6rem]">
-                              暂无封面
+                <Card
+                  key={item.id}
+                  data-search-result-id={String(item.id)}
+                  data-selected={item.checked ? "true" : "false"}
+                  className={cn(
+                    "relative min-w-0 cursor-pointer gap-0 overflow-visible py-0 transition-colors hover:bg-card",
+                    item.checked ? "border-2 border-primary" : "border-border"
+                  )}
+                  onClick={(event) => {
+                    if (event.target.closest("button, a, input, label, select, textarea, [role='menuitem'], [role='switch'], [data-search-card-actions]")) return;
+                    updateResultChecked(item.id, !item.checked);
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={`${item.checked ? "取消选择" : "选择"}${item.name}`}
+                    aria-pressed={Boolean(item.checked)}
+                    className="pointer-events-none absolute inset-0 z-0 rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-ring/55"
+                    title={`${item.checked ? "取消选择" : "选择"}${item.name}`}
+                    onClick={() => updateResultChecked(item.id, !item.checked)}
+                  />
+                  <CardContent className="relative flex min-w-0 flex-col gap-2 px-3 py-3 sm:px-4 sm:py-4">
+                    <div className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-start gap-3">
+                      <div className="relative size-24 shrink-0 self-center overflow-hidden rounded-[calc(var(--radius)-0.05rem)] border border-border/70 bg-muted/50">
+                        {coverUrl ? (
+                          <LazyImage alt={item.name} className="size-full object-cover" src={coverUrl} />
+                        ) : (
+                          <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+                            暂无封面
+                          </div>
+                        )}
+                        {paymentTag ? (
+                          <Badge variant={searchResultTagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>
+                            {paymentTag}
+                          </Badge>
+                        ) : null}
+                      </div>
+
+                      <div className="flex min-w-0 flex-col justify-center gap-1 lg:min-h-24">
+                        <SearchResultTitle
+                          imported={Boolean(importedDrama)}
+                          itemId={item.id}
+                          title={item.name}
+                          titleClassName={getTitleClassName(item.name)}
+                          titleTags={titleTags}
+                        />
+
+                        <div data-search-card-metadata className="min-w-0">
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground" aria-label={`${idLabel}: ${item.id}`} title={`${idLabel}: ${item.id}`}>
+                              <PlatformIdIcon aria-hidden="true" className={metaIconClassName} platform={platform} tone="inherit" />
+                              <span className="min-w-0 break-all">{item.id}</span>
                             </div>
-                          )}
-                          {paymentTag ? (
-                            <Badge variant={searchResultTagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>
-                              {paymentTag}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 lg:min-h-24 lg:gap-1">
-                          <div className="hidden min-w-0 flex-wrap items-center gap-1.5 lg:flex">
-                            <span className={`min-w-0 break-words ${getTitleClassName(item.name)}`}>{item.name}</span>
-                            {titleTags.map((label) => (
-                              <Badge key={`${item.id}-desktop-${label}`} variant={searchResultTagVariants[label] || "outline"} className={metaBadgeClassName}>
-                                {label}
-                              </Badge>
-                            ))}
-                            {importedDrama ? <Badge variant="imported" className={metaBadgeClassName}>已导入</Badge> : null}
-                          </div>
-                          <div className="min-w-0 lg:hidden">
-                            <span className={`break-words ${getTitleClassName(item.name)}`}>{item.name}</span>
-                            {titleTags.map((label) => (
-                              <Badge key={`${item.id}-${label}`} variant={searchResultTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>
-                                {label}
-                              </Badge>
-                            ))}
-                            {importedDrama ? <Badge variant="imported" className={mobileInlineBadgeClassName}>已导入</Badge> : null}
-                          </div>
-                          <PlatformDramaLink
-                            platform={platform}
-                            dramaId={item.id}
-                            idLabel={idLabel}
-                            source="search"
-                            dramaTitle={item.name}
-                            frontendVersion={frontendVersion}
-                            iconClassName={metaIconClassName}
-                          />
-                          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                            <FeatherIcon aria-label="原作名" className={metaIconClassName} title="原作名" />
-                            <span className="min-w-0 break-words">{originalAuthorText || "暂无"}</span>
-                          </div>
-                          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                            <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
-                            <span className="min-w-0 break-words">{mainCvText.replace(/^主要CV：/, "") || "暂无"}</span>
-                          </div>
-                          <div className="mt-1 hidden min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm lg:flex">
-                            {metrics.map((metric) => (
-                              <div
-                                key={`${item.id}-desktop-${metric.label}`}
-                                aria-label={`${metric.label}: ${metric.value}`}
-                                title={`${metric.label}: ${metric.value}`}
-                                className="max-w-full text-foreground"
-                              >
-                                <span className="inline-flex w-fit max-w-full items-center gap-1">
-                                  <MetricIcon label={metric.label} loading={metric.loading} className="size-3.5 shrink-0 text-muted-foreground" />
-                                  <span className={`min-w-0 break-all text-[0.74rem] font-medium tabular-nums sm:text-sm ${metricsStatus === "ready" ? "metric-value-ready" : ""}`}>{metric.value}</span>
-                                </span>
-                              </div>
-                            ))}
-                            {metricsFailed ? (
-                              <Button type="button" variant="ghost" size="xs" className="h-6 px-1.5 text-xs" onClick={() => onRetryMetrics?.(item)}>
-                                重试
-                              </Button>
-                            ) : null}
-                            {canShowTrend ? (
-                              <>
-                                <RankTrendButton
-                                  density="inline"
-                                  onClick={() => openTrendDialog(item)}
-                                  aria-label={`查看${item.name}趋势`}
-                                  title="查看趋势"
-                                />
-                                <CompareActionButton
-                                  density="inline"
-                                  onClick={() => addCompareItem(item)}
-                                  aria-label={`加入${item.name}对比`}
-                                  title="加入对比"
-                                />
-                              </>
-                            ) : null}
+                            <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground">
+                              <FeatherIcon aria-label="原作名" className={metaIconClassName} title="原作名" />
+                              <span className="min-w-0 break-words">{originalAuthorText || "暂无"}</span>
+                            </div>
+                            <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground">
+                              <MicIcon aria-label="主要CV" className={metaIconClassName} title="主要CV" />
+                              <span className="min-w-0 break-words">{mainCvText.replace(/^主要CV：/, "") || "暂无"}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
+                    </div>
 
-                      <div className="hidden flex-nowrap gap-2 lg:flex lg:justify-end">
-                        <div className={resultActionControlClass}>
-                          <Switch
-                            aria-label="切换当前作品全选"
-                            size="sm"
-                            checked={areAllEpisodesSelected(item.id)}
-                            onCheckedChange={(checked) => setResultAllEpisodesSelected(item, Boolean(checked))}
-                            className="data-checked:bg-primary data-unchecked:bg-muted"
-                          />
-                          <span>全选</span>
-                        </div>
-                        <div className={resultActionControlClass}>
-                          <Switch
-                            aria-label="切换当前作品付费分集"
-                            size="sm"
-                            checked={arePaidEpisodesSelected(item.id)}
-                            onCheckedChange={(checked) => setResultPaidEpisodesSelected(item, Boolean(checked))}
-                            className="data-checked:bg-primary data-unchecked:bg-muted"
-                          />
-                          <span>付费</span>
-                        </div>
+                    <div className="flex min-w-0 flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex min-w-0 flex-nowrap items-center gap-x-2 text-xs sm:gap-x-3">
+                        {metrics.map((metric) => (
+                          <div
+                            key={`${item.id}-${metric.label}`}
+                            aria-label={`${metric.label}: ${metric.value}`}
+                            title={`${metric.label}: ${metric.value}`}
+                            className="min-w-0 shrink text-foreground"
+                          >
+                            <span className="inline-flex w-fit max-w-full items-center gap-1">
+                              <MetricIcon label={metric.label} loading={metric.loading} className="size-3.5 shrink-0 text-muted-foreground" />
+                              <span className={`min-w-0 whitespace-nowrap font-medium tabular-nums ${metricsStatus === "ready" ? "metric-value-ready" : ""}`}>{metric.value}</span>
+                            </span>
+                          </div>
+                        ))}
+                        {metricsFailed ? (
+                          <Button type="button" variant="ghost" size="xs" className="h-7 px-1.5 text-xs" onClick={() => onRetryMetrics?.(item)}>
+                            重试
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      <SearchResultActionLayout data-search-card-actions="true" imported={Boolean(importedDrama)}>
                         <Button
                           type="button"
+                          data-touch="compact"
+                          variant={importedDrama ? "outline" : "default"}
+                          className={resultActionButtonClass}
+                          aria-label={importActionLabel}
+                          title={importActionLabel}
+                          disabled={importingDrama}
+                          onClick={() => importOrToggleDrama(item)}
+                        >
+                          {importingDrama ? (
+                            <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />
+                          ) : importedDrama ? (
+                            importedDrama.expanded
+                              ? <ChevronDownIcon data-icon="inline-start" />
+                              : <ChevronRightIcon data-icon="inline-start" />
+                          ) : (
+                            <ImportIcon data-icon="inline-start" />
+                          )}
+                          <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>{importActionText}</span>
+                        </Button>
+                        {importedDrama ? <Button
+                          type="button"
+                          data-touch="compact"
+                          variant="outline"
+                          className={resultSelectionActionClass}
+                          aria-label={allEpisodesSelected ? "取消当前作品全选" : "选择当前作品全部分集"}
+                          aria-pressed={allEpisodesSelected}
+                          title="全选"
+                          onClick={() => setResultAllEpisodesSelected(item, !allEpisodesSelected)}
+                        >
+                          <span className="min-w-0 truncate whitespace-nowrap">全选</span>
+                        </Button> : null}
+                        {importedDrama ? <Button
+                          type="button"
+                          data-touch="compact"
+                          variant="outline"
+                          className={resultSelectionActionClass}
+                          aria-label={paidEpisodesSelected ? "取消当前作品付费分集选择" : "选择当前作品付费分集"}
+                          aria-pressed={paidEpisodesSelected}
+                          title="付费"
+                          onClick={() => setResultPaidEpisodesSelected(item, !paidEpisodesSelected)}
+                        >
+                          <span className="min-w-0 truncate whitespace-nowrap">付费</span>
+                        </Button> : null}
+                        <Button
+                          type="button"
+                          data-touch="compact"
+                          className={trendResultActionButtonClass}
+                          aria-label="查看趋势"
+                          title="趋势"
+                          disabled={!canShowTrend}
+                          onClick={() => openTrendDialog(item)}
+                        >
+                          <TrendingUpIcon data-icon="inline-start" />
+                          <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>趋势</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          data-touch="compact"
                           variant="secondary"
                           className={resultActionButtonClass}
+                          aria-label="统计付费ID"
+                          title="付费ID"
                           disabled={statisticsActionsDisabled}
                           onClick={() => onStartDramaPaidIdStatistics?.(
                             getResultDramaId(item),
@@ -1269,59 +1388,55 @@ export function SearchResults({
                           )}
                         >
                           <UserSearchIcon data-icon="inline-start" />
-                          付费ID
+                          <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>付费ID</span>
                         </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className={resultActionButtonClass}
-                          disabled={statisticsActionsDisabled}
-                          onClick={() => onStartRevenueEstimate?.(
-                            [getResultDramaId(item)],
-                            { source: `${getResultDramaId(item)}earn` }
-                          )}
-                        >
-                          <HandCoinsIcon data-icon="inline-start" />
-                          收益
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm lg:hidden">
-                      {metrics.map((metric) => (
-                          <div
-                            key={`${item.id}-${metric.label}`}
-                            aria-label={`${metric.label}: ${metric.value}`}
-                            title={`${metric.label}: ${metric.value}`}
-                            className="max-w-full text-foreground"
-                          >
-                            <span className="inline-flex w-fit max-w-full items-center gap-1">
-                              <MetricIcon label={metric.label} loading={metric.loading} className="size-3.5 shrink-0 text-muted-foreground" />
-                              <span className={`min-w-0 break-all text-[0.74rem] font-medium tabular-nums sm:text-sm ${metricsStatus === "ready" ? "metric-value-ready" : ""}`}>{metric.value}</span>
-                            </span>
-                          </div>
-                        ))}
-                      {metricsFailed ? (
-                        <Button type="button" variant="ghost" size="xs" data-touch="compact" className="h-7 px-1.5 text-xs" onClick={() => onRetryMetrics?.(item)}>
-                          重试
-                        </Button>
-                      ) : null}
-                      {canShowTrend ? (
-                        <>
-                          <RankTrendButton
-                            density="inline"
-                            onClick={() => openTrendDialog(item)}
-                            aria-label={`查看${item.name}趋势`}
-                            title="查看趋势"
-                          />
-                          <CompareActionButton
-                            density="inline"
-                            onClick={() => addCompareItem(item)}
-                            aria-label={`加入${item.name}对比`}
-                            title="加入对比"
-                          />
-                        </>
-                      ) : null}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              data-touch="compact"
+                              variant="outline"
+                              className={resultActionButtonClass}
+                              aria-label={`${item.name}更多操作`}
+                              title="更多操作"
+                            >
+                              <MoreHorizontalIcon data-icon="inline-start" />
+                              <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>更多</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" side="bottom">
+                            <DropdownMenuItem
+                              disabled={favoriteActionsDisabled}
+                              onSelect={() => onToggleFavorite?.(buildFavoritePayload(item))}
+                            >
+                              <StarIcon aria-hidden="true" className={isFavorite(item) ? "fill-primary text-primary" : ""} />
+                              {isFavorite(item) ? "取消收藏" : "收藏"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem disabled={!canShowTrend || (canAddCompareItem ? !canAddCompareItem(item) : false)} onSelect={() => addCompareItem(item)}>
+                              <ArrowLeftRightIcon aria-hidden="true" />
+                              对比
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={statisticsActionsDisabled}
+                              onSelect={() => onStartRevenueEstimate?.([getResultDramaId(item)], { source: `${getResultDramaId(item)}earn` })}
+                            >
+                              <HandCoinsIcon aria-hidden="true" />
+                              收益
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <PlatformDramaLink
+                                appearance="menu"
+                                platform={platform}
+                                dramaId={item.id}
+                                idLabel={idLabel}
+                                source="search"
+                                dramaTitle={item.name}
+                                frontendVersion={frontendVersion}
+                              />
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </SearchResultActionLayout>
                     </div>
 
                     {canShowTrend && trendDialog.open && String(trendDialog.item?.id) === String(item.id) ? (
@@ -1335,57 +1450,6 @@ export function SearchResults({
                         handleVersionResponse={handleVersionResponse}
                       />
                     ) : null}
-
-                    <div className={mobileResultActionsClass}>
-                      <div className={mobileResultActionControlClass}>
-                        <Switch
-                          aria-label="切换当前作品全选"
-                          size="sm"
-                          checked={areAllEpisodesSelected(item.id)}
-                          onCheckedChange={(checked) => setResultAllEpisodesSelected(item, Boolean(checked))}
-                          className="data-checked:bg-primary data-unchecked:bg-muted"
-                        />
-                        <span>全选</span>
-                      </div>
-                      <div className={mobileResultActionControlClass}>
-                        <Switch
-                          aria-label="切换当前作品付费分集"
-                          size="sm"
-                          checked={arePaidEpisodesSelected(item.id)}
-                          onCheckedChange={(checked) => setResultPaidEpisodesSelected(item, Boolean(checked))}
-                          className="data-checked:bg-primary data-unchecked:bg-muted"
-                        />
-                        <span>付费</span>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        data-touch="compact"
-                        className={mobileResultActionButtonClass}
-                        disabled={statisticsActionsDisabled}
-                        onClick={() => onStartDramaPaidIdStatistics?.(
-                          getResultDramaId(item),
-                          { source: `${getResultDramaId(item)}payID` }
-                        )}
-                      >
-                        <UserSearchIcon data-icon="inline-start" />
-                        付费ID
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        data-touch="compact"
-                        className={mobileResultActionButtonClass}
-                        disabled={statisticsActionsDisabled}
-                        onClick={() => onStartRevenueEstimate?.(
-                          [getResultDramaId(item)],
-                          { source: `${getResultDramaId(item)}earn` }
-                        )}
-                      >
-                        <HandCoinsIcon data-icon="inline-start" />
-                        收益
-                      </Button>
-                    </div>
 
                     {importedDrama?.expanded ? (
                       <>
@@ -1423,8 +1487,8 @@ export function SearchResults({
                         </div>
                       </>
                     ) : null}
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
               );
             })}
             {showLoadMore ? (
@@ -1459,8 +1523,7 @@ export function SearchResults({
             )}
           </div>
         )}
-        </CardContent>
-      </Card>
+      </div>
       {results.length ? (
         <aside className="hidden lg:sticky lg:top-36 lg:block">
           <div className="grid gap-3">

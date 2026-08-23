@@ -737,10 +737,6 @@ app.use(createRequestLoggerMiddleware({ logger }));
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(compression({
   threshold: 1024,
-  filter: (req, res) => {
-    const type = String(res.getHeader("Content-Type") || "").toLowerCase();
-    return type.includes("application/json") && compression.filter(req, res);
-  },
 }));
 
 app.use((error, req, res, next) => {
@@ -2203,7 +2199,7 @@ export function buildUserActionKeywordText(action, fields = {}) {
   if (["search", "ranks", "ongoing"].includes(normalizedAction)) {
     return normalizeTextValue(fields.keyword);
   }
-  if (normalizedAction === "trend") {
+  if (["trend", "paid_id_click", "revenue_click"].includes(normalizedAction)) {
     return normalizeTextValue(fields.dramaName);
   }
   if (normalizedAction === "compare") {
@@ -2341,6 +2337,31 @@ export function buildCvProfileOpenUsageLog(payload = {}) {
       platform,
       ...(rankKey ? { rankKey } : {}),
     } : {}),
+    success: true,
+  };
+}
+
+export function buildTrendOpenUsageLog(payload = {}) {
+  const platform = normalizeTextValue(payload.platform);
+  const dramaId = normalizeTextValue(payload.dramaId ?? payload.id).slice(0, 80);
+  const dramaName = normalizeTextValue(payload.dramaName).slice(0, 200);
+  const source = normalizeTextValue(payload.source).slice(0, 40);
+  const rankKey = normalizeTextValue(payload.rankKey).slice(0, 80);
+  const isPeakSeriesTrend = platform === "missevan" && rankKey === "peak" && Boolean(dramaId);
+  const isDramaTrend = ["missevan", "manbo"].includes(platform) && (isNumericId(dramaId) || isPeakSeriesTrend);
+  const isCvTrend = platform === "cv" && ["cv", "cv-paid"].includes(rankKey) && Boolean(dramaId) && Boolean(dramaName);
+
+  if (!isDramaTrend && !isCvTrend) {
+    return null;
+  }
+
+  return {
+    platform,
+    action: "trend",
+    dramaId,
+    ...(dramaName ? { dramaName } : {}),
+    ...(source ? { source } : {}),
+    ...(rankKey ? { rankKey } : {}),
     success: true,
   };
 }
@@ -10806,35 +10827,40 @@ app.post("/usage-log", async (req, res) => {
     }
 
     if (action === "trend") {
-      if (!["missevan", "manbo"].includes(platform)) {
+      const entry = buildTrendOpenUsageLog(payload);
+      if (!entry) {
         return res.status(400).json({
           success: false,
-          message: "Invalid usage log payload",
+          message: "Invalid trend usage log payload",
         });
       }
+      await writeUsageLog(entry);
+      return res.json({ success: true });
+    }
 
+    if (["paid_id_click", "revenue_click"].includes(action)) {
       const dramaId = String(payload.dramaId ?? payload.id ?? "").trim().slice(0, 80);
-      const rankKey = normalizeTextValue(payload.rankKey).slice(0, 80);
-      const isPeakSeriesTrend = platform === "missevan" && rankKey === "peak" && dramaId;
-      if (!isNumericId(dramaId) && !isPeakSeriesTrend) {
+      const dramaName = normalizeTextValue(payload.dramaName).slice(0, 200);
+      const source = normalizeTextValue(payload.source).slice(0, 40);
+      if (
+        !["missevan", "manbo"].includes(platform) ||
+        !isNumericId(dramaId) ||
+        !dramaName ||
+        !["ongoing", "ranks", "homeview"].includes(source) ||
+        payload.success !== true
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Missing trend drama id",
+          message: "Invalid statistics usage log payload",
         });
       }
 
-      const source = normalizeTextValue(payload.source).slice(0, 40);
       await writeUsageLog({
         platform,
         action,
         dramaId,
-        ...(normalizeTextValue(payload.dramaName).slice(0, 200)
-          ? { dramaName: normalizeTextValue(payload.dramaName).slice(0, 200) }
-          : {}),
-        ...(source ? { source } : {}),
-        ...(rankKey
-          ? { rankKey }
-          : {}),
+        dramaName,
+        source,
         success: true,
       });
       return res.json({ success: true });
@@ -11287,10 +11313,30 @@ function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTask
   return task;
 }
 
-app.use(express.static(path.join(__dirname, "dist")));
+const distDirectory = path.join(__dirname, "dist");
+const distAssetsDirectory = path.join(distDirectory, "assets");
+
+app.use("/assets", express.static(distAssetsDirectory, {
+  fallthrough: true,
+  immutable: true,
+  maxAge: "1y",
+}));
+
+app.use(express.static(distDirectory, {
+  fallthrough: true,
+  maxAge: 0,
+  setHeaders: (res, filePath) => {
+    if (path.basename(filePath).toLowerCase() === "index.html") {
+      res.setHeader("Cache-Control", "no-store");
+      return;
+    }
+    res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
+  },
+}));
 
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "index.html"));
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(distDirectory, "index.html"));
 });
 
 let serverInstance = null;

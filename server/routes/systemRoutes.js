@@ -23,7 +23,7 @@ export function registerSystemRoutes(router, {
       missevanEnabled,
       desktopApp,
       brandName: missevanEnabled ? "MMTOOLKIT.APP" : "Manbo Toolkit",
-      titleZh: missevanEnabled ? "小猫小狐数据分析" : "小狐分析",
+      titleZh: missevanEnabled ? "小猫小狐工具箱" : "小狐分析",
       description: missevanEnabled
         ? "支持 Missevan 与 Manbo 的作品导入、分集筛选、弹幕统计和数据汇总。"
         : "支持 Manbo 平台的作品导入、分集筛选、弹幕统计和去重 ID 汇总。",

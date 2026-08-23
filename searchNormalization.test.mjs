@@ -184,6 +184,60 @@ test("CV profile open usage logs normalize search, rank and legacy events", asyn
   }), null);
 });
 
+test("trend usage logs accept named CV ranks without weakening drama id validation", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildTrendOpenUsageLog } = await import("./server.js");
+
+  assert.deepEqual(buildTrendOpenUsageLog({
+    platform: "cv",
+    action: "trend",
+    dramaId: "  陈张太康  ",
+    dramaName: "陈张太康",
+    source: "homeview",
+    rankKey: "cv-paid",
+  }), {
+    platform: "cv",
+    action: "trend",
+    dramaId: "陈张太康",
+    dramaName: "陈张太康",
+    source: "homeview",
+    rankKey: "cv-paid",
+    success: true,
+  });
+  assert.equal(buildTrendOpenUsageLog({
+    platform: "cv",
+    dramaId: "陈张太康",
+    dramaName: "陈张太康",
+    rankKey: "popular_weekly",
+  }), null);
+  assert.equal(buildTrendOpenUsageLog({
+    platform: "cv",
+    dramaId: "陈张太康",
+    rankKey: "cv",
+  }), null);
+  assert.equal(buildTrendOpenUsageLog({
+    platform: "missevan",
+    dramaId: "not-a-drama-id",
+    dramaName: "测试剧集",
+    rankKey: "popular_weekly",
+  }), null);
+  assert.deepEqual(buildTrendOpenUsageLog({
+    platform: "manbo",
+    dramaId: "1834138790155780240",
+    dramaName: "测试剧集",
+    source: "ranks",
+    rankKey: "hot",
+  }), {
+    platform: "manbo",
+    action: "trend",
+    dramaId: "1834138790155780240",
+    dramaName: "测试剧集",
+    source: "ranks",
+    rankKey: "hot",
+    success: true,
+  });
+});
+
 test("library search falls back to optional internal 的 compatibility", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { searchMissevanLibraryRecords, searchManboLibraryRecords } = await import("./server.js");
@@ -1391,6 +1445,8 @@ test("terminal stats task usage logs preserve the full result and optional sourc
   assert.equal(buildStatsTaskKeyResultText("id", { totalUsers: null }), "");
   assert.equal(buildUserActionKeywordText("search", { keyword: "  剑名不奈何  " }), "剑名不奈何");
   assert.equal(buildUserActionKeywordText("trend", { dramaName: "剑名不奈何 第一季" }), "剑名不奈何 第一季");
+  assert.equal(buildUserActionKeywordText("paid_id_click", { dramaName: "剑名不奈何 第一季" }), "剑名不奈何 第一季");
+  assert.equal(buildUserActionKeywordText("revenue_click", { dramaName: "剑名不奈何 第一季" }), "剑名不奈何 第一季");
   assert.equal(buildUserActionKeywordText("ranks", { keyword: "猫耳付费榜" }), "猫耳付费榜");
   assert.equal(buildUserActionKeywordText("ongoing", { keyword: "漫播一周内更新" }), "漫播一周内更新");
   assert.equal(buildUserActionKeywordText("compare", {

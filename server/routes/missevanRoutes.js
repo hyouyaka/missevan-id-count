@@ -38,6 +38,7 @@ export function registerMissevanRoutes(router, {
     const usageAction = normalizeDramaCardUsageAction(req.body.usageAction);
     const usageTitles = normalizeStringArray(req.body?.titles, inputItems.length);
     const usageSource = normalizeStatsTaskSource(req.body?.source);
+    const suppressUsageLog = req.body?.suppressUsageLog === true;
     const results = [];
     const failedIds = [];
     const failedItems = [];
@@ -105,7 +106,7 @@ export function registerMissevanRoutes(router, {
     }
 
     const dedupedResults = dedupeMissevanDramaCardResults(results);
-    if (inputItems.length) {
+    if (inputItems.length && !suppressUsageLog) {
       const resolvedUsageTitles = normalizeStringArray([
         ...usageTitles,
         ...dedupedResults.map((item) => item?.name ?? item?.title),

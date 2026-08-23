@@ -24,6 +24,7 @@ import {
   formatSignedCompactMetricValue,
   formatDeviceDateTime,
   formatRankCompactCount,
+  formatRankCardMetricValue,
   formatRevenueDisplayValue,
   getRevenueDisplayLabel,
   getInlineTaggedTitleDisplayText,
@@ -31,6 +32,7 @@ import {
   loadPersistedHistoryEntries,
   mergeMissingSearchCardFields,
   normalizeOngoingWindow,
+  normalizeSearchRouteQuery,
   parseRawItems,
   readToolRouteStateFromLocation,
   readToolViewFromLocation,
@@ -376,6 +378,7 @@ test("tool route state reader includes detail params with normalized fallbacks",
     }),
     {
       view: "ongoing",
+      q: "",
       platform: "manbo",
       window: "7d",
       category: "ignored",
@@ -390,6 +393,7 @@ test("tool route state reader includes detail params with normalized fallbacks",
   );
   assert.deepEqual(readToolRouteStateFromLocation({ search: "?view=bad&platform=bad&window=bad" }), {
     view: "home",
+    q: "",
     platform: "missevan",
     window: "7d",
     category: "",
@@ -403,6 +407,7 @@ test("tool route state reader includes detail params with normalized fallbacks",
   });
   assert.deepEqual(readToolRouteStateFromLocation({ search: "" }), {
     view: "home",
+    q: "",
     platform: "missevan",
     window: "7d",
     category: "",
@@ -434,6 +439,33 @@ test("tool route URL builder keeps only ongoing route params", () => {
   );
 });
 
+test("search route preserves encoded keyword semantics and selected category", () => {
+  const keyword = "  路知行 魏超,魔道，天官  ";
+  const url = buildToolRouteUrl(
+    { pathname: "/tool", search: "?foo=bar", hash: "#results" },
+    { view: "search", q: keyword, platform: "cv" }
+  );
+  assert.equal(
+    url,
+    `/tool?foo=bar&view=search&q=${encodeURIComponent(keyword.trim()).replaceAll("%20", "+")}&platform=cv#results`
+  );
+  assert.deepEqual(readToolRouteStateFromLocation({ search: url.slice(url.indexOf("?"), url.indexOf("#")) }), {
+    view: "search",
+    q: keyword.trim(),
+    platform: "cv",
+    window: "7d",
+    category: "",
+    rank: "",
+    cv: "",
+    cvKey: "",
+    payment: "all",
+    release: "all",
+    partners: "all",
+    sort: "plays_desc",
+  });
+  assert.equal(normalizeSearchRouteQuery(` ${"a".repeat(240)} `).length, 200);
+});
+
 test("tool route URL builder keeps only ranks route params", () => {
   assert.equal(
     buildToolRouteUrl(
@@ -462,6 +494,7 @@ test("tool route URL builder keeps the encoded CV deep link only on the CV view"
     }),
     {
       view: "cv",
+      q: "",
       platform: "none",
       window: "7d",
       category: "",
@@ -496,6 +529,7 @@ test("CV route round-trips release years and JSON-encoded partner names", () => 
   );
   assert.deepEqual(readToolRouteStateFromLocation({ search: url.slice(url.indexOf("?")) }), {
     view: "cv",
+    q: "",
     platform: "all",
     window: "7d",
     category: "",
@@ -1088,6 +1122,16 @@ test("formatRankCompactCount keeps two decimals for wan and yi units", () => {
   assert.equal(formatRankCompactCount(123456), "12.35万");
   assert.equal(formatRankCompactCount(100000000), "1.00亿");
   assert.equal(formatRankCompactCount(1188561622), "11.89亿");
+});
+
+test("formatRankCardMetricValue follows rank card wan and yi precision", () => {
+  assert.equal(formatRankCardMetricValue(9999), "9999");
+  assert.equal(formatRankCardMetricValue(10000), "1.0万");
+  assert.equal(formatRankCardMetricValue(123456), "12.3万");
+  assert.equal(formatRankCardMetricValue(99999999), "10000.0万");
+  assert.equal(formatRankCardMetricValue(100000000), "1.00亿");
+  assert.equal(formatRankCardMetricValue(1188561622), "11.89亿");
+  assert.equal(formatRankCardMetricValue("invalid"), "0");
 });
 
 test("getInlineTaggedTitleDisplayText truncates long tagged mobile titles", () => {

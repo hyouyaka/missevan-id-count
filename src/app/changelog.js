@@ -4,6 +4,13 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.8.0",
+    changes: [
+      "优化重构了界面UI，为首页，更新和榜单界面添加更多功能。",
+      "建议反馈添加了小红书的联系方式",
+    ],
+  },
+  {
     version: "1.7.9",
     changes: ["优化搜索逻辑，“广播剧”“有声剧”可被识别为剧集类型，仅显示相应类型的搜索结果。"],
   },
@@ -148,6 +155,10 @@ export const CHANGELOG_ENTRIES = [
     ],
   },
 ];
+
+export function getChangelogEntriesForMode(mode = "history") {
+  return mode === "summary" ? CHANGELOG_ENTRIES.slice(0, 1) : CHANGELOG_ENTRIES;
+}
 
 function resolveStorage(storage) {
   if (storage) {

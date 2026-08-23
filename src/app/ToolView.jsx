@@ -17,13 +17,10 @@ import { toast } from "sonner";
 
 import { AppIcon } from "@/app/AppIcon";
 import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
-import { CvProfileView } from "@/app/CvProfileView";
-import { FavoritesPanel } from "@/app/FavoritesPanel";
 import { HomeView } from "@/app/HomeView";
 import { MessageDialog } from "@/app/MessageDialog";
-import { OutputPanel } from "@/app/OutputPanel";
 import { SearchPanel } from "@/app/SearchPanel";
-import { SearchResults, MetricLegend } from "@/app/SearchResults";
+import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import {
   MainNavigationDrawer,
   LazyRouteFallback,
@@ -106,6 +103,16 @@ const OngoingPanel = lazy(() =>
 
 const FeedbackView = lazy(() =>
   import("@/app/FeedbackView").then((module) => ({ default: module.FeedbackView }))
+);
+
+const SearchWorkspace = lazy(() => import("@/app/SearchWorkspace"));
+
+const FavoritesPanel = lazy(() =>
+  import("@/app/FavoritesPanel").then((module) => ({ default: module.FavoritesPanel }))
+);
+
+const CvProfileView = lazy(() =>
+  import("@/app/CvProfileView").then((module) => ({ default: module.CvProfileView }))
 );
 
 function getStatsRequestErrorMessage(error) {
@@ -1017,17 +1024,18 @@ export function ToolView({ initialAppConfig }) {
     desktopApp: initialAppConfig?.desktopApp === true,
     missevanEnabled: initialAppConfig?.missevanEnabled !== false,
   };
-  const [toolRouteState, setToolRouteState] = useState(() =>
-    typeof window === "undefined"
-      ? normalizeToolRouteState({}, initialToolViewOptions)
-      : readToolRouteStateFromLocation(window.location, initialToolViewOptions)
-  );
+  const initialToolRouteState = typeof window === "undefined"
+    ? normalizeToolRouteState({}, initialToolViewOptions)
+    : readToolRouteStateFromLocation(window.location, initialToolViewOptions);
+  const [toolRouteState, setToolRouteState] = useState(initialToolRouteState);
   const currentPlatform = toolRouteState.view;
   const [activeSearchPlatform, setActiveSearchPlatform] = useState(() =>
-    initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
+    initialToolRouteState.platform === "manbo" || initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
   );
   const [activeSearchCategory, setActiveSearchCategory] = useState(() =>
-    initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
+    initialToolRouteState.view === "search" && ["missevan", "manbo", "cv"].includes(initialToolRouteState.platform)
+      ? initialToolRouteState.platform
+      : initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
   );
   const [cvSearchState, setCvSearchState] = useState({
     results: [],
@@ -1036,7 +1044,7 @@ export function ToolView({ initialAppConfig }) {
     keyword: "",
   });
   const [sharedSearchForm, setSharedSearchForm] = useState({
-    keyword: "",
+    keyword: initialToolRouteState.q,
     manualInput: "",
   });
   const [sharedOutputPlatform, setSharedOutputPlatform] = useState(() =>
@@ -1062,7 +1070,8 @@ export function ToolView({ initialAppConfig }) {
   const [notice, setNotice] = useState(null);
   const [searchJumpStatus, setSearchJumpStatus] = useState(null);
   const [searchMetricLegendOpen, setSearchMetricLegendOpen] = useState(false);
-  const [globalSearchPending, setGlobalSearchPending] = useState(false);
+  const [globalSearchPending, setGlobalSearchPending] = useState(() => Boolean(initialToolRouteState.q));
+  const [searchRouteRestoreGeneration, setSearchRouteRestoreGeneration] = useState(0);
   const [favoriteItems, setFavoriteItems] = useState([]);
   const [favoriteRefreshState, setFavoriteRefreshState] = useState({
     isRunning: false,
@@ -1080,7 +1089,13 @@ export function ToolView({ initialAppConfig }) {
   const [isDesktopBrowser, setIsDesktopBrowser] = useState(false);
   const [mainNavigationRanksData, setMainNavigationRanksData] = useState(null);
   const [mainNavigationRanksStatus, setMainNavigationRanksStatus] = useState("idle");
-  const { changelogOpen, openChangelog, setChangelogOpen } = useChangelogDialog(appConfig.frontendVersion);
+  const {
+    changelogOpen,
+    changelogMode,
+    openChangelog,
+    showChangelogHistory,
+    setChangelogOpen,
+  } = useChangelogDialog(appConfig.frontendVersion);
 
   const currentPlatformRef = useRef(currentPlatform);
   const toolRouteStateRef = useRef(toolRouteState);
@@ -1141,6 +1156,22 @@ export function ToolView({ initialAppConfig }) {
     });
   }
 
+  function canAddDramaToCompareBasket(rawItem) {
+    const compareKind = String(rawItem?.compareKind ?? "drama").trim() || "drama";
+    const platform = String(rawItem?.platform ?? "").trim();
+    const id = String(rawItem?.id ?? rawItem?.dramaId ?? rawItem?.trendLookupId ?? "").trim();
+    if (!platform || !id || compareItems.length >= MAX_COMPARE_ITEMS) {
+      return false;
+    }
+    if (compareKind === "peak_series" && compareItems.some((item) => item.compareKind !== compareKind)) {
+      return false;
+    }
+    if (compareKind !== "peak_series" && compareItems.some((item) => item.compareKind === "peak_series")) {
+      return false;
+    }
+    return !compareItems.some((item) => item.key === getCompareItemKey({ compareKind, platform, id }));
+  }
+
   function removeDramaFromCompareBasket(key) {
     setCompareItems((current) => current.filter((item) => item.key !== key));
   }
@@ -1186,6 +1217,7 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     function handleToolViewPopState() {
       applyCurrentPlatformFromUrl();
+      setSearchRouteRestoreGeneration((current) => current + 1);
     }
 
     window.addEventListener("popstate", handleToolViewPopState);
@@ -1197,6 +1229,27 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     activeSearchPlatformRef.current = activeSearchPlatform;
   }, [activeSearchPlatform]);
+
+  useEffect(() => {
+    if (toolRouteState.view !== "search") {
+      return;
+    }
+    setSharedSearchForm((current) => current.keyword === toolRouteState.q ? current : { ...current, keyword: toolRouteState.q });
+    setActiveSearchCategory(toolRouteState.platform);
+    if (toolRouteState.platform === "missevan" || toolRouteState.platform === "manbo") {
+      setActiveSearchPlatform(toolRouteState.platform);
+    }
+  }, [toolRouteState.platform, toolRouteState.q, toolRouteState.view]);
+
+  useEffect(() => {
+    if (toolRouteState.view !== "search" || !toolRouteState.q || typeof window === "undefined") {
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [toolRouteState.q, toolRouteState.view]);
 
   useEffect(() => {
     sharedOutputPlatformRef.current = sharedOutputPlatform;
@@ -1256,13 +1309,13 @@ export function ToolView({ initialAppConfig }) {
   ];
   const webPlatforms = [
     { key: "home", label: "首页" },
-    { key: "search", label: "统计" },
+    { key: "search", label: "计算与统计" },
     { key: "missevan", label: "猫耳" },
     { key: "manbo", label: "漫播" },
     { key: "favorites", label: "收藏" },
   ];
   const desktopPlatforms = [
-    { key: "search", label: "统计" },
+    { key: "search", label: "计算与统计" },
     { key: "favorites", label: "收藏" },
   ];
   const visiblePlatforms = appConfig.desktopApp ? desktopPlatforms : webPlatforms;
@@ -1295,23 +1348,6 @@ export function ToolView({ initialAppConfig }) {
   useEffect(() => {
     closeMainDrawer();
   }, [currentPlatform]);
-
-  useEffect(() => {
-    if (!mainDrawerOpen) {
-      return undefined;
-    }
-
-    function handleMainDrawerKeyDown(event) {
-      if (event.key === "Escape") {
-        setMainDrawerOpen(false);
-      }
-    }
-
-    window.addEventListener("keydown", handleMainDrawerKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleMainDrawerKeyDown);
-    };
-  }, [mainDrawerOpen]);
 
   function getActiveWorkPlatform() {
     return activeSearchPlatformRef.current === "manbo" || appConfigRef.current.missevanEnabled
@@ -1397,8 +1433,15 @@ export function ToolView({ initialAppConfig }) {
   function commitGlobalSearchNavigation(action = {}) {
     if (action?.action === "import") {
       clearCvSearchResults();
+      navigateToolRoute({ view: "search", q: "" });
+      setMainDrawerOpen(false);
+      return;
     }
-    navigateToolRoute({ view: "search" });
+    navigateToolRoute({
+      view: "search",
+      q: action?.action === "search" ? action.keyword : "",
+      platform: ["missevan", "manbo", "cv"].includes(activeSearchCategory) ? activeSearchCategory : activeSearchPlatform,
+    });
     setMainDrawerOpen(false);
   }
 
@@ -1461,17 +1504,23 @@ export function ToolView({ initialAppConfig }) {
     const normalizedPlatform = platform === "manbo" ? "manbo" : "missevan";
     setActiveSearchPlatform(normalizedPlatform);
     setActiveSearchCategory(normalizedPlatform);
-    navigateCurrentPlatform("search");
+    navigateToolRoute({ view: "search", q: "", platform: normalizedPlatform });
   }
 
   function changeSearchCategory(category) {
     if (category === "cv") {
       setActiveSearchCategory("cv");
+      if (toolRouteStateRef.current.view === "search" && toolRouteStateRef.current.q) {
+        navigateToolRoute({ platform: "cv" }, { replace: true });
+      }
       return;
     }
     const platform = category === "manbo" ? "manbo" : "missevan";
     setActiveSearchPlatform(platform);
     setActiveSearchCategory(platform);
+    if (toolRouteStateRef.current.view === "search" && toolRouteStateRef.current.q) {
+      navigateToolRoute({ platform }, { replace: true });
+    }
   }
 
   function clearCvSearchResults() {
@@ -2385,7 +2434,6 @@ export function ToolView({ initialAppConfig }) {
         manualInput,
       });
       setManualSearchResults(normalizedPlatform, results, { limit: normalizedRawItems.length, scroll: false });
-      navigateToolRoute({ view: "search" });
       openSearchPlatform(normalizedPlatform);
       scrollToPanel(resultsPanelRef);
       if (data.failedItems?.length) {
@@ -2415,7 +2463,18 @@ export function ToolView({ initialAppConfig }) {
     return normalizedTitles.slice(0, dramaIds.length);
   }
 
-  async function openDramaInSearch({ platform, id, ids, titles, name, paymentLabel, contentTypeLabel, usageAction, usageSource }) {
+  async function openDramaInSearch({
+    platform,
+    id,
+    ids,
+    titles,
+    name,
+    paymentLabel,
+    contentTypeLabel,
+    usageAction,
+    usageSource,
+    suppressUsageLog = false,
+  }) {
     const targetPlatform = platform === "manbo" ? "manbo" : "missevan";
     const dramaIds = Array.from(
       new Set(
@@ -2434,7 +2493,7 @@ export function ToolView({ initialAppConfig }) {
     const normalizedUsageSource = String(usageSource ?? "").trim().slice(0, 40);
     if (!dramaIds.length) {
       toast.error("打开搜索结果失败，请稍后重试。");
-      return;
+      return false;
     }
 
     setSearchJumpStatus({
@@ -2448,6 +2507,7 @@ export function ToolView({ initialAppConfig }) {
         ...(dramaTitles.length ? { titles: dramaTitles } : {}),
         ...(normalizedUsageAction ? { usageAction: normalizedUsageAction } : {}),
         ...(normalizedUsageSource ? { source: normalizedUsageSource } : {}),
+        ...(suppressUsageLog === true ? { suppressUsageLog: true } : {}),
       };
       const body = targetPlatform === "manbo"
         ? { items: dramaIds.map((dramaId) => ({ raw: dramaId })), ...usageFields }
@@ -2484,10 +2544,10 @@ export function ToolView({ initialAppConfig }) {
           } else {
             toast.error(renderMissevanAccessDeniedMessage(appConfigRef.current));
           }
-          return;
+          return false;
         }
         toast.error("打开搜索结果失败，请稍后重试。");
-        return;
+        return false;
       }
 
       resetSearchFlow("missevan");
@@ -2502,12 +2562,13 @@ export function ToolView({ initialAppConfig }) {
         manualInput,
       });
       setManualSearchResults(targetPlatform, results, { limit: dramaIds.length, scroll: false });
-      navigateToolRoute({ view: "search" });
       openSearchPlatform(targetPlatform);
       scrollToPanel(resultsPanelRef);
+      return true;
     } catch (error) {
       console.error("Failed to open drama in search", error);
       toast.error("打开搜索结果失败，请稍后重试。");
+      return false;
     } finally {
       setSearchJumpStatus(null);
     }
@@ -3426,12 +3487,10 @@ export function ToolView({ initialAppConfig }) {
   };
 
   return (
-    <div className="app-shell mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pt-3 sm:px-5 sm:pt-[6.5rem] lg:gap-5 lg:px-6">
-      {mainDrawerOpen ? (
-        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px]" onClick={closeMainDrawer} aria-hidden="true" />
-      ) : null}
-      {mainDrawerOpen ? (
+    <Sheet open={mainDrawerOpen} onOpenChange={setMainDrawerOpen}>
+      <div className="app-shell mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-3 pt-3 sm:px-5 sm:pt-[6.5rem] lg:gap-5 lg:px-6">
         <MainNavigationDrawer
+          open={mainDrawerOpen}
           platforms={visiblePlatforms}
           currentRoute={toolRouteState}
           ongoingMenu={ongoingNavigationMenu}
@@ -3450,52 +3509,31 @@ export function ToolView({ initialAppConfig }) {
           desktopApp={appConfig.desktopApp}
           desktopAppUrl={appConfig.desktopAppUrl}
         />
-      ) : null}
-      <Button
-        type="button"
-        variant="outline"
-        size="icon-lg"
-        className="sm:hidden fixed right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-50 shrink-0 bg-background/92 backdrop-blur-xl"
-        aria-expanded={mainDrawerOpen}
-        aria-controls="main-navigation-drawer"
-        aria-label={mainMenuButtonLabel}
-        title={mainMenuButtonLabel}
-        onClick={() => setMainDrawerOpen((open) => !open)}
-      >
-        <MenuIcon aria-hidden="true" className="size-4" />
-      </Button>
-      <header className="-mx-3 border-b border-border/75 bg-background/92 px-3 py-3 backdrop-blur-xl sm:fixed sm:inset-x-0 sm:top-0 sm:z-30 sm:mx-0 sm:px-5 lg:px-6">
-        <div className="relative mx-auto grid max-w-7xl gap-3 sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:gap-5">
-          <div className="flex min-w-0 items-start gap-3 pr-14 sm:col-start-1 sm:row-start-1 sm:pr-0">
+      <header className="contents sm:fixed sm:inset-x-0 sm:top-0 sm:z-30 sm:block sm:border-b sm:border-border/75 sm:bg-background/92 sm:px-5 sm:py-3 sm:backdrop-blur-xl lg:px-6">
+        <div className="contents sm:relative sm:mx-auto sm:grid sm:max-w-7xl sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:gap-5">
+          <div className="relative flex min-w-0 items-start gap-3 pr-14 text-left text-inherit sm:col-start-1 sm:row-start-1 sm:pr-0">
             <button
               type="button"
               aria-label={headerHomeLabel}
-              className="inline-flex min-w-0 shrink-0 items-center text-left text-inherit leading-none"
+              className="absolute inset-0 z-10 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               onClick={openHomeFromHeader}
-            >
-              <AppIcon className="size-14 self-center rounded-xl sm:size-12" />
-            </button>
-            <div className="min-w-0">
+            />
+            <AppIcon className="pointer-events-none size-14 self-center rounded-xl sm:size-12" />
+            <div className="pointer-events-none min-w-0">
               <div className="flex min-w-0 flex-wrap items-baseline gap-2">
                 <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-primary">{appConfig.brandName}</div>
                 <span className="text-xs font-semibold leading-none text-muted-foreground">
                   v{appConfig.frontendVersion}
                 </span>
               </div>
-              <h1 className="mt-1 min-w-0 text-[22px] font-semibold leading-tight tracking-tight sm:text-xl lg:text-2xl">
-                <button
-                  type="button"
-                  aria-label={headerHomeLabel}
-                  className="inline-flex min-w-0 text-left text-inherit leading-tight [font:inherit] [letter-spacing:inherit]"
-                  onClick={openHomeFromHeader}
-                >
-                  <span className="min-w-0">{appConfig.titleZh}</span>
-                </button>
+              <h1 className="mt-1 min-w-0 text-[1.625rem] font-semibold leading-tight tracking-tight">
+                <span className="min-w-0">{appConfig.titleZh}</span>
               </h1>
             </div>
           </div>
-          <SearchPanel
-            className="w-full sm:col-start-2 sm:row-start-1 sm:w-full"
+          <div className="sticky top-[env(safe-area-inset-top)] z-30 -mx-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-border/75 bg-background px-3 pb-3 pt-0 sm:static sm:contents sm:py-3">
+            <SearchPanel
+            className="min-w-0 w-full sm:col-start-2 sm:row-start-1 sm:w-full"
             descriptionClassName="sm:hidden"
             cooldownHours={appConfig.cooldownHours}
             cooldownUntil={appConfig.cooldownUntil}
@@ -3515,7 +3553,7 @@ export function ToolView({ initialAppConfig }) {
             onSearchCommit={commitGlobalSearchNavigation}
             onSearchPendingChange={setGlobalSearchPending}
             onSelectPlatform={setActiveSearchPlatform}
-            onSelectCategory={setActiveSearchCategory}
+            onSelectCategory={changeSearchCategory}
             onUpdateFormState={updateSharedSearchForm}
             onUpdatePlatformResults={(platform, results, source, meta) => setSearchResults(platform, results, source, meta)}
             onUpdateCvResults={(results, meta) => setCvSearchState({
@@ -3524,21 +3562,27 @@ export function ToolView({ initialAppConfig }) {
               exactMatch: Boolean(meta?.exactMatch),
               keyword: String(meta?.keyword ?? "").trim(),
             })}
+            restoreSearchRequest={toolRouteState.view === "search" && toolRouteState.q ? {
+              keyword: toolRouteState.q,
+              category: toolRouteState.platform,
+              signature: `${searchRouteRestoreGeneration}:${toolRouteState.q}`,
+            } : null}
             placeholder="请输入关键词、ID、分享链接。"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-lg"
-            className="hidden shrink-0 sm:inline-flex sm:col-start-3 sm:row-start-1"
-            aria-expanded={mainDrawerOpen}
-            aria-controls="main-navigation-drawer"
-            aria-label={mainMenuButtonLabel}
-            title={mainMenuButtonLabel}
-            onClick={() => setMainDrawerOpen((open) => !open)}
-          >
-            <MenuIcon aria-hidden="true" className="size-4" />
-          </Button>
+            />
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-lg"
+                className="shrink-0 bg-background sm:inline-flex sm:col-start-3 sm:row-start-1"
+                aria-controls="main-navigation-drawer"
+                aria-label={mainMenuButtonLabel}
+                title={mainMenuButtonLabel}
+              >
+                <MenuIcon aria-hidden="true" className="size-4" />
+              </Button>
+            </SheetTrigger>
+          </div>
 
           {appConfig.versionMismatch ? (
             <Alert className="border-destructive/30 bg-destructive/10 sm:col-span-3">
@@ -3554,11 +3598,18 @@ export function ToolView({ initialAppConfig }) {
 
       {currentPlatform === "home" ? (
         <HomeView
+          favoriteKeys={favoriteKeySet}
+          favoriteActionsDisabled={favoriteActionsDisabled}
+          statisticsActionsDisabled={statisticsActionsDisabled}
           frontendVersion={appConfig.frontendVersion}
           handleVersionResponse={updateVersionStatusFromResponse}
           onNavigateRoute={navigateHomeRoute}
           onOpenSearchResult={openDramaInSearch}
           onOpenCv={openCvProfile}
+          onToggleFavorite={toggleFavorite}
+          onAddCompareItem={addDramaToCompareBasket}
+          onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
+          onStartRevenueEstimate={startRevenueEstimate}
         />
       ) : currentPlatform === "ranks" ? (
         <Suspense
@@ -3572,6 +3623,7 @@ export function ToolView({ initialAppConfig }) {
           <RanksPanel
             favoriteKeys={favoriteKeySet}
             favoriteActionsDisabled={favoriteActionsDisabled}
+            statisticsActionsDisabled={statisticsActionsDisabled}
             frontendVersion={appConfig.frontendVersion}
             handleVersionResponse={updateVersionStatusFromResponse}
             routeState={toolRouteState}
@@ -3580,6 +3632,8 @@ export function ToolView({ initialAppConfig }) {
             onOpenSearchResult={openDramaInSearch}
             onOpenCv={openCvProfile}
             onAddCompareItem={addDramaToCompareBasket}
+            onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
+            onStartRevenueEstimate={startRevenueEstimate}
           />
         </Suspense>
       ) : currentPlatform === "ongoing" ? (
@@ -3594,6 +3648,7 @@ export function ToolView({ initialAppConfig }) {
           <OngoingPanel
             favoriteKeys={favoriteKeySet}
             favoriteActionsDisabled={favoriteActionsDisabled}
+            statisticsActionsDisabled={statisticsActionsDisabled}
             frontendVersion={appConfig.frontendVersion}
             handleVersionResponse={updateVersionStatusFromResponse}
             routeState={toolRouteState}
@@ -3601,6 +3656,8 @@ export function ToolView({ initialAppConfig }) {
             onToggleFavorite={toggleFavorite}
             onOpenSearchResult={openDramaInSearch}
             onAddCompareItem={addDramaToCompareBasket}
+            onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
+            onStartRevenueEstimate={startRevenueEstimate}
           />
         </Suspense>
       ) : currentPlatform === "feedback" ? (
@@ -3618,117 +3675,112 @@ export function ToolView({ initialAppConfig }) {
           />
         </Suspense>
       ) : currentPlatform === "cv" ? (
-        <CvProfileView
-          cvName={toolRouteState.cv}
-          profileId={toolRouteState.cvKey}
-          frontendVersion={appConfig.frontendVersion}
-          handleVersionResponse={updateVersionStatusFromResponse}
-          onBack={returnFromCvProfile}
-          platformFilter={toolRouteState.platform}
-          paymentFilter={toolRouteState.payment}
-          releaseFilter={toolRouteState.release}
-          partnersFilter={toolRouteState.partners}
-          onRouteStateChange={(patch) => navigateToolRoute(patch, { replace: true })}
-          onOpenSearchResult={openDramaInSearch}
-        />
+        <Suspense fallback={<LazyRouteFallback title="正在加载 CV 主页" description="正在准备 CV 作品与筛选数据。" />}>
+          <CvProfileView
+            cvName={toolRouteState.cv}
+            profileId={toolRouteState.cvKey}
+            frontendVersion={appConfig.frontendVersion}
+            handleVersionResponse={updateVersionStatusFromResponse}
+            onBack={returnFromCvProfile}
+            platformFilter={toolRouteState.platform}
+            paymentFilter={toolRouteState.payment}
+            releaseFilter={toolRouteState.release}
+            partnersFilter={toolRouteState.partners}
+            onRouteStateChange={(patch) => navigateToolRoute(patch, { replace: true })}
+            onOpenSearchResult={openDramaInSearch}
+          />
+        </Suspense>
       ) : currentPlatform === "favorites" ? (
-        <FavoritesPanel
-          favorites={favoriteItems}
-          favoriteActionsDisabled={favoriteActionsDisabled}
-          statisticsActionsDisabled={statisticsActionsDisabled}
-          frontendVersion={appConfig.frontendVersion}
-          handleVersionResponse={updateVersionStatusFromResponse}
-          isDesktopApp={appConfig.desktopApp}
-          cooldownHours={appConfig.cooldownHours}
-          cooldownUntil={appConfig.cooldownUntil}
-          desktopAppUrl={appConfig.desktopAppUrl}
-          onFavoritesChange={reloadFavoriteItems}
-          onBackgroundTaskChange={setBackgroundTask}
-          refreshState={favoriteRefreshState}
-          refreshRevision={favoriteRefreshRevision}
-          onRefreshStateChange={setFavoriteRefreshState}
-          onRefreshSettled={handleFavoriteRefreshSettled}
-          onToggleFavorite={toggleFavorite}
-        />
+        <Suspense fallback={<LazyRouteFallback title="正在加载收藏" description="正在准备收藏作品与历史记录。" />}>
+          <FavoritesPanel
+            favorites={favoriteItems}
+            favoriteActionsDisabled={favoriteActionsDisabled}
+            statisticsActionsDisabled={statisticsActionsDisabled}
+            frontendVersion={appConfig.frontendVersion}
+            handleVersionResponse={updateVersionStatusFromResponse}
+            isDesktopApp={appConfig.desktopApp}
+            cooldownHours={appConfig.cooldownHours}
+            cooldownUntil={appConfig.cooldownUntil}
+            desktopAppUrl={appConfig.desktopAppUrl}
+            onFavoritesChange={reloadFavoriteItems}
+            onBackgroundTaskChange={setBackgroundTask}
+            refreshState={favoriteRefreshState}
+            refreshRevision={favoriteRefreshRevision}
+            onRefreshStateChange={setFavoriteRefreshState}
+            onRefreshSettled={handleFavoriteRefreshSettled}
+            onToggleFavorite={toggleFavorite}
+          />
+        </Suspense>
       ) : (
-        <div className="grid gap-4 sm:gap-5">
-          <div className="hidden sm:block">
-            <MetricLegend />
-          </div>
-
-          {searchMetricLegendOpen ? (
-            <div id="search-metric-legend" className="sm:hidden">
-              <MetricLegend />
-            </div>
-          ) : null}
-
-          <section ref={resultsPanelRef} className="grid gap-3">
-            <SearchResults
-                dramas={currentBrowseState?.dramas || []}
-                frontendVersion={appConfig.frontendVersion}
-                handleVersionResponse={updateVersionStatusFromResponse}
-                favoriteKeys={favoriteKeySet}
-                favoriteActionsDisabled={favoriteActionsDisabled}
-                statisticsActionsDisabled={statisticsActionsDisabled}
-                onAddDramas={addDramas}
-                onSelectionChange={updateSelection}
-                onSetDramas={setDramas}
-                onSetResults={setResults}
-                onStartIdStatistics={startIdStatisticsConcurrent}
-                onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
-                onStartPlayCountStatistics={startPlayCountStatistics}
-                onStartRevenueEstimate={startRevenueEstimate}
-                onToggleFavorite={toggleFavorite}
-                onAddCompareItem={addDramaToCompareBasket}
-                onRetryMetrics={retrySearchCardMetrics}
-                onLoadMoreResults={() => loadMoreSearchResults(activeBrowsePlatform)}
-                allResults={getAllSearchResults(currentBrowseState)}
-                hasMoreResults={Boolean(currentBrowseState?.searchHasMore)}
-                isSearchPending={globalSearchPending}
-                isLoadingMoreResults={Boolean(currentBrowseState?.isLoadingMoreResults)}
-                loadedResultCount={Number(currentBrowseState?.searchResults?.length ?? 0) || 0}
-                platformTabs={visibleSearchCategories}
-                activePlatform={activeSearchCategory}
-                onPlatformChange={changeSearchCategory}
-                cvResults={cvSearchState.results}
-                onOpenCv={openCvProfile}
-                metricLegendOpen={searchMetricLegendOpen}
-                onToggleMetricLegend={() => setSearchMetricLegendOpen((open) => !open)}
-                platformResultCounts={searchResultCounts}
-                platform={activeBrowsePlatform}
-                resultSource={currentBrowseState?.searchResultSource || "search"}
-                results={currentBrowseState?.searchResults || []}
-                selectedEpisodes={currentBrowseState?.selectedEpisodesSnapshot || []}
-                totalResults={Number(currentBrowseState?.searchTotalMatched ?? 0) || 0}
-            />
-          </section>
-
-          <section ref={outputPanelRef} className="grid gap-3">
-            <OutputPanel
-              currentAction={sharedStatsState?.currentAction}
-              currentHistoryEntryId={sharedStatsState?.currentHistoryEntryId}
-              elapsedMs={sharedStatsState?.elapsedMs}
-              historyEntries={sharedHistoryEntries}
-              idResults={sharedStatsState?.idResults}
-              idSelectedEpisodeCount={sharedStatsState?.idSelectedEpisodeCount}
-              isRunning={sharedStatsState?.isRunning}
-              onCancelStatistics={cancelCurrentStatistics}
-              onClearHistory={clearAllHistoryEntries}
-              onDeleteHistoryEntry={(entry) => deleteHistoryEntry(entry.platform, entry.id)}
-              platform={sharedOutputPlatform}
-              playCountFailed={sharedStatsState?.playCountFailed}
-              playCountResults={sharedStatsState?.playCountResults}
-              playCountSelectedEpisodeCount={sharedStatsState?.playCountSelectedEpisodeCount}
-              playCountTotal={sharedStatsState?.playCountTotal}
-              progress={sharedStatsState?.progress}
-              revenueResults={sharedStatsState?.revenueResults}
-              revenueSummary={sharedRevenueSummary}
-              suspectedOverflowEpisodes={sharedStatsState?.suspectedOverflowEpisodes}
-              totalDanmaku={sharedStatsState?.totalDanmaku}
-              totalUsers={sharedStatsState?.totalUsers}
-            />
-          </section>
-        </div>
+        <Suspense fallback={<LazyRouteFallback title="正在加载搜索结果" description="搜索框保持可用，正在准备结果和统计区域。" />}>
+          <SearchWorkspace
+            legend={{
+              open: searchMetricLegendOpen,
+              onToggle: () => setSearchMetricLegendOpen((open) => !open),
+            }}
+            panelRefs={{ results: resultsPanelRef, output: outputPanelRef }}
+            results={{
+              dramas: currentBrowseState?.dramas || [],
+              frontendVersion: appConfig.frontendVersion,
+              handleVersionResponse: updateVersionStatusFromResponse,
+              favoriteKeys: favoriteKeySet,
+              favoriteActionsDisabled,
+              statisticsActionsDisabled,
+              onAddDramas: addDramas,
+              onSelectionChange: updateSelection,
+              onSetDramas: setDramas,
+              onSetResults: setResults,
+              onStartIdStatistics: startIdStatisticsConcurrent,
+              onStartDramaPaidIdStatistics: startDramaPaidIdStatistics,
+              onStartPlayCountStatistics: startPlayCountStatistics,
+              onStartRevenueEstimate: startRevenueEstimate,
+              onToggleFavorite: toggleFavorite,
+              onAddCompareItem: addDramaToCompareBasket,
+              canAddCompareItem: (item) => canAddDramaToCompareBasket({ ...item, platform: activeBrowsePlatform }),
+              onRetryMetrics: retrySearchCardMetrics,
+              onLoadMoreResults: () => loadMoreSearchResults(activeBrowsePlatform),
+              allResults: getAllSearchResults(currentBrowseState),
+              hasMoreResults: Boolean(currentBrowseState?.searchHasMore),
+              isSearchPending: globalSearchPending,
+              isLoadingMoreResults: Boolean(currentBrowseState?.isLoadingMoreResults),
+              loadedResultCount: Number(currentBrowseState?.searchResults?.length ?? 0) || 0,
+              platformTabs: visibleSearchCategories,
+              activePlatform: activeSearchCategory,
+              onPlatformChange: changeSearchCategory,
+              cvResults: cvSearchState.results,
+              onOpenCv: openCvProfile,
+              platformResultCounts: searchResultCounts,
+              platform: activeBrowsePlatform,
+              resultSource: currentBrowseState?.searchResultSource || "search",
+              results: currentBrowseState?.searchResults || [],
+              selectedEpisodes: currentBrowseState?.selectedEpisodesSnapshot || [],
+              totalResults: Number(currentBrowseState?.searchTotalMatched ?? 0) || 0,
+            }}
+            output={{
+              currentAction: sharedStatsState?.currentAction,
+              currentHistoryEntryId: sharedStatsState?.currentHistoryEntryId,
+              elapsedMs: sharedStatsState?.elapsedMs,
+              historyEntries: sharedHistoryEntries,
+              idResults: sharedStatsState?.idResults,
+              idSelectedEpisodeCount: sharedStatsState?.idSelectedEpisodeCount,
+              isRunning: sharedStatsState?.isRunning,
+              onCancelStatistics: cancelCurrentStatistics,
+              onClearHistory: clearAllHistoryEntries,
+              onDeleteHistoryEntry: (entry) => deleteHistoryEntry(entry.platform, entry.id),
+              platform: sharedOutputPlatform,
+              playCountFailed: sharedStatsState?.playCountFailed,
+              playCountResults: sharedStatsState?.playCountResults,
+              playCountSelectedEpisodeCount: sharedStatsState?.playCountSelectedEpisodeCount,
+              playCountTotal: sharedStatsState?.playCountTotal,
+              progress: sharedStatsState?.progress,
+              revenueResults: sharedStatsState?.revenueResults,
+              revenueSummary: sharedRevenueSummary,
+              suspectedOverflowEpisodes: sharedStatsState?.suspectedOverflowEpisodes,
+              totalDanmaku: sharedStatsState?.totalDanmaku,
+              totalUsers: sharedStatsState?.totalUsers,
+            }}
+          />
+        </Suspense>
       )}
 
       <BackgroundTaskCenter
@@ -3753,7 +3805,12 @@ export function ToolView({ initialAppConfig }) {
         handleVersionResponse={updateVersionStatusFromResponse}
       />
       <MessageDialog notice={notice} onClose={() => setNotice(null)} />
-      <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
+      <ChangelogDialog
+        open={changelogOpen}
+        mode={changelogMode}
+        onOpenChange={setChangelogOpen}
+        onShowHistory={showChangelogHistory}
+      />
 
       <AlertDialog
         open={Boolean(cancelFavoriteRequest)}
@@ -3795,6 +3852,7 @@ export function ToolView({ initialAppConfig }) {
           </AlertDialogHeader>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+      </div>
+    </Sheet>
   );
 }

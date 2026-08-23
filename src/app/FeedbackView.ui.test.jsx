@@ -9,6 +9,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test("feedback introduction links to the MMToolkit Xiaohongshu account", () => {
+  render(<FeedbackView featureSuggestionUrl="" />);
+
+  expect(
+    screen.getByText(
+      "可以提交Bug、数据异常、新功能建议等，我的回复也会显示在这里。也可私信小红书账号",
+      { exact: false }
+    )
+  ).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "MMToolkit" })).toHaveAttribute(
+    "href",
+    "https://xhslink.cn/m/53LZBGOylUC"
+  );
+});
+
 test("revenue calculation accordion is collapsed by default and toggles the full markdown", async () => {
   const user = userEvent.setup();
   render(<FeedbackView featureSuggestionUrl="" />);

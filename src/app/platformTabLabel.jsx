@@ -96,6 +96,10 @@ export function PlatformDramaLink({
   iconClassName = "size-3.5 shrink-0",
   textClassName = "",
   externalIconClassName = "size-3.5",
+  appearance = "inline",
+  children,
+  onClick,
+  ...anchorProps
 }) {
   const key = platform?.key || platform;
   const meta = platformTabMeta[key];
@@ -109,7 +113,11 @@ export function PlatformDramaLink({
   const linkLabel =
     ariaLabel || `在${meta.label}打开${idLabel} ${normalizedDramaId}（新窗口）`;
 
-  function logExternalOpen() {
+  function handleExternalOpen(event) {
+    onClick?.(event);
+    if (event?.defaultPrevented) {
+      return;
+    }
     const payload = buildDramaExternalUsagePayload(key, normalizedDramaId, source, dramaTitle);
     if (!payload) {
       return;
@@ -126,25 +134,35 @@ export function PlatformDramaLink({
 
   return (
     <a
+      {...anchorProps}
       aria-label={linkLabel}
-      className={`-mt-0.5 -mb-2 inline-flex w-fit max-w-full cursor-pointer items-start self-start gap-1.5 rounded-sm pt-0.5 pb-2 text-xs text-muted-foreground underline-offset-4 transition-colors duration-200 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${className}`.trim()}
+      className={`${appearance === "menu" ? "flex min-h-11 w-full items-center gap-2 rounded-sm px-2.5 py-2 text-sm text-popover-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground" : "-mt-0.5 -mb-2 inline-flex w-fit max-w-full cursor-pointer items-start self-start gap-1.5 rounded-sm pt-0.5 pb-2 text-xs text-muted-foreground underline-offset-4 transition-colors duration-200 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"} ${className}`.trim()}
       href={href}
-      onClick={logExternalOpen}
+      onClick={handleExternalOpen}
       rel="noopener noreferrer"
       target="_blank"
       title={title || linkLabel}
     >
-      <PlatformIdIcon
-        aria-hidden="true"
-        className={iconClassName}
-        platform={key}
-        tone="inherit"
-      />
-      <span className={`min-w-0 break-all ${textClassName}`.trim()}>{visibleId}</span>
-      <SquareArrowOutUpRightIcon
-        aria-hidden="true"
-        className={`mt-px shrink-0 ${externalIconClassName}`.trim()}
-      />
+      {appearance === "menu" ? (
+        <>
+          <PlatformGlyph platform={key} className={`shrink-0 ${externalIconClassName}`.trim()} tone="inherit" />
+          <span>{children || `${meta.label}收听`}</span>
+        </>
+      ) : (
+        <>
+          <PlatformIdIcon
+            aria-hidden="true"
+            className={iconClassName}
+            platform={key}
+            tone="inherit"
+          />
+          <span className={`min-w-0 break-all ${textClassName}`.trim()}>{visibleId}</span>
+          <SquareArrowOutUpRightIcon
+            aria-hidden="true"
+            className={`mt-px shrink-0 ${externalIconClassName}`.trim()}
+          />
+        </>
+      )}
     </a>
   );
 }

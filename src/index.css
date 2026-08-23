@@ -5,6 +5,7 @@
 }
 @import "tw-animate-css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono/wght-italic.css";
 
 @theme inline {
   @keyframes accordion-down {
@@ -140,7 +141,7 @@
 
 @theme inline {
   --font-sans: 'Geist Variable', sans-serif;
-  --font-mono: "Geist Mono", "Consolas", monospace;
+  --font-mono: "Geist Mono Variable", "Consolas", monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -562,18 +563,24 @@ body {
   gap: 0;
 }
 
-.home-editorial-trend-cover-action,
 .home-editorial-trend-cover-static {
   display: flex;
   min-width: 0;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.25rem;
+  gap: 0;
   border: 0;
   border-radius: calc(var(--radius) - 0.0625rem);
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+.rank-watermark {
+  font-family: "Geist Mono Variable", "Consolas", monospace;
+  font-style: italic;
+  font-weight: 700;
+  font-kerning: normal;
 }
 
 .cv-profile-work-grid > article {
@@ -599,43 +606,6 @@ body {
   }
 }
 
-.home-editorial-trend-cover-action {
-  cursor: pointer;
-}
-
-.home-editorial-trend-cover-action:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-}
-
-.home-editorial-trend-cue {
-  display: grid;
-  width: 100%;
-  min-height: 0.75rem;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.25rem;
-  color: var(--home-success);
-  transition: color 160ms ease;
-}
-
-.home-editorial-trend-cue svg {
-  width: 0.875rem;
-  height: 0.875rem;
-  stroke-width: 2;
-}
-
-.home-editorial-trend-line {
-  height: 1px;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.home-editorial-trend-cover-action:hover .home-editorial-trend-cue,
-.home-editorial-trend-cover-action:focus-visible .home-editorial-trend-cue {
-  color: color-mix(in oklch, var(--home-success) 78%, var(--foreground));
-}
-
 .home-editorial-update-item.is-featured .home-editorial-update-cover {
   width: clamp(5.75rem, 13vw, 7.5rem);
 }
@@ -654,11 +624,13 @@ body {
 }
 
 .home-editorial-update-meta {
+  position: relative;
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem 0.75rem;
+  padding-right: 3rem;
   color: var(--muted-foreground);
   font-size: 0.75rem;
   line-height: 1.25rem;

@@ -14,7 +14,7 @@ function getMissevanDanmakuCapByDurationMs(durationMs) {
   if (normalizedDuration <= 10 * minuteMs) {
     return 8500;
   }
-  if (normalizedDuration <= 25 * minuteMs) {
+  if (normalizedDuration <= 15 * minuteMs) {
     return 12000;
   }
   if (normalizedDuration <= 40 * minuteMs) {

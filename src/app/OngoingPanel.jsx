@@ -1,11 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeftRightIcon,
+  HandCoinsIcon,
   HeartIcon,
   MicIcon,
+  MoreHorizontalIcon,
   PlayCircleIcon,
   RefreshCwIcon,
   ShoppingCartIcon,
   StarIcon,
+  TrendingUpIcon,
+  UserSearchIcon,
   UsersRoundIcon,
 } from "lucide-react";
 
@@ -14,7 +19,6 @@ import {
   formatDeviceDateTime,
   formatPlainNumber,
   getBackendVersionFromResponse,
-  getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import {
@@ -22,18 +26,22 @@ import {
   resolveRankTrendAvailabilityIds,
 } from "@/app/rankTrendData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
-import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
-import { RankBadge } from "@/app/RankBadge";
+import { RankWatermark } from "@/app/RankBadge";
+import { PlatformDramaLink, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import {
-  CompareActionButton,
   fetchRankTrendData,
   logRankTrendOpen,
-  RankTrendButton,
 } from "@/app/rankTrendActions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -51,7 +59,7 @@ const mobileOngoingTextTabsListClassName =
 const mobileOngoingPlatformTabClassName =
   "h-7 min-h-7 min-w-0 px-3 text-sm!";
 const mobileOngoingWindowTabClassName =
-  "h-7 min-h-7 min-w-10 px-2 text-xs!";
+  "h-7 min-h-7 min-w-11 justify-center px-2 text-xs!";
 const mobileOngoingSelectedTabClassName = "";
 const mobileOngoingSelectedPlatformTabClassName = "";
 const desktopOngoingTextTabsListClassName =
@@ -82,6 +90,169 @@ const metricIconMap = {
 
 const coverPaymentBadgeClassName =
   "absolute bottom-0 right-0 h-4 rounded-none rounded-tl-[calc(var(--radius)-0.18rem)] border-0! px-1 text-[0.54rem] leading-none shadow-none! lg:h-[1.05rem] lg:px-1.5 lg:text-[0.58rem]";
+const ongoingActionButtonClassName =
+  "relative h-8 min-w-11 shrink-0 justify-center gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-center text-[0.7rem] after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-[''] sm:gap-1.5 sm:px-2.5 sm:text-xs";
+const ongoingTrendButtonClassName =
+  `${ongoingActionButtonClassName} border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]`;
+const ongoingCompareButtonClassName =
+  `${ongoingActionButtonClassName} border-[color-mix(in_oklch,var(--accent-compare)_34%,transparent)] bg-[var(--accent-compare)] text-[var(--accent-compare-foreground)] shadow-[0_12px_24px_-16px_var(--accent-compare)] hover:bg-[var(--accent-compare-hover)] hover:text-[var(--accent-compare-foreground)]`;
+
+function OngoingActionLayout({ children }) {
+  const containerRef = useRef(null);
+  const trendButtonRef = useRef(null);
+  const compareButtonRef = useRef(null);
+  const moreButtonRef = useRef(null);
+  const [actionMode, setActionMode] = useState("more-only");
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const trendButton = trendButtonRef.current;
+    const compareButton = compareButtonRef.current;
+    const moreButton = moreButtonRef.current;
+    if (!container || !trendButton || !compareButton || !moreButton) return undefined;
+
+    let cancelled = false;
+    const updateActionMode = () => {
+      if (cancelled) return;
+      const availableWidth = container.getBoundingClientRect().width;
+      const gap = Number.parseFloat(window.getComputedStyle(container).columnGap) || 0;
+      const trendWidth = trendButton.getBoundingClientRect().width;
+      const compareWidth = compareButton.getBoundingClientRect().width;
+      const moreWidth = moreButton.getBoundingClientRect().width;
+      const allActionsWidth = trendWidth + compareWidth + moreWidth + gap * 2;
+      const trendAndMoreWidth = trendWidth + moreWidth + gap;
+      const nextMode = availableWidth + 0.5 >= allActionsWidth
+        ? "all"
+        : availableWidth + 0.5 >= trendAndMoreWidth
+          ? "trend-more"
+          : "more-only";
+      setActionMode((current) => current === nextMode ? current : nextMode);
+    };
+
+    updateActionMode();
+    document.fonts?.ready?.then(updateActionMode);
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const resizeObserver = new ResizeObserver(updateActionMode);
+    resizeObserver.observe(container);
+    resizeObserver.observe(trendButton);
+    resizeObserver.observe(compareButton);
+    resizeObserver.observe(moreButton);
+    return () => {
+      cancelled = true;
+      resizeObserver.disconnect();
+    };
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      data-action-mode={actionMode}
+      className="relative flex w-full min-w-0 flex-nowrap items-center justify-end gap-x-1 gap-y-1.5 overflow-visible"
+    >
+      {children({ actionMode, trendButtonRef, compareButtonRef, moreButtonRef })}
+    </div>
+  );
+}
+
+function OngoingTitle({ itemId, onClick, title, titleTags }) {
+  const containerRef = useRef(null);
+  const measureRef = useRef(null);
+  const measureTitleRef = useRef(null);
+  const normalizedTitle = String(title || "未命名剧集");
+  const [visibleTitle, setVisibleTitle] = useState(normalizedTitle);
+  const titleTagsKey = titleTags.join("\u0001");
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const measure = measureRef.current;
+    const measureTitle = measureTitleRef.current;
+    if (!container || !measure || !measureTitle) return undefined;
+
+    let animationFrameId = 0;
+    let cancelled = false;
+
+    const updateVisibleTitle = () => {
+      measure.style.width = `${container.clientWidth}px`;
+      const lineHeight = Number.parseFloat(window.getComputedStyle(measureTitle).lineHeight) || 20;
+      const maxHeight = lineHeight * 2 + 2;
+      const fitsWithinTwoLines = (candidate) => {
+        measureTitle.textContent = candidate;
+        return measure.getBoundingClientRect().height <= maxHeight;
+      };
+
+      if (fitsWithinTwoLines(normalizedTitle)) {
+        setVisibleTitle((current) => (current === normalizedTitle ? current : normalizedTitle));
+        return;
+      }
+
+      const titleCharacters = Array.from(normalizedTitle);
+      let low = 0;
+      let high = titleCharacters.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const candidate = `${titleCharacters.slice(0, middle).join("").trimEnd()}…`;
+        if (fitsWithinTwoLines(candidate)) low = middle;
+        else high = middle - 1;
+      }
+      const truncatedTitle = `${titleCharacters.slice(0, low).join("").trimEnd()}…`;
+      setVisibleTitle((current) => (current === truncatedTitle ? current : truncatedTitle));
+    };
+
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(animationFrameId);
+      animationFrameId = window.requestAnimationFrame(updateVisibleTitle);
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdate);
+    resizeObserver?.observe(container);
+    updateVisibleTitle();
+    document.fonts?.ready.then(() => {
+      if (!cancelled) scheduleUpdate();
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(animationFrameId);
+      resizeObserver?.disconnect();
+    };
+  }, [normalizedTitle, titleTagsKey]);
+
+  const renderTags = () => titleTags.map((label) => (
+    <Badge
+      key={`${itemId}-${label}`}
+      variant={tagVariants[label] || "outline"}
+      className="ml-1 inline-flex h-[1.05rem] shrink-0 px-1.5 align-[0.12em] text-[0.6rem] leading-none"
+    >
+      {label}
+    </Badge>
+  ));
+
+  const titleTextClassName = "break-words text-base! font-semibold! leading-5!";
+  return (
+    <div ref={containerRef} className="relative min-w-0 max-h-[42px] overflow-hidden" title={normalizedTitle}>
+      <button
+        type="button"
+        className="block w-full rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        onClick={onClick}
+      >
+        <span className={titleTextClassName}>{visibleTitle}</span>
+        {renderTags()}
+      </button>
+      <span
+        ref={measureRef}
+        aria-hidden="true"
+        className="pointer-events-none invisible absolute left-0 top-0 block whitespace-normal"
+      >
+        <span ref={measureTitleRef} className={titleTextClassName}>{normalizedTitle}</span>
+        {renderTags()}
+      </span>
+    </div>
+  );
+}
 
 function buildProxyImageUrl(url) {
   return url ? `/image-proxy?url=${encodeURIComponent(url)}` : "";
@@ -195,8 +366,11 @@ function OngoingCard({
   onOpenSearchResult,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
   trendAvailable = false,
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
@@ -205,20 +379,14 @@ function OngoingCard({
     : ["view_count", "pay_count", "danmaku_uid_count"];
   const metricKeys = baseMetricKeys.filter((metricKey) => item?.metrics?.[metricKey]?.visible !== false);
   const titleTags = [item.content_type_label].filter(Boolean);
-  const mobileDisplayTitle = getInlineTaggedTitleDisplayText(item.name || "未命名剧集", {
-    hasTags: titleTags.length > 0,
-    viewport: "mobile",
-  });
-  const desktopDisplayTitle = getInlineTaggedTitleDisplayText(item.name || "未命名剧集", {
-    hasTags: titleTags.length > 0,
-    viewport: "desktop",
-  });
   const paymentTag = item.payment_label;
   const metricGridClassName = metricKeys.length >= 3 ? "grid-cols-3" : "grid-cols-2";
   const canOpenTrend = Boolean(platform && item?.id && trendAvailable);
   const favoriteKey = `${platform}:${String(item?.id ?? "").trim()}`;
   const isFavorite = Boolean(favoriteKeys?.has?.(favoriteKey));
   const [isTrendOpen, setIsTrendOpen] = useState(false);
+  const [statisticsActionPending, setStatisticsActionPending] = useState("");
+  const statisticsActionLockRef = useRef(false);
   const [trendState, setTrendState] = useState({
     isLoading: false,
     error: "",
@@ -322,96 +490,206 @@ function OngoingCard({
     });
   }
 
+  function logStatisticsMenuClick(action) {
+    fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform,
+        action,
+        dramaId: String(item.id),
+        dramaName: item.name || "",
+        source: "ongoing",
+        success: true,
+      }),
+      keepalive: true,
+    }).catch((error) => {
+      console.error("Failed to log ongoing statistics action", error);
+    });
+  }
+
+  async function runStatisticsAction(action) {
+    if (statisticsActionsDisabled || statisticsActionLockRef.current || !onOpenSearchResult) {
+      return;
+    }
+    const isPaidIdAction = action === "paid_id_click";
+    const startStatistics = isPaidIdAction
+      ? onStartDramaPaidIdStatistics
+      : onStartRevenueEstimate;
+    if (!startStatistics) {
+      return;
+    }
+
+    statisticsActionLockRef.current = true;
+    setStatisticsActionPending(action);
+    logStatisticsMenuClick(action);
+    try {
+      const opened = await onOpenSearchResult({
+        platform,
+        id: item.id,
+        titles: [item.name],
+        name: item.name,
+        paymentLabel: item.payment_label,
+        contentTypeLabel: item.content_type_label,
+        suppressUsageLog: true,
+      });
+      if (!opened) {
+        return;
+      }
+      if (isPaidIdAction) {
+        await startStatistics(item.id, {
+          platform,
+          source: `${item.id}payID`,
+        });
+      } else {
+        await startStatistics([item.id], {
+          platform,
+          source: `${item.id}earn`,
+        });
+      }
+    } finally {
+      statisticsActionLockRef.current = false;
+      setStatisticsActionPending("");
+    }
+  }
+
   return (
     <>
-      <Card
-        className="overflow-hidden py-0"
-      >
-        <CardContent className="p-0">
-          <div className="flex h-[9.5rem] gap-3 overflow-hidden p-3.5 sm:h-[10.25rem]">
-            <div className="flex shrink-0 flex-col items-center gap-2">
-              <RankBadge rank={rank} />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="bg-background/84"
-                disabled={favoriteActionsDisabled}
-                onClick={toggleFavorite}
-                aria-label={isFavorite ? "取消收藏" : "加入收藏"}
-                title={isFavorite ? "取消收藏" : "加入收藏"}
-              >
-                <StarIcon className={isFavorite ? "fill-primary text-primary" : ""} />
-              </Button>
-            </div>
-            <div className="relative flex w-[5.35rem] shrink-0 flex-col items-center sm:w-24">
-              <div className="relative size-[5.35rem] shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted/50 sm:size-24">
-                {coverUrl ? (
-                  <LazyImage alt={item.name} className="size-full object-cover" src={coverUrl} />
-                ) : (
-                  <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
-                    暂无封面
-                  </div>
-                )}
-                {paymentTag ? (
-                  <Badge variant={tagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>
-                    {paymentTag}
-                  </Badge>
-                ) : null}
-              </div>
-              {canOpenTrend ? (
-                <div className="absolute right-0 top-[5rem] flex h-11 w-max items-center justify-end overflow-visible sm:top-[5.75rem]">
-                  <div className="flex w-max flex-nowrap items-center justify-end gap-2">
-                    <RankTrendButton
-                      density="inline"
-                      onClick={openTrendDialog}
-                      aria-label={`查看${item.name}趋势`}
-                      title="查看趋势"
-                    />
-                    <CompareActionButton
-                      density="inline"
-                      onClick={addCompareItem}
-                      aria-label={`加入${item.name}对比`}
-                      title="加入对比"
-                    />
-                  </div>
+      <Card className="relative isolate overflow-hidden py-0">
+        <RankWatermark rank={rank} />
+        <CardContent className="relative z-10 p-0">
+          <div className="grid grid-cols-[116px_minmax(0,1fr)] items-stretch gap-3 p-3.5">
+            <div className="relative size-[116px] shrink-0 self-center overflow-hidden rounded-md border border-border/70 bg-muted/50">
+              {coverUrl ? (
+                <LazyImage alt={item.name} className="size-full object-cover" src={coverUrl} />
+              ) : (
+                <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+                  暂无封面
                 </div>
+              )}
+              {paymentTag ? (
+                <Badge variant={tagVariants[paymentTag] || "outline"} className={coverPaymentBadgeClassName}>
+                  {paymentTag}
+                </Badge>
               ) : null}
             </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-0.5">
-              <div className="min-w-0">
-                <button
-                  type="button"
-                  className="break-words rounded-sm text-left text-base! font-semibold! leading-5! text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  onClick={openSearchResult}
-                >
-                  <span className="sm:hidden">{mobileDisplayTitle}</span>
-                  <span className="hidden sm:inline">{desktopDisplayTitle}</span>
-                  {titleTags.map((label) => (
-                    <Badge
-                      key={`${item.id}-${label}`}
-                      variant={tagVariants[label] || "outline"}
-                      className="ml-1 inline-flex h-[1.05rem] shrink-0 px-1.5 align-[0.12em] text-[0.6rem] leading-none"
-                    >
-                      {label}
-                    </Badge>
-                  ))}
-                </button>
+            <div className="flex min-w-0 flex-col gap-1.5 pt-0.5">
+              <OngoingTitle itemId={item.id} onClick={openSearchResult} title={item.name} titleTags={titleTags} />
+              <div
+                className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground"
+                aria-label={`${platformLabels[platform] || "平台"}作品ID：${item.id}`}
+                title={`${platformLabels[platform] || "平台"}作品ID：${item.id}`}
+              >
+                <PlatformIdIcon aria-hidden="true" className="size-3.5 shrink-0" platform={platform} tone="inherit" />
+                <span className="min-w-0 break-all">{item.id}</span>
               </div>
-              <PlatformDramaLink
-                platform={platform}
-                dramaId={item.id}
-                source="ongoing"
-                dramaTitle={item.name}
-                frontendVersion={frontendVersion}
-              />
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <MicIcon aria-label="主要CV" className="size-3.5 shrink-0" />
-                <span className="line-clamp-2 min-w-0 break-words">{String(item.main_cv_text || "").replace(/^主要CV：/, "") || "暂无"}</span>
+              <div className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground">
+                <MicIcon aria-label="主要CV" className="mt-[3px] size-3.5 shrink-0" />
+                <span className="min-w-0 break-words">{String(item.main_cv_text || "").replace(/^主要CV：/, "") || "暂无"}</span>
               </div>
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground">
                 <RefreshCwIcon aria-label="最近更新" className="size-3.5 shrink-0" />
                 <span className="min-w-0 break-all">{formatOngoingDate(item.updated_at)}</span>
+              </div>
+              <div className="mt-1 min-w-0">
+                <OngoingActionLayout>
+                  {({ actionMode, trendButtonRef, compareButtonRef, moreButtonRef }) => {
+                    const showTrendButton = actionMode !== "more-only";
+                    const showCompareButton = actionMode === "all";
+                    return (
+                      <>
+                        <Button
+                          ref={trendButtonRef}
+                          type="button"
+                          data-touch="compact"
+                          className={`${ongoingTrendButtonClassName} ${showTrendButton ? "" : "pointer-events-none invisible absolute"}`}
+                          disabled={!canOpenTrend}
+                          onClick={openTrendDialog}
+                          aria-hidden={showTrendButton ? undefined : true}
+                          aria-label={`查看${item.name}趋势`}
+                          tabIndex={showTrendButton ? undefined : -1}
+                          title={canOpenTrend ? "查看趋势" : "暂无趋势数据"}
+                        >
+                          <TrendingUpIcon data-icon="inline-start" />
+                          <span className="whitespace-nowrap">趋势</span>
+                        </Button>
+                        <Button
+                          ref={compareButtonRef}
+                          type="button"
+                          data-touch="compact"
+                          className={`${ongoingCompareButtonClassName} ${showCompareButton ? "" : "pointer-events-none invisible absolute"}`}
+                          disabled={!canOpenTrend || !onAddCompareItem}
+                          onClick={addCompareItem}
+                          aria-hidden={showCompareButton ? undefined : true}
+                          aria-label={`加入${item.name}对比`}
+                          tabIndex={showCompareButton ? undefined : -1}
+                          title={canOpenTrend ? "加入对比" : "暂无趋势数据"}
+                        >
+                          <ArrowLeftRightIcon data-icon="inline-start" />
+                          <span className="whitespace-nowrap">对比</span>
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              ref={moreButtonRef}
+                              type="button"
+                              data-touch="compact"
+                              variant="outline"
+                              className={ongoingActionButtonClassName}
+                              aria-label={`${item.name}更多操作`}
+                              title="更多操作"
+                            >
+                              <MoreHorizontalIcon data-icon="inline-start" />
+                              <span className="whitespace-nowrap">更多</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" side="bottom">
+                            {actionMode === "more-only" ? (
+                              <DropdownMenuItem disabled={!canOpenTrend} onSelect={openTrendDialog}>
+                                <TrendingUpIcon aria-hidden="true" />
+                                趋势
+                              </DropdownMenuItem>
+                            ) : null}
+                            {actionMode !== "all" ? (
+                              <DropdownMenuItem disabled={!canOpenTrend || !onAddCompareItem} onSelect={addCompareItem}>
+                                <ArrowLeftRightIcon aria-hidden="true" />
+                                对比
+                              </DropdownMenuItem>
+                            ) : null}
+                            <DropdownMenuItem disabled={favoriteActionsDisabled} onSelect={toggleFavorite}>
+                              <StarIcon aria-hidden="true" className={isFavorite ? "fill-primary text-primary" : ""} />
+                              {isFavorite ? "取消收藏" : "收藏"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)}
+                              onSelect={() => runStatisticsAction("paid_id_click")}
+                            >
+                              <UserSearchIcon aria-hidden="true" />
+                              付费ID
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)}
+                              onSelect={() => runStatisticsAction("revenue_click")}
+                            >
+                              <HandCoinsIcon aria-hidden="true" />
+                              收益
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                              <PlatformDramaLink
+                                appearance="menu"
+                                platform={platform}
+                                dramaId={item.id}
+                                source="ongoing"
+                                dramaTitle={item.name}
+                                frontendVersion={frontendVersion}
+                              />
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </>
+                    );
+                  }}
+                </OngoingActionLayout>
               </div>
             </div>
           </div>
@@ -445,8 +723,11 @@ export function OngoingPanel({
   onOpenSearchResult,
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
   onToggleFavorite,
   onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
 }) {
   const [selectedPlatform, setSelectedPlatform] = useState(() =>
     routeState?.platform === "manbo" ? "manbo" : "missevan"
@@ -839,8 +1120,11 @@ export function OngoingPanel({
               onOpenSearchResult={onOpenSearchResult}
               favoriteKeys={favoriteKeys}
               favoriteActionsDisabled={favoriteActionsDisabled}
+              statisticsActionsDisabled={statisticsActionsDisabled}
               onToggleFavorite={onToggleFavorite}
               onAddCompareItem={onAddCompareItem}
+              onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+              onStartRevenueEstimate={onStartRevenueEstimate}
               trendAvailable={availableTrendIds.has(String(item.id))}
             />
           ))}

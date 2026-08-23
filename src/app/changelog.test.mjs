@@ -5,9 +5,15 @@ import { readFileSync } from "node:fs";
 import {
   CHANGELOG_ENTRIES,
   CHANGELOG_SEEN_VERSION_STORAGE_KEY,
+  getChangelogEntriesForMode,
   getShouldAutoOpenChangelog,
   markChangelogVersionSeen,
 } from "./changelog.js";
+
+test("changelog summary exposes only the latest entry while history remains complete", () => {
+  assert.deepEqual(getChangelogEntriesForMode("summary"), [CHANGELOG_ENTRIES[0]]);
+  assert.equal(getChangelogEntriesForMode("history"), CHANGELOG_ENTRIES);
+});
 
 const packageJson = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8")
@@ -54,8 +60,20 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.7.9", () => {
-  assert.equal(packageJson.version, "1.7.9");
+test("package version is 1.8.0", () => {
+  assert.equal(packageJson.version, "1.8.0");
+});
+
+test("changelog contains the 1.8.0 UI and feedback updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.8.0");
+
+  assert.deepEqual(entry, {
+    version: "1.8.0",
+    changes: [
+      "优化重构了界面UI，为首页，更新和榜单界面添加更多功能。",
+      "建议反馈添加了小红书的联系方式",
+    ],
+  });
 });
 
 test("changelog contains the 1.7.9 search type update", () => {

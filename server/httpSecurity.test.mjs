@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 
 import {
   buildContentSecurityPolicy,
@@ -10,6 +11,8 @@ import {
   isSameOriginRequest,
   MANBO_CRYPTO_SCRIPT_ORIGIN,
 } from "./httpSecurity.js";
+
+const applicationSource = fs.readFileSync(new URL("./application.js", import.meta.url), "utf8");
 
 function request(overrides = {}) {
   return {
@@ -77,4 +80,18 @@ test("content security policy only includes a valid HTTPS Twikoo origin", () => 
 test("request ids accept safe caller ids and replace unsafe values", () => {
   assert.equal(createRequestId("request-42"), "request-42");
   assert.match(createRequestId("<script>"), /^[0-9a-f-]{36}$/);
+});
+
+test("HTTP delivery enables negotiated compression and orders immutable assets before SPA fallback", () => {
+  assert.match(applicationSource, /app\.use\(compression\(\{[\s\S]*threshold: 1024/);
+  assert.doesNotMatch(applicationSource, /type\.includes\("application\/json"\)/);
+
+  const assetsIndex = applicationSource.indexOf('app.use("/assets", express.static');
+  const generalStaticIndex = applicationSource.indexOf("app.use(express.static(distDirectory");
+  const fallbackIndex = applicationSource.indexOf('app.get("*"');
+  assert.ok(assetsIndex >= 0 && assetsIndex < generalStaticIndex && generalStaticIndex < fallbackIndex);
+  assert.match(applicationSource, /immutable: true/);
+  assert.match(applicationSource, /maxAge: "1y"/);
+  assert.match(applicationSource, /path\.basename\(filePath\)[\s\S]*index\.html[\s\S]*Cache-Control", "no-store"/);
+  assert.match(applicationSource.slice(fallbackIndex), /Cache-Control", "no-store"/);
 });
