@@ -1034,7 +1034,7 @@ test("web feedback route initializes the npm Twikoo client inside its own view",
   assert.match(feedbackViewSource, /可以提交Bug、数据异常、新功能建议等，我的回复也会显示在这里。也可私信小红书账号/);
   assert.match(
     feedbackViewSource,
-    /href="https:\/\/xhslink\.cn\/m\/53LZBGOylUC"[\s\S]*target="_blank"[\s\S]*rel="noreferrer"[\s\S]*MMToolkit/
+    /href="https:\/\/xhslink\.cn\/o\/9hUXfAAAP8I"[\s\S]*target="_blank"[\s\S]*rel="noreferrer"[\s\S]*MMToolkit/
   );
   assert.doesNotMatch(feedbackViewSource, /可以匿名提交 Bug、数据异常、新功能建议/);
   assert.match(feedbackViewSource, />参考提交格式<\/h2>/);

@@ -135,7 +135,7 @@ export function FeedbackView({ featureSuggestionUrl, frontendVersion }) {
               <CardDescription className="mt-1">
                 可以提交Bug、数据异常、新功能建议等，我的回复也会显示在这里。也可私信小红书账号
                 <a
-                  href="https://xhslink.cn/m/53LZBGOylUC"
+                  href="https://xhslink.cn/o/9hUXfAAAP8I"
                   target="_blank"
                   rel="noreferrer"
                   className="font-medium text-primary underline underline-offset-4 transition-colors hover:text-[var(--primary-hover)] focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"

@@ -20,7 +20,7 @@ test("feedback introduction links to the MMToolkit Xiaohongshu account", () => {
   ).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "MMToolkit" })).toHaveAttribute(
     "href",
-    "https://xhslink.cn/m/53LZBGOylUC"
+    "https://xhslink.cn/o/9hUXfAAAP8I"
   );
 });
 
