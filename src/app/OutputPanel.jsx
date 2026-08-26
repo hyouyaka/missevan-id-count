@@ -131,15 +131,42 @@ function ResultCard({ title, metrics, emphasized = false, footer = null }) {
   );
 }
 
-function formatOverflowDanmakuCount(value) {
+function formatEpisodeCount(value) {
   if (value == null || value === "") {
-    return "暂不可得";
+    return "-";
   }
   const count = Number(value);
-  return Number.isFinite(count) && count >= 0 ? formatPlainNumber(count) : "暂不可得";
+  return Number.isFinite(count) && count >= 0 ? formatPlainNumber(count) : "-";
 }
 
-function OverflowEpisodeList({ episodes = [] }) {
+function formatFetchedEpisodeCount(item, field) {
+  if (item?.status === "failed") {
+    return "失败";
+  }
+  return formatEpisodeCount(item?.[field]);
+}
+
+function formatEpisodeTotalCount(item, platform) {
+  if (item?.status === "failed") {
+    return "-";
+  }
+  if (platform === "manbo") {
+    const totalDanmaku = Number(item?.totalDanmaku);
+    const fetchedDanmaku = Number(item?.fetchedDanmaku);
+    const isOverflow =
+      Number.isFinite(totalDanmaku)
+      && totalDanmaku > 0
+      && Number.isFinite(fetchedDanmaku)
+      && fetchedDanmaku >= 0
+      && fetchedDanmaku <= totalDanmaku * 0.9;
+    if (!isOverflow) {
+      return "-";
+    }
+  }
+  return formatEpisodeCount(item?.totalDanmaku);
+}
+
+function EpisodeDetailList({ episodes = [], platform }) {
   const [expanded, setExpanded] = useState(false);
   const regionId = useId();
 
@@ -153,12 +180,18 @@ function OverflowEpisodeList({ episodes = [] }) {
         type="button"
         variant="ghost"
         size="xs"
-        className="h-7 max-w-full px-1.5"
+        data-touch="compact"
+        className="relative h-7 max-w-full overflow-visible px-1.5 after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
         aria-expanded={expanded}
         aria-controls={regionId}
         onClick={() => setExpanded((current) => !current)}
       >
-        <span className="truncate">疑似弹幕溢出 {episodes.length} 集</span>
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="shrink-0">分集明细 {episodes.length} 集</span>
+          <span className="truncate text-[10px] font-normal text-muted-foreground">
+            （弹幕溢出时额外显示总弹幕）
+          </span>
+        </span>
         <ChevronDownIcon
           data-icon="inline-end"
           aria-hidden="true"
@@ -166,65 +199,73 @@ function OverflowEpisodeList({ episodes = [] }) {
         />
       </Button>
       {expanded ? (
-        <div id={regionId} className="border-t border-border/65 px-1.5 pb-1 pt-2">
-          <div className="w-full max-w-full overflow-hidden rounded-md border border-border/70 sm:w-fit">
-            <table className="w-full max-w-full table-fixed border-collapse text-xs sm:w-fit sm:table-auto">
-              <caption className="sr-only">疑似弹幕溢出分集明细</caption>
-              <colgroup>
-                <col />
-                <col style={{ width: "calc(7ch + 1rem)" }} />
-                <col style={{ width: "calc(7ch + 1rem)" }} />
-              </colgroup>
-              <thead className="bg-muted/45 text-muted-foreground">
-                <tr>
-                  <th scope="col" className="px-2 py-1.5 text-left font-medium">
-                    分集标题
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                    总弹幕
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                    抓取弹幕
-                  </th>
+        <div
+          id={regionId}
+          className="max-h-[28rem] w-full max-w-full overflow-y-auto overscroll-contain border-t border-border/65"
+        >
+          <table className="w-full max-w-full table-fixed border-collapse text-xs sm:table-auto">
+            <caption className="sr-only">弹幕 ID 统计分集明细</caption>
+            <colgroup>
+              <col />
+              <col style={{ width: "calc(7ch + 1rem)" }} />
+              <col style={{ width: "calc(7ch + 1rem)" }} />
+              <col style={{ width: "calc(7ch + 1rem)" }} />
+            </colgroup>
+            <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
+              <tr>
+                <th scope="col" className="px-2 py-1.5 text-left font-medium">
+                  分集标题
+                </th>
+                <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                  去重ID
+                </th>
+                <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                  抓取弹幕
+                </th>
+                <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                  总弹幕
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/65 text-foreground/80">
+              {episodes.map((item) => (
+                <tr key={item.key}>
+                  <td className="min-w-0 px-2 py-1.5 text-left align-top leading-5 [overflow-wrap:anywhere]">
+                    {item.title}
+                  </td>
+                  <td className="break-all px-2 py-1.5 text-right align-top leading-5 tabular-nums">
+                    {formatFetchedEpisodeCount(item, "uniqueUsers")}
+                  </td>
+                  <td className="break-all px-2 py-1.5 text-right align-top leading-5 tabular-nums">
+                    {formatFetchedEpisodeCount(item, "fetchedDanmaku")}
+                  </td>
+                  <td className="break-all px-2 py-1.5 text-right align-top leading-5 tabular-nums">
+                    {formatEpisodeTotalCount(item, platform)}
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-border/65 text-foreground/80">
-                {episodes.map((item) => (
-                  <tr key={item.key}>
-                    <td className="min-w-0 px-2 py-1.5 text-left align-top leading-5 [overflow-wrap:anywhere]">
-                      {item.title}
-                    </td>
-                    <td className="break-all px-2 py-1.5 text-right align-top leading-5 tabular-nums">
-                      {formatOverflowDanmakuCount(item.totalDanmaku)}
-                    </td>
-                    <td className="break-all px-2 py-1.5 text-right align-top leading-5 tabular-nums">
-                      {formatOverflowDanmakuCount(item.fetchedDanmaku)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : null}
     </div>
   );
 }
 
-function getOverflowEpisodesForDrama(dramaId, keys = []) {
+function getEpisodeDetailsForDrama(dramaId, details = []) {
   const normalizedDramaId = String(dramaId ?? "").trim();
-  if (!normalizedDramaId || !Array.isArray(keys) || keys.length === 0) {
+  if (!normalizedDramaId || !Array.isArray(details) || details.length === 0) {
     return [];
   }
 
   const prefix = `${normalizedDramaId}-`;
-  const filteredTitles = keys.flatMap((item) => {
+  const filteredTitles = details.flatMap((item) => {
     const isLegacyKey = typeof item === "string";
     const itemDramaId = isLegacyKey
       ? ""
       : String(item?.dramaId ?? "").trim();
     const normalizedKey = String(isLegacyKey ? item : item?.key ?? "").trim();
-    if (!normalizedKey || !normalizedKey.startsWith(prefix)) {
+    if (!normalizedKey || (!itemDramaId && !normalizedKey.startsWith(prefix))) {
       return [];
     }
     if (itemDramaId && itemDramaId !== normalizedDramaId) {
@@ -236,8 +277,10 @@ function getOverflowEpisodesForDrama(dramaId, keys = []) {
     return [{
       key: normalizedKey,
       title: episodeTitle || "未知分集",
+      status: isLegacyKey ? "success" : item?.status,
       totalDanmaku: isLegacyKey ? null : item?.totalDanmaku,
       fetchedDanmaku: isLegacyKey ? null : item?.fetchedDanmaku,
+      uniqueUsers: isLegacyKey ? null : item?.uniqueUsers,
     }];
   });
 
@@ -295,7 +338,8 @@ function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-1.5 text-[10px] text-muted-foreground"
+            data-touch="compact"
+            className="relative h-7 overflow-visible px-1.5 text-[10px] text-muted-foreground after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
             aria-expanded={!collapsed}
             aria-controls="stats-result-history"
             onClick={() => setCollapsed((current) => !current)}
@@ -304,7 +348,14 @@ function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
             {collapsed ? "展开" : "收起"}
           </Button>
         </div>
-        <Button type="button" variant="ghost" size="sm" className="h-7 px-1.5 text-[10px] text-muted-foreground" onClick={onClearHistory}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-touch="compact"
+          className="relative h-7 overflow-visible px-1.5 text-[10px] text-muted-foreground after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
+          onClick={onClearHistory}
+        >
           <Trash2Icon data-icon="inline-start" />
           清空
         </Button>
@@ -374,7 +425,7 @@ export function OutputPanel({
   playCountTotal,
   playCountFailed,
   idResults,
-  suspectedOverflowEpisodes = [],
+  episodeDetails = [],
   idSelectedEpisodeCount,
   totalDanmaku,
   totalUsers,
@@ -522,7 +573,10 @@ export function OutputPanel({
                   { label: "去重 ID 数", value: formatPlainNumber(drama.users) },
                 ]}
                 footer={
-                  <OverflowEpisodeList episodes={getOverflowEpisodesForDrama(drama.dramaId, suspectedOverflowEpisodes)} />
+                  <EpisodeDetailList
+                    episodes={getEpisodeDetailsForDrama(drama.dramaId, episodeDetails)}
+                    platform={platform}
+                  />
                 }
               />
             ))}
@@ -575,7 +629,7 @@ export function OutputPanel({
             ) : null}
 
             {revenueResults.map((drama) => {
-              const overflowTitles = getOverflowEpisodesForDrama(drama.dramaId, suspectedOverflowEpisodes);
+              const dramaEpisodeDetails = getEpisodeDetailsForDrama(drama.dramaId, episodeDetails);
 
               return (
                 <ResultCard
@@ -604,7 +658,7 @@ export function OutputPanel({
                           ),
                     },
                   ]}
-                  footer={<OverflowEpisodeList episodes={overflowTitles} />}
+                  footer={<EpisodeDetailList episodes={dramaEpisodeDetails} platform={platform} />}
                 />
               );
             })}

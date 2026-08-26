@@ -774,7 +774,7 @@ export function createStatsState() {
     playCountTotal: 0,
     playCountFailed: false,
     idResults: [],
-    suspectedOverflowEpisodes: [],
+    episodeDetails: [],
     idSelectedEpisodeCount: 0,
     totalDanmaku: 0,
     totalUsers: 0,

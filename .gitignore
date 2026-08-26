@@ -26,6 +26,8 @@ tmp-manbo-json-method-note.md
 runtime/
 reports/
 cloudflare/**/.wrangler/
+design-qa.md
+design-qa-assets/
 
 # Editor directories and files
 .vscode/*

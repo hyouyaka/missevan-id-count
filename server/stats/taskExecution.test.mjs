@@ -3,9 +3,13 @@ import test from "node:test";
 
 import {
   isMissevanLikelyDanmakuOverflow,
-  orderDetectedOverflowEpisodeKeys,
 } from "../../shared/episodeRules.js";
 import { aggregateRevenueFinancials } from "../../shared/revenueSummaryUtils.js";
+import {
+  computeMissevanRevenueMetrics,
+  normalizeMissevanPayType,
+  resolveMissevanRevenueType,
+} from "../../shared/missevanRevenueUtils.js";
 import { createStatsTaskExecutor, getManboRevenueType } from "./taskExecution.js";
 
 function buildIdDramaMap(episodes) {
@@ -60,16 +64,12 @@ function createRevenueTask(dramaIds = ["8"]) {
 function createDependencies(overrides = {}) {
   return {
     buildIdDramaMap,
-    buildOverflowEpisodeKey(dramaId, episodeTitle) {
-      return `${String(dramaId)}-${String(episodeTitle)}`;
-    },
     isAccessDeniedError: () => false,
     isManboMemberDramaInfo: () => false,
     isMissevanAccessDenied: () => false,
     isMissevanLikelyDanmakuOverflow,
     MANBO_STATS_EPISODE_CONCURRENCY: 4,
     normalizeOptionalFiniteNumber: () => null,
-    orderDetectedOverflowEpisodeKeys,
     refreshMissevanCooldownState: async () => {},
     reportStatsTask(task, patch) {
       Object.assign(task, patch);
@@ -119,10 +119,11 @@ async function runManboRevenueTask(dramaInfo, usersBySetId = {}) {
   return {
     result: task.result.revenueResults[0],
     summary: task.result.revenueSummary,
+    episodeDetails: task.result.episodeDetails,
   };
 }
 
-test("Missevan overflow totals are requested only for capped episodes", async () => {
+test("Missevan episode details cover every successful episode and request totals only for capped episodes", async () => {
   const episodes = [
     {
       sound_id: 1,
@@ -184,33 +185,52 @@ test("Missevan overflow totals are requested only for capped episodes", async ()
     assert.equal(call.options.forceRefresh, true);
     assert.equal(call.options.signal, task.abortSignal);
   });
-  assert.deepEqual(task.result.suspectedOverflowEpisodes, [
+  assert.deepEqual(task.result.episodeDetails, [
     {
-      key: "9-溢出",
+      key: "missevan:9:1",
       dramaId: "9",
+      episodeId: "1",
+      title: "未溢出",
+      status: "success",
+      totalDanmaku: null,
+      fetchedDanmaku: 499,
+      uniqueUsers: 0,
+    },
+    {
+      key: "missevan:9:2",
+      dramaId: "9",
+      episodeId: "2",
       title: "溢出",
+      status: "success",
       totalDanmaku: 1_234_567,
       fetchedDanmaku: 500,
+      uniqueUsers: 0,
     },
     {
-      key: "9-总数失败",
+      key: "missevan:9:3",
       dramaId: "9",
+      episodeId: "3",
       title: "总数失败",
+      status: "success",
       totalDanmaku: null,
       fetchedDanmaku: 500,
+      uniqueUsers: 0,
     },
     {
-      key: "9-总数缺失",
+      key: "missevan:9:4",
       dramaId: "9",
+      episodeId: "4",
       title: "总数缺失",
+      status: "success",
       totalDanmaku: null,
       fetchedDanmaku: 500,
+      uniqueUsers: 0,
     },
   ]);
   assert.equal(task.failedCount, 0);
 });
 
-test("Missevan ID cancellation preserves completed overflow details", async () => {
+test("Missevan ID cancellation preserves only attempted episode details", async () => {
   const episodes = [
     {
       sound_id: 1,
@@ -271,13 +291,16 @@ test("Missevan ID cancellation preserves completed overflow details", async () =
         users: 1,
       },
     ],
-    suspectedOverflowEpisodes: [
+    episodeDetails: [
       {
-        key: "9-已完成",
+        key: "missevan:9:1",
         dramaId: "9",
+        episodeId: "1",
         title: "已完成",
+        status: "success",
         totalDanmaku: 1_234,
         fetchedDanmaku: 500,
+        uniqueUsers: 1,
       },
     ],
     totalDanmaku: 500,
@@ -286,7 +309,46 @@ test("Missevan ID cancellation preserves completed overflow details", async () =
   });
 });
 
-test("Manbo overflow details reuse assessment totals and preserve episode order", async () => {
+test("failed danmaku attempts remain in episode details without numeric metrics", async () => {
+  const episodes = [
+    {
+      sound_id: 7,
+      drama_id: "9",
+      drama_title: "测试剧",
+      episode_title: "失败分集",
+      duration: 30_000,
+    },
+  ];
+  const executor = createStatsTaskExecutor(createDependencies({
+    missevanClient: {
+      async getDanmakuSummary() {
+        return {
+          success: false,
+          accessDenied: false,
+          users: [],
+        };
+      },
+    },
+  }));
+  const task = createIdTask("missevan", episodes);
+
+  await executor(task, { report() {} });
+
+  assert.deepEqual(task.result.episodeDetails, [
+    {
+      key: "missevan:9:7",
+      dramaId: "9",
+      episodeId: "7",
+      title: "失败分集",
+      status: "failed",
+      totalDanmaku: null,
+      fetchedDanmaku: null,
+      uniqueUsers: null,
+    },
+  ]);
+});
+
+test("Manbo episode details reuse assessment totals for all successful episodes and preserve order", async () => {
   const episodes = [
     {
       sound_id: "11",
@@ -306,7 +368,7 @@ test("Manbo overflow details reuse assessment totals and preserve episode order"
     isLikelyManboDanmakuOverflow: async (setId, fetchedDanmaku) => {
       assessmentCalls.push({ setId, fetchedDanmaku });
       return {
-        overflow: true,
+        overflow: setId === "11",
         totalDanmaku: setId === "11" ? 1_000_001 : 2_000_002,
       };
     },
@@ -318,7 +380,7 @@ test("Manbo overflow details reuse assessment totals and preserve episode order"
         return {
           success: true,
           danmaku: setId === "11" ? 100 : 200,
-          users: [],
+          users: setId === "11" ? ["a", "a", "b"] : ["c"],
         };
       },
     },
@@ -329,23 +391,24 @@ test("Manbo overflow details reuse assessment totals and preserve episode order"
 
   assert.equal(assessmentCalls.length, 2);
   assert.deepEqual(
-    task.result.suspectedOverflowEpisodes.map((item) => item.title),
+    task.result.episodeDetails.map((item) => item.title),
     ["第一集", "第二集"]
   );
   assert.deepEqual(
-    task.result.suspectedOverflowEpisodes.map((item) => [
+    task.result.episodeDetails.map((item) => [
       item.totalDanmaku,
       item.fetchedDanmaku,
+      item.uniqueUsers,
     ]),
     [
-      [1_000_001, 100],
-      [2_000_002, 200],
+      [1_000_001, 100, 2],
+      [2_000_002, 200, 1],
     ]
   );
 });
 
 test("Manbo episode revenue uses the lowest set price and both paid ID counts", async () => {
-  const { result, summary } = await runManboRevenueTask(
+  const { result, summary, episodeDetails } = await runManboRevenueTask(
     {
       drama: {
         id: "8",
@@ -384,6 +447,102 @@ test("Manbo episode revenue uses the lowest set price and both paid ID counts", 
   assert.equal(summary.paidCountSourceSummary, "mixed");
   assert.equal(summary.totalPayCount, 2);
   assert.equal(summary.totalDanmakuPaidUserCount, 4);
+  assert.deepEqual(episodeDetails.map((item) => [item.key, item.uniqueUsers]), [
+    ["manbo:8:11", 2],
+    ["manbo:8:12", 3],
+  ]);
+});
+
+test("Manbo official pay-count revenue does not create empty episode details", async () => {
+  const { result, episodeDetails } = await runManboRevenueTask({
+    drama: {
+      id: "8",
+      name: "全季付费剧",
+      view_count: 1000,
+      diamond_value: 500,
+      pay_type: 1,
+      price: 100,
+      member_price: 80,
+      pay_count: 10,
+    },
+    episodes: {
+      episode: [
+        { sound_id: "11", name: "第一集", pay_type: 1 },
+        { sound_id: "12", name: "第二集", pay_type: 1 },
+      ],
+    },
+  });
+
+  assert.equal(result.paidCountSource, "pay_count");
+  assert.deepEqual(episodeDetails, []);
+});
+
+test("Missevan paid revenue exposes episode details without querying totals for non-capped episodes", async () => {
+  const soundSummaryCalls = [];
+  const executor = createStatsTaskExecutor(createDependencies({
+    aggregateRevenueFinancials,
+    computeMissevanRevenueMetrics,
+    normalizeMissevanPayType,
+    resolveMissevanRevenueType,
+    normalizeOptionalFiniteNumber(value) {
+      if (value == null || value === "") {
+        return null;
+      }
+      const normalized = Number(value);
+      return Number.isFinite(normalized) ? normalized : null;
+    },
+    missevanClient: {
+      async getDramaInfo() {
+        return {
+          drama: {
+            id: 9,
+            name: "猫耳分集付费剧",
+            view_count: 1000,
+            price: 10,
+            member_price: 8,
+            pay_type: 1,
+            vip: 0,
+          },
+          episodes: {
+            episode: [
+              { sound_id: 71, name: "第一集", need_pay: 1, price: 10, duration: 30_000 },
+            ],
+          },
+        };
+      },
+      async getRewardDetailMeta() {
+        return null;
+      },
+      async getDanmakuSummary() {
+        return { success: true, danmaku: 499, users: ["a", "a", "b"] };
+      },
+      async getSoundSummary(soundId) {
+        soundSummaryCalls.push(soundId);
+        return { success: true, comment_count: 900 };
+      },
+      async getRewardSummary() {
+        return { success: true, rewardCoinTotal: 0 };
+      },
+    },
+  }));
+  const task = createRevenueTask([9]);
+  task.platform = "missevan";
+
+  await executor(task, { report() {} });
+
+  assert.deepEqual(soundSummaryCalls, []);
+  assert.deepEqual(task.result.episodeDetails, [
+    {
+      key: "missevan:9:71",
+      dramaId: "9",
+      episodeId: "71",
+      title: "第一集",
+      status: "success",
+      totalDanmaku: null,
+      fetchedDanmaku: 499,
+      uniqueUsers: 2,
+    },
+  ]);
 });
 
 test("Manbo episode revenue lets official pay count win both bounds", async () => {

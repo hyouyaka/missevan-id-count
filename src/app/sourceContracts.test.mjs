@@ -2128,14 +2128,14 @@ test("running statistics keep long mobile progress copy visible", () => {
   assert.match(runningSource, /\{progress\}%/);
 });
 
-test("history toolbar uses compact labels without shrinking button height", () => {
+test("history toolbar keeps desktop density with mobile touch targets", () => {
   assert.match(
     outputPanelSource,
-    /className="h-7 px-1\.5 text-\[10px\] text-muted-foreground"[\s\S]*\{collapsed \? "展开" : "收起"\}/
+    /data-touch="compact"[\s\S]*className="relative h-7 overflow-visible px-1\.5 text-\[10px\][\s\S]*\{collapsed \? "展开" : "收起"\}/
   );
   assert.match(
     outputPanelSource,
-    /className="h-7 px-1\.5 text-\[10px\] text-muted-foreground" onClick=\{onClearHistory\}/
+    /data-touch="compact"[\s\S]*className="relative h-7 overflow-visible px-1\.5 text-\[10px\][\s\S]*after:-inset-y-2[\s\S]*onClick=\{onClearHistory\}/
   );
   assert.doesNotMatch(
     indexCssSource,
@@ -2143,36 +2143,48 @@ test("history toolbar uses compact labels without shrinking button height", () =
   );
 });
 
-test("overflow episodes preserve server order and use an accessible responsive table", () => {
-  const helperStart = outputPanelSource.indexOf("function getOverflowEpisodesForDrama");
+test("episode details use the requested column order and an accessible responsive table", () => {
+  const helperStart = outputPanelSource.indexOf("function getEpisodeDetailsForDrama");
   const helperEnd = outputPanelSource.indexOf("const HISTORY_METRIC_ICON_MAP", helperStart);
   const helperSource = outputPanelSource.slice(helperStart, helperEnd);
-  const overflowListStart = outputPanelSource.indexOf("function OverflowEpisodeList");
-  const overflowListEnd = outputPanelSource.indexOf("function getOverflowEpisodesForDrama", overflowListStart);
-  const overflowListSource = outputPanelSource.slice(overflowListStart, overflowListEnd);
+  const detailListStart = outputPanelSource.indexOf("function EpisodeDetailList");
+  const detailListEnd = outputPanelSource.indexOf("function getEpisodeDetailsForDrama", detailListStart);
+  const detailListSource = outputPanelSource.slice(detailListStart, detailListEnd);
 
   assert.match(outputPanelSource, /aria-controls=\{regionId\}/);
   assert.match(outputPanelSource, /aria-expanded=\{expanded\}/);
-  assert.match(overflowListSource, /<table/);
-  assert.match(overflowListSource, /分集标题/);
-  assert.match(overflowListSource, /总弹幕/);
-  assert.match(overflowListSource, /抓取弹幕/);
-  assert.match(outputPanelSource, /暂不可得/);
-  assert.match(overflowListSource, /formatOverflowDanmakuCount/);
-  assert.match(outputPanelSource, /function formatOverflowDanmakuCount[\s\S]*formatPlainNumber/);
-  assert.match(overflowListSource, /w-full max-w-full table-fixed/);
-  assert.match(overflowListSource, /sm:w-fit sm:table-auto/);
-  assert.match(overflowListSource, /calc\(7ch \+ 1rem\)/);
-  assert.match(overflowListSource, /\[overflow-wrap:anywhere\]/);
-  assert.match(overflowListSource, /break-all/);
-  assert.doesNotMatch(overflowListSource, /overflow-x-auto/);
-  assert.match(helperSource, /keys\.flatMap/);
+  assert.match(detailListSource, /<table/);
+  assert.match(detailListSource, /分集明细 \{episodes\.length\} 集/);
+  assert.match(detailListSource, /（弹幕溢出时额外显示总弹幕）/);
+  assert.match(detailListSource, /truncate text-\[10px\] font-normal text-muted-foreground/);
+  const titleIndex = detailListSource.indexOf("分集标题");
+  const uniqueIndex = detailListSource.indexOf("去重ID", titleIndex);
+  const fetchedIndex = detailListSource.indexOf("抓取弹幕", uniqueIndex);
+  const totalIndex = detailListSource.indexOf("总弹幕", fetchedIndex);
+  assert.ok(titleIndex >= 0 && uniqueIndex > titleIndex && fetchedIndex > uniqueIndex && totalIndex > fetchedIndex);
+  assert.match(outputPanelSource, /return "-"/);
+  assert.match(outputPanelSource, /item\?\.status === "failed"[\s\S]*return "失败"/);
+  assert.match(detailListSource, /w-full max-w-full table-fixed/);
+  assert.match(detailListSource, /sm:table-auto/);
+  assert.doesNotMatch(detailListSource, /sm:w-fit/);
+  assert.match(detailListSource, /max-h-\[28rem\]/);
+  assert.match(detailListSource, /overflow-y-auto/);
+  assert.match(detailListSource, /sticky top-0/);
+  assert.match(detailListSource, /calc\(7ch \+ 1rem\)/);
+  assert.match(detailListSource, /\[overflow-wrap:anywhere\]/);
+  assert.match(detailListSource, /break-all/);
+  assert.doesNotMatch(detailListSource, /overflow-x-auto/);
+  const expandedRegionIndex = detailListSource.indexOf("id={regionId}");
+  const tableIndex = detailListSource.indexOf("<table", expandedRegionIndex);
+  assert.ok(expandedRegionIndex >= 0 && tableIndex > expandedRegionIndex);
+  assert.doesNotMatch(detailListSource.slice(expandedRegionIndex, tableIndex), /<div/);
+  assert.match(helperSource, /details\.flatMap/);
   assert.match(helperSource, /typeof item === "string"/);
   assert.doesNotMatch(helperSource, /\.sort\(/);
   assert.match(outputPanelSource, /label: "抓取弹幕"/);
 });
 
-test("overflow detail collection reuses platform totals and keeps the Manbo threshold", () => {
+test("episode detail collection keeps request limits and reuses platform totals", () => {
   assert.match(serverSource, /sound\.comment_count/);
   assert.match(serverSource, /cached && !options\.forceRefresh/);
   assert.match(
@@ -2190,6 +2202,18 @@ test("overflow detail collection reuses platform totals and keeps the Manbo thre
   );
   assert.match(statsTaskExecutionSource, /fetchedDanmaku: result\.danmaku/);
   assert.match(statsTaskExecutionSource, /fetchedDanmaku: danmakuResult\.danmaku/);
+  assert.match(statsTaskExecutionSource, /uniqueUsers: episodeUserSet\.size/);
+  assert.match(statsTaskExecutionSource, /episodeDetails:/);
+  assert.match(toolViewSource, /result\.episodeDetails/);
+  assert.match(
+    outputPanelSource,
+    /function formatEpisodeTotalCount[\s\S]*platform === "manbo"[\s\S]*fetchedDanmaku <= totalDanmaku \* 0\.9/
+  );
+  assert.match(outputPanelSource, /formatEpisodeTotalCount\(item, platform\)/);
+  assert.match(
+    outputPanelSource,
+    /size="xs"[\s\S]*data-touch="compact"[\s\S]*className="relative h-7 max-w-full overflow-visible[\s\S]*after:-inset-y-2/
+  );
 });
 
 test("completed background tasks collapse and dismiss after opening results", () => {
@@ -2774,12 +2798,12 @@ test("favorite stats task source flows into danmaku usage logs", () => {
   );
   assert.match(
     serverSource,
-    /missevanClient\.getDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*String\(episode\?\.name \?\? ""\)\.trim\(\),\s*task\.source,/,
+    /missevanClient\.getDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*episodeTitle,\s*task\.source,/,
     "Missevan revenue danmaku logs should inherit the stats task source"
   );
   assert.match(
     serverSource,
-    /manboClient\.getDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*String\(episode\?\.name \?\? ""\)\.trim\(\),\s*task\.source,/,
+    /manboClient\.getDanmakuSummary\(\s*episode\.sound_id,\s*title,\s*episodeTitle,\s*task\.source,/,
     "Manbo revenue danmaku logs should inherit the stats task source"
   );
 });

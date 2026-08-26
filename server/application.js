@@ -36,10 +36,7 @@ import {
 import { canonicalizeCompatibleSearchText } from "../shared/searchCompatibility.js";
 import { createUpstashRestClient } from "../shared/upstashRestClient.js";
 import { loadLocalEnv } from "../envConfig.js";
-import {
-  isMissevanLikelyDanmakuOverflow,
-  orderDetectedOverflowEpisodeKeys,
-} from "../shared/episodeRules.js";
+import { isMissevanLikelyDanmakuOverflow } from "../shared/episodeRules.js";
 import {
   buildOngoingResponse,
   getBeijingYearMonth,
@@ -685,7 +682,6 @@ statsTaskExecutor = createStatsTaskExecutor({
   aggregateRevenueFinancials,
   buildIdDramaMap,
   buildMissevanPlayCountWorkPlan,
-  buildOverflowEpisodeKey,
   buildPlayCountDramaMap,
   computeMissevanRevenueMetrics,
   fetchManboSetSummary,
@@ -699,7 +695,6 @@ statsTaskExecutor = createStatsTaskExecutor({
   missevanClient,
   normalizeMissevanPayType,
   normalizeOptionalFiniteNumber,
-  orderDetectedOverflowEpisodeKeys,
   refreshMissevanCooldownState,
   reportStatsTask,
   resolveMissevanPlayCountDramaTotal,
@@ -9798,12 +9793,6 @@ function buildIdDramaMap(episodes) {
     dramaMap.get(key).selectedEpisodeCount += 1;
   });
   return dramaMap;
-}
-
-function buildOverflowEpisodeKey(dramaId, episodeTitle) {
-  const normalizedDramaId = String(dramaId ?? "").trim();
-  const normalizedEpisodeTitle = String(episodeTitle ?? "").trim();
-  return `${normalizedDramaId}-${normalizedEpisodeTitle}`;
 }
 
 async function isLikelyManboDanmakuOverflow(setId, danmakuCount) {

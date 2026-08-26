@@ -2806,15 +2806,15 @@ export function ToolView({ initialAppConfig }) {
           playCountTotal: Array.isArray(result.playCountResults) ? Number(result.playCountTotal ?? 0) : state.stats.playCountTotal,
           playCountFailed: Array.isArray(result.playCountResults) ? Boolean(result.playCountFailed) : state.stats.playCountFailed,
           idResults: Array.isArray(result.idResults) ? result.idResults : state.stats.idResults,
-          suspectedOverflowEpisodes: Array.isArray(result.idResults)
-            ? Array.isArray(result.suspectedOverflowEpisodes)
-              ? result.suspectedOverflowEpisodes
-              : []
-            : Array.isArray(result.revenueResults)
-              ? Array.isArray(result.revenueSummary?.suspectedOverflowEpisodes)
-                ? result.revenueSummary.suspectedOverflowEpisodes
-                : []
-              : state.stats.suspectedOverflowEpisodes,
+          episodeDetails: Array.isArray(result.idResults) || Array.isArray(result.revenueResults)
+            ? Array.isArray(result.episodeDetails)
+              ? result.episodeDetails
+              : Array.isArray(result.suspectedOverflowEpisodes)
+                ? result.suspectedOverflowEpisodes
+                : Array.isArray(result.revenueSummary?.suspectedOverflowEpisodes)
+                  ? result.revenueSummary.suspectedOverflowEpisodes
+                  : []
+            : state.stats.episodeDetails,
           idSelectedEpisodeCount: Array.isArray(result.idResults)
             ? Number(result.idSelectedEpisodeCount ?? state.stats.idSelectedEpisodeCount ?? 0)
             : state.stats.idSelectedEpisodeCount,
@@ -3780,7 +3780,7 @@ export function ToolView({ initialAppConfig }) {
               progress: sharedStatsState?.progress,
               revenueResults: sharedStatsState?.revenueResults,
               revenueSummary: sharedRevenueSummary,
-              suspectedOverflowEpisodes: sharedStatsState?.suspectedOverflowEpisodes,
+              episodeDetails: sharedStatsState?.episodeDetails,
               totalDanmaku: sharedStatsState?.totalDanmaku,
               totalUsers: sharedStatsState?.totalUsers,
             }}

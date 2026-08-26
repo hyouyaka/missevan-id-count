@@ -60,8 +60,17 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.8.0", () => {
-  assert.equal(packageJson.version, "1.8.0");
+test("package version is 1.8.1", () => {
+  assert.equal(packageJson.version, "1.8.1");
+});
+
+test("changelog contains the 1.8.1 episode detail update", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.8.1");
+
+  assert.deepEqual(entry, {
+    version: "1.8.1",
+    changes: ["付费ID统计结果添加显示分集明细，弹幕溢出的分集会额外显示总弹幕数。"],
+  });
 });
 
 test("changelog contains the 1.8.0 UI and feedback updates", () => {

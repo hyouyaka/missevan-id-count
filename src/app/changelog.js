@@ -4,6 +4,10 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.8.1",
+    changes: ["付费ID统计结果添加显示分集明细，弹幕溢出的分集会额外显示总弹幕数。"],
+  },
+  {
     version: "1.8.0",
     changes: [
       "优化重构了界面UI，为首页，更新和榜单界面添加更多功能。",
