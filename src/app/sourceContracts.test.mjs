@@ -2954,7 +2954,8 @@ test("Missevan JSON and text requests can use Render fallback with usage log mar
   assert.match(serverSource, /function buildMissevanFallbackUrl/);
   assert.match(serverSource, /isMissevanFallbackRouteInCooldown\(route\)[\s\S]*status:\s*"cooldown"[\s\S]*fallbackRoute:\s*route\.fallbackRoute/);
   assert.match(serverSource, /response\.status === 418[\s\S]*markMissevanFallbackRouteCooldown\(route\)/);
-  assert.match(serverSource, /failureStatus[\s\S]*"timeout"/);
+  assert.match(serverSource, /function classifyRequestFailureOutcome[\s\S]*return "timeout";[\s\S]*return "cancelled";/);
+  assert.match(serverSource, /const failureStatus = classifyRequestFailureOutcome\(\{[\s\S]*timeoutState: timeout/);
   assert.match(serverSource, /createMissevanFallbackError[\s\S]*failureStatus/);
   assert.match(fetchJsonSource, /fetchMissevanJsonWithFallbackChain/);
   assert.match(fetchJsonSource, /getForcedMissevanFallbackRoute/);
@@ -4416,6 +4417,7 @@ test("resource protection environment keys are loaded from local env files", () 
     "STATS_TASK_MAX_ITEMS",
     "MISSEVAN_STATS_MAX_CONCURRENCY",
     "MANBO_STATS_MAX_CONCURRENCY",
+    "MANBO_DANMAKU_GLOBAL_CONCURRENCY",
     "STATS_TASK_QUEUE_MAX",
     "STATS_TASK_CLIENT_QUEUE_MAX",
     "IMAGE_PROXY_MAX_BYTES",

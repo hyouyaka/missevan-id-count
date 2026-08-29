@@ -1327,6 +1327,56 @@ test("danmaku operation logs merge normal requests and retain anomalous attempts
   assert.equal(cancelled.fields.cancelled, true);
 });
 
+test("operation log levels distinguish normal cancellation from timeouts", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const {
+    classifyRequestFailureOutcome,
+    getOperationAttemptLogLevel,
+    getOperationUsageLogLevel,
+  } = await import("./server.js");
+
+  assert.equal(getOperationUsageLogLevel("missevan_request", {
+    outcome: "cancelled",
+    success: false,
+  }), "info");
+  assert.equal(getOperationUsageLogLevel("danmaku_summary", {
+    cancelled: true,
+    error: "Client disconnected",
+    success: false,
+  }), "info");
+  assert.equal(getOperationUsageLogLevel("missevan_request", {
+    outcome: "timeout",
+    success: false,
+  }), "error");
+  assert.equal(getOperationUsageLogLevel("danmaku_summary", {
+    httpStatus: 504,
+    success: false,
+  }), "error");
+  assert.equal(getOperationUsageLogLevel("danmaku_summary", {
+    error: "upstream failed",
+    success: false,
+  }), "error");
+  assert.equal(getOperationAttemptLogLevel({
+    status: "cancelled",
+    success: false,
+  }), "info");
+  assert.equal(getOperationAttemptLogLevel({
+    status: "timeout",
+    success: false,
+  }), "warn");
+
+  const cancelled = new AbortController();
+  cancelled.abort(new DOMException("Client disconnected", "AbortError"));
+  assert.equal(classifyRequestFailureOutcome({ externalSignal: cancelled.signal }), "cancelled");
+
+  const parentTimeout = new AbortController();
+  parentTimeout.abort(new Error("Request timeout after 12000ms"));
+  assert.equal(classifyRequestFailureOutcome({ externalSignal: parentTimeout.signal }), "timeout");
+  assert.equal(classifyRequestFailureOutcome({ timeoutState: { timedOut: true } }), "timeout");
+  assert.equal(classifyRequestFailureOutcome({ responseStatus: 504 }), 504);
+  assert.equal(classifyRequestFailureOutcome({ error: new Error("upstream failed") }), "error");
+});
+
 test("terminal stats task usage logs preserve the full result and optional source", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const {

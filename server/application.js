@@ -91,6 +91,11 @@ import {
 import { createMissevanClient } from "./clients/missevanClient.js";
 import { createManboClient } from "./clients/manboClient.js";
 import { createSharedRequestRegistry } from "./clients/sharedRequest.js";
+import {
+  createRequestConcurrencyGate,
+  normalizeRequestConcurrency,
+} from "./clients/requestConcurrency.js";
+import { fetchRequiredManboDanmakuPages } from "./clients/manboDanmakuPages.js";
 import { createDramaService } from "./services/dramaService.js";
 import { createWeeklyPlaybackStore } from "./services/weeklyPlaybackService.js";
 import { searchLibraryWithFallback } from "./services/searchService.js";
@@ -418,6 +423,16 @@ const MANBO_DANMAKU_PAGE_CONCURRENCY = Math.max(
   1,
   Number(process.env.MANBO_DANMAKU_PAGE_CONCURRENCY ?? 12) || 12
 );
+const MANBO_DANMAKU_GLOBAL_CONCURRENCY = normalizeRequestConcurrency(
+  process.env.MANBO_DANMAKU_GLOBAL_CONCURRENCY,
+  32,
+  64
+);
+const MANBO_DANMAKU_RESCUE_CONCURRENCY = 2;
+const MANBO_DANMAKU_RESCUE_TIMEOUT_MS = 20_000;
+const MANBO_DANMAKU_RESCUE_RETRIES = 1;
+const MANBO_DANMAKU_RESCUE_DELAY_MS = 1_000;
+const MANBO_DANMAKU_FAILED_PAGE_LOG_LIMIT = 20;
 const MANBO_STATS_EPISODE_CONCURRENCY = Math.max(
   1,
   Number(process.env.MANBO_STATS_EPISODE_CONCURRENCY ?? 4) || 4
@@ -425,6 +440,9 @@ const MANBO_STATS_EPISODE_CONCURRENCY = Math.max(
 const MANBO_FETCH_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.MANBO_FETCH_TIMEOUT_MS ?? 10000) || 10000
+);
+const manboDanmakuPageGate = createRequestConcurrencyGate(
+  MANBO_DANMAKU_GLOBAL_CONCURRENCY
 );
 const SEARCH_CARD_METRICS_TIMEOUT_MS = 12_000;
 const SEARCH_CARD_METRICS_MAX_ACTIVE = 20;
@@ -7339,6 +7357,14 @@ export function normalizeOperationAttemptLogFields(attempt = {}) {
   return fields;
 }
 
+export function getOperationAttemptLogLevel(attempt = {}) {
+  return attempt.status === "cancelled" || attempt.outcome === "cancelled"
+    ? "info"
+    : attempt.success === false
+      ? "warn"
+      : "info";
+}
+
 async function finalizeActiveOperation(entry) {
   const trace = getActiveOperationTrace();
   if (!trace || trace.finalized) {
@@ -7347,7 +7373,7 @@ async function finalizeActiveOperation(entry) {
   trace.finalized = true;
   const { anomalousAttempts, fields, level } = buildOperationTraceLog(trace, entry);
   for (const attempt of anomalousAttempts) {
-    const attemptLevel = attempt.success === false ? "warn" : "info";
+    const attemptLevel = getOperationAttemptLogLevel(attempt);
     await logger.operation("external_request_attempt", {
       operation: trace.event,
       ...normalizeOperationAttemptLogFields(attempt),
@@ -7432,6 +7458,22 @@ export function normalizeUsageLogFields(entry, action) {
   return fields;
 }
 
+export function getOperationUsageLogLevel(action, fields = {}) {
+  if (fields.cancelled || fields.outcome === "cancelled") {
+    return "info";
+  }
+  const terminalFailure = fields.success === false && [
+    "cache_refresh",
+    "danmaku_summary",
+    "missevan_request",
+    "watch_count",
+  ].includes(action);
+  if (fields.error || fields.accessDenied || terminalFailure) {
+    return "error";
+  }
+  return fields.fallbackUsed ? "warn" : "info";
+}
+
 async function writeUsageLog(entry) {
   const action = normalizeTextValue(entry?.action);
   if (action === "danmaku_summary" && await finalizeActiveOperation(entry)) {
@@ -7448,19 +7490,7 @@ async function writeUsageLog(entry) {
     if (!fields.operationId) {
       fields.operationId = randomUUID();
     }
-    const terminalFailure = fields.success === false && [
-      "cache_refresh",
-      "danmaku_summary",
-      "missevan_request",
-      "watch_count",
-    ].includes(action);
-    const level = fields.cancelled
-      ? "info"
-      : fields.error || fields.accessDenied || terminalFailure
-        ? "error"
-        : fields.fallbackUsed
-        ? "warn"
-        : "info";
+    const level = getOperationUsageLogLevel(action, fields);
     return logger.operation(event, fields, level);
   }
   const level = fields.success === false ? "warn" : "info";
@@ -7503,6 +7533,31 @@ export function createTimeoutSignal(timeoutMs, externalSignal) {
       externalSignal?.removeEventListener("abort", onExternalAbort);
     },
   };
+}
+
+export function classifyRequestFailureOutcome({
+  error,
+  externalSignal,
+  responseStatus = "",
+  timeoutState,
+} = {}) {
+  if (responseStatus !== "" && responseStatus != null) {
+    return responseStatus;
+  }
+  const externalAbortReason = externalSignal?.reason;
+  const externalAbortIsCancellation = externalAbortReason?.name === "AbortError";
+  if (
+    timeoutState?.timedOut ||
+    error?.requestTimedOut === true ||
+    externalAbortReason?.name === "TimeoutError" ||
+    (externalSignal?.aborted && !externalAbortIsCancellation)
+  ) {
+    return "timeout";
+  }
+  if (externalSignal?.aborted || error?.name === "AbortError") {
+    return "cancelled";
+  }
+  return "error";
 }
 
 function buildMissevanFetchHeaders(headers = {}) {
@@ -7697,7 +7752,12 @@ async function fetchMissevanViaFallbackRoute(url, route, options = {}, details =
 
     return payload;
   } catch (error) {
-    const failureStatus = responseStatus || (error?.name === "AbortError" ? "timeout" : "error");
+    const failureStatus = classifyRequestFailureOutcome({
+      error,
+      externalSignal: options.signal,
+      responseStatus,
+      timeoutState: timeout,
+    });
     if (!isMissevanFallbackError(error)) {
       writeMissevanRequestUsageLog(url, {
         attempt: details.attempt,
@@ -7818,6 +7878,7 @@ function getRequestLogPlatform(url) {
 }
 
 function recordGenericRequestAttempt(url, details = {}) {
+  const pageNo = getRequestLogPageNo(url);
   recordOperationAttempt({
     platform: getRequestLogPlatform(url),
     endpoint: getMissevanRequestLogEndpoint(url),
@@ -7830,6 +7891,7 @@ function recordGenericRequestAttempt(url, details = {}) {
     fallbackUsed: Boolean(details.fallbackUsed),
     fallbackRoute: String(details.fallbackRoute || ""),
     fallbackReason: String(details.fallbackReason || ""),
+    ...(pageNo ? { pageNo } : {}),
   });
 }
 
@@ -8010,9 +8072,15 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
       }
 
       if (options.missevan && !requestLogged) {
+        const failureStatus = classifyRequestFailureOutcome({
+          error,
+          externalSignal: options.signal,
+          responseStatus,
+          timeoutState,
+        });
         writeMissevanRequestUsageLog(url, {
           attempt: attempt + 1,
-          status: responseStatus || (options.signal?.aborted ? "cancelled" : timeoutState?.timedOut ? "timeout" : "error"),
+          status: failureStatus,
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
           accessDenied: false,
@@ -8020,7 +8088,12 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
       } else if (!options.missevan && !requestLogged && getActiveOperationTrace()) {
         recordGenericRequestAttempt(url, {
           attempt: attempt + 1,
-          status: responseStatus || (options.signal?.aborted ? "cancelled" : timeoutState?.timedOut ? "timeout" : "error"),
+          status: classifyRequestFailureOutcome({
+            error,
+            externalSignal: options.signal,
+            responseStatus,
+            timeoutState,
+          }),
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
         });
@@ -8175,7 +8248,12 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       if (options.missevan && !requestLogged) {
         writeMissevanRequestUsageLog(url, {
           attempt: attempt + 1,
-          status: responseStatus || (options.signal?.aborted ? "cancelled" : timeoutState?.timedOut ? "timeout" : "error"),
+          status: classifyRequestFailureOutcome({
+            error,
+            externalSignal: options.signal,
+            responseStatus,
+            timeoutState,
+          }),
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
           accessDenied: false,
@@ -8195,6 +8273,15 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
   }
 
   throw lastError;
+}
+
+function getRequestLogPageNo(url) {
+  try {
+    const pageNo = Number((typeof url === "string" ? new URL(url) : url).searchParams.get("pageNo"));
+    return Number.isInteger(pageNo) && pageNo > 0 ? pageNo : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function formatImageProxyError(error) {
@@ -8793,7 +8880,11 @@ async function fetchDanmakuSummary(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (options.signal?.aborted) {
+    const failureOutcome = classifyRequestFailureOutcome({
+      error,
+      externalSignal: options.signal,
+    });
+    if (options.signal?.aborted && failureOutcome === "cancelled") {
       void writeUsageLog({
         platform: "missevan",
         action: "danmaku_summary",
@@ -8824,6 +8915,7 @@ async function fetchDanmakuSummary(
     void writeUsageLog({
       platform: "missevan",
       action: "danmaku_summary",
+      status: failureOutcome,
       soundId: Number(soundId),
       dramaTitle,
       episodeTitle,
@@ -9596,27 +9688,49 @@ async function fetchManboDanmakuSummary(
     options.signal,
     async (sharedSignal) => {
       const startedAt = Date.now();
+      let rescueAttempted = false;
+      let rescuedPageCount = 0;
+      let totalPages = 0;
 
       try {
         const pageSize = 200;
         const users = new Set();
-        const pageFetchOptions = {
-          timeoutMs: MANBO_FETCH_TIMEOUT_MS,
-          signal: sharedSignal,
+        const fetchPage = (pageNo, phase) => {
+          const rescue = phase === "rescue";
+          const url = `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=${pageNo}`;
+          return manboDanmakuPageGate.run(
+            sharedSignal,
+            () => fetchJsonWithRetry(
+              url,
+              rescue ? MANBO_DANMAKU_RESCUE_RETRIES : 2,
+              rescue ? MANBO_DANMAKU_RESCUE_DELAY_MS : 250,
+              {
+                timeoutMs: rescue ? MANBO_DANMAKU_RESCUE_TIMEOUT_MS : MANBO_FETCH_TIMEOUT_MS,
+                signal: sharedSignal,
+              }
+            )
+          );
         };
-        const firstPageData = await fetchJsonWithRetry(
-          `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=1`,
-          2,
-          250,
-          pageFetchOptions
-        );
+        let firstPageData = null;
+        const firstPageFetch = await fetchRequiredManboDanmakuPages({
+          fetchPage,
+          onPage(_pageNo, data) {
+            firstPageData = data;
+          },
+          pageNumbers: [1],
+          primaryConcurrency: 1,
+          rescueConcurrency: 1,
+          signal: sharedSignal,
+        });
+        rescueAttempted ||= firstPageFetch.rescueAttempted;
+        rescuedPageCount += firstPageFetch.rescuedPageCount;
         const firstPayload = firstPageData?.data || {};
         const firstList = Array.isArray(firstPayload.list) ? firstPayload.list : [];
         const totalDanmaku = Math.max(
           0,
           Number(firstPayload.count ?? firstList.length ?? 0)
         );
-        const totalPages =
+        totalPages =
           totalDanmaku > 0 ? Math.ceil(totalDanmaku / pageSize) : 1;
 
         firstList.forEach((item) => {
@@ -9630,16 +9744,13 @@ async function fetchManboDanmakuSummary(
           (_, index) => index + 2
         );
 
-        await runWithConcurrency(
-          remainingPages,
-          MANBO_DANMAKU_PAGE_CONCURRENCY,
-          async (pageNo) => {
-            const data = await fetchJsonWithRetry(
-              `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=${pageNo}`,
-              2,
-              250,
-              pageFetchOptions
-            );
+        const remainingPageFetch = await fetchRequiredManboDanmakuPages({
+          fetchPage,
+          pageNumbers: remainingPages,
+          primaryConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
+          rescueConcurrency: MANBO_DANMAKU_RESCUE_CONCURRENCY,
+          signal: sharedSignal,
+          onPage(_pageNo, data) {
             const payload = data?.data || {};
             const list = Array.isArray(payload.list) ? payload.list : [];
             list.forEach((item) => {
@@ -9647,8 +9758,10 @@ async function fetchManboDanmakuSummary(
                 users.add(String(item.eid));
               }
             });
-          }
-        );
+          },
+        });
+        rescueAttempted ||= remainingPageFetch.rescueAttempted;
+        rescuedPageCount += remainingPageFetch.rescuedPageCount;
 
         const summary = {
           success: true,
@@ -9678,6 +9791,10 @@ async function fetchManboDanmakuSummary(
           cached: false,
           ...(source ? { source } : {}),
           pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
+          globalPageConcurrency: MANBO_DANMAKU_GLOBAL_CONCURRENCY,
+          rescueAttempted,
+          rescuedPageCount,
+          failedPageCount: 0,
           totalPages,
           durationMs: Date.now() - startedAt,
         });
@@ -9689,7 +9806,20 @@ async function fetchManboDanmakuSummary(
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (sharedSignal.aborted) {
+        const failureOutcome = error?.outcome || classifyRequestFailureOutcome({
+          error,
+          externalSignal: sharedSignal,
+        });
+        const failedPages = Array.isArray(error?.failedPages)
+          ? error.failedPages.slice(0, MANBO_DANMAKU_FAILED_PAGE_LOG_LIMIT)
+          : [];
+        rescueAttempted ||= Boolean(error?.rescueAttempted);
+        rescuedPageCount += Math.max(0, Number(error?.rescuedPageCount) || 0);
+        const failedPageCount = Math.max(
+          failedPages.length,
+          Number(error?.failedPageCount) || 0
+        );
+        if (sharedSignal.aborted && failureOutcome === "cancelled") {
           void writeUsageLog({
             platform: "manbo",
             action: "danmaku_summary",
@@ -9702,6 +9832,12 @@ async function fetchManboDanmakuSummary(
             cached: false,
             ...(source ? { source } : {}),
             pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
+            globalPageConcurrency: MANBO_DANMAKU_GLOBAL_CONCURRENCY,
+            rescueAttempted,
+            rescuedPageCount,
+            failedPageCount,
+            ...(failedPages.length > 0 ? { failedPages } : {}),
+            ...(totalPages > 0 ? { totalPages } : {}),
             durationMs: Date.now() - startedAt,
           });
           return {
@@ -9722,6 +9858,7 @@ async function fetchManboDanmakuSummary(
         void writeUsageLog({
           platform: "manbo",
           action: "danmaku_summary",
+          status: failureOutcome,
           soundId: String(setId),
           dramaTitle,
           episodeTitle: resolvedEpisodeTitle,
@@ -9733,6 +9870,12 @@ async function fetchManboDanmakuSummary(
           ...(source ? { source } : {}),
           error: message,
           pageConcurrency: MANBO_DANMAKU_PAGE_CONCURRENCY,
+          globalPageConcurrency: MANBO_DANMAKU_GLOBAL_CONCURRENCY,
+          rescueAttempted,
+          rescuedPageCount,
+          failedPageCount,
+          ...(failedPages.length > 0 ? { failedPages } : {}),
+          ...(totalPages > 0 ? { totalPages } : {}),
           durationMs: Date.now() - startedAt,
         });
 
