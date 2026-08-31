@@ -99,7 +99,10 @@ import { fetchRequiredManboDanmakuPages } from "./clients/manboDanmakuPages.js";
 import { createDramaService } from "./services/dramaService.js";
 import { createWeeklyPlaybackStore } from "./services/weeklyPlaybackService.js";
 import { searchLibraryWithFallback } from "./services/searchService.js";
-import { createRequestSecurityMiddleware } from "./httpSecurity.js";
+import {
+  createRequestSecurityMiddleware,
+  createSensitiveProbePathMiddleware,
+} from "./httpSecurity.js";
 import {
   createCategoryFileSink,
   createLogger,
@@ -729,6 +732,7 @@ app.use(createRequestSecurityMiddleware({
   logger,
 }));
 app.use(createRequestLoggerMiddleware({ logger }));
+app.use(createSensitiveProbePathMiddleware());
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(compression({
   threshold: 1024,

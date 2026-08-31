@@ -15,6 +15,47 @@ const DEFAULT_PERMISSION_POLICY = [
   "clipboard-read=()",
 ].join(", ");
 
+const SENSITIVE_METADATA_SEGMENTS = new Set([
+  ".git",
+  ".svn",
+  ".hg",
+  ".htpasswd",
+  ".htaccess",
+]);
+
+export function isSensitiveProbePath(pathname) {
+  let normalizedPath = String(pathname || "");
+  try {
+    normalizedPath = decodeURIComponent(normalizedPath);
+  } catch (_) {
+    // Keep checking the undecoded path when percent encoding is malformed.
+  }
+
+  return normalizedPath
+    .replaceAll("\\", "/")
+    .split("/")
+    .some((rawSegment) => {
+      const segment = rawSegment.toLowerCase();
+      return (
+        segment === ".env" ||
+        segment.startsWith(".env.") ||
+        SENSITIVE_METADATA_SEGMENTS.has(segment)
+      );
+    });
+}
+
+export function createSensitiveProbePathMiddleware() {
+  return (req, res, next) => {
+    if (!isSensitiveProbePath(req.path)) {
+      return next();
+    }
+
+    res.setHeader("Cache-Control", "no-store");
+    res.type("text/plain");
+    return res.status(404).send("Not Found");
+  };
+}
+
 function normalizeHostHeader(value) {
   return String(value || "").trim().toLowerCase();
 }
