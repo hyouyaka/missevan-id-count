@@ -1,10 +1,10 @@
 # M&M Toolkit Architecture
 
-Last updated: 2026-07-30
+Last updated: 2026-09-03
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.7.8
+- **Version**: 1.8.2
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
   - `server.js` as the stable backend facade, with `server/application.js` providing composition and `server/routes/` holding extracted route groups
@@ -253,7 +253,10 @@ This subsystem is backed by shared domain utilities and Upstash snapshot keys.
 
 ### Rank System
 - `GET /ranks` returns normalized categories for both platforms.
-- The backend tags the response with schema version `5`.
+- The backend tags the response with schema version `6`.
+- The weekly growth snapshot is read from `ranks:weekly-growth:latest`. Its `weekly` and `fourWeek` periods become the shared `growth_weekly` and `growth_monthly` ranks, inserted between peak and CV categories.
+- Growth-card covers are joined from the already-loaded Missevan and Manbo info-v2 stores by drama ID; the rank consumer does not call either platform API.
+- `ranks:meta` keeps normal, CV, and growth version markers in independent `normal`, `cv`, and `watchcountGrowth` sections. `watchcountGrowth.resources["ranks:weekly-growth:latest"]` drives growth refreshes, while the public response exposes `cvSummary`, `growthSummary`, and separate `meta.cv` / `meta.growth` publication times.
 - The frontend renders this data in `src/app/RanksPanel.jsx`.
 
 ### Trend System

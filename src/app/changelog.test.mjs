@@ -10,8 +10,8 @@ import {
   markChangelogVersionSeen,
 } from "./changelog.js";
 
-test("changelog summary exposes only the latest entry while history remains complete", () => {
-  assert.deepEqual(getChangelogEntriesForMode("summary"), [CHANGELOG_ENTRIES[0]]);
+test("changelog summary exposes the latest two entries while history remains complete", () => {
+  assert.deepEqual(getChangelogEntriesForMode("summary"), CHANGELOG_ENTRIES.slice(0, 2));
   assert.equal(getChangelogEntriesForMode("history"), CHANGELOG_ENTRIES);
 });
 
@@ -60,16 +60,29 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.8.1", () => {
-  assert.equal(packageJson.version, "1.8.1");
+test("package version is 1.8.2", () => {
+  assert.equal(packageJson.version, "1.8.2");
 });
 
-test("changelog contains the 1.8.1 episode detail update", () => {
+test("changelog contains the 1.8.2 growth rank update", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.8.2");
+
+  assert.deepEqual(entry, {
+    version: "1.8.2",
+    changes: [
+      "新增猫耳、漫播飙升榜，支持查看7日和4周播放量增量，并在首页提供7日榜速览。",
+    ],
+  });
+});
+
+test("changelog keeps the 1.8.1 episode detail update", () => {
   const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.8.1");
 
   assert.deepEqual(entry, {
     version: "1.8.1",
-    changes: ["付费ID统计结果添加显示分集明细，弹幕溢出的分集会额外显示总弹幕数。"],
+    changes: [
+      "付费ID统计结果添加显示分集明细，弹幕溢出的分集会额外显示总弹幕数。",
+    ],
   });
 });
 

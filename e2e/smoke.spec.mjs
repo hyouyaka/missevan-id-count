@@ -180,3 +180,102 @@ test("P1 search deep link, compact action hierarchy, and drawer work responsivel
     await context.close();
   }
 });
+
+test("growth ranks show both periods on desktop and one switchable period on mobile", async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: "http://127.0.0.1:3000",
+    viewport: { width: 1440, height: 900 },
+  });
+  const page = await context.newPage();
+  await page.addInitScript((version) => {
+    window.localStorage.setItem("missevan-changelog-seen-version", version);
+  }, appVersion);
+
+  const growthRanks = [
+    {
+      key: "growth_weekly",
+      label: "周榜",
+      name: "7日飙升榜",
+      fetchedAt: "2026-09-03T05:00:00+00:00",
+      statisticsPeriod: { startDate: "2026-08-27", endDate: "2026-09-03" },
+      items: [{ rank: 1, id: "22602", name: "猫耳飙升测试剧", view_count: 295782463, view_count_increase: 123456, main_cv_text: "主要CV：测试声优", create_time: "2024-01-02", platform: "missevan", type: "drama" }],
+    },
+    {
+      key: "growth_monthly",
+      label: "月榜",
+      name: "4周飙升榜",
+      fetchedAt: "2026-09-03T05:00:00+00:00",
+      statisticsPeriod: { startDate: "2026-08-06", endDate: "2026-09-03" },
+      items: [{ rank: 1, id: "22603", name: "猫耳月榜测试剧", view_count: 123456789, view_count_increase: 654321, main_cv_text: "主要CV：测试声优", create_time: "2024-02-03", platform: "missevan", type: "drama" }],
+    },
+  ];
+  await page.route("**/ranks?**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      success: true,
+      schemaVersion: 6,
+      updatedAt: "2026-09-03T05:00:00+00:00",
+      cvSummary: { updatedAt: "2026-09-03T04:00:00+00:00", missevanDramaCount: 842, manboDramaCount: 331 },
+      growthSummary: {
+        updatedAt: "2026-09-03T05:00:00+00:00",
+        date: "2026-09-03",
+        missevanDramaCount: 901,
+        manboDramaCount: 402,
+      },
+      meta: { normal: { publishedAt: "" }, cv: { publishedAt: "" }, growth: { publishedAt: "2026-09-03T05:01:00+00:00" } },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [{ key: "growth", label: "飙升榜", ranks: growthRanks }] },
+        manbo: { key: "manbo", label: "漫播", categories: [{ key: "growth", label: "飙升榜", ranks: growthRanks.map((rank) => ({ ...rank, items: rank.items.map((item) => ({ ...item, id: "1697533863498088523", name: item.name.replace("猫耳", "漫播"), platform: "manbo" })) })) }] },
+      },
+    }),
+  }));
+  await page.route("**/ranks/trends/availability?**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ success: true, ids: [] }),
+  }));
+
+  try {
+    await page.goto("/?view=ranks&platform=missevan&category=growth&rank=growth_weekly");
+    await expect(page.locator("h2:visible").filter({ hasText: /^7日飙升榜$/ })).toHaveCount(1);
+    await expect(page.locator("h2:visible").filter({ hasText: /^4周飙升榜$/ })).toHaveCount(1);
+    await expect(page.getByText("统计区间：2026-08-27 至 2026-09-03", { exact: true }).filter({ visible: true })).toBeVisible();
+    const growthDelta = page.getByText("（+12.3万）", { exact: true }).filter({ visible: true });
+    const latestPlayCount = page.getByText("2.96亿", { exact: true }).filter({ visible: true });
+    await expect(growthDelta).toBeVisible();
+    await expect(growthDelta).toHaveCSS("font-weight", "700");
+    expect(await growthDelta.evaluate((node) => getComputedStyle(node).fontSize))
+      .toBe(await latestPlayCount.evaluate((node) => getComputedStyle(node).fontSize));
+    await page.getByRole("button", { name: "查看榜单说明" }).first().click();
+    await expect(page.getByText("统计来自猫耳901部，漫播402部上架中的作品，每周更新。", { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("h2:visible").filter({ hasText: /^7日飙升榜$/ })).toHaveCount(1);
+    await expect(page.locator("h2:visible").filter({ hasText: /^4周飙升榜$/ })).toHaveCount(0);
+    await page.getByRole("tab", { name: "月", exact: true }).click();
+    await expect(page.locator("h2:visible").filter({ hasText: /^4周飙升榜$/ })).toHaveCount(1);
+    expect(new URL(page.url()).searchParams.get("rank")).toBe("growth_monthly");
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    await page.goto("/");
+    const growthCard = page.locator(".home-editorial-rank-card").filter({
+      has: page.getByRole("heading", { name: "7日飙升榜", exact: true }),
+    });
+    await expect(growthCard).toHaveCount(1);
+    await expect(growthCard).toContainText("统计区间：2026-08-27 至 2026-09-03");
+    await expect(growthCard).not.toContainText("更新");
+
+    await page.getByRole("tablist", { name: "选择榜单平台" })
+      .getByRole("tab", { name: "漫播", exact: true })
+      .click();
+    const manboGrowthCard = page.locator(".home-editorial-rank-card").filter({
+      has: page.getByRole("heading", { name: "7日飙升榜", exact: true }),
+    });
+    await expect(manboGrowthCard).toHaveCount(1);
+    await expect(manboGrowthCard).toContainText("统计区间：2026-08-27 至 2026-09-03");
+  } finally {
+    await context.close();
+  }
+});

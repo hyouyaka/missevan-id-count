@@ -216,6 +216,7 @@ export function registerStatsRoutes(router, {
       res.setHeader("X-Ranks-Cache-Status", cacheStatus || "hit");
       res.setHeader("X-Ranks-Normal-Updated-At", response.updatedAt || "");
       res.setHeader("X-Ranks-CV-Updated-At", response.cvSummary?.updatedAt || "");
+      res.setHeader("X-Ranks-Growth-Updated-At", response.growthSummary?.updatedAt || "");
       if (probePhase) {
         res.setHeader("X-Ranks-Probe-Phase", probePhase);
       }
@@ -231,6 +232,7 @@ export function registerStatsRoutes(router, {
         success: false,
         updatedAt: "",
         cvSummary: { updatedAt: "", missevanDramaCount: 0, manboDramaCount: 0 },
+        growthSummary: { updatedAt: "", date: "" },
         meta: buildRanksResponseMeta(null),
         platforms: {
           missevan: { key: "missevan", label: "猫耳", categories: [] },

@@ -107,10 +107,11 @@ test("rank response appends normalized CV ranks per platform", async () => {
     },
   });
 
-  assert.equal(response.schemaVersion, 5);
+  assert.equal(response.schemaVersion, 6);
   assert.deepEqual(response.meta, {
     normal: { publishedAt: "2026-06-10T08:05:00+00:00" },
     cv: { publishedAt: "2026-06-10T09:35:00+00:00" },
+    growth: { publishedAt: "" },
   });
   assert.deepEqual(response.cvSummary, {
     updatedAt: "2026-06-10T09:30:00+00:00",
@@ -216,6 +217,128 @@ test("rank response exposes CV total and paid ranks with playback deltas", async
   assert.equal(cvCategory.ranks[1].items[0].playbackDelta.delta, null);
 });
 
+test("rank response inserts weekly growth ranks before CV with periods and string ids", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+  const snapshot = {
+    _meta: { updated_at: "2026-08-31T08:00:00+00:00" },
+    missevan: { ranks: {}, dramas: {} },
+    manbo: { ranks: {}, dramas: {} },
+  };
+  const cvSnapshot = {
+    generated_at: "2026-09-03T04:00:00+00:00",
+    missevanDramaCount: 842,
+    manboDramaCount: 331,
+    rankings: {
+      missevan: [{ cvName: "甲", rank: 1, works: [] }],
+      manbo: [{ cvName: "乙", rank: 1, works: [] }],
+    },
+  };
+  const growthSnapshot = {
+    version: 1,
+    kind: "weeklyViewGrowth",
+    date: "2026-09-03",
+    generated_at: "2026-09-03T05:00:00+00:00",
+    missevanDramaCount: 901,
+    manboDramaCount: 402,
+    statisticsPeriods: {
+      weekly: {
+        missevan: { startDate: "2026-08-27", endDate: "2026-09-03" },
+        manbo: { startDate: "2026-08-27", endDate: "2026-09-03" },
+      },
+      fourWeek: {
+        missevan: { startDate: "2026-08-06", endDate: "2026-09-03" },
+        manbo: { startDate: "2026-08-06", endDate: "2026-09-03" },
+      },
+    },
+    rankings: {
+      weekly: {
+        missevan: [{ rank: 1, platform: "missevan", dramaId: "22602", title: "猫耳测试剧", viewCount: 295782463, viewCountIncrease: 123456, mainCvs: ["甲", "乙"], catalogName: "广播剧", payStatus: "付费", createTime: "2024-01-02" }],
+        manbo: [{ rank: 1, platform: "manbo", dramaId: "1697533863498088523", title: "漫播测试剧", viewCount: 58396828, viewCountIncrease: 654321, mainCvs: ["乙"], catalogName: "有声书", payStatus: "会员", createTime: "2025-02-03" }],
+      },
+      fourWeek: {
+        missevan: [],
+        manbo: [],
+      },
+    },
+  };
+
+  const response = buildNormalizedRanksResponse(
+    snapshot,
+    null,
+    cvSnapshot,
+    {
+      meta: {
+        cv: {
+          resources: {
+            "ranks:cv:latest": { updatedAt: "cv-version", publishedAt: "cv-published" },
+          },
+        },
+        watchcountGrowth: {
+          updatedAt: "growth-version",
+          publishedAt: "growth-published",
+          resources: {
+            "ranks:weekly-growth:latest": { updatedAt: "growth-version", publishedAt: "growth-published" },
+          },
+        },
+      },
+    },
+    growthSnapshot,
+    {
+      missevan: { "22602": "https://cover.test/missevan.jpg" },
+      manbo: { "1697533863498088523": "https://cover.test/manbo.jpg" },
+    }
+  );
+
+  assert.deepEqual(response.growthSummary, {
+    updatedAt: "2026-09-03T05:00:00+00:00",
+    date: "2026-09-03",
+    missevanDramaCount: 901,
+    manboDramaCount: 402,
+  });
+  assert.equal(response.meta.growth.publishedAt, "growth-published");
+  assert.equal(response.meta.cv.publishedAt, "cv-published");
+  for (const platform of ["missevan", "manbo"]) {
+    assert.deepEqual(
+      response.platforms[platform].categories.map((category) => category.key),
+      ["growth", "cv"]
+    );
+    const growth = response.platforms[platform].categories[0];
+    assert.equal(growth.label, "飙升榜");
+    assert.deepEqual(growth.ranks.map((rank) => [rank.key, rank.label, rank.name]), [
+      ["growth_weekly", "周榜", "7日飙升榜"],
+      ["growth_monthly", "月榜", "4周飙升榜"],
+    ]);
+    assert.deepEqual(growth.ranks[0].statisticsPeriod, {
+      startDate: "2026-08-27",
+      endDate: "2026-09-03",
+    });
+  }
+  const missevanItem = response.platforms.missevan.categories[0].ranks[0].items[0];
+  assert.equal(missevanItem.id, "22602");
+  assert.equal(missevanItem.cover, "https://cover.test/missevan.jpg");
+  assert.equal(missevanItem.view_count_increase, 123456);
+  assert.equal(missevanItem.main_cv_text, "主要CV：甲，乙");
+  assert.equal(missevanItem.payment_label, "付费");
+  assert.equal(missevanItem.create_time, "2024-01-02");
+  const manboItem = response.platforms.manbo.categories[0].ranks[0].items[0];
+  assert.equal(manboItem.id, "1697533863498088523");
+  assert.equal(typeof manboItem.id, "string");
+  assert.equal(manboItem.content_type_label, "有声剧");
+
+  const growthWithoutMissevanCount = { ...growthSnapshot };
+  delete growthWithoutMissevanCount.missevanDramaCount;
+  const responseWithoutGrowthCounts = buildNormalizedRanksResponse(
+    snapshot,
+    null,
+    cvSnapshot,
+    {},
+    { ...growthWithoutMissevanCount, manboDramaCount: null }
+  );
+  assert.equal(responseWithoutGrowthCounts.growthSummary.missevanDramaCount, null);
+  assert.equal(responseWithoutGrowthCounts.growthSummary.manboDramaCount, null);
+});
+
 test("rank response keeps ordinary ranks when CV snapshot is unavailable", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildNormalizedRanksResponse } = await import("./server.js");
@@ -230,10 +353,11 @@ test("rank response keeps ordinary ranks when CV snapshot is unavailable", async
     null
   );
 
-  assert.equal(response.schemaVersion, 5);
+  assert.equal(response.schemaVersion, 6);
   assert.deepEqual(response.meta, {
     normal: { publishedAt: "" },
     cv: { publishedAt: "" },
+    growth: { publishedAt: "" },
   });
   assert.equal(response.cvSummary.updatedAt, "");
   assert.equal(response.platforms.missevan.categories.some((category) => category.key === "cv"), false);
@@ -328,6 +452,11 @@ test("cold ranks response reads and exposes published times from ranks meta", as
       cvBaselineSnapshot: null,
       updatedAt: "cv-version",
     }),
+    readGrowthRanksBundle: async () => ({
+      weeklyGrowthSnapshot: null,
+      weeklyGrowthCovers: { missevan: {}, manbo: {} },
+      weeklyGrowthUpdatedAt: "",
+    }),
     readRanksMeta: async () => {
       metaCalls += 1;
       return {
@@ -348,6 +477,7 @@ test("cold ranks response reads and exposes published times from ranks meta", as
   assert.deepEqual(result.response.meta, {
     normal: { publishedAt: "2026-06-20T08:05:00+00:00" },
     cv: { publishedAt: "2026-06-19T04:10:00+00:00" },
+    growth: { publishedAt: "" },
   });
 });
 
@@ -393,6 +523,11 @@ test("cold ranks response keeps rank data when ranks meta is unavailable", async
         cvBaselineSnapshot: null,
         updatedAt: "",
       }),
+      readGrowthRanksBundle: async () => ({
+        weeklyGrowthSnapshot: null,
+        weeklyGrowthCovers: { missevan: {}, manbo: {} },
+        weeklyGrowthUpdatedAt: "",
+      }),
       readRanksMeta: async () => {
         throw new Error("meta unavailable");
       },
@@ -402,6 +537,7 @@ test("cold ranks response keeps rank data when ranks meta is unavailable", async
     assert.deepEqual(result.response.meta, {
       normal: { publishedAt: "" },
       cv: { publishedAt: "" },
+      growth: { publishedAt: "" },
     });
   } finally {
     console.warn = warn;
@@ -426,7 +562,7 @@ test("cached ranks response syncs published times when meta versions are unchang
     cvUpdatedAt: "cv-version",
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "normal-version",
       cvSummary: { updatedAt: "cv-version" },
       meta: {
@@ -471,6 +607,7 @@ test("cached ranks response syncs published times when meta versions are unchang
   assert.deepEqual(result.response.meta, {
     normal: { publishedAt: "2026-06-15T00:40:00+00:00" },
     cv: { publishedAt: "2026-06-12T04:10:00+00:00" },
+    growth: { publishedAt: "" },
   });
 });
 
@@ -541,8 +678,10 @@ test("rank meta refresh decision reads no big keys when versions are unchanged",
     {
       normalUpdatedAt: "2026-06-12T21:20:00-04:00",
       cvUpdatedAt: "2026-06-13T00:44:24-04:00",
+      weeklyGrowthUpdatedAt: "",
       refreshNormal: false,
       refreshCv: false,
+      refreshGrowth: false,
     }
   );
 });
@@ -559,8 +698,10 @@ test("rank meta refresh decision refreshes only changed sources", async () => {
     {
       normalUpdatedAt: "new-normal",
       cvUpdatedAt: "same-cv",
+      weeklyGrowthUpdatedAt: "",
       refreshNormal: true,
       refreshCv: false,
+      refreshGrowth: false,
     }
   );
 
@@ -572,8 +713,81 @@ test("rank meta refresh decision refreshes only changed sources", async () => {
     {
       normalUpdatedAt: "same-normal",
       cvUpdatedAt: "new-cv",
+      weeklyGrowthUpdatedAt: "",
       refreshNormal: false,
       refreshCv: true,
+      refreshGrowth: false,
+    }
+  );
+});
+
+test("rank meta refresh decision distinguishes CV and growth resources", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildRanksMetaRefreshDecision } = await import("./server.js");
+  const meta = {
+    normal: {
+      updatedAt: "normal-top-level",
+      resources: {
+        "ranks:latest": { updatedAt: "normal-version", publishedAt: "normal-published" },
+      },
+    },
+    cv: {
+      resources: {
+        "ranks:cv:latest": { updatedAt: "cv-version", publishedAt: "cv-published" },
+      },
+    },
+    watchcountGrowth: {
+      updatedAt: "growth-top-level",
+      resources: {
+        "ranks:weekly-growth:latest": { updatedAt: "growth-version", publishedAt: "growth-published" },
+      },
+    },
+  };
+
+  assert.deepEqual(
+    buildRanksMetaRefreshDecision(
+      {
+        normalUpdatedAt: "normal-version",
+        cvUpdatedAt: "cv-version",
+        weeklyGrowthUpdatedAt: "old-growth",
+      },
+      meta
+    ),
+    {
+      normalUpdatedAt: "normal-version",
+      cvUpdatedAt: "cv-version",
+      weeklyGrowthUpdatedAt: "growth-version",
+      refreshNormal: false,
+      refreshCv: false,
+      refreshGrowth: true,
+    }
+  );
+
+  assert.deepEqual(
+    buildRanksMetaRefreshDecision(
+      {
+        normalUpdatedAt: "normal-version",
+        cvUpdatedAt: "cv-version",
+        weeklyGrowthUpdatedAt: "old-growth",
+      },
+      {
+        cv: {
+          resources: {
+            "ranks:weekly-growth:latest": {
+              updatedAt: "legacy-cv-growth-version",
+              publishedAt: "legacy-cv-growth-published",
+            },
+          },
+        },
+      }
+    ),
+    {
+      normalUpdatedAt: "normal-version",
+      cvUpdatedAt: "cv-version",
+      weeklyGrowthUpdatedAt: "old-growth",
+      refreshNormal: false,
+      refreshCv: false,
+      refreshGrowth: false,
     }
   );
 });
@@ -670,7 +884,7 @@ test("cached ranks response refreshes normal snapshot when meta normal version a
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -734,7 +948,7 @@ test("cached ranks response throttles stale fallback meta probes outside active 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -792,7 +1006,7 @@ test("cached ranks response periodically probes meta even when idle response is 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -854,7 +1068,7 @@ test("cached ranks response backs off fallback meta probe failures", async () =>
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -912,7 +1126,7 @@ test("cached ranks response reports meta-refresh when active probe reads unchang
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "2026-06-14T20:37:24-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -957,7 +1171,7 @@ test("cached ranks response records meta versions after refresh to avoid repeate
     cvUpdatedAt: "old-cv",
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
       platforms: {
@@ -1007,6 +1221,213 @@ test("cached ranks response records meta versions after refresh to avoid repeate
   assert.equal(second.cacheStatus, "meta-hit");
   assert.equal(normalCalls, 1);
   assert.equal(cvCalls, 1);
+});
+
+test("cached ranks response reads and commits only the independently refreshed CV or growth resource", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  const normalSnapshot = {
+    _meta: { updated_at: "same-normal" },
+    missevan: { ranks: {}, dramas: {} },
+    manbo: { ranks: {}, dramas: {} },
+  };
+  const response = {
+    success: true,
+    schemaVersion: 6,
+    updatedAt: "same-normal",
+    cvSummary: { updatedAt: "same-cv" },
+    growthSummary: { updatedAt: "old-growth" },
+    platforms: {
+      missevan: { key: "missevan", label: "猫耳", categories: [] },
+      manbo: { key: "manbo", label: "漫播", categories: [] },
+    },
+  };
+  const oldCvSnapshot = { generated_at: "same-cv", rankings: { stable: true } };
+  const oldGrowthSnapshot = { generated_at: "old-growth", weekly: { stable: true } };
+  const oldGrowthCovers = { missevan: { 1: "old-cover" }, manbo: {} };
+  const baseCache = {
+    normalSnapshot,
+    peakTrendSnapshot: null,
+    normalUpdatedAt: "same-normal",
+    response,
+    loadedAt: Date.parse("2026-06-15T02:34:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  };
+
+  __setRanksCacheForTest({
+    ...baseCache,
+    cvSnapshot: oldCvSnapshot,
+    cvTrendSnapshots: { stable: true },
+    weeklyGrowthSnapshot: oldGrowthSnapshot,
+    weeklyGrowthCovers: oldGrowthCovers,
+    cvUpdatedAt: "same-cv",
+    weeklyGrowthUpdatedAt: "old-growth",
+  });
+
+  const growthResult = await getCachedRanksResponse({
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "same-normal" },
+      cv: { updatedAt: "same-cv" },
+      growth: { updatedAt: "new-growth" },
+    }),
+    readGrowthRanksBundle: async () => {
+      return {
+        weeklyGrowthSnapshot: { generated_at: "new-growth", weekly: { fresh: true } },
+        weeklyGrowthCovers: { missevan: { 2: "new-cover" }, manbo: {} },
+        updatedAt: "",
+        weeklyGrowthUpdatedAt: "new-growth",
+      };
+    },
+  });
+
+  assert.equal(growthResult.cacheStatus, "growth-refresh");
+  assert.deepEqual(__getRanksCacheForTest().cvSnapshot, oldCvSnapshot);
+  assert.deepEqual(__getRanksCacheForTest().weeklyGrowthSnapshot, {
+    generated_at: "new-growth",
+    weekly: { fresh: true },
+  });
+
+  __setRanksCacheForTest({
+    ...baseCache,
+    cvSnapshot: oldCvSnapshot,
+    cvTrendSnapshots: { stable: true },
+    weeklyGrowthSnapshot: oldGrowthSnapshot,
+    weeklyGrowthCovers: oldGrowthCovers,
+    cvUpdatedAt: "old-cv",
+    weeklyGrowthUpdatedAt: "same-growth",
+  });
+
+  const cvResult = await getCachedRanksResponse({
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "same-normal" },
+      cv: { updatedAt: "new-cv" },
+      growth: { updatedAt: "same-growth" },
+    }),
+    readCvRanksBundle: async () => {
+      return {
+        cvSnapshot: { generated_at: "new-cv", rankings: { fresh: true } },
+        cvTrendSnapshots: { fresh: true },
+        weeklyGrowthSnapshot: null,
+        weeklyGrowthCovers: { missevan: {}, manbo: {} },
+        updatedAt: "new-cv",
+        weeklyGrowthUpdatedAt: "",
+      };
+    },
+  });
+
+  assert.equal(cvResult.cacheStatus, "cv-refresh");
+  assert.deepEqual(__getRanksCacheForTest().cvSnapshot, {
+    generated_at: "new-cv",
+    rankings: { fresh: true },
+  });
+  assert.deepEqual(__getRanksCacheForTest().weeklyGrowthSnapshot, oldGrowthSnapshot);
+  assert.deepEqual(__getRanksCacheForTest().weeklyGrowthCovers, oldGrowthCovers);
+});
+
+test("cached ranks response preserves and retries CV or growth when the refreshed snapshot is missing", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, getCachedRanksResponse } = await import("./server.js");
+  const normalSnapshot = {
+    _meta: { updated_at: "same-normal" },
+    missevan: { ranks: {}, dramas: {} },
+    manbo: { ranks: {}, dramas: {} },
+  };
+  const oldCvSnapshot = { generated_at: "old-cv", rankings: { stable: true } };
+  const oldGrowthSnapshot = { generated_at: "old-growth", rankings: { stable: true } };
+  const oldGrowthCovers = { missevan: { 1: "old-cover" }, manbo: {} };
+  const baseCache = {
+    normalSnapshot,
+    peakTrendSnapshot: null,
+    cvSnapshot: oldCvSnapshot,
+    cvTrendSnapshots: { stable: true },
+    weeklyGrowthSnapshot: oldGrowthSnapshot,
+    weeklyGrowthCovers: oldGrowthCovers,
+    normalUpdatedAt: "same-normal",
+    response: {
+      success: true,
+      schemaVersion: 6,
+      updatedAt: "same-normal",
+      cvSummary: { updatedAt: "old-cv" },
+      growthSummary: { updatedAt: "old-growth" },
+      platforms: {
+        missevan: { key: "missevan", label: "猫耳", categories: [] },
+        manbo: { key: "manbo", label: "漫播", categories: [] },
+      },
+    },
+    loadedAt: Date.parse("2026-06-15T02:34:00.000Z"),
+    meta: null,
+    metaLoadedAt: 0,
+    metaLoadPromise: null,
+    loadPromise: null,
+    metaPostRefreshBackoff: {},
+  };
+  let growthCalls = 0;
+
+  __setRanksCacheForTest({
+    ...baseCache,
+    cvSnapshot: { generated_at: "same-cv", rankings: { stable: true } },
+    cvUpdatedAt: "same-cv",
+    weeklyGrowthUpdatedAt: "old-growth",
+  });
+  const growthOptions = {
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "same-normal" },
+      cv: { updatedAt: "same-cv" },
+      growth: { updatedAt: "new-growth" },
+    }),
+    readGrowthRanksBundle: async () => {
+      growthCalls += 1;
+      return {
+        weeklyGrowthSnapshot: null,
+        weeklyGrowthCovers: { missevan: {}, manbo: {} },
+        weeklyGrowthUpdatedAt: "",
+      };
+    },
+  };
+
+  assert.equal((await getCachedRanksResponse(growthOptions)).cacheStatus, "stale");
+  assert.equal((await getCachedRanksResponse(growthOptions)).cacheStatus, "stale");
+  assert.equal(growthCalls, 2);
+  assert.deepEqual(__getRanksCacheForTest().weeklyGrowthSnapshot, oldGrowthSnapshot);
+  assert.deepEqual(__getRanksCacheForTest().weeklyGrowthCovers, oldGrowthCovers);
+  assert.equal(__getRanksCacheForTest().weeklyGrowthUpdatedAt, "old-growth");
+
+  let cvCalls = 0;
+  __setRanksCacheForTest({
+    ...baseCache,
+    weeklyGrowthSnapshot: { generated_at: "same-growth", rankings: { stable: true } },
+    cvUpdatedAt: "old-cv",
+    weeklyGrowthUpdatedAt: "same-growth",
+  });
+  const cvOptions = {
+    now: Date.parse("2026-06-15T02:35:00.000Z"),
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "same-normal" },
+      cv: { updatedAt: "new-cv" },
+      growth: { updatedAt: "same-growth" },
+    }),
+    readCvRanksBundle: async () => {
+      cvCalls += 1;
+      return {
+        cvSnapshot: null,
+        cvTrendSnapshots: null,
+        updatedAt: "",
+      };
+    },
+  };
+
+  assert.equal((await getCachedRanksResponse(cvOptions)).cacheStatus, "stale");
+  assert.equal((await getCachedRanksResponse(cvOptions)).cacheStatus, "stale");
+  assert.equal(cvCalls, 2);
+  assert.deepEqual(__getRanksCacheForTest().cvSnapshot, oldCvSnapshot);
+  assert.equal(__getRanksCacheForTest().cvUpdatedAt, "old-cv");
 });
 
 test("admin cache refresh executor requires a configured token", async () => {
@@ -1062,6 +1483,7 @@ test("admin cache refresh executor refreshes requested targets and writes a usag
           cacheStatus: "normal-refresh+cv-refresh",
           normalUpdatedAt: "normal-new",
           cvUpdatedAt: "cv-new",
+          weeklyGrowthUpdatedAt: "growth-new",
         };
       },
       refreshOngoing: async (platform) => {
@@ -1084,6 +1506,8 @@ test("admin cache refresh executor refreshes requested targets and writes a usag
   assert.equal(logs[0].reason, "manual patch");
   assert.equal(logs[0].normalUpdatedAt, "normal-new");
   assert.equal(logs[0].cvUpdatedAt, "cv-new");
+  assert.equal(logs[0].weeklyGrowthUpdatedAt, "growth-new");
+  assert.equal(result.payload.weeklyGrowthUpdatedAt, "growth-new");
   assert.deepEqual(logs[0].errors, []);
 });
 
@@ -1129,15 +1553,18 @@ test("admin ranks force refresh does not partially mutate cache when a requested
     normalSnapshot: { _meta: { updated_at: "old-normal" }, ranks: [] },
     peakTrendSnapshot: { old: true },
     cvSnapshot: { generated_at: "old-cv", items: [] },
+    weeklyGrowthSnapshot: { generated_at: "old-growth", rankings: {} },
     normalUpdatedAt: "old-normal",
     cvUpdatedAt: "old-cv",
+    weeklyGrowthUpdatedAt: "old-growth",
     meta: {
       normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
       cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+      growth: { updatedAt: "old-growth", publishedAt: "old-growth-published" },
     },
     response: {
       success: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
     },
@@ -1152,6 +1579,7 @@ test("admin ranks force refresh does not partially mutate cache when a requested
         readRanksMeta: async () => ({
           normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
           cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+          growth: { updatedAt: "new-growth", publishedAt: "new-growth-published" },
         }),
         readNormalRanksBundle: async () => ({
           snapshot: { _meta: { updated_at: "new-normal" }, ranks: [] },
@@ -1173,6 +1601,7 @@ test("admin ranks force refresh does not partially mutate cache when a requested
   assert.deepEqual(cache.meta, {
     normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
     cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+    growth: { updatedAt: "old-growth", publishedAt: "old-growth-published" },
   });
 });
 
@@ -1357,6 +1786,43 @@ test("admin ranks CV force refresh on a cold cache reads only the CV bundle", as
   assert.equal(__getRanksCacheForTest().response, null);
 });
 
+test("admin ranks growth force refresh reads only the growth bundle", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+  const oldCvSnapshot = { generated_at: "old-cv", rankings: { stable: true } };
+  let bundleCalls = 0;
+
+  __setRanksCacheForTest({
+    normalSnapshot: null,
+    cvSnapshot: oldCvSnapshot,
+    weeklyGrowthSnapshot: { generated_at: "old-growth", rankings: {} },
+    cvUpdatedAt: "old-cv",
+    weeklyGrowthUpdatedAt: "old-growth",
+    response: null,
+  });
+
+  const result = await refreshAdminRanksCacheTarget({
+    target: "ranks:growth",
+    force: true,
+    readRanksMeta: async () => ({
+      growth: { updatedAt: "new-growth", publishedAt: "new-growth-published" },
+    }),
+    readGrowthRanksBundle: async () => {
+      bundleCalls += 1;
+      return {
+        weeklyGrowthSnapshot: { generated_at: "new-growth", rankings: { fresh: true } },
+        weeklyGrowthCovers: { missevan: { 2: "new-cover" }, manbo: {} },
+        weeklyGrowthUpdatedAt: "new-growth",
+      };
+    },
+  });
+
+  assert.equal(bundleCalls, 1);
+  assert.equal(result.cacheStatus, "cold-refresh+growth-refresh");
+  assert.equal(result.weeklyGrowthUpdatedAt, "new-growth");
+  assert.deepEqual(__getRanksCacheForTest().cvSnapshot, oldCvSnapshot);
+});
+
 test("admin ranks normal force refresh on a cold cache reads only the normal bundle", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
@@ -1424,11 +1890,15 @@ test("admin ranks force refresh publishes matching bundles and meta in the first
     peakTrendSnapshot: { old: true },
     cvSnapshot: { generated_at: "old-cv", rankings: {} },
     cvTrendSnapshots: { old: true },
+    weeklyGrowthSnapshot: { generated_at: "old-growth", rankings: {} },
+    weeklyGrowthCovers: { missevan: {}, manbo: {} },
     normalUpdatedAt: "old-normal",
     cvUpdatedAt: "old-cv",
+    weeklyGrowthUpdatedAt: "old-growth",
     meta: {
       normal: { updatedAt: "old-normal", publishedAt: "old-normal-published" },
       cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+      growth: { updatedAt: "old-growth", publishedAt: "old-growth-published" },
     },
     metaLoadedAt: now - 60_000,
     metaPostRefreshBackoff: {},
@@ -1441,6 +1911,7 @@ test("admin ranks force refresh publishes matching bundles and meta in the first
     readRanksMeta: async () => ({
       normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
       cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+      growth: { updatedAt: "new-growth", publishedAt: "new-growth-published" },
     }),
     readNormalRanksBundle: async () => ({
       snapshot: {
@@ -1456,6 +1927,11 @@ test("admin ranks force refresh publishes matching bundles and meta in the first
       cvTrendSnapshots: { new: true },
       updatedAt: "new-cv",
     }),
+    readGrowthRanksBundle: async () => ({
+        weeklyGrowthSnapshot: { generated_at: "new-growth", rankings: {} },
+        weeklyGrowthCovers: { missevan: {}, manbo: {} },
+        weeklyGrowthUpdatedAt: "new-growth",
+    }),
   });
 
   assert.equal(result.normalUpdatedAt, "new-normal");
@@ -1463,10 +1939,12 @@ test("admin ranks force refresh publishes matching bundles and meta in the first
   assert.deepEqual(__getRanksCacheForTest().meta, {
     normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
     cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+    growth: { updatedAt: "new-growth", publishedAt: "new-growth-published" },
   });
   assert.deepEqual(__getRanksCacheForTest().response.meta, {
     normal: { publishedAt: "new-normal-published" },
     cv: { publishedAt: "new-cv-published" },
+    growth: { publishedAt: "new-growth-published" },
   });
 
   __setRanksCacheForTest({
@@ -1495,17 +1973,22 @@ test("admin ranks non-force refresh commits published times without rereading un
     manbo: { ranks: {}, dramas: {} },
   };
   const cvSnapshot = { generated_at: "same-cv", rankings: {} };
+  const growthSnapshot = { generated_at: "same-growth", rankings: {} };
 
   __setRanksCacheForTest({
     normalSnapshot,
     peakTrendSnapshot: null,
     cvSnapshot,
     cvTrendSnapshots: null,
+    weeklyGrowthSnapshot: growthSnapshot,
+    weeklyGrowthCovers: { missevan: {}, manbo: {} },
     normalUpdatedAt: "same-normal",
     cvUpdatedAt: "same-cv",
+    weeklyGrowthUpdatedAt: "same-growth",
     meta: {
       normal: { updatedAt: "same-normal", publishedAt: "old-normal-published" },
       cv: { updatedAt: "same-cv", publishedAt: "old-cv-published" },
+      growth: { updatedAt: "same-growth", publishedAt: "old-growth-published" },
     },
     response: null,
     metaPostRefreshBackoff: {},
@@ -1518,6 +2001,7 @@ test("admin ranks non-force refresh commits published times without rereading un
     readRanksMeta: async () => ({
       normal: { updatedAt: "same-normal", publishedAt: "new-normal-published" },
       cv: { updatedAt: "same-cv", publishedAt: "new-cv-published" },
+      growth: { updatedAt: "same-growth", publishedAt: "new-growth-published" },
     }),
     readNormalRanksBundle: async () => {
       throw new Error("unchanged normal bundle should not be read");
@@ -1531,7 +2015,188 @@ test("admin ranks non-force refresh commits published times without rereading un
   assert.deepEqual(__getRanksCacheForTest().response.meta, {
     normal: { publishedAt: "new-normal-published" },
     cv: { publishedAt: "new-cv-published" },
+    growth: { publishedAt: "new-growth-published" },
   });
+});
+
+test("admin non-force refresh reads and commits only the independently refreshed CV or growth resource", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+  const oldGrowthSnapshot = { generated_at: "same-growth", weekly: { stable: true } };
+  const oldGrowthCovers = { missevan: { 1: "old-cover" }, manbo: {} };
+
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "same-normal" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: { generated_at: "old-cv", rankings: {} },
+    cvTrendSnapshots: { old: true },
+    weeklyGrowthSnapshot: oldGrowthSnapshot,
+    weeklyGrowthCovers: oldGrowthCovers,
+    normalUpdatedAt: "same-normal",
+    cvUpdatedAt: "old-cv",
+    weeklyGrowthUpdatedAt: "same-growth",
+    meta: {
+      normal: { updatedAt: "same-normal", publishedAt: "same-normal-published" },
+      cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+      growth: { updatedAt: "same-growth", publishedAt: "same-growth-published" },
+    },
+    response: null,
+  });
+
+  const result = await refreshAdminRanksCacheTarget({
+    target: "ranks:cv",
+    force: false,
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "same-normal", publishedAt: "same-normal-published" },
+      cv: { updatedAt: "new-cv", publishedAt: "new-cv-published" },
+      growth: { updatedAt: "same-growth", publishedAt: "same-growth-published" },
+    }),
+    readCvRanksBundle: async () => {
+      return {
+        cvSnapshot: { generated_at: "new-cv", rankings: { fresh: true } },
+        cvTrendSnapshots: { fresh: true },
+        weeklyGrowthSnapshot: null,
+        weeklyGrowthCovers: { missevan: {}, manbo: {} },
+        updatedAt: "new-cv",
+        weeklyGrowthUpdatedAt: "",
+      };
+    },
+  });
+
+  const cache = __getRanksCacheForTest();
+  assert.equal(result.cacheStatus, "cold-refresh+cv-refresh");
+  assert.deepEqual(cache.weeklyGrowthSnapshot, oldGrowthSnapshot);
+  assert.deepEqual(cache.weeklyGrowthCovers, oldGrowthCovers);
+
+  const oldCvSnapshot = { generated_at: "same-cv", rankings: { stable: true } };
+  __setRanksCacheForTest({
+    normalSnapshot: {
+      _meta: { updated_at: "same-normal" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: oldCvSnapshot,
+    cvTrendSnapshots: { stable: true },
+    weeklyGrowthSnapshot: oldGrowthSnapshot,
+    weeklyGrowthCovers: oldGrowthCovers,
+    normalUpdatedAt: "same-normal",
+    cvUpdatedAt: "same-cv",
+    weeklyGrowthUpdatedAt: "old-growth",
+    meta: {
+      normal: { updatedAt: "same-normal", publishedAt: "same-normal-published" },
+      cv: { updatedAt: "same-cv", publishedAt: "same-cv-published" },
+      growth: { updatedAt: "old-growth", publishedAt: "old-growth-published" },
+    },
+    response: null,
+  });
+
+  const growthResult = await refreshAdminRanksCacheTarget({
+    target: "ranks:growth",
+    force: false,
+    readRanksMeta: async () => ({
+      normal: { updatedAt: "same-normal", publishedAt: "same-normal-published" },
+      cv: { updatedAt: "same-cv", publishedAt: "same-cv-published" },
+      growth: { updatedAt: "new-growth", publishedAt: "new-growth-published" },
+    }),
+    readGrowthRanksBundle: async () => {
+      return {
+        cvSnapshot: null,
+        cvTrendSnapshots: null,
+        weeklyGrowthSnapshot: { generated_at: "new-growth", weekly: { fresh: true } },
+        weeklyGrowthCovers: { missevan: { 2: "new-cover" }, manbo: {} },
+        updatedAt: "",
+        weeklyGrowthUpdatedAt: "new-growth",
+      };
+    },
+  });
+
+  const growthCache = __getRanksCacheForTest();
+  assert.equal(growthResult.cacheStatus, "cold-refresh+growth-refresh");
+  assert.deepEqual(growthCache.cvSnapshot, oldCvSnapshot);
+  assert.deepEqual(growthCache.weeklyGrowthSnapshot, {
+    generated_at: "new-growth",
+    weekly: { fresh: true },
+  });
+});
+
+test("admin non-force refresh rejects missing CV or growth snapshots without mutating cache", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { __getRanksCacheForTest, __setRanksCacheForTest, refreshAdminRanksCacheTarget } = await import("./server.js");
+  const oldCvSnapshot = { generated_at: "old-cv", rankings: { stable: true } };
+  const oldGrowthSnapshot = { generated_at: "old-growth", rankings: { stable: true } };
+  const oldMeta = {
+    normal: { updatedAt: "same-normal", publishedAt: "same-normal-published" },
+    cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+    growth: { updatedAt: "old-growth", publishedAt: "old-growth-published" },
+  };
+  const baseCache = {
+    normalSnapshot: {
+      _meta: { updated_at: "same-normal" },
+      missevan: { ranks: {}, dramas: {} },
+      manbo: { ranks: {}, dramas: {} },
+    },
+    peakTrendSnapshot: null,
+    cvSnapshot: oldCvSnapshot,
+    cvTrendSnapshots: { stable: true },
+    weeklyGrowthSnapshot: oldGrowthSnapshot,
+    weeklyGrowthCovers: { missevan: { 1: "old-cover" }, manbo: {} },
+    normalUpdatedAt: "same-normal",
+    meta: oldMeta,
+    response: null,
+  };
+
+  __setRanksCacheForTest({
+    ...baseCache,
+    cvUpdatedAt: "old-cv",
+    weeklyGrowthUpdatedAt: "same-growth",
+  });
+  await assert.rejects(
+    () => refreshAdminRanksCacheTarget({
+      target: "ranks:cv",
+      force: false,
+      readRanksMeta: async () => ({
+        normal: { updatedAt: "same-normal" },
+        cv: { updatedAt: "new-cv" },
+        growth: { updatedAt: "same-growth" },
+      }),
+      readCvRanksBundle: async () => {
+        return { cvSnapshot: null, updatedAt: "" };
+      },
+    }),
+    /CV ranks snapshot is unavailable/
+  );
+  assert.deepEqual(__getRanksCacheForTest().cvSnapshot, oldCvSnapshot);
+  assert.equal(__getRanksCacheForTest().cvUpdatedAt, "old-cv");
+  assert.deepEqual(__getRanksCacheForTest().meta, oldMeta);
+
+  __setRanksCacheForTest({
+    ...baseCache,
+    cvUpdatedAt: "same-cv",
+    weeklyGrowthUpdatedAt: "old-growth",
+  });
+  await assert.rejects(
+    () => refreshAdminRanksCacheTarget({
+      target: "ranks:growth",
+      force: false,
+      readRanksMeta: async () => ({
+        normal: { updatedAt: "same-normal" },
+        cv: { updatedAt: "same-cv" },
+        growth: { updatedAt: "new-growth" },
+      }),
+      readGrowthRanksBundle: async () => {
+        return { weeklyGrowthSnapshot: null, weeklyGrowthUpdatedAt: "" };
+      },
+    }),
+    /Weekly growth ranks snapshot is unavailable/
+  );
+  assert.deepEqual(__getRanksCacheForTest().weeklyGrowthSnapshot, oldGrowthSnapshot);
+  assert.equal(__getRanksCacheForTest().weeklyGrowthUpdatedAt, "old-growth");
+  assert.deepEqual(__getRanksCacheForTest().meta, oldMeta);
 });
 
 test("admin ranks partial refresh updates only the requested meta branch", async () => {
@@ -1584,6 +2249,7 @@ test("admin ranks partial refresh updates only the requested meta branch", async
   assert.deepEqual(cache.meta, {
     normal: { updatedAt: "new-normal", publishedAt: "new-normal-published" },
     cv: { updatedAt: "old-cv", publishedAt: "old-cv-published" },
+    growth: { updatedAt: "", publishedAt: "" },
   });
 });
 
@@ -1623,7 +2289,7 @@ test("rank response cache validator changes when rank versions or published time
 
   const normalVersion = "2026-06-12T23:10:00+00:00";
   const firstValidator = getRanksResponseCacheValidator({
-    schemaVersion: 5,
+    schemaVersion: 6,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-12T04:04:24+00:00" },
     meta: {
@@ -1632,7 +2298,7 @@ test("rank response cache validator changes when rank versions or published time
     },
   });
   const secondValidator = getRanksResponseCacheValidator({
-    schemaVersion: 5,
+    schemaVersion: 6,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-13T04:04:24+00:00" },
     meta: {

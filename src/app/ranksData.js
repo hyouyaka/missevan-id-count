@@ -40,6 +40,9 @@ export function resolveRankRefreshAt(rankData, categoryKey, rank) {
   if (categoryKey === "cv") {
     return rankData?.cvSummary?.updatedAt || rank?.fetchedAt || "";
   }
+  if (categoryKey === "growth") {
+    return rankData?.growthSummary?.updatedAt || rank?.fetchedAt || "";
+  }
   return rankData?.updatedAt || "";
 }
 

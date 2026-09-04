@@ -133,7 +133,7 @@ export function buildDramaExternalUrl(platform, dramaId) {
     : `https://manbo.kilaaudio.com/Activecard/radioplay?id=${encodedDramaId}`;
 }
 
-const dramaExternalUsageSources = new Set(["search", "ongoing", "ranks", "ranks_cv", "cv_profile"]);
+const dramaExternalUsageSources = new Set(["search", "ongoing", "ranks", "ranks_cv", "cv_profile", "homeview"]);
 
 export function buildDramaExternalUsagePayload(platform, dramaId, source, title) {
   const normalizedPlatform = String(platform?.key ?? platform ?? "").trim();
@@ -534,7 +534,7 @@ function formatMobileRankNavigationLabel(categoryLabel, rankLabel, singleRank = 
   return `${prefix}${suffix}` || normalizedRankLabel || normalizedCategoryLabel;
 }
 
-export const RANK_PLATFORM_CARRY_CATEGORY_KEYS = ["peak", "cv"];
+export const RANK_PLATFORM_CARRY_CATEGORY_KEYS = ["peak", "growth", "cv"];
 
 function getFirstRankCategory(platformData) {
   return Array.isArray(platformData?.categories) ? platformData.categories.find((category) => category?.key) || null : null;
@@ -576,6 +576,9 @@ function getPreferredRankKeyForCategory(category) {
     return "weekly";
   }
   if (key.includes("best_seller") || key.includes("seller") || label.includes("畅销")) {
+    return "weekly";
+  }
+  if (key.includes("growth") || label.includes("飙升")) {
     return "weekly";
   }
   if (key.includes("cv") || label.toUpperCase().includes("CV")) {
@@ -1373,6 +1376,15 @@ export function formatRankCardMetricValue(value) {
     return `${(numericValue / 10000).toFixed(1)}万`;
   }
   return formatPlainNumber(numericValue);
+}
+
+export function formatSignedRankCardMetricValue(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue === 0) {
+    return "0";
+  }
+  const sign = numericValue > 0 ? "+" : "-";
+  return `${sign}${formatRankCardMetricValue(Math.abs(numericValue))}`;
 }
 
 export function formatPlayCountDisplay(value, failed) {

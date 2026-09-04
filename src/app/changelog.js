@@ -4,8 +4,16 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.8.2",
+    changes: [
+      "新增猫耳、漫播飙升榜，支持查看7日和4周播放量增量，并在首页提供7日榜速览。",
+    ],
+  },
+  {
     version: "1.8.1",
-    changes: ["付费ID统计结果添加显示分集明细，弹幕溢出的分集会额外显示总弹幕数。"],
+    changes: [
+      "付费ID统计结果添加显示分集明细，弹幕溢出的分集会额外显示总弹幕数。",
+    ],
   },
   {
     version: "1.8.0",
@@ -161,7 +169,7 @@ export const CHANGELOG_ENTRIES = [
 ];
 
 export function getChangelogEntriesForMode(mode = "history") {
-  return mode === "summary" ? CHANGELOG_ENTRIES.slice(0, 1) : CHANGELOG_ENTRIES;
+  return mode === "summary" ? CHANGELOG_ENTRIES.slice(0, 2) : CHANGELOG_ENTRIES;
 }
 
 function resolveStorage(storage) {

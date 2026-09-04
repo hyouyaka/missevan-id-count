@@ -25,6 +25,7 @@ import {
   formatDeviceDateTime,
   formatRankCompactCount,
   formatRankCardMetricValue,
+  formatSignedRankCardMetricValue,
   formatRevenueDisplayValue,
   getRevenueDisplayLabel,
   getInlineTaggedTitleDisplayText,
@@ -81,6 +82,13 @@ test("buildDramaExternalUsagePayload creates a bounded external-open event", () 
     dramaId: "2235647356781461610",
     source: "ranks_cv",
     title: "漫播作品",
+  });
+  assert.deepEqual(buildDramaExternalUsagePayload("missevan", "12345", "homeview", "首页作品"), {
+    platform: "missevan",
+    action: "external_open",
+    dramaId: "12345",
+    source: "homeview",
+    title: "首页作品",
   });
   assert.equal(buildDramaExternalUsagePayload("missevan", "", "ongoing"), null);
   assert.equal(buildDramaExternalUsagePayload("unknown", "12345", "ranks"), null);
@@ -862,6 +870,14 @@ test("mobile rank navigation items flatten platform categories into direct rank 
               ranks: [{ key: "peak", label: "巅峰榜" }],
             },
             {
+              key: "growth",
+              label: "飙升榜",
+              ranks: [
+                { key: "growth_weekly", label: "周榜" },
+                { key: "growth_monthly", label: "月榜" },
+              ],
+            },
+            {
               key: "cv",
               label: "CV榜",
               ranks: [
@@ -900,6 +916,14 @@ test("mobile rank navigation items flatten platform categories into direct rank 
               ranks: [{ key: "peak", label: "巅峰榜" }],
             },
             {
+              key: "growth",
+              label: "飙升榜",
+              ranks: [
+                { key: "growth_weekly", label: "周榜" },
+                { key: "growth_monthly", label: "月榜" },
+              ],
+            },
+            {
               key: "cv",
               label: "CV榜",
               ranks: [
@@ -918,11 +942,11 @@ test("mobile rank navigation items flatten platform categories into direct rank 
 
   assert.deepEqual(
     missevanItems.map((item) => item.label),
-    ["新品日榜", "新品周榜", "人气周榜", "人气月榜", "畅销周榜", "畅销月榜", "巅峰榜", "CV总榜", "CV付费榜"]
+    ["新品日榜", "新品周榜", "人气周榜", "人气月榜", "畅销周榜", "畅销月榜", "巅峰榜", "飙升周榜", "飙升月榜", "CV总榜", "CV付费榜"]
   );
   assert.deepEqual(
     manboItems.map((item) => item.label),
-    ["热播榜", "票房总榜", "票房会员剧榜", "票房付费剧榜", "钻石月榜", "巅峰榜", "CV总榜", "CV付费榜"]
+    ["热播榜", "票房总榜", "票房会员剧榜", "票房付费剧榜", "钻石月榜", "巅峰榜", "飙升周榜", "飙升月榜", "CV总榜", "CV付费榜"]
   );
   assert.deepEqual(missevanItems[1].routePatch, {
     view: "ranks",
@@ -973,7 +997,7 @@ test("mobile rank navigation category defaults land on requested ranks", () => {
   assert.equal(manboCategories.find((item) => item.key === "box_office").routePatch.rank, "box_office_total");
 });
 
-test("rank platform switch carries only peak and CV categories", () => {
+test("rank platform switch carries peak, growth and CV categories", () => {
   const missevanPlatform = {
     key: "missevan",
     categories: [
@@ -989,6 +1013,14 @@ test("rank platform switch carries only peak and CV categories", () => {
         key: "peak",
         label: "巅峰榜",
         ranks: [{ key: "peak", label: "巅峰榜" }],
+      },
+      {
+        key: "growth",
+        label: "飙升榜",
+        ranks: [
+          { key: "growth_weekly", label: "周榜" },
+          { key: "growth_monthly", label: "月榜" },
+        ],
       },
       {
         key: "cv",
@@ -1020,6 +1052,14 @@ test("rank platform switch carries only peak and CV categories", () => {
         ranks: [{ key: "peak", label: "巅峰榜" }],
       },
       {
+        key: "growth",
+        label: "飙升榜",
+        ranks: [
+          { key: "growth_weekly", label: "周榜" },
+          { key: "growth_monthly", label: "月榜" },
+        ],
+      },
+      {
         key: "cv",
         label: "CV榜",
         ranks: [{ key: "cv", label: "CV榜" }],
@@ -1040,6 +1080,13 @@ test("rank platform switch carries only peak and CV categories", () => {
       rank: "cv",
     }),
     { view: "ranks", platform: "manbo", category: "cv", rank: "cv" }
+  );
+  assert.deepEqual(
+    buildRankPlatformSwitchRoutePatch("manbo", manboPlatform, {
+      category: "growth",
+      rank: "growth_monthly",
+    }),
+    { view: "ranks", platform: "manbo", category: "growth", rank: "growth_monthly" }
   );
   assert.deepEqual(
     buildRankPlatformSwitchRoutePatch("manbo", manboPlatform, {
@@ -1449,6 +1496,13 @@ test("formatSignedCompactMetricValue preserves negative compact deltas", () => {
   assert.equal(formatSignedCompactMetricValue(-12345), "-1.23万");
   assert.equal(formatSignedCompactMetricValue(12345), "+1.23万");
   assert.equal(formatSignedCompactMetricValue(0), "0");
+});
+
+test("formatSignedRankCardMetricValue preserves signs and rank-card precision", () => {
+  assert.equal(formatSignedRankCardMetricValue(-123), "-123");
+  assert.equal(formatSignedRankCardMetricValue(1729000), "+172.9万");
+  assert.equal(formatSignedRankCardMetricValue(-123456789), "-1.23亿");
+  assert.equal(formatSignedRankCardMetricValue(0), "0");
 });
 
 test("createStatsHistoryEntry keeps successful revenue items when some dramas fail", () => {

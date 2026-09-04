@@ -62,6 +62,7 @@ const HOME_RANK_CONFIG = {
     { title: "猫耳人气周榜", displayTitle: "人气周榜", categoryKey: "popular", rankKey: "popular_weekly" },
     { title: "猫耳畅销周榜", displayTitle: "畅销周榜", categoryKey: "bestseller", rankKey: "bestseller_weekly" },
     { title: "猫耳巅峰榜", displayTitle: "巅峰榜", categoryKey: "peak", rankKey: "peak" },
+    { title: "猫耳7日飙升榜", displayTitle: "7日飙升榜", categoryKey: "growth", rankKey: "growth_weekly" },
     { title: "猫耳CV榜总榜", displayTitle: "CV总榜", categoryKey: "cv", rankKey: "cv", itemType: "cv" },
   ],
   manbo: [
@@ -69,6 +70,7 @@ const HOME_RANK_CONFIG = {
     { title: "漫播票房总榜", displayTitle: "票房总榜", categoryKey: "box_office", rankKey: "box_office_total" },
     { title: "漫播钻石榜", displayTitle: "钻石榜", categoryKey: "diamond", rankKey: "diamond_monthly" },
     { title: "漫播巅峰榜", displayTitle: "巅峰榜", categoryKey: "peak", rankKey: "peak" },
+    { title: "漫播7日飙升榜", displayTitle: "7日飙升榜", categoryKey: "growth", rankKey: "growth_weekly" },
     { title: "漫播CV总榜", displayTitle: "CV总榜", categoryKey: "cv", rankKey: "cv", itemType: "cv" },
   ],
 };
@@ -125,6 +127,12 @@ function formatHomeUpdatedLabel(value) {
     return "";
   }
   return `${formatDeviceDateTime(date)} 更新`;
+}
+
+function formatHomeStatisticsPeriod(period) {
+  const startDate = String(period?.startDate ?? "").trim();
+  const endDate = String(period?.endDate ?? "").trim();
+  return startDate && endDate ? `${startDate} 至 ${endDate}` : "";
 }
 
 function formatCompactCount(value) {
@@ -589,6 +597,9 @@ function RankDramaItem({
   const coverUrl = buildProxyImageUrl(item?.cover);
   const isMissevanPeak = platform === "missevan" && item?.type === "peak";
   const playCountText = formatRankCompactCount(getViewCountValue(item));
+  const growthText = rankKey === "growth_weekly"
+    ? formatDelta(item?.view_count_increase)
+    : "";
   const searchDramaIds = isMissevanPeak
     ? (Array.isArray(item.drama_ids) ? item.drama_ids : [])
     : item?.id != null
@@ -651,7 +662,10 @@ function RankDramaItem({
           title={`${isMissevanPeak ? "系列总播放量" : "播放量"}：${playCountText}`}
         >
           <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="min-w-0 break-words tabular-nums">{playCountText}</span>
+          <span className="min-w-0 break-words tabular-nums">
+            {playCountText}
+            {growthText ? <span className="home-editorial-delta">（{growthText}）</span> : null}
+          </span>
           <HomeMoreMenu
             item={item}
             platform={platform}
@@ -737,13 +751,20 @@ function HomeRankCard({
 }) {
   const items = (rank?.items || []).slice(0, 3);
   const isCvRank = rankConfig.itemType === "cv";
+  const statisticsPeriodText = rankConfig.categoryKey === "growth"
+    ? formatHomeStatisticsPeriod(rank?.statisticsPeriod)
+    : "";
   return (
     <div className="home-editorial-rank-card">
       <div className="home-editorial-rank-header">
           <h3 className="line-clamp-1 min-w-0" title={rankConfig.displayTitle || rankConfig.title}>
             {rankConfig.displayTitle || rankConfig.title}
           </h3>
-          {formatHomeUpdatedLabel(updatedAt) ? (
+          {statisticsPeriodText ? (
+            <span className="home-editorial-updated-at">
+              统计区间：{statisticsPeriodText}
+            </span>
+          ) : formatHomeUpdatedLabel(updatedAt) ? (
             <span className="home-editorial-updated-at">
               {formatHomeUpdatedLabel(updatedAt)}
             </span>

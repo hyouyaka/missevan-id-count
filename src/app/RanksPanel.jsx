@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "re
 import {
   ArrowLeftRightIcon,
   BeanIcon,
+  CalendarDaysIcon,
   ChevronDownIcon,
   CoinsIcon,
   GemIcon,
@@ -29,6 +30,7 @@ import {
   formatPlainNumber,
   formatRankCardMetricValue,
   formatRankCompactCount,
+  formatSignedRankCardMetricValue,
   getBackendVersionFromResponse,
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
@@ -190,6 +192,16 @@ function MetricLegend({ variant = "default", className = "" }) {
       </div>
     </div>
   );
+}
+
+function isWeeklyGrowthRankKey(rankKey) {
+  return ["growth_weekly", "growth_monthly"].includes(String(rankKey ?? "").trim());
+}
+
+function formatRankStatisticsPeriod(period) {
+  const startDate = String(period?.startDate ?? "").trim();
+  const endDate = String(period?.endDate ?? "").trim();
+  return startDate && endDate ? `${startDate} 至 ${endDate}` : "";
 }
 
 function RankInfoPopover({ infoText }) {
@@ -428,7 +440,8 @@ function RankItemCard({
 }) {
   const coverUrl = buildProxyImageUrl(item.cover);
   const isMissevanPeak = platform === "missevan" && item.type === "peak";
-  const metrics = isMissevanPeak ? [] : getRankMetrics(platform, item, rankKey);
+  const isWeeklyGrowth = isWeeklyGrowthRankKey(rankKey);
+  const metrics = isMissevanPeak || isWeeklyGrowth ? [] : getRankMetrics(platform, item, rankKey);
   const dramaIdText = Array.isArray(item.drama_ids) && item.drama_ids.length ? item.drama_ids.join("，") : "";
   const detailIdText = isMissevanPeak ? dramaIdText : String(item.id ?? "");
   const paymentTag = getRankPaymentTag(item);
@@ -569,11 +582,23 @@ function RankItemCard({
             {renderTitle()}
             {detailIdText ? <div className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground" aria-label={`作品ID：${detailIdText}`} title={`作品ID：${detailIdText}`}><PlatformIdIcon aria-hidden="true" className={`${metaIconClassName} mt-[3px]`} platform={platform} tone="inherit" /><span className="min-w-0 break-all">{detailIdText}</span></div> : null}
             <div className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground"><MicIcon aria-label="主要CV" className={`${metaIconClassName} mt-[3px]`} title="主要CV" /><span className="min-w-0 break-words">{mainCvText || "暂无"}</span></div>
-            {!isMissevanPeak && formatRankUpdatedDate(item.updated_at) ? <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground"><RefreshCwIcon aria-label="最近更新" className={metaIconClassName} title="最近更新" /><span>{formatRankUpdatedDate(item.updated_at)}</span></div> : null}
+            {isWeeklyGrowth ? <div className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground" title={`上线时间：${item.create_time || "暂无"}`}><CalendarDaysIcon aria-label="上线时间" className={`${metaIconClassName} mt-[3px]`} title="上线时间" /><span className="min-w-0 break-words">{item.create_time || "暂无"}</span></div> : null}
+            {!isMissevanPeak && !isWeeklyGrowth && formatRankUpdatedDate(item.updated_at) ? <div className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground"><RefreshCwIcon aria-label="最近更新" className={metaIconClassName} title="最近更新" /><span>{formatRankUpdatedDate(item.updated_at)}</span></div> : null}
             {isMissevanPeak ? <PeakRankFourthRow item={item} canShowTrend={canShowTrend} onOpenTrend={openTrendDialog} onAddCompareItem={addCompareItem} className="hidden lg:flex" /> : null}
           </div>
         </div>
-        {isMissevanPeak ? <PeakRankFourthRow item={item} canShowTrend={canShowTrend} onOpenTrend={openTrendDialog} onAddCompareItem={addCompareItem} className="mt-3 lg:hidden" /> : (
+        {isMissevanPeak ? <PeakRankFourthRow item={item} canShowTrend={canShowTrend} onOpenTrend={openTrendDialog} onAddCompareItem={addCompareItem} className="mt-3 lg:hidden" /> : isWeeklyGrowth ? (
+          <div className="mt-3 flex min-h-8 min-w-0 items-center gap-2">
+            <div className="flex min-w-0 shrink items-center gap-1.5 text-sm text-foreground" aria-label={`最新播放量：${formatPlainNumber(item.view_count)}`} title={`最新播放量：${formatPlainNumber(item.view_count)}`}>
+              <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="shrink-0 tabular-nums">{formatRankCardMetricValue(item.view_count)}</span>
+              <span className="shrink-0 font-bold tabular-nums text-[var(--accent-success)]" title={`播放量增量：${formatSignedRankCardMetricValue(item.view_count_increase)}`}>
+                （{formatSignedRankCardMetricValue(item.view_count_increase)}）
+              </span>
+            </div>
+            {renderNormalActions()}
+          </div>
+        ) : (
           <>
             {metrics.length ? <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">{metrics.map((metric) => {
               const rawValue = metric.label === "总播放量" ? item.view_count : metric.label === "追剧数" || metric.label === "收藏数" ? item.subscription_num : metric.label === "打赏人数" ? item.reward_num : metric.label === "打赏榜总和" ? item.reward_total : metric.label === "付费集弹幕ID数" ? item.danmaku_uid_count : metric.label === "投喂总数" ? item.diamond_value : metric.label === "购买人数/收听人数" ? item.pay_count : item.rank_value;
@@ -955,6 +980,7 @@ function RankColumn({
   trendAvailableIds = new Set(),
 }) {
   const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
+  const statisticsPeriodText = formatRankStatisticsPeriod(rank?.statisticsPeriod);
   return (
     <section className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)]">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -965,10 +991,10 @@ function RankColumn({
           </h2>
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
             <span>{rank.items.length} 项</span>
-            {rankUpdatedAtText ? <span className="text-right sm:hidden">更新：{rankUpdatedAtText}</span> : null}
+            {statisticsPeriodText ? <span className="text-right sm:hidden">统计区间：{statisticsPeriodText}</span> : rankUpdatedAtText ? <span className="text-right sm:hidden">更新：{rankUpdatedAtText}</span> : null}
           </div>
         </div>
-        {rankUpdatedAtText ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{rankUpdatedAtText}</div> : null}
+        {statisticsPeriodText ? <div className="hidden text-right text-xs text-muted-foreground sm:block">统计区间：{statisticsPeriodText}</div> : rankUpdatedAtText ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{rankUpdatedAtText}</div> : null}
       </div>
       {rank.items.length ? (
         <div className="grid gap-3">
@@ -1312,11 +1338,19 @@ export function RanksPanel({
   const hasRanks = availablePlatforms.length > 0;
   const canShowMetricLegend = !isLoading && !errorMessage && hasRanks;
   const isCvCategory = category?.key === "cv";
+  const isGrowthCategory = category?.key === "growth";
   const cvSummary = rankData?.cvSummary || {};
+  const growthSummary = rankData?.growthSummary || {};
+  const hasGrowthDramaCounts =
+    growthSummary.missevanDramaCount != null && growthSummary.manboDramaCount != null;
   const rankRefreshAt = resolveRankRefreshAt(rankData, category?.key, activeRank);
   const rankInfoText = isCvCategory
     ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品，每周更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`
-    : `同步猫耳和漫播榜单，每日更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`;
+    : isGrowthCategory
+      ? hasGrowthDramaCounts
+        ? `统计来自猫耳${formatPlainNumber(growthSummary.missevanDramaCount)}部，漫播${formatPlainNumber(growthSummary.manboDramaCount)}部上架中的作品，每周更新。`
+        : "每周更新。"
+      : `同步猫耳和漫播榜单，每日更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`;
   const renderMobileMetricLegendToggle = () =>
     canShowMetricLegend ? (
       <button

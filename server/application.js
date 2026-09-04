@@ -193,6 +193,7 @@ const INFO_META_SCHEMA_VERSIONS = Object.freeze({
 const NEW_DRAMA_IDS_KEY = "new:dramaIDs";
 const RANKS_KEY = "ranks:latest";
 const CV_RANKS_KEY = "ranks:cv:latest";
+const WEEKLY_GROWTH_RANKS_KEY = "ranks:weekly-growth:latest";
 const RANK_TREND_V2_KEYS = Object.freeze({
   missevan: "ranks:trend:missevan:v2",
   manbo: "ranks:trend:manbo:v2",
@@ -341,8 +342,11 @@ const ranksCache = {
   peakTrendSnapshot: null,
   cvSnapshot: null,
   cvTrendSnapshots: null,
+  weeklyGrowthSnapshot: null,
+  weeklyGrowthCovers: { missevan: {}, manbo: {} },
   normalUpdatedAt: "",
   cvUpdatedAt: "",
+  weeklyGrowthUpdatedAt: "",
   response: null,
   loadedAt: 0,
   loadPromise: null,
@@ -358,7 +362,7 @@ const ranksCache = {
 const rankTrendAggregateCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const RANKS_RESPONSE_SCHEMA_VERSION = 5;
+const RANKS_RESPONSE_SCHEMA_VERSION = 6;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 7;
 const ONGOING_RESPONSE_SCHEMA_VERSION = 4;
 
@@ -1467,7 +1471,7 @@ async function loadAccessDeniedCooldown() {
     return;
   }
 
-  if (accessDeniedUntil <= Date.now()) {
+  if (accessDeniedUntil > 0 && accessDeniedUntil <= Date.now()) {
     armRepeatCooldownIfNeeded();
     await persistAccessDeniedCooldown();
   }
@@ -1804,16 +1808,38 @@ function normalizeRanksMetaUpdatedAt(value) {
   return normalizeTextValue(value?.updatedAt ?? value?.updated_at);
 }
 
-function normalizeRanksMeta(meta) {
+function getRanksMetaResource(section, key) {
+  const resource = section?.resources?.[key];
+  return resource && typeof resource === "object" && !Array.isArray(resource)
+    ? resource
+    : null;
+}
+
+function normalizeRanksMetaResource(section, key, fallbackToSection = false) {
+  const resource = getRanksMetaResource(section, key);
+  const hasResourceMap = Boolean(
+    section?.resources && typeof section.resources === "object" && !Array.isArray(section.resources)
+  );
+  const shouldFallbackToSection = fallbackToSection && !hasResourceMap;
+  const fallbackUpdatedAt = shouldFallbackToSection ? normalizeRanksMetaUpdatedAt(section) : "";
+  const fallbackPublishedAt = shouldFallbackToSection
+    ? normalizeTextValue(section?.publishedAt ?? section?.published_at)
+    : "";
   return {
-    normal: {
-      updatedAt: normalizeRanksMetaUpdatedAt(meta?.normal),
-      publishedAt: normalizeTextValue(meta?.normal?.publishedAt ?? meta?.normal?.published_at),
-    },
-    cv: {
-      updatedAt: normalizeRanksMetaUpdatedAt(meta?.cv),
-      publishedAt: normalizeTextValue(meta?.cv?.publishedAt ?? meta?.cv?.published_at),
-    },
+    updatedAt: normalizeRanksMetaUpdatedAt(resource) || fallbackUpdatedAt,
+    publishedAt:
+      normalizeTextValue(resource?.publishedAt ?? resource?.published_at) ||
+      normalizeRanksMetaUpdatedAt(resource) ||
+      fallbackPublishedAt,
+  };
+}
+
+function normalizeRanksMeta(meta) {
+  const growthSection = meta?.watchcountGrowth ?? meta?.growth;
+  return {
+    normal: normalizeRanksMetaResource(meta?.normal, RANKS_KEY, true),
+    cv: normalizeRanksMetaResource(meta?.cv, CV_RANKS_KEY, true),
+    growth: normalizeRanksMetaResource(growthSection, WEEKLY_GROWTH_RANKS_KEY, true),
   };
 }
 
@@ -1822,6 +1848,7 @@ function buildRanksResponseMeta(meta) {
   return {
     normal: { publishedAt: normalized.normal.publishedAt },
     cv: { publishedAt: normalized.cv.publishedAt },
+    growth: { publishedAt: normalized.growth.publishedAt },
   };
 }
 
@@ -1829,11 +1856,18 @@ export function buildRanksMetaRefreshDecision(currentVersions = {}, meta = {}) {
   const normalizedMeta = normalizeRanksMeta(meta);
   const normalUpdatedAt = normalizedMeta.normal.updatedAt || normalizeTextValue(currentVersions.normalUpdatedAt);
   const cvUpdatedAt = normalizedMeta.cv.updatedAt || normalizeTextValue(currentVersions.cvUpdatedAt);
+  const weeklyGrowthUpdatedAt =
+    normalizedMeta.growth.updatedAt || normalizeTextValue(currentVersions.weeklyGrowthUpdatedAt);
   return {
     normalUpdatedAt,
     cvUpdatedAt,
+    weeklyGrowthUpdatedAt,
     refreshNormal: Boolean(normalizedMeta.normal.updatedAt && normalizedMeta.normal.updatedAt !== normalizeTextValue(currentVersions.normalUpdatedAt)),
     refreshCv: Boolean(normalizedMeta.cv.updatedAt && normalizedMeta.cv.updatedAt !== normalizeTextValue(currentVersions.cvUpdatedAt)),
+    refreshGrowth: Boolean(
+      normalizedMeta.growth.updatedAt &&
+        normalizedMeta.growth.updatedAt !== normalizeTextValue(currentVersions.weeklyGrowthUpdatedAt)
+    ),
   };
 }
 
@@ -3219,6 +3253,101 @@ function buildNormalizedCvRankCategory(cvSnapshot, platform, cvTrendOptions = {}
   };
 }
 
+const WEEKLY_GROWTH_PERIOD_CONFIG = Object.freeze([
+  { sourceKey: "weekly", key: "growth_weekly", label: "周榜", name: "7日飙升榜" },
+  { sourceKey: "fourWeek", key: "growth_monthly", label: "月榜", name: "4周飙升榜" },
+]);
+
+function normalizeWeeklyGrowthPeriod(period) {
+  const startDate = normalizeTextValue(period?.startDate ?? period?.start_date);
+  const endDate = normalizeTextValue(period?.endDate ?? period?.end_date);
+  return startDate && endDate ? { startDate, endDate } : null;
+}
+
+function normalizeWeeklyGrowthRankItem(item, index, platform, coverMap = {}) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return null;
+  }
+  const dramaId = normalizeTextValue(item.dramaId ?? item.id);
+  const title = normalizeTextValue(item.title ?? item.name);
+  if (!isNumericId(dramaId) || !title) {
+    return null;
+  }
+  const mainCvs = normalizeStringArray(item.mainCvs ?? item.main_cvs, 20);
+  return {
+    rank: normalizeRankNumber(item.rank) ?? index + 1,
+    id: dramaId,
+    name: title,
+    cover: normalizeTextValue(item.cover) || normalizeTextValue(coverMap?.[dramaId]),
+    view_count: normalizeRankNumber(item.viewCount ?? item.view_count) ?? 0,
+    view_count_increase:
+      normalizeRankNumber(item.viewCountIncrease ?? item.view_count_increase) ?? 0,
+    payment_label: getRankPaymentLabel({ payStatus: item.payStatus ?? item.pay_status }),
+    content_type_label: getRankContentTypeLabel({
+      catalogName: item.catalogName ?? item.catalog_name,
+    }),
+    catalogName: normalizeRankCatalogName({
+      catalogName: item.catalogName ?? item.catalog_name,
+    }),
+    main_cvs: mainCvs,
+    main_cv_text: buildMainCvText(mainCvs),
+    create_time: normalizeTextValue(item.createTime ?? item.create_time),
+    is_new: item.isNew === true || item.is_new === true,
+    new_reason: normalizeTextValue(item.newReason ?? item.new_reason),
+    platform,
+    type: "drama",
+  };
+}
+
+function buildNormalizedWeeklyGrowthRank(
+  weeklyGrowthSnapshot,
+  platform,
+  config,
+  coverMap = {}
+) {
+  const sourceItems = weeklyGrowthSnapshot?.rankings?.[config.sourceKey]?.[platform];
+  if (!Array.isArray(sourceItems)) {
+    return null;
+  }
+  const statisticsPeriod = normalizeWeeklyGrowthPeriod(
+    weeklyGrowthSnapshot?.statisticsPeriods?.[config.sourceKey]?.[platform]
+  );
+  return {
+    key: config.key,
+    label: config.label,
+    name: config.name,
+    fetchedAt: normalizeTextValue(
+      weeklyGrowthSnapshot?.generated_at ?? weeklyGrowthSnapshot?.generatedAt
+    ),
+    unitName: "播放量增量",
+    statisticsPeriod,
+    items: sourceItems
+      .map((item, index) =>
+        normalizeWeeklyGrowthRankItem(item, index, platform, coverMap)
+      )
+      .filter(Boolean),
+  };
+}
+
+function buildNormalizedWeeklyGrowthCategory(
+  weeklyGrowthSnapshot,
+  platform,
+  coverMap = {}
+) {
+  const ranks = WEEKLY_GROWTH_PERIOD_CONFIG
+    .map((config) =>
+      buildNormalizedWeeklyGrowthRank(weeklyGrowthSnapshot, platform, config, coverMap)
+    )
+    .filter(Boolean);
+  return ranks.length
+    ? {
+        key: "growth",
+        label: "飙升榜",
+        ranks,
+      }
+    : null;
+}
+
 function buildCvRanksSummary(cvSnapshot) {
   return {
     updatedAt: normalizeTextValue(cvSnapshot?.generated_at ?? cvSnapshot?.generatedAt),
@@ -3227,7 +3356,30 @@ function buildCvRanksSummary(cvSnapshot) {
   };
 }
 
-function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = null, cvSnapshot = null, cvTrendOptions = {}) {
+function buildWeeklyGrowthSummary(weeklyGrowthSnapshot) {
+  const missevanDramaCount = weeklyGrowthSnapshot?.missevanDramaCount;
+  const manboDramaCount = weeklyGrowthSnapshot?.manboDramaCount;
+  return {
+    updatedAt: normalizeTextValue(
+      weeklyGrowthSnapshot?.generated_at ?? weeklyGrowthSnapshot?.generatedAt
+    ),
+    date: normalizeTextValue(weeklyGrowthSnapshot?.date),
+    missevanDramaCount:
+      missevanDramaCount == null ? null : normalizeRankNumber(missevanDramaCount),
+    manboDramaCount:
+      manboDramaCount == null ? null : normalizeRankNumber(manboDramaCount),
+  };
+}
+
+function buildNormalizedRankPlatform(
+  snapshot,
+  platform,
+  peakTrendSnapshot = null,
+  cvSnapshot = null,
+  cvTrendOptions = {},
+  weeklyGrowthSnapshot = null,
+  weeklyGrowthCovers = {}
+) {
   const platformPayload =
     snapshot?.[platform] && typeof snapshot[platform] === "object"
       ? snapshot[platform]
@@ -3263,6 +3415,14 @@ function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = nul
       };
     })
     .filter(Boolean);
+  const growthCategory = buildNormalizedWeeklyGrowthCategory(
+    weeklyGrowthSnapshot,
+    platform,
+    weeklyGrowthCovers
+  );
+  if (growthCategory) {
+    categories.push(growthCategory);
+  }
   const cvCategory = buildNormalizedCvRankCategory(cvSnapshot, platform, cvTrendOptions);
   if (cvCategory) {
     categories.push(cvCategory);
@@ -3275,23 +3435,52 @@ function buildNormalizedRankPlatform(snapshot, platform, peakTrendSnapshot = nul
   };
 }
 
-export function buildNormalizedRanksResponse(snapshot, peakTrendSnapshot = null, cvSnapshot = null, cvTrendOptions = {}) {
+export function buildNormalizedRanksResponse(
+  snapshot,
+  peakTrendSnapshot = null,
+  cvSnapshot = null,
+  cvTrendOptions = {},
+  weeklyGrowthSnapshot = null,
+  weeklyGrowthCovers = { missevan: {}, manbo: {} }
+) {
   const safeSnapshot =
     snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
       ? snapshot
       : {};
   const cvSummary = buildCvRanksSummary(cvSnapshot);
+  const growthSummary = buildWeeklyGrowthSummary(weeklyGrowthSnapshot);
   const meta = buildRanksResponseMeta(cvTrendOptions.meta);
+  const safeWeeklyGrowthCovers =
+    weeklyGrowthCovers && typeof weeklyGrowthCovers === "object" && !Array.isArray(weeklyGrowthCovers)
+      ? weeklyGrowthCovers
+      : {};
 
   return {
     success: true,
     schemaVersion: RANKS_RESPONSE_SCHEMA_VERSION,
     updatedAt: normalizeTextValue(safeSnapshot?._meta?.updated_at),
     cvSummary,
+    growthSummary,
     meta,
     platforms: {
-      missevan: buildNormalizedRankPlatform(safeSnapshot, "missevan", peakTrendSnapshot, cvSnapshot, cvTrendOptions),
-      manbo: buildNormalizedRankPlatform(safeSnapshot, "manbo", null, cvSnapshot, cvTrendOptions),
+      missevan: buildNormalizedRankPlatform(
+        safeSnapshot,
+        "missevan",
+        peakTrendSnapshot,
+        cvSnapshot,
+        cvTrendOptions,
+        weeklyGrowthSnapshot,
+        safeWeeklyGrowthCovers.missevan || {}
+      ),
+      manbo: buildNormalizedRankPlatform(
+        safeSnapshot,
+        "manbo",
+        null,
+        cvSnapshot,
+        cvTrendOptions,
+        weeklyGrowthSnapshot,
+        safeWeeklyGrowthCovers.manbo || {}
+      ),
     },
   };
 }
@@ -3301,8 +3490,10 @@ export function getRanksResponseCacheValidator(response = {}) {
     response?.schemaVersion || RANKS_RESPONSE_SCHEMA_VERSION,
     normalizeTextValue(response?.updatedAt),
     normalizeTextValue(response?.cvSummary?.updatedAt),
+    normalizeTextValue(response?.growthSummary?.updatedAt),
     normalizeTextValue(response?.meta?.normal?.publishedAt),
     normalizeTextValue(response?.meta?.cv?.publishedAt),
+    normalizeTextValue(response?.meta?.growth?.publishedAt),
   ].join(":");
 }
 
@@ -3336,6 +3527,42 @@ function getRanksSnapshotUpdatedAt(snapshot) {
 
 function getCvSnapshotUpdatedAt(snapshot) {
   return normalizeTextValue(snapshot?.generated_at ?? snapshot?.generatedAt);
+}
+
+function getWeeklyGrowthSnapshotUpdatedAt(snapshot) {
+  return normalizeTextValue(snapshot?.generated_at ?? snapshot?.generatedAt);
+}
+
+function collectWeeklyGrowthDramaIds(snapshot, platform) {
+  return Array.from(new Set(
+    WEEKLY_GROWTH_PERIOD_CONFIG.flatMap(({ sourceKey }) => {
+      const items = snapshot?.rankings?.[sourceKey]?.[platform];
+      return (Array.isArray(items) ? items : [])
+        .map((item) => normalizeTextValue(item?.dramaId ?? item?.id))
+        .filter(isNumericId);
+    })
+  ));
+}
+
+async function buildWeeklyGrowthCoverMaps(snapshot) {
+  const covers = { missevan: {}, manbo: {} };
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return covers;
+  }
+  await Promise.all([
+    ensureInfoStoreLoaded(missevanInfoStore),
+    ensureInfoStoreLoaded(manboInfoStore),
+  ]);
+  ["missevan", "manbo"].forEach((platform) => {
+    const store = getInfoStore(platform);
+    collectWeeklyGrowthDramaIds(snapshot, platform).forEach((dramaId) => {
+      const cover = normalizeTextValue(store.byDramaId.get(dramaId)?.cover);
+      if (cover) {
+        covers[platform][dramaId] = cover;
+      }
+    });
+  });
+  return covers;
 }
 
 function collectPeakSeriesNames(snapshot) {
@@ -3395,6 +3622,26 @@ async function readCvRanksBundle(options = {}) {
   };
 }
 
+async function readGrowthRanksBundle(options = {}) {
+  const tolerateError = options?.tolerateError === true;
+  let weeklyGrowthSnapshot = null;
+  let weeklyGrowthCovers = { missevan: {}, manbo: {} };
+  try {
+    weeklyGrowthSnapshot = await readRanksJsonKey(WEEKLY_GROWTH_RANKS_KEY);
+    weeklyGrowthCovers = await buildWeeklyGrowthCoverMaps(weeklyGrowthSnapshot);
+  } catch (error) {
+    if (!tolerateError) {
+      throw error;
+    }
+    void logger.operation("weekly_growth_ranks_snapshot_read_failed", {}, "warn", error);
+  }
+  return {
+    weeklyGrowthSnapshot,
+    weeklyGrowthCovers,
+    weeklyGrowthUpdatedAt: getWeeklyGrowthSnapshotUpdatedAt(weeklyGrowthSnapshot),
+  };
+}
+
 export function parseRanksBatchJson(value, fallback = null, options = {}) {
   try {
     if (value == null || value === "") {
@@ -3417,24 +3664,28 @@ async function readInitialRanksBatch() {
     "MGET",
     RANKS_KEY,
     CV_RANKS_KEY,
+    WEEKLY_GROWTH_RANKS_KEY,
     RANKS_META_KEY,
   ], {
     source: "ranks_cold_start",
     key: [
       RANKS_KEY,
       CV_RANKS_KEY,
+      WEEKLY_GROWTH_RANKS_KEY,
       RANKS_META_KEY,
     ].join(","),
   });
-  if (!Array.isArray(values) || values.length !== 3) {
+  if (!Array.isArray(values) || values.length !== 4) {
     throw new Error("Invalid initial ranks MGET response");
   }
   const snapshot = parseRanksBatchJson(values[0], {});
   const cvSnapshot = parseRanksBatchJson(values[1], null, { tolerateError: true });
+  const weeklyGrowthSnapshot = parseRanksBatchJson(values[2], null, { tolerateError: true });
   const [peakTrendSnapshot, cvTrendSnapshots] = await Promise.all([
     readPeakRankTrendV2Snapshots(collectPeakSeriesNames(snapshot)).catch(() => null),
     readCvRankTrendV2SnapshotsForNames(collectCvRankNames(cvSnapshot)).catch(() => null),
   ]);
+  const weeklyGrowthCovers = await buildWeeklyGrowthCoverMaps(weeklyGrowthSnapshot);
   return {
     normalBundle: {
       snapshot,
@@ -3446,7 +3697,12 @@ async function readInitialRanksBatch() {
       cvTrendSnapshots,
       updatedAt: getCvSnapshotUpdatedAt(cvSnapshot),
     },
-    meta: normalizeRanksMeta(parseRanksBatchJson(values[2], null, { tolerateError: true })),
+    growthBundle: {
+      weeklyGrowthSnapshot,
+      weeklyGrowthCovers,
+      weeklyGrowthUpdatedAt: getWeeklyGrowthSnapshotUpdatedAt(weeklyGrowthSnapshot),
+    },
+    meta: normalizeRanksMeta(parseRanksBatchJson(values[3], null, { tolerateError: true })),
   };
 }
 
@@ -3458,12 +3714,16 @@ function updateCombinedRanksResponseCache() {
     {
       cvTrendSnapshots: ranksCache.cvTrendSnapshots,
       meta: ranksCache.meta,
-    }
+    },
+    ranksCache.weeklyGrowthSnapshot,
+    ranksCache.weeklyGrowthCovers
   );
   ranksCache.response = response;
   ranksCache.loadedAt = Date.now();
   ranksCache.normalUpdatedAt = response.updatedAt || ranksCache.normalUpdatedAt;
   ranksCache.cvUpdatedAt = response.cvSummary?.updatedAt || ranksCache.cvUpdatedAt;
+  ranksCache.weeklyGrowthUpdatedAt =
+    response.growthSummary?.updatedAt || ranksCache.weeklyGrowthUpdatedAt;
   return response;
 }
 
@@ -3494,6 +3754,13 @@ async function readInitialRanksMeta(readMeta, now) {
 
 function hasNormalRanksSnapshot(snapshot) {
   return Boolean(snapshot && typeof snapshot === "object" && !Array.isArray(snapshot));
+}
+
+function requireRanksSnapshot(snapshot, label) {
+  if (!hasNormalRanksSnapshot(snapshot)) {
+    throw new Error(`${label} snapshot is unavailable`);
+  }
+  return snapshot;
 }
 
 function getActiveRanksMetaProbeTtl(
@@ -3560,16 +3827,20 @@ function recordRanksMetaPostRefreshBackoff(source, cycleIds, now = Date.now()) {
 }
 
 async function loadInitialRanksResponse() {
-  const [normalBundle, cvBundle] = await Promise.all([
+  const [normalBundle, cvBundle, growthBundle] = await Promise.all([
     readNormalRanksBundle(),
     readCvRanksBundle({ tolerateError: true }),
+    readGrowthRanksBundle({ tolerateError: true }),
   ]);
   ranksCache.normalSnapshot = normalBundle.snapshot;
   ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
   ranksCache.normalUpdatedAt = normalBundle.updatedAt;
   ranksCache.cvSnapshot = cvBundle.cvSnapshot;
   ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
+  ranksCache.weeklyGrowthSnapshot = growthBundle.weeklyGrowthSnapshot;
+  ranksCache.weeklyGrowthCovers = growthBundle.weeklyGrowthCovers;
   ranksCache.cvUpdatedAt = cvBundle.updatedAt;
+  ranksCache.weeklyGrowthUpdatedAt = growthBundle.weeklyGrowthUpdatedAt;
   return updateCombinedRanksResponseCache();
 }
 
@@ -3608,6 +3879,7 @@ export async function getCachedRanksResponse(options = {}) {
   const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
   const readNormalBundle = options.readNormalRanksBundle || readNormalRanksBundle;
   const readCvBundle = options.readCvRanksBundle || readCvRanksBundle;
+  const readGrowthBundle = options.readGrowthRanksBundle || readGrowthRanksBundle;
   const readMeta = options.readRanksMeta || (() => readRanksJsonKey(RANKS_META_KEY));
   if (ranksCache.loadPromise) {
     return ranksCache.loadPromise;
@@ -3618,21 +3890,25 @@ export async function getCachedRanksResponse(options = {}) {
       if (!ranksCache.response || ranksCache.response.schemaVersion !== RANKS_RESPONSE_SCHEMA_VERSION) {
         let normalBundle;
         let cvBundle;
+        let growthBundle;
         if (
           !options.readNormalRanksBundle &&
           !options.readCvRanksBundle &&
+          !options.readGrowthRanksBundle &&
           !options.readRanksMeta
         ) {
           const batch = await readInitialRanksBatch();
           normalBundle = batch.normalBundle;
           cvBundle = batch.cvBundle;
+          growthBundle = batch.growthBundle;
           ranksCache.meta = batch.meta;
           ranksCache.metaLoadedAt = now;
           ranksCache.metaLoadFailedAt = 0;
         } else {
-          [normalBundle, cvBundle] = await Promise.all([
+          [normalBundle, cvBundle, growthBundle] = await Promise.all([
             readNormalBundle(),
             readCvBundle({ tolerateError: true }),
+            readGrowthBundle({ tolerateError: true }),
             readInitialRanksMeta(readMeta, now),
           ]);
         }
@@ -3641,7 +3917,10 @@ export async function getCachedRanksResponse(options = {}) {
         ranksCache.normalUpdatedAt = normalBundle.updatedAt;
         ranksCache.cvSnapshot = cvBundle.cvSnapshot;
         ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
+        ranksCache.weeklyGrowthSnapshot = growthBundle.weeklyGrowthSnapshot || null;
+        ranksCache.weeklyGrowthCovers = growthBundle.weeklyGrowthCovers || { missevan: {}, manbo: {} };
         ranksCache.cvUpdatedAt = cvBundle.updatedAt;
+        ranksCache.weeklyGrowthUpdatedAt = growthBundle.weeklyGrowthUpdatedAt || "";
         const response = updateCombinedRanksResponseCache();
         return { response, cacheStatus: "cold-refresh", probePhase: "" };
       }
@@ -3668,10 +3947,11 @@ export async function getCachedRanksResponse(options = {}) {
         {
           normalUpdatedAt: ranksCache.normalUpdatedAt,
           cvUpdatedAt: ranksCache.cvUpdatedAt,
+          weeklyGrowthUpdatedAt: ranksCache.weeklyGrowthUpdatedAt,
         },
         metaResult.meta
       );
-      if (!decision.refreshNormal && !decision.refreshCv) {
+      if (!decision.refreshNormal && !decision.refreshCv && !decision.refreshGrowth) {
         return {
           response: updateRanksResponseMetaCache(metaResult.meta),
           cacheStatus: metaResult.status || "meta-hit",
@@ -3683,7 +3963,10 @@ export async function getCachedRanksResponse(options = {}) {
       if (decision.refreshNormal) {
         try {
           const normalBundle = await readNormalBundle();
-          ranksCache.normalSnapshot = normalBundle.snapshot;
+          ranksCache.normalSnapshot = requireRanksSnapshot(
+            normalBundle.snapshot,
+            "Normal ranks"
+          );
           ranksCache.peakTrendSnapshot = normalBundle.peakTrendSnapshot;
           ranksCache.normalUpdatedAt = normalBundle.updatedAt || decision.normalUpdatedAt;
           recordRanksMetaPostRefreshBackoff("normal", probeCycleIds, now);
@@ -3697,7 +3980,7 @@ export async function getCachedRanksResponse(options = {}) {
       if (decision.refreshCv) {
         try {
           const cvBundle = await readCvBundle();
-          ranksCache.cvSnapshot = cvBundle.cvSnapshot;
+          ranksCache.cvSnapshot = requireRanksSnapshot(cvBundle.cvSnapshot, "CV ranks");
           ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
           ranksCache.cvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
           recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
@@ -3708,12 +3991,34 @@ export async function getCachedRanksResponse(options = {}) {
         }
       }
 
+      if (decision.refreshGrowth) {
+        try {
+          const growthBundle = await readGrowthBundle();
+          ranksCache.weeklyGrowthSnapshot = requireRanksSnapshot(
+            growthBundle.weeklyGrowthSnapshot,
+            "Weekly growth ranks"
+          );
+          ranksCache.weeklyGrowthCovers =
+            growthBundle.weeklyGrowthCovers || { missevan: {}, manbo: {} };
+          ranksCache.weeklyGrowthUpdatedAt =
+            growthBundle.weeklyGrowthUpdatedAt || decision.weeklyGrowthUpdatedAt;
+          refreshStatuses.push("growth-refresh");
+        } catch (error) {
+          void logger.operation("weekly_growth_ranks_refresh_failed", {}, "warn", error);
+          refreshStatuses.push("stale");
+        }
+      }
+
       const response = updateCombinedRanksResponseCache();
       if (refreshStatuses.includes("normal-refresh")) {
         ranksCache.normalUpdatedAt = decision.normalUpdatedAt || ranksCache.normalUpdatedAt;
       }
       if (refreshStatuses.includes("cv-refresh")) {
         ranksCache.cvUpdatedAt = decision.cvUpdatedAt || ranksCache.cvUpdatedAt;
+      }
+      if (refreshStatuses.includes("growth-refresh")) {
+        ranksCache.weeklyGrowthUpdatedAt =
+          decision.weeklyGrowthUpdatedAt || ranksCache.weeklyGrowthUpdatedAt;
       }
       return {
         response,
@@ -3733,6 +4038,7 @@ function normalizeAdminCacheRefreshTarget(value) {
   return [
     "ranks:normal",
     "ranks:cv",
+    "ranks:growth",
     "ranks",
     "ongoing:missevan",
     "ongoing:manbo",
@@ -3767,16 +4073,21 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
   const readNormalBundle = options.readNormalRanksBundle || readNormalRanksBundle;
   const readCvBundle = options.readCvRanksBundle || readCvRanksBundle;
+  const readGrowthBundle = options.readGrowthRanksBundle || readGrowthRanksBundle;
   const readMeta = options.readRanksMeta || (() => readRanksJsonKey(RANKS_META_KEY));
   const refreshNormal = target === "ranks" || target === "ranks:normal";
   const refreshCv = target === "ranks" || target === "ranks:cv";
+  const refreshGrowth = target === "ranks" || target === "ranks:growth";
   const statuses = [];
   let nextNormalSnapshot = ranksCache.normalSnapshot;
   let nextPeakTrendSnapshot = ranksCache.peakTrendSnapshot;
   let nextCvSnapshot = ranksCache.cvSnapshot;
   let nextCvTrendSnapshots = ranksCache.cvTrendSnapshots;
+  let nextWeeklyGrowthSnapshot = ranksCache.weeklyGrowthSnapshot;
+  let nextWeeklyGrowthCovers = ranksCache.weeklyGrowthCovers;
   let nextNormalUpdatedAt = ranksCache.normalUpdatedAt;
   let nextCvUpdatedAt = ranksCache.cvUpdatedAt;
+  let nextWeeklyGrowthUpdatedAt = ranksCache.weeklyGrowthUpdatedAt;
   const cacheIsCold =
     !ranksCache.response ||
     ranksCache.response.schemaVersion !== RANKS_RESPONSE_SCHEMA_VERSION;
@@ -3791,7 +4102,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   const hasRequiredMeta = Boolean(
     meta &&
       (!refreshNormal || meta.normal.updatedAt) &&
-      (!refreshCv || meta.cv.updatedAt)
+      (!refreshCv || meta.cv.updatedAt) &&
+      (!refreshGrowth || meta.growth.updatedAt)
   );
   if (!hasRequiredMeta) {
     if (force) {
@@ -3803,6 +4115,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
       cacheStatus: statuses.join("+") || "meta-hit",
       normalUpdatedAt: ranksCache.response?.updatedAt || ranksCache.normalUpdatedAt || "",
       cvUpdatedAt: ranksCache.response?.cvSummary?.updatedAt || ranksCache.cvUpdatedAt || "",
+      weeklyGrowthUpdatedAt:
+        ranksCache.response?.growthSummary?.updatedAt || ranksCache.weeklyGrowthUpdatedAt || "",
     };
   }
 
@@ -3813,43 +4127,71 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   if (refreshCv) {
     nextMeta.cv = meta.cv;
   }
+  if (refreshGrowth) {
+    nextMeta.growth = meta.growth;
+  }
 
   if (force) {
     if (refreshNormal) {
       const normalBundle = await readNormalBundle();
-      nextNormalSnapshot = normalBundle.snapshot;
+      nextNormalSnapshot = requireRanksSnapshot(normalBundle.snapshot, "Normal ranks");
       nextPeakTrendSnapshot = normalBundle.peakTrendSnapshot;
       nextNormalUpdatedAt = normalBundle.updatedAt || nextNormalUpdatedAt;
       statuses.push("normal-refresh");
     }
     if (refreshCv) {
       const cvBundle = await readCvBundle();
-      nextCvSnapshot = cvBundle.cvSnapshot;
+      nextCvSnapshot = requireRanksSnapshot(cvBundle.cvSnapshot, "CV ranks");
       nextCvTrendSnapshots = cvBundle.cvTrendSnapshots;
       nextCvUpdatedAt = cvBundle.updatedAt || nextCvUpdatedAt;
       statuses.push("cv-refresh");
+    }
+    if (refreshGrowth) {
+      const growthBundle = await readGrowthBundle();
+      nextWeeklyGrowthSnapshot = requireRanksSnapshot(
+        growthBundle.weeklyGrowthSnapshot,
+        "Weekly growth ranks"
+      );
+      nextWeeklyGrowthCovers =
+        growthBundle.weeklyGrowthCovers || { missevan: {}, manbo: {} };
+      nextWeeklyGrowthUpdatedAt =
+        growthBundle.weeklyGrowthUpdatedAt || nextWeeklyGrowthUpdatedAt;
+      statuses.push("growth-refresh");
     }
   } else {
     const decision = buildRanksMetaRefreshDecision(
       {
         normalUpdatedAt: ranksCache.normalUpdatedAt,
         cvUpdatedAt: ranksCache.cvUpdatedAt,
+        weeklyGrowthUpdatedAt: ranksCache.weeklyGrowthUpdatedAt,
       },
       meta
     );
     if (refreshNormal && decision.refreshNormal) {
       const normalBundle = await readNormalBundle();
-      nextNormalSnapshot = normalBundle.snapshot;
+      nextNormalSnapshot = requireRanksSnapshot(normalBundle.snapshot, "Normal ranks");
       nextPeakTrendSnapshot = normalBundle.peakTrendSnapshot;
       nextNormalUpdatedAt = normalBundle.updatedAt || decision.normalUpdatedAt;
       statuses.push("normal-refresh");
     }
     if (refreshCv && decision.refreshCv) {
       const cvBundle = await readCvBundle();
-      nextCvSnapshot = cvBundle.cvSnapshot;
+      nextCvSnapshot = requireRanksSnapshot(cvBundle.cvSnapshot, "CV ranks");
       nextCvTrendSnapshots = cvBundle.cvTrendSnapshots;
       nextCvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
       statuses.push("cv-refresh");
+    }
+    if (refreshGrowth && decision.refreshGrowth) {
+      const growthBundle = await readGrowthBundle();
+      nextWeeklyGrowthSnapshot = requireRanksSnapshot(
+        growthBundle.weeklyGrowthSnapshot,
+        "Weekly growth ranks"
+      );
+      nextWeeklyGrowthCovers =
+        growthBundle.weeklyGrowthCovers || { missevan: {}, manbo: {} };
+      nextWeeklyGrowthUpdatedAt =
+        growthBundle.weeklyGrowthUpdatedAt || decision.weeklyGrowthUpdatedAt;
+      statuses.push("growth-refresh");
     }
     if (!statuses.length) {
       statuses.push("meta-hit");
@@ -3860,8 +4202,11 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   ranksCache.peakTrendSnapshot = nextPeakTrendSnapshot;
   ranksCache.cvSnapshot = nextCvSnapshot;
   ranksCache.cvTrendSnapshots = nextCvTrendSnapshots;
+  ranksCache.weeklyGrowthSnapshot = nextWeeklyGrowthSnapshot;
+  ranksCache.weeklyGrowthCovers = nextWeeklyGrowthCovers;
   ranksCache.normalUpdatedAt = nextNormalUpdatedAt;
   ranksCache.cvUpdatedAt = nextCvUpdatedAt;
+  ranksCache.weeklyGrowthUpdatedAt = nextWeeklyGrowthUpdatedAt;
   ranksCache.meta = nextMeta;
   ranksCache.metaLoadedAt = target === "ranks" ? now : 0;
   ranksCache.metaLoadFailedAt = 0;
@@ -3875,6 +4220,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
     cacheStatus: statuses.join("+"),
     normalUpdatedAt: response?.updatedAt || ranksCache.normalUpdatedAt || "",
     cvUpdatedAt: response?.cvSummary?.updatedAt || ranksCache.cvUpdatedAt || "",
+    weeklyGrowthUpdatedAt:
+      response?.growthSummary?.updatedAt || ranksCache.weeklyGrowthUpdatedAt || "",
   };
 }
 
@@ -3883,8 +4230,11 @@ export function __getRanksCacheForTest() {
     normalSnapshot: ranksCache.normalSnapshot,
     peakTrendSnapshot: ranksCache.peakTrendSnapshot,
     cvSnapshot: ranksCache.cvSnapshot,
+    weeklyGrowthSnapshot: ranksCache.weeklyGrowthSnapshot,
+    weeklyGrowthCovers: ranksCache.weeklyGrowthCovers,
     normalUpdatedAt: ranksCache.normalUpdatedAt,
     cvUpdatedAt: ranksCache.cvUpdatedAt,
+    weeklyGrowthUpdatedAt: ranksCache.weeklyGrowthUpdatedAt,
     meta: ranksCache.meta,
     response: ranksCache.response,
     loadedAt: ranksCache.loadedAt,
@@ -3916,7 +4266,12 @@ function getAdminCacheRefreshTasks(target) {
       { kind: "ongoing", platform: "manbo" },
     ];
   }
-  if (target === "ranks" || target === "ranks:normal" || target === "ranks:cv") {
+  if (
+    target === "ranks" ||
+    target === "ranks:normal" ||
+    target === "ranks:cv" ||
+    target === "ranks:growth"
+  ) {
     return [{ kind: "ranks", target }];
   }
   if (target === "ongoing") {
@@ -3944,6 +4299,8 @@ function summarizeAdminCacheRefreshResults(results = []) {
     cacheStatus: ranksResult?.cacheStatus || "",
     normalUpdatedAt: ranksResult?.normalUpdatedAt || ranksCache.normalUpdatedAt || "",
     cvUpdatedAt: ranksResult?.cvUpdatedAt || ranksCache.cvUpdatedAt || "",
+    weeklyGrowthUpdatedAt:
+      ranksResult?.weeklyGrowthUpdatedAt || ranksCache.weeklyGrowthUpdatedAt || "",
     errors,
   };
 }
@@ -4015,6 +4372,7 @@ export async function executeAdminCacheRefresh(request = {}, dependencies = {}) 
     ...(summary.cacheStatus ? { cacheStatus: summary.cacheStatus } : {}),
     normalUpdatedAt: summary.normalUpdatedAt,
     cvUpdatedAt: summary.cvUpdatedAt,
+    weeklyGrowthUpdatedAt: summary.weeklyGrowthUpdatedAt,
     errors: summary.errors,
   };
   if (dependencies.writeLog) {
@@ -10976,7 +11334,7 @@ app.post("/usage-log", async (req, res) => {
       }
 
       const requestedSource = normalizeTextValue(payload.source).slice(0, 40);
-      const source = ["search", "ongoing", "ranks", "ranks_cv", "cv_profile"].includes(requestedSource)
+      const source = ["search", "ongoing", "ranks", "ranks_cv", "cv_profile", "homeview"].includes(requestedSource)
         ? requestedSource
         : "unknown";
       const title = normalizeTextValue(payload.title).slice(0, 200);

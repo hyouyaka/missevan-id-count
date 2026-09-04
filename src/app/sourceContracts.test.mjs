@@ -590,6 +590,9 @@ test("home view maps requested sections and see-more routes", () => {
   assert.match(homeViewSource, /categoryKey: "bestseller"[\s\S]*rankKey: "bestseller_weekly"/);
   assert.match(homeViewSource, /categoryKey: "box_office"[\s\S]*rankKey: "box_office_total"/);
   assert.match(homeViewSource, /categoryKey: "diamond"[\s\S]*rankKey: "diamond_monthly"/);
+  assert.match(homeViewSource, /猫耳巅峰榜[\s\S]*猫耳7日飙升榜[\s\S]*猫耳CV榜总榜/);
+  assert.match(homeViewSource, /漫播巅峰榜[\s\S]*漫播7日飙升榜[\s\S]*漫播CV总榜/);
+  assert.match(homeViewSource, /categoryKey: "growth"[\s\S]*rankKey: "growth_weekly"/);
   assert.match(homeViewSource, /categoryKey: "cv"[\s\S]*rankKey: "cv"/);
   assert.match(homeViewSource, /window: "7d"/);
   assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ongoing",\s*platform,\s*window: "7d"/);
@@ -666,7 +669,7 @@ test("home compact more menus reuse rank actions with homeview logging", () => {
   assert.match(toolViewSource, /<HomeView[\s\S]*favoriteKeys=\{favoriteKeySet\}[\s\S]*onAddCompareItem=\{addDramaToCompareBasket\}[\s\S]*onStartDramaPaidIdStatistics=\{startDramaPaidIdStatistics\}[\s\S]*onStartRevenueEstimate=\{startRevenueEstimate\}/);
 });
 
-test("home section subtitles show platform and shared rank refresh times", () => {
+test("home section subtitles show platform, growth periods, and shared rank refresh times", () => {
   const ongoingListStart = homeViewSource.indexOf("function OngoingPlatformList");
   const ongoingListEnd = homeViewSource.indexOf("function RankDramaItem", ongoingListStart);
   const rankCardStart = homeViewSource.indexOf("function HomeRankCard");
@@ -686,6 +689,7 @@ test("home section subtitles show platform and shared rank refresh times", () =>
   assert.match(homeViewSource, /from "@\/app\/app-utils"/);
   assert.match(homeViewSource, /function formatHomeUpdatedLabel\(value\)/);
   assert.match(homeViewSource, /return `\$\{formatDeviceDateTime\(date\)\} 更新`/);
+  assert.match(homeViewSource, /function formatHomeStatisticsPeriod\(period\)/);
   assert.match(ongoingListSource, /function OngoingPlatformList\(\{[\s\S]*platform,[\s\S]*items,[\s\S]*updatedAt,/);
   assert.match(ongoingListSource, /inline-flex shrink-0 items-center gap-2 whitespace-nowrap/);
   assert.match(ongoingListSource, /home-editorial-updated-at/);
@@ -694,6 +698,8 @@ test("home section subtitles show platform and shared rank refresh times", () =>
   assert.match(homeViewSource, /updatedAt=\{ongoingByPlatform\.manbo\?\.updatedAt\}/);
   assert.match(rankCardSource, /function HomeRankCard\(\{[\s\S]*platform,[\s\S]*rankConfig,[\s\S]*updatedAt,/);
   assert.match(rankCardSource, /home-editorial-updated-at/);
+  assert.match(rankCardSource, /rankConfig\.categoryKey === "growth"[\s\S]*formatHomeStatisticsPeriod\(rank\?\.statisticsPeriod\)/);
+  assert.match(rankCardSource, /统计区间：\{statisticsPeriodText\}[\s\S]*formatHomeUpdatedLabel\(updatedAt\)/);
   assert.match(rankCardSource, /\{formatHomeUpdatedLabel\(updatedAt\)\}/);
   assert.match(ranksDataSource, /export function resolveRankRefreshAt\(rankData, categoryKey, rank\)/);
   assert.match(ranksDataSource, /categoryKey === "cv"[\s\S]*rankData\?\.cvSummary\?\.updatedAt \|\| rank\?\.fetchedAt[\s\S]*rankData\?\.updatedAt/);
@@ -1378,7 +1384,7 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(serverSource, /parseManboInfoSnapshotPreservingCvIds\(raw\)/);
   assert.match(cvProfileUtilsSource, /CV_IDENTITY_NOT_FOUND/);
   assert.match(serverSource, /CV identity is ambiguous/);
-  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv", "cv_profile"\]\.includes\(requestedSource\)/);
+  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv", "cv_profile", "homeview"\]\.includes\(requestedSource\)/);
   assert.match(serverSource, /\["cv_profile_open", "cv_rank_open_profile"\]\.includes\(action\)/);
   assert.match(serverSource, /function buildCvProfileOpenUsageLog|export function buildCvProfileOpenUsageLog/);
   assert.match(homeViewSource, /source: "ranks"/);
@@ -2020,7 +2026,7 @@ test("search cards keep a non-link work ID with its platform icon and move the s
 
 test("platform drama links log a validated external-open action without blocking navigation", () => {
   assert.match(appUtilsSource, /action: "external_open"/);
-  assert.match(appUtilsSource, /dramaExternalUsageSources = new Set\(\["search", "ongoing", "ranks", "ranks_cv", "cv_profile"\]\)/);
+  assert.match(appUtilsSource, /dramaExternalUsageSources = new Set\(\["search", "ongoing", "ranks", "ranks_cv", "cv_profile", "homeview"\]\)/);
   assert.match(platformTabLabelSource, /buildDramaExternalUsagePayload\(key, normalizedDramaId, source, dramaTitle\)/);
   assert.match(platformTabLabelSource, /fetch\(buildVersionedUrl\("\/usage-log", frontendVersion\)/);
   assert.match(platformTabLabelSource, /keepalive: true/);
@@ -2028,7 +2034,7 @@ test("platform drama links log a validated external-open action without blocking
   assert.doesNotMatch(platformTabLabelSource, /preventDefault/);
   assert.match(serverSource, /if \(action === "external_open"\)/);
   assert.match(serverSource, /if \(!isNumericId\(dramaId\)\)/);
-  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv", "cv_profile"\]\.includes\(requestedSource\)/);
+  assert.match(serverSource, /\["search", "ongoing", "ranks", "ranks_cv", "cv_profile", "homeview"\]\.includes\(requestedSource\)/);
   assert.match(serverSource, /normalizeTextValue\(payload\.title\)\.slice\(0, 200\)/);
   assert.match(serverSource, /message: "Missing external drama title"/);
   assert.match(serverSource, /action,[\s\S]*dramaId,[\s\S]*source,[\s\S]*title,[\s\S]*success: true/);
@@ -2982,6 +2988,22 @@ test("Missevan cooldown availability checks fallback routes in priority order", 
   assert.doesNotMatch(cooldownSource, /routes\.forEach/);
 });
 
+test("Missevan cooldown refresh does not persist the normal zero state", () => {
+  const refreshStart = serverSource.indexOf("async function loadAccessDeniedCooldown");
+  const refreshEnd = serverSource.indexOf("\nasync function refreshMissevanCooldownState", refreshStart);
+  const refreshSource = serverSource.slice(refreshStart, refreshEnd);
+
+  assert.match(
+    refreshSource,
+    /if \(accessDeniedUntil > 0 && accessDeniedUntil <= Date\.now\(\)\)/
+  );
+  assert.doesNotMatch(
+    refreshSource,
+    /if \(accessDeniedUntil <= Date\.now\(\)\)/,
+    "normal accessDeniedUntil=0 must not trigger an Upstash write-back"
+  );
+});
+
 test("Missevan stats tasks do not bypass fallback routes during direct cooldown", () => {
   const idTaskSource = serverSource.slice(
     serverSource.indexOf("async function executeMissevanIdTask"),
@@ -3186,6 +3208,32 @@ test("peak rank titles pass all available drama ids to search result jump", () =
 test("rank refresh timestamps use device timezone display", () => {
   assert.match(ranksPanelSource, /formatDeviceDateTime/, "rank panel should use shared device-time formatter");
   assert.doesNotMatch(ranksPanelSource, /北京时间/, "rank refresh copy should not hardcode Beijing time");
+});
+
+test("weekly growth ranks keep responsive periods, independent counts, and compact drama cards", () => {
+  assert.match(ranksPanelSource, /function isWeeklyGrowthRankKey\(rankKey\)/);
+  assert.match(ranksPanelSource, /\["growth_weekly", "growth_monthly"\]/);
+  assert.match(ranksPanelSource, /function formatRankStatisticsPeriod\(period\)/);
+  assert.match(ranksPanelSource, /统计区间：\{statisticsPeriodText\}/);
+  assert.match(ranksPanelSource, /const isGrowthCategory = category\?\.key === "growth"/);
+  assert.match(
+    ranksPanelSource,
+    /统计来自猫耳\$\{formatPlainNumber\(growthSummary\.missevanDramaCount\)\}部，漫播\$\{formatPlainNumber\(growthSummary\.manboDramaCount\)\}部上架中的作品，每周更新。/
+  );
+  assert.match(ranksPanelSource, /growthSummary\.missevanDramaCount != null && growthSummary\.manboDramaCount != null/);
+  assert.match(ranksPanelSource, /: "每周更新。"/);
+  assert.match(ranksPanelSource, /<CalendarDaysIcon aria-label="上线时间"/);
+  assert.match(ranksPanelSource, /最新播放量：\$\{formatPlainNumber\(item\.view_count\)\}/);
+  assert.match(ranksPanelSource, /font-bold tabular-nums text-\[var\(--accent-success\)\]/);
+  assert.match(ranksPanelSource, /（\{formatSignedRankCardMetricValue\(item\.view_count_increase\)\}）/);
+  assert.doesNotMatch(ranksPanelSource, /播放量增量：\+\$\{formatPlainNumber\(item\.view_count_increase\)\}/);
+  assert.doesNotMatch(ranksPanelSource, /增量 \+\{formatRankCardMetricValue\(item\.view_count_increase\)\}/);
+  assert.match(homeViewSource, /rankKey === "growth_weekly"[\s\S]*formatDelta\(item\?\.view_count_increase\)/);
+  assert.match(homeViewSource, /growthText \? <span className="home-editorial-delta">（\{growthText\}）<\/span>/);
+  assert.match(ranksPanelSource, /isWeeklyGrowth \? \([\s\S]*\{renderNormalActions\(\)\}/);
+  assert.match(ranksPanelSource, /hidden gap-3 lg:grid lg:grid-cols-\[repeat\(auto-fit,minmax\(21rem,1fr\)\)\]/);
+  assert.match(ranksPanelSource, /lg:hidden[\s\S]*activeRank/);
+  assert.match(ranksDataSource, /categoryKey === "growth"[\s\S]*rankData\?\.growthSummary\?\.updatedAt/);
 });
 
 test("CV ranks use a dedicated expandable works layout", () => {
@@ -4277,6 +4325,34 @@ test("rank-derived runtime has no dated shard reads or fixed CV baseline", () =>
   assert.doesNotMatch(serverSource, /falling back to legacy/i);
   assert.doesNotMatch(ranksTrendUtilsSource, /baselineSnapshot|getCvBaselineDate|findCvRankingItem/);
   assert.doesNotMatch(architectureSource, /ranks:index|ranks:metrics:\*|ranks:list:\*/);
+});
+
+test("CV and growth ranks use separate resource readers", () => {
+  const metaNormalizerStart = serverSource.indexOf("function normalizeRanksMeta(meta)");
+  const metaNormalizerSource = serverSource.slice(
+    metaNormalizerStart,
+    serverSource.indexOf("function buildRanksResponseMeta", metaNormalizerStart)
+  );
+  const cvReaderStart = serverSource.indexOf("async function readCvRanksBundle");
+  const growthReaderStart = serverSource.indexOf("async function readGrowthRanksBundle");
+  const cvReaderSource = serverSource.slice(cvReaderStart, growthReaderStart);
+  const growthReaderSource = serverSource.slice(
+    growthReaderStart,
+    serverSource.indexOf("export function parseRanksBatchJson", growthReaderStart)
+  );
+  const growthRefreshStart = serverSource.indexOf("if (decision.refreshGrowth)");
+  const growthRefreshSource = serverSource.slice(
+    growthRefreshStart,
+    serverSource.indexOf("const response = updateCombinedRanksResponseCache()", growthRefreshStart)
+  );
+  assert.match(cvReaderSource, /CV_RANKS_KEY/);
+  assert.doesNotMatch(cvReaderSource, /WEEKLY_GROWTH_RANKS_KEY/);
+  assert.match(growthReaderSource, /WEEKLY_GROWTH_RANKS_KEY/);
+  assert.doesNotMatch(growthReaderSource, /CV_RANKS_KEY/);
+  assert.match(metaNormalizerSource, /meta\?\.watchcountGrowth \?\? meta\?\.growth/);
+  assert.doesNotMatch(metaNormalizerSource, /normalizeRanksMetaResource\(meta\?\.cv, WEEKLY_GROWTH_RANKS_KEY/);
+  assert.doesNotMatch(growthRefreshSource, /recordRanksMetaPostRefreshBackoff\("cv"/);
+  assert.match(serverSource, /target === "ranks:growth"/);
 });
 
 test("server negotiates all compressible responses and skips precompressed media", () => {
