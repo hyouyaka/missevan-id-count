@@ -14,7 +14,9 @@ const cvSearchResultsSource = readFileSync(new URL("./CvSearchResults.jsx", impo
 const appUtilsSource = readFileSync(new URL("./app-utils.js", import.meta.url), "utf8");
 const appIconSource = readFileSync(new URL("./AppIcon.jsx", import.meta.url), "utf8");
 const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import.meta.url), "utf8");
+const favoritesRefreshServiceSource = readFileSync(new URL("./favoritesRefreshService.js", import.meta.url), "utf8");
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
+const useFavoriteRefreshSource = readFileSync(new URL("./useFavoriteRefresh.js", import.meta.url), "utf8");
 const feedbackViewSource = readSourceIfExists("./FeedbackView.jsx");
 const homeViewSource = readSourceIfExists("./HomeView.jsx");
 const lazyRankTrendDialogSource = readSourceIfExists("./LazyRankTrendDialog.jsx");
@@ -37,10 +39,15 @@ const searchPanelSource = readFileSync(new URL("./SearchPanel.jsx", import.meta.
 const searchResultsSource = readFileSync(new URL("./SearchResults.jsx", import.meta.url), "utf8");
 const searchWorkspaceSource = readFileSync(new URL("./SearchWorkspace.jsx", import.meta.url), "utf8");
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
+const dramaCompareSource = readFileSync(new URL("./DramaCompare.jsx", import.meta.url), "utf8");
+const dramaCompareUtilsSource = readFileSync(new URL("./dramaCompareUtils.js", import.meta.url), "utf8");
 const navigationSource = readFileSync(new URL("./navigation.jsx", import.meta.url), "utf8");
 const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
+const applicationSource = readFileSync(new URL("../../server/application.js", import.meta.url), "utf8");
+const imageProxyRoutesSource = readFileSync(new URL("../../server/routes/imageProxyRoutes.js", import.meta.url), "utf8");
 const serverSource = [
-  readFileSync(new URL("../../server/application.js", import.meta.url), "utf8"),
+  applicationSource,
+  imageProxyRoutesSource,
   readFileSync(new URL("../../server/routes/systemRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/routes/statsRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/routes/missevanRoutes.js", import.meta.url), "utf8"),
@@ -168,7 +175,7 @@ test("semantic role colors keep the requested labels and actions distinct", () =
     assert.match(actionSource, /const trendActionButtonClassName[\s\S]*var\(--accent-success\)/);
   }
 
-  assert.equal(toolViewSource.match(/variant="compare"/g)?.length ?? 0, 2);
+  assert.equal(dramaCompareSource.match(/variant="compare"/g)?.length ?? 0, 2);
 });
 
 test("platform pills use globally distinct selected surfaces", () => {
@@ -1221,7 +1228,7 @@ test("list artwork uses shared lazy image loading", () => {
   assert.match(ranksPanelSource, /<LazyImage alt=\{work\.title\}/);
   assert.match(ranksPanelSource, /<LazyImage alt=\{item\.cvName\}/);
   assert.match(favoritesPanelSource, /<LazyImage alt=\{favorite\.title\}/);
-  assert.match(toolViewSource, /<LazyImage alt=\{item\.title\}/);
+  assert.match(dramaCompareSource, /<LazyImage alt=\{item\.title\}/);
   assert.match(platformTabLabelSource, /function PlatformGlyph/);
   assert.match(platformTabLabelSource, /maskImage/);
 });
@@ -1244,7 +1251,7 @@ test("mobile bottom layers share safe-area offsets", () => {
   );
   assert.match(toolViewSource, /className="app-shell/);
   assert.match(searchResultsSource, /fixed inset-x-3 mobile-fixed-bottom z-40 lg:hidden/);
-  assert.match(toolViewSource, /fixed mobile-compare-basket right-3 z-30 sm:bottom-3/);
+  assert.match(dramaCompareSource, /fixed mobile-compare-basket right-3 z-30 sm:bottom-3/);
   assert.doesNotMatch(indexCssSource, /--mobile-floating-content-bottom-padding/);
   assert.doesNotMatch(toolViewSource, /pb-24/);
 });
@@ -2224,7 +2231,7 @@ test("episode detail collection keeps request limits and reuses platform totals"
 
 test("completed background tasks collapse and dismiss after opening results", () => {
   const taskCenterStart = toolViewSource.indexOf("function BackgroundTaskCenter");
-  const taskCenterEnd = toolViewSource.indexOf("const MAX_COMPARE_ITEMS", taskCenterStart);
+  const taskCenterEnd = toolViewSource.indexOf("export function ToolView", taskCenterStart);
   const taskCenterSource = toolViewSource.slice(taskCenterStart, taskCenterEnd);
   const openResultStart = toolViewSource.indexOf("function openBackgroundTaskResult");
   const openResultEnd = toolViewSource.indexOf("function getAllSearchResults", openResultStart);
@@ -2361,12 +2368,11 @@ test("favorite payloads preserve main CV text from current cards", () => {
 });
 
 test("favorite refresh backfills sparse main CV lists from info store once", () => {
-  const refreshStart = favoritesPanelSource.indexOf("async function refreshFavoriteSnapshot");
+  const refreshStart = favoritesRefreshServiceSource.indexOf("export async function refreshFavoriteSnapshot");
   assert.notEqual(refreshStart, -1, "favorite refresh function should exist");
-  const refreshEnd = favoritesPanelSource.indexOf("\nexport function FavoritesPanel", refreshStart);
-  const refreshSource = favoritesPanelSource.slice(refreshStart, refreshEnd === -1 ? undefined : refreshEnd);
+  const refreshSource = favoritesRefreshServiceSource.slice(refreshStart);
 
-  assert.match(favoritesPanelSource, /function countFavoriteMainCvNames/, "favorite panel should count saved main CV names");
+  assert.match(favoritesRefreshServiceSource, /function countFavoriteMainCvNames/, "favorite refresh service should count saved main CV names");
   assert.match(refreshSource, /countFavoriteMainCvNames\(favorite\.mainCvText\) <= 2/);
   assert.match(refreshSource, /fetchFavoriteMainCvText\(favorite, frontendVersion, handleVersionResponse\)/);
   assert.match(refreshSource, /refreshedMainCvText/);
@@ -2606,8 +2612,8 @@ test("favorite refresh state survives navigation through ToolView ownership", ()
     /const \[refreshState, setRefreshState\] = useState\(\{[\s\S]*?isRunning: false/,
     "FavoritesPanel should not lose refresh state when the tab unmounts"
   );
-  assert.match(favoritesPanelSource, /onRefreshStateChange\(\{[\s\S]*?isRunning: true/);
-  assert.match(favoritesPanelSource, /onRefreshSettled\?\.\(\)/);
+  assert.match(useFavoriteRefreshSource, /onRefreshStateChange\(\{[\s\S]*?isRunning: true/);
+  assert.match(useFavoriteRefreshSource, /onRefreshSettled\?\.\(\)/);
   assert.match(favoritesPanelSource, /useEffect\(\(\) => \{[\s\S]*?reloadSnapshots\(\);[\s\S]*?\}, \[refreshRevision\]\)/);
   assert.match(
     favoritesPanelSource,
@@ -2635,9 +2641,9 @@ test("favorite actions are disabled globally during favorite refresh", () => {
   assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| statisticsActionsDisabled \|\| selectedFavorites\.length === 0\}/);
   assert.match(favoritesPanelSource, /disabled=\{favoriteActionsDisabled\}/);
   assert.match(favoritesPanelSource, /onClick=\{\(\) => refreshMany\(selectedFavorites\)\}/);
-  assert.match(favoritesPanelSource, /const refreshLockRef = useRef\(false\)/);
-  assert.match(favoritesPanelSource, /if \(refreshLockRef\.current\) \{[\s\S]*?return;/);
-  assert.match(favoritesPanelSource, /finally \{[\s\S]*?refreshLockRef\.current = false;/);
+  assert.match(useFavoriteRefreshSource, /const refreshLockRef = useRef\(false\)/);
+  assert.match(useFavoriteRefreshSource, /if \(refreshLockRef\.current\) \{[\s\S]*?return;/);
+  assert.match(useFavoriteRefreshSource, /finally \{[\s\S]*?refreshLockRef\.current = false;/);
   assert.match(favoritesPanelSource, /刷新所选/);
   assert.match(searchResultsSource, /favoriteActionsDisabled = false/);
   assert.match(searchResultsSource, /disabled=\{favoriteActionsDisabled\}[\s\S]*?onSelect=\{\(\) => onToggleFavorite\?\./);
@@ -2648,20 +2654,19 @@ test("favorite actions are disabled globally during favorite refresh", () => {
 });
 
 test("favorite refresh skips writes when the favorite was removed mid-refresh", () => {
-  const refreshStart = favoritesPanelSource.indexOf("async function refreshFavoriteSnapshot");
+  const refreshStart = favoritesRefreshServiceSource.indexOf("export async function refreshFavoriteSnapshot");
   assert.notEqual(refreshStart, -1, "favorite refresh function should exist");
-  const refreshEnd = favoritesPanelSource.indexOf("\nexport function FavoritesPanel", refreshStart);
-  const refreshSource = favoritesPanelSource.slice(refreshStart, refreshEnd === -1 ? undefined : refreshEnd);
-  const refreshManyStart = favoritesPanelSource.indexOf("async function refreshMany");
+  const refreshSource = favoritesRefreshServiceSource.slice(refreshStart);
+  const refreshManyStart = useFavoriteRefreshSource.indexOf("async function refreshMany");
   assert.notEqual(refreshManyStart, -1, "favorite batch refresh function should exist");
-  const refreshManyEnd = favoritesPanelSource.indexOf("\n  async function exportData", refreshManyStart);
-  const refreshManySource = favoritesPanelSource.slice(
+  const refreshManyEnd = useFavoriteRefreshSource.indexOf("\n  return { refreshMany };", refreshManyStart);
+  const refreshManySource = useFavoriteRefreshSource.slice(
     refreshManyStart,
     refreshManyEnd === -1 ? undefined : refreshManyEnd
   );
 
   assert.match(
-    favoritesPanelSource,
+    favoritesRefreshServiceSource,
     /updateFavoriteIfExists/,
     "favorite refresh should import a conditional update helper before writing"
   );
@@ -2698,14 +2703,13 @@ test("favorite refresh skips writes when the favorite was removed mid-refresh", 
 });
 
 test("favorite refresh stops without writing snapshots when Missevan access is denied", () => {
-  const refreshStart = favoritesPanelSource.indexOf("async function refreshFavoriteSnapshot");
+  const refreshStart = favoritesRefreshServiceSource.indexOf("export async function refreshFavoriteSnapshot");
   assert.notEqual(refreshStart, -1, "favorite refresh function should exist");
-  const refreshEnd = favoritesPanelSource.indexOf("\nexport function FavoritesPanel", refreshStart);
-  const refreshSource = favoritesPanelSource.slice(refreshStart, refreshEnd === -1 ? undefined : refreshEnd);
-  const refreshManyStart = favoritesPanelSource.indexOf("async function refreshMany");
+  const refreshSource = favoritesRefreshServiceSource.slice(refreshStart);
+  const refreshManyStart = useFavoriteRefreshSource.indexOf("async function refreshMany");
   assert.notEqual(refreshManyStart, -1, "favorite batch refresh function should exist");
-  const refreshManyEnd = favoritesPanelSource.indexOf("\n  async function exportData", refreshManyStart);
-  const refreshManySource = favoritesPanelSource.slice(
+  const refreshManyEnd = useFavoriteRefreshSource.indexOf("\n  return { refreshMany };", refreshManyStart);
+  const refreshManySource = useFavoriteRefreshSource.slice(
     refreshManyStart,
     refreshManyEnd === -1 ? undefined : refreshManyEnd
   );
@@ -2714,11 +2718,11 @@ test("favorite refresh stops without writing snapshots when Missevan access is d
   const batchAccessDeniedIndex = refreshManySource.indexOf("if (isFavoriteAccessDeniedError(error))");
   const failedSnapshotIndex = refreshManySource.indexOf("await saveSnapshot", batchAccessDeniedIndex);
 
-  assert.match(favoritesPanelSource, /class FavoriteAccessDeniedError extends Error/);
-  assert.match(favoritesPanelSource, /function isFavoriteAccessDeniedError/);
+  assert.match(favoritesRefreshServiceSource, /class FavoriteAccessDeniedError extends Error/);
+  assert.match(favoritesRefreshServiceSource, /function isFavoriteAccessDeniedError/);
   assert.match(favoritesPanelSource, /getMissevanAccessDeniedMessage/);
-  assert.match(favoritesPanelSource, /if \(platform === "missevan" && snapshot\?\.accessDenied\)/);
-  assert.match(favoritesPanelSource, /if \(favorite\.platform === "missevan" && \(data\?\.accessDenied \|\| result\?\.accessDenied\)\)/);
+  assert.match(favoritesRefreshServiceSource, /if \(platform === "missevan" && snapshot\?\.accessDenied\)/);
+  assert.match(favoritesRefreshServiceSource, /if \(favorite\.platform === "missevan" && \(data\?\.accessDenied \|\| result\?\.accessDenied\)\)/);
   assert.notEqual(accessDeniedGuardIndex, -1, "refreshFavoriteSnapshot should rethrow access-denied task errors");
   assert.ok(
     accessDeniedGuardIndex < updateIndex,
@@ -2794,11 +2798,11 @@ test("favorites cancellation is confirmed and removes saved snapshots", () => {
 });
 
 test("favorite stats task source flows into danmaku usage logs", () => {
-  assert.match(favoritesPanelSource, /source: "favorite"/, "favorite refresh should mark stats tasks as favorite sourced");
+  assert.match(favoritesRefreshServiceSource, /source: "favorite"/, "favorite refresh should mark stats tasks as favorite sourced");
   assert.match(serverSource, /getDanmakuSummary\([\s\S]*task\.source/, "stat task source should be passed into danmaku summary calls");
   assert.match(serverSource, /\.\.\.\(source \? \{ source \} : \{\}\)/, "danmaku usage logs should include optional source");
   assert.match(
-    favoritesPanelSource,
+    favoritesRefreshServiceSource,
     /taskType: "revenue"[\s\S]*payload: \{ dramaIds: \[Number\(favorite\.dramaId\)\], source: "favorite" \}/,
     "Missevan favorite revenue refresh should mark the task as favorite sourced"
   );
@@ -3025,10 +3029,9 @@ test("Missevan stats tasks do not bypass fallback routes during direct cooldown"
 });
 
 test("Missevan favorite refresh avoids running duplicate danmaku tasks", () => {
-  const refreshStart = favoritesPanelSource.indexOf("async function refreshFavoriteSnapshot");
+  const refreshStart = favoritesRefreshServiceSource.indexOf("export async function refreshFavoriteSnapshot");
   assert.notEqual(refreshStart, -1, "favorite refresh function should exist");
-  const refreshEnd = favoritesPanelSource.indexOf("\nfunction buildEmptySnapshotMetrics", refreshStart);
-  const refreshSource = favoritesPanelSource.slice(refreshStart, refreshEnd === -1 ? undefined : refreshEnd);
+  const refreshSource = favoritesRefreshServiceSource.slice(refreshStart);
 
   assert.doesNotMatch(
     refreshSource,
@@ -3661,11 +3664,11 @@ test("rank trend chart data points show hover and touch tooltips", () => {
 });
 
 test("compare trend chart data points show hover and touch tooltips", () => {
-  const chartStart = toolViewSource.indexOf("function CompareTrendChart");
-  const chartEnd = toolViewSource.indexOf("function DramaCompareDialog", chartStart);
+  const chartStart = dramaCompareSource.indexOf("function CompareTrendChart");
+  const chartEnd = dramaCompareSource.indexOf("export function DramaCompareDialog", chartStart);
   assert.notEqual(chartStart, -1, "CompareTrendChart should exist");
   assert.notEqual(chartEnd, -1, "CompareTrendChart should end before dialog");
-  const chartSource = toolViewSource.slice(chartStart, chartEnd);
+  const chartSource = dramaCompareSource.slice(chartStart, chartEnd);
 
   assert.match(chartSource, /const \[hoveredPoint, setHoveredPoint\] = useState\(null\)/);
   assert.match(chartSource, /const \[selectedPoint, setSelectedPoint\] = useState\(null\)/);
@@ -3739,18 +3742,18 @@ test("tool shell includes a global background task center and inline compare bas
   assert.match(toolViewSource, /statisticsActionsDisabled/);
   assert.match(toolViewSource, /DramaCompareBasket/);
   assert.match(toolViewSource, /DramaCompareDialog/);
-  assert.match(toolViewSource, /MAX_COMPARE_ITEMS = 6/);
+  assert.match(dramaCompareUtilsSource, /MAX_COMPARE_ITEMS = 6/);
   assert.match(toolViewSource, /\$\{progress\}%/);
   assert.match(toolViewSource, /const \[compareBasketOpen, setCompareBasketOpen\] = useState\(false\)/);
-  assert.match(toolViewSource, /w-\[min\(60vw,18rem\)\]/);
-  assert.match(toolViewSource, /max-h-\[13\.5rem\] overflow-y-auto/);
-  assert.match(toolViewSource, /对比 \{items\.length\}\/\{MAX_COMPARE_ITEMS\}/);
+  assert.match(dramaCompareSource, /w-\[min\(60vw,18rem\)\]/);
+  assert.match(dramaCompareSource, /max-h-\[13\.5rem\] overflow-y-auto/);
+  assert.match(dramaCompareSource, /对比 \{items\.length\}\/\{MAX_COMPARE_ITEMS\}/);
   assert.match(toolViewSource, /data-touch="compact"[\s\S]*after:inset-x-0 after:-inset-y-2[\s\S]*查看结果/);
-  assert.match(toolViewSource, /data-touch="compact"[\s\S]*className="relative overflow-visible text-sm! after:absolute after:inset-x-0 after:-inset-y-2[\s\S]*<ArrowLeftRightIcon[\s\S]*对比/);
-  assert.match(toolViewSource, /const compareBasketTitleSummary = items\.map/);
-  assert.match(toolViewSource, /-ml-\d/);
-  assert.match(toolViewSource, /aria-label="收起对比"[\s\S]*<ChevronDownIcon/);
-  assert.doesNotMatch(toolViewSource, /对比篮/);
+  assert.match(dramaCompareSource, /data-touch="compact"[\s\S]*className="relative overflow-visible text-sm! after:absolute after:inset-x-0 after:-inset-y-2[\s\S]*<ArrowLeftRightIcon[\s\S]*对比/);
+  assert.match(dramaCompareSource, /const compareBasketTitleSummary = items\.map/);
+  assert.match(dramaCompareSource, /-ml-\d/);
+  assert.match(dramaCompareSource, /aria-label="收起对比"[\s\S]*<ChevronDownIcon/);
+  assert.doesNotMatch(dramaCompareSource, /对比篮/);
   assert.match(toolViewSource, /toast\.success\("已加入对比。"\)/);
   assert.doesNotMatch(toolViewSource, /toast\.success\("已加入对比篮。"\)/);
   const addCompareStart = toolViewSource.indexOf("function addDramaToCompareBasket");
@@ -3763,7 +3766,7 @@ test("tool shell includes a global background task center and inline compare bas
   assert.doesNotMatch(toolViewSource, /<ComparePanel/);
 
   const backgroundTaskStart = toolViewSource.indexOf("function BackgroundTaskCenter");
-  const backgroundTaskEnd = toolViewSource.indexOf("const MAX_COMPARE_ITEMS", backgroundTaskStart);
+  const backgroundTaskEnd = toolViewSource.indexOf("export function ToolView", backgroundTaskStart);
   assert.notEqual(backgroundTaskStart, -1, "BackgroundTaskCenter should exist");
   assert.notEqual(backgroundTaskEnd, -1, "BackgroundTaskCenter should end before compare constants");
   const backgroundTaskSource = toolViewSource.slice(backgroundTaskStart, backgroundTaskEnd);
@@ -3785,22 +3788,23 @@ test("tool shell includes a global background task center and inline compare bas
 
 test("favorites refresh reports through the background task center", () => {
   assert.match(favoritesPanelSource, /onBackgroundTaskChange/);
-  assert.match(favoritesPanelSource, /type: "favorites_refresh"/);
+  assert.match(useFavoriteRefreshSource, /type: "favorites_refresh"/);
   assert.match(toolViewSource, /onBackgroundTaskChange=\{setBackgroundTask\}/);
 });
 
 test("favorite refresh maps live task progress into each batch item", () => {
-  assert.match(favoritesPanelSource, /function getStatsTaskProgressSnapshot/);
-  assert.match(favoritesPanelSource, /任务排队中，前方 \$\{queuePosition\} 个任务/);
-  assert.match(favoritesPanelSource, /onProgress\?\.\(progressSnapshot\)/);
-  assert.match(favoritesPanelSource, /progress: 15 \+ Math\.floor\(clampFavoriteProgress\(snapshot\.progress\) \* 0\.8\)/);
-  assert.match(favoritesPanelSource, /function getFavoriteBatchProgress/);
-  assert.match(favoritesPanelSource, /\(\(index \+ itemProgress \/ 100\) \/ count\) \* 100/);
-  assert.match(favoritesPanelSource, /Math\.max\(latestProgress, getFavoriteBatchProgress/);
-  assert.doesNotMatch(favoritesPanelSource, /Math\.floor\(\(index \/ queue\.length\) \* 100\)/);
+  assert.match(favoritesRefreshServiceSource, /function getStatsTaskProgressSnapshot/);
+  assert.match(favoritesRefreshServiceSource, /任务排队中，前方 \$\{queuePosition\} 个任务/);
+  assert.match(favoritesRefreshServiceSource, /onProgress\?\.\(progressSnapshot\)/);
+  assert.match(favoritesRefreshServiceSource, /progress: 15 \+ Math\.floor\(clampFavoriteProgress\(snapshot\.progress\) \* 0\.8\)/);
+  assert.match(favoritesRefreshServiceSource, /function getFavoriteBatchProgress/);
+  assert.match(favoritesRefreshServiceSource, /\(\(index \+ itemProgress \/ 100\) \/ count\) \* 100/);
+  assert.match(useFavoriteRefreshSource, /Math\.max\(latestProgress, getFavoriteBatchProgress/);
+  assert.doesNotMatch(useFavoriteRefreshSource, /Math\.floor\(\(index \/ queue\.length\) \* 100\)/);
   assert.match(toolViewSource, /currentAction: ""/);
-  assert.match(favoritesPanelSource, /action\.includes\(favoriteTitle\) \? action : `\$\{favoriteTitle\} · \$\{action\}`/);
-  assert.match(favoritesPanelSource, /if \(!stoppedByAccessDenied\) \{[\s\S]*?setSelectedKeys\(new Set\(\)\);[\s\S]*?\}/);
+  assert.match(useFavoriteRefreshSource, /action\.includes\(favoriteTitle\) \? action : `\$\{favoriteTitle\} · \$\{action\}`/);
+  assert.match(useFavoriteRefreshSource, /if \(!stoppedByAccessDenied\) \{[\s\S]*?onClearSelection\?\.\(\);[\s\S]*?\}/);
+  assert.match(favoritesPanelSource, /onClearSelection: \(\) => setSelectedKeys\(new Set\(\)\)/);
 });
 
 test("search keeps trend visible while compare moves into the more menu", () => {
@@ -3861,18 +3865,18 @@ test("trend and compare dialogs default to 7-day absolute playback", () => {
   assert.match(trendDialogSource, /setSelectedChartMode\("absolute"\)/);
   assert.match(trendDialogSource, /setSelectedMetricKey\("view_count"\)/);
 
-  const compareDialogStart = toolViewSource.indexOf("function DramaCompareDialog");
-  const compareDialogEnd = toolViewSource.indexOf("function DramaCompareBasket", compareDialogStart);
+  const compareDialogStart = dramaCompareSource.indexOf("export function DramaCompareDialog");
+  const compareDialogEnd = dramaCompareSource.indexOf("export function DramaCompareBasket", compareDialogStart);
   assert.notEqual(compareDialogStart, -1, "DramaCompareDialog should exist");
   assert.notEqual(compareDialogEnd, -1, "DramaCompareDialog should end before basket");
-  const compareDialogSource = toolViewSource.slice(compareDialogStart, compareDialogEnd);
+  const compareDialogSource = dramaCompareSource.slice(compareDialogStart, compareDialogEnd);
   assert.match(compareDialogSource, /const \[selectedMetric, setSelectedMetric\] = useState\("view_count"\)/);
   assert.match(compareDialogSource, /const \[selectedWindow, setSelectedWindow\] = useState\("7d"\)/);
   assert.match(compareDialogSource, /const \[selectedChartMode, setSelectedChartMode\] = useState\("absolute"\)/);
   assert.match(compareDialogSource, /setSelectedMetric\("view_count"\)/);
   assert.match(compareDialogSource, /setSelectedWindow\("7d"\)/);
   assert.match(compareDialogSource, /setSelectedChartMode\("absolute"\)/);
-  assert.match(toolViewSource, /const COMPARE_WEEKLY_WINDOWS = \["3w", "7w", "30w"\]/);
+  assert.match(dramaCompareSource, /const COMPARE_WEEKLY_WINDOWS = \["3w", "7w", "30w"\]/);
   assert.match(compareDialogSource, /loadTrend\(item, "weekly_playback"\)/);
   assert.match(compareDialogSource, /const isWeeklyPlaybackCompare/);
   assert.match(compareDialogSource, /availableMetricOptions\.length > 1/);
@@ -3920,15 +3924,15 @@ test("trend and compare charts position date labels from visible chart markers",
   assert.doesNotMatch(rankTrendUiSource, /axisLabelPoints\.map/);
   assert.doesNotMatch(rankTrendUiSource, /inset-x-3 bottom-2 flex justify-between/);
 
-  const chartStart = toolViewSource.indexOf("function CompareTrendChart");
-  const chartEnd = toolViewSource.indexOf("function DramaCompareDialog", chartStart);
+  const chartStart = dramaCompareSource.indexOf("function CompareTrendChart");
+  const chartEnd = dramaCompareSource.indexOf("export function DramaCompareDialog", chartStart);
   assert.notEqual(chartStart, -1, "CompareTrendChart should exist");
   assert.notEqual(chartEnd, -1, "CompareTrendChart should end before dialog");
-  const chartSource = toolViewSource.slice(chartStart, chartEnd);
+  const chartSource = dramaCompareSource.slice(chartStart, chartEnd);
   assert.match(chartSource, /chartData\?\.dateMarkers \|\| chartData\?\.lines\?\.\[0\]\?\.markers \|\| \[\]/);
   assert.match(chartSource, /axisLabelMarkers\.map\(\(\{ point, position \}\) =>/);
   assert.doesNotMatch(chartSource, /const axisPoints = chartMetrics\.find/);
-  assert.doesNotMatch(toolViewSource, /function getCompareDateLabelPoints/);
+  assert.doesNotMatch(dramaCompareSource, /function getCompareDateLabelPoints/);
 });
 
 test("rank trend chart does not clip positioned date labels", () => {
@@ -3953,11 +3957,11 @@ test("seven-day chart labels show every other visible point and the final point"
 });
 
 test("compare palette and card checkbox keep fixed color identity", () => {
-  const paletteStart = toolViewSource.indexOf("const comparePalette = [");
-  const paletteEnd = toolViewSource.indexOf("];", paletteStart);
+  const paletteStart = dramaCompareUtilsSource.indexOf("export const comparePalette = [");
+  const paletteEnd = dramaCompareUtilsSource.indexOf("];", paletteStart);
   assert.notEqual(paletteStart, -1, "comparePalette should exist");
   assert.notEqual(paletteEnd, -1, "comparePalette should end before semicolon");
-  const paletteSource = toolViewSource.slice(paletteStart, paletteEnd);
+  const paletteSource = dramaCompareUtilsSource.slice(paletteStart, paletteEnd);
   assert.match(paletteSource, /"var\(--chart-1\)"/);
   assert.match(paletteSource, /"var\(--chart-2\)"/);
   assert.match(paletteSource, /"var\(--chart-3\)"/);
@@ -3967,31 +3971,31 @@ test("compare palette and card checkbox keep fixed color identity", () => {
   assert.doesNotMatch(paletteSource, /"#28559A"/);
   assert.doesNotMatch(paletteSource, /rgb\(32,54,112\)/);
 
-  const dialogStart = toolViewSource.indexOf("function DramaCompareDialog");
-  const dialogEnd = toolViewSource.indexOf("function DramaCompareBasket", dialogStart);
+  const dialogStart = dramaCompareSource.indexOf("export function DramaCompareDialog");
+  const dialogEnd = dramaCompareSource.indexOf("export function DramaCompareBasket", dialogStart);
   assert.notEqual(dialogStart, -1, "DramaCompareDialog should exist");
   assert.notEqual(dialogEnd, -1, "DramaCompareDialog should end before basket");
-  const dialogSource = toolViewSource.slice(dialogStart, dialogEnd);
+  const dialogSource = dramaCompareSource.slice(dialogStart, dialogEnd);
   assert.match(dialogSource, /className="relative flex w-\[120px\] shrink-0/);
   assert.match(dialogSource, /className="absolute right-2 top-2 inline-flex items-center gap-1"/);
   assert.match(dialogSource, /style=\{\{ accentColor: lineColor \}\}/);
 });
 
 test("compare dialog filters metrics, avoids loading loops, and fits mobile width", () => {
-  assert.match(toolViewSource, /import \{[\s\S]*formatPlainNumber[\s\S]*\} from "@\/app\/app-utils";/);
-  assert.doesNotMatch(toolViewSource, /axis\.ticks\.map/);
+  assert.match(dramaCompareUtilsSource, /import \{ formatPlainNumber \} from "@\/app\/app-utils";/);
+  assert.doesNotMatch(dramaCompareSource, /axis\.ticks\.map/);
 
-  const chartStart = toolViewSource.indexOf("function CompareTrendChart");
-  const chartEnd = toolViewSource.indexOf("function DramaCompareDialog", chartStart);
+  const chartStart = dramaCompareSource.indexOf("function CompareTrendChart");
+  const chartEnd = dramaCompareSource.indexOf("export function DramaCompareDialog", chartStart);
   assert.notEqual(chartStart, -1, "CompareTrendChart should exist");
   assert.notEqual(chartEnd, -1, "CompareTrendChart should end before dialog");
-  const chartSource = toolViewSource.slice(chartStart, chartEnd);
+  const chartSource = dramaCompareSource.slice(chartStart, chartEnd);
 
-  const dialogStart = toolViewSource.indexOf("function DramaCompareDialog");
-  const dialogEnd = toolViewSource.indexOf("function DramaCompareBasket", dialogStart);
+  const dialogStart = dramaCompareSource.indexOf("export function DramaCompareDialog");
+  const dialogEnd = dramaCompareSource.indexOf("export function DramaCompareBasket", dialogStart);
   assert.notEqual(dialogStart, -1, "DramaCompareDialog should exist");
   assert.notEqual(dialogEnd, -1, "DramaCompareDialog should end before basket");
-  const dialogSource = toolViewSource.slice(dialogStart, dialogEnd);
+  const dialogSource = dramaCompareSource.slice(dialogStart, dialogEnd);
 
   assert.match(dialogSource, /const handleVersionResponseRef = useRef\(handleVersionResponse\)/);
   assert.match(dialogSource, /const compareItemsKey = items\.map/);
@@ -4007,7 +4011,7 @@ test("compare dialog filters metrics, avoids loading loops, and fits mobile widt
   assert.match(dialogSource, /const coloredCompareItems = items\.map/);
   assert.match(dialogSource, /const coloredTrendItems = trendItems\.map/);
   assert.match(dialogSource, /const visibleTrendItems = coloredTrendItems\.filter/);
-  assert.match(toolViewSource, /color: item\.compareColor \|\| comparePalette/);
+  assert.match(dramaCompareUtilsSource, /color: item\.compareColor \|\| comparePalette/);
   assert.match(chartSource, /filterNonZeroTrendMetrics/);
   assert.match(chartSource, /overflow-visible/);
   assert.match(dialogSource, /type="checkbox"/);
@@ -4230,8 +4234,8 @@ test("rank trend backend supports five-sample classification and weekly playback
     rankTrendUiSource,
     /if \(isWeeklyPlayback\) \{[\s\S]*key: "date", label: "日期"[\s\S]*key: "view_count", label: "播放量"[\s\S]*const finalMetricKey/
   );
-  assert.match(toolViewSource, /loadTrend\(item, "weekly_playback"\)/);
-  assert.match(toolViewSource, /formatCompareWindowLabel/);
+  assert.match(dramaCompareSource, /loadTrend\(item, "weekly_playback"\)/);
+  assert.match(dramaCompareSource, /formatCompareWindowLabel/);
 
   const weeklyResponseStart = serverSource.indexOf("async function getCachedWeeklyRankTrendResponse");
   const weeklyResponseEnd = serverSource.indexOf("function getOngoingCacheKey", weeklyResponseStart);
@@ -4372,11 +4376,11 @@ test("image proxy retries aborted image bodies and logs concise failures", () =>
   assert.match(serverSource, /async function fetchImageBufferWithRetry/);
   assert.match(serverSource, /function formatImageProxyError/);
 
-  const helperStart = serverSource.indexOf("async function fetchImageBufferWithRetry");
+  const helperStart = applicationSource.indexOf("async function fetchImageBufferWithRetry");
   assert.notEqual(helperStart, -1, "image proxy retry helper should exist");
-  const helperEnd = serverSource.indexOf("app.get(\"/image-proxy\"", helperStart);
-  assert.notEqual(helperEnd, -1, "image proxy helper should be defined before the route");
-  const helperSource = serverSource.slice(helperStart, helperEnd);
+  const helperEnd = applicationSource.indexOf("export function normalizeMissevanDramaInfo", helperStart);
+  assert.notEqual(helperEnd, -1, "image proxy retry helper should end before drama normalization");
+  const helperSource = applicationSource.slice(helperStart, helperEnd);
 
   assert.match(helperSource, /createTimeoutSignal\(IMAGE_PROXY_TIMEOUT_MS\)/);
   assert.match(helperSource, /redirect: "manual"/);
@@ -4390,11 +4394,10 @@ test("image proxy retries aborted image bodies and logs concise failures", () =>
   assert.doesNotMatch(helperSource, /response\.arrayBuffer\(\)/);
   assert.match(helperSource, /response\.status >= 400 && response\.status < 500/);
 
-  const routeStart = serverSource.indexOf('app.get("/image-proxy"');
+  assert.match(applicationSource, /registerImageProxyRoutes\(app, \{[\s\S]*fetchImageBufferWithRetry[\s\S]*formatImageProxyError[\s\S]*imageProxyLimiter[\s\S]*isAllowedImageHost[\s\S]*logger/);
+  const routeStart = imageProxyRoutesSource.indexOf('router.get("/image-proxy"');
   assert.notEqual(routeStart, -1, "image proxy route should exist");
-  const routeEnd = serverSource.indexOf('app.get("/search"', routeStart);
-  assert.notEqual(routeEnd, -1, "image proxy route should end before search route");
-  const routeSource = serverSource.slice(routeStart, routeEnd);
+  const routeSource = imageProxyRoutesSource.slice(routeStart);
 
   assert.match(routeSource, /fetchImageBufferWithRetry\(targetUrl\)/);
   assert.match(routeSource, /formatImageProxyError\(error\)/);

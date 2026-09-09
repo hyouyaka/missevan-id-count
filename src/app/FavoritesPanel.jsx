@@ -27,14 +27,12 @@ import { toast } from "sonner";
 
 import {
   buildVersionedUrl,
-  extractResponseItems,
   formatCompactMetricValue,
   formatDeviceDateTime,
   getMissevanAccessDeniedMessage,
   getRemainingCooldownMinutes,
   formatPlainNumber,
   formatSignedCompactMetricValue,
-  getBackendVersionFromResponse,
   MISSEVAN_DESKTOP_ACCESS_HINT,
 } from "@/app/app-utils";
 import {
@@ -45,7 +43,6 @@ import {
   FAVORITE_FILTER_OPTIONS,
   FAVORITE_SORT_OPTIONS,
   filterFavorites,
-  getFavoriteByKey,
   getLatestMetricReading,
   getLatestSnapshot,
   getSnapshotsForFavorite,
@@ -54,13 +51,14 @@ import {
   loadFavoriteSettings,
   normalizeFavoriteSettings,
   saveFavoriteSettings,
-  saveSnapshot,
   resolveFavoriteMetricKey,
   serializeFavoritesHistoryCsv,
   sortFavoritesWithSnapshots,
   updateFavoriteIfExists,
 } from "@/app/favoritesStorage";
 import { PlatformGlyph, PlatformIdIcon } from "@/app/platformTabLabel";
+import { fetchFavoriteMainCvText } from "@/app/favoritesRefreshService";
+import { useFavoriteRefresh } from "@/app/useFavoriteRefresh";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,7 +70,6 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 const metricIconMap = {
   viewCount: PlayCircleIcon,
@@ -163,24 +160,6 @@ function isFavoriteMoneyMetric(metricKey) {
   return metricKey === "rewardTotal" || metricKey === "giftTotal";
 }
 
-function getNullableFavoriteMetric(value) {
-  if (value == null || value === "") {
-    return null;
-  }
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function addFavoriteMetricError(errors, metricErrors, metricKeys, message) {
-  const normalizedMessage = String(message ?? "").trim() || "指标未获取";
-  (Array.isArray(metricKeys) ? metricKeys : [metricKeys]).forEach((metricKey) => {
-    metricErrors[metricKey] = normalizedMessage;
-  });
-  if (!errors.includes(normalizedMessage)) {
-    errors.push(normalizedMessage);
-  }
-}
-
 function formatFavoriteMoneyYuan(value, platform) {
   if (value == null || value === "") {
     return "暂无";
@@ -240,14 +219,6 @@ function getVisibleMetricKeys(platform) {
 
 function formatFavoriteMainCvText(value) {
   return String(value ?? "").replace(/^主要CV：/, "").trim() || "暂无";
-}
-
-function countFavoriteMainCvNames(value) {
-  const normalized = String(value ?? "").replace(/^主要CV：/, "").trim();
-  if (!normalized || normalized === "暂无") {
-    return 0;
-  }
-  return normalized.split(/[，,、/]/).map((item) => item.trim()).filter(Boolean).length;
 }
 
 function MetricPill({ metricKey, value, platform }) {
@@ -621,342 +592,6 @@ function SnapshotDetailsDisclosure({ favorite, snapshots, deltaMetric, expanded,
   );
 }
 
-async function parseVersionedJson(response, frontendVersion, handleVersionResponse) {
-  const data = await response.json();
-  handleVersionResponse?.({
-    ...data,
-    frontendVersion,
-    backendVersion: getBackendVersionFromResponse(response, data),
-  });
-  return data;
-}
-
-async function postJson(path, payload, frontendVersion, handleVersionResponse) {
-  const response = await fetch(buildVersionedUrl(path, frontendVersion), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = await parseVersionedJson(response, frontendVersion, handleVersionResponse);
-  if (data?.accessDenied) {
-    throw createFavoriteAccessDeniedError(data?.message || data?.error || "猫耳访问受限");
-  }
-  if (!response.ok) {
-    throw new Error(data?.message || `请求失败：${response.status}`);
-  }
-  return data;
-}
-
-async function getJson(path, frontendVersion, handleVersionResponse) {
-  const response = await fetch(buildVersionedUrl(path, frontendVersion), {
-    cache: "no-store",
-  });
-  const data = await parseVersionedJson(response, frontendVersion, handleVersionResponse);
-  if (data?.accessDenied) {
-    throw createFavoriteAccessDeniedError(data?.message || data?.error || "猫耳访问受限");
-  }
-  if (!response.ok) {
-    throw new Error(data?.message || `请求失败：${response.status}`);
-  }
-  return data;
-}
-
-async function wait(delayMs) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
-  });
-}
-
-class FavoriteAccessDeniedError extends Error {
-  constructor(message = "猫耳访问受限") {
-    super(message);
-    this.name = "FavoriteAccessDeniedError";
-    this.accessDenied = true;
-  }
-}
-
-function isFavoriteAccessDeniedError(error) {
-  return error?.accessDenied === true || error?.name === "FavoriteAccessDeniedError";
-}
-
-function createFavoriteAccessDeniedError(message) {
-  return new FavoriteAccessDeniedError(message);
-}
-
-function clampFavoriteProgress(value, maximum = 100) {
-  const number = Number(value ?? 0);
-  return Math.max(0, Math.min(Number.isFinite(number) ? number : 0, maximum));
-}
-
-function getStatsTaskProgressSnapshot(snapshot) {
-  const queuePosition = Number(snapshot?.queuePosition ?? 0);
-  return {
-    ...snapshot,
-    progress: clampFavoriteProgress(snapshot?.progress),
-    currentAction: snapshot?.status === "queued" && queuePosition > 0
-      ? `任务排队中，前方 ${queuePosition} 个任务`
-      : snapshot?.currentAction || "统计中",
-  };
-}
-
-function getFavoriteBatchProgress(favoriteIndex, favoriteCount, favoriteProgress) {
-  const count = Math.max(1, Number(favoriteCount ?? 0) || 1);
-  const index = Math.max(0, Number(favoriteIndex ?? 0) || 0);
-  const itemProgress = clampFavoriteProgress(favoriteProgress);
-  return Math.min(99, Math.floor(((index + itemProgress / 100) / count) * 100));
-}
-
-async function runStatsTask({ platform, taskType, payload, frontendVersion, handleVersionResponse, onProgress }) {
-  const created = await postJson("/stat-tasks", { platform, taskType, ...payload }, frontendVersion, handleVersionResponse);
-  const taskId = String(created?.taskId ?? "").trim();
-  if (!taskId) {
-    throw new Error("统计任务创建失败");
-  }
-
-  let snapshot = created;
-  for (let index = 0; index < 240; index += 1) {
-    const progressSnapshot = getStatsTaskProgressSnapshot(snapshot);
-    onProgress?.(progressSnapshot);
-    if (platform === "missevan" && snapshot?.accessDenied) {
-      throw createFavoriteAccessDeniedError(progressSnapshot.currentAction || snapshot.error || "猫耳访问受限");
-    }
-    if (snapshot.status === "completed") {
-      return snapshot;
-    }
-    if (snapshot.status === "failed") {
-      throw new Error(snapshot.error || "统计任务失败");
-    }
-    if (snapshot.status === "cancelled") {
-      throw new Error("统计任务已取消");
-    }
-    await wait(1200);
-    snapshot = await getJson(`/stat-tasks/${taskId}?_ts=${Date.now()}`, frontendVersion, handleVersionResponse);
-  }
-  throw new Error("统计任务超时");
-}
-
-function buildPaidEpisodePayload(platform, dramaInfo) {
-  const drama = dramaInfo?.drama || {};
-  const dramaId = String(drama.id ?? "").trim();
-  const dramaTitle = String(drama.name ?? "").trim();
-  const episodes = Array.isArray(dramaInfo?.episodes?.episode) ? dramaInfo.episodes.episode : [];
-  return episodes
-    .filter((episode) => isPaidEpisode(platform, episode) || isMemberEpisode(platform, episode))
-    .map((episode) => ({
-      drama_id: dramaId,
-      sound_id: episode.sound_id,
-      drama_title: dramaTitle,
-      episode_title: episode.name,
-      duration: Number(episode.duration ?? 0),
-    }));
-}
-
-function getDramaCover(dramaInfo, fallback = "") {
-  const drama = dramaInfo?.drama || {};
-  return String(drama.cover ?? drama.cover_url ?? drama.coverUrl ?? fallback ?? "").trim();
-}
-
-async function fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionResponse) {
-  const path = favorite.platform === "manbo" ? "/manbo/getdramas" : "/getdramas";
-  const data = await postJson(
-    path,
-    { drama_ids: [favorite.platform === "manbo" ? String(favorite.dramaId) : Number(favorite.dramaId)] },
-    frontendVersion,
-    handleVersionResponse
-  );
-  const result = extractResponseItems(data)[0];
-  if (favorite.platform === "missevan" && (data?.accessDenied || result?.accessDenied)) {
-    throw createFavoriteAccessDeniedError(data?.message || result?.message || "猫耳访问受限");
-  }
-  if (!result?.success || !result?.info) {
-    throw new Error(result?.message || "作品详情读取失败");
-  }
-  return result.info;
-}
-
-async function fetchFavoriteMainCvText(favorite, frontendVersion, handleVersionResponse) {
-  const params = new URLSearchParams({
-    platform: favorite.platform,
-    dramaId: String(favorite.dramaId ?? ""),
-  });
-  const data = await getJson(`/favorites/meta?${params.toString()}`, frontendVersion, handleVersionResponse);
-  return String(data?.mainCvText ?? data?.main_cv_text ?? "").trim();
-}
-
-async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp = false, onProgress }) {
-  const capturedAt = Date.now();
-  const errors = [];
-  const metricErrors = {};
-  onProgress?.({ progress: 0, currentAction: "读取作品详情" });
-  const dramaInfo = await fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionResponse);
-  onProgress?.({ progress: 10, currentAction: "整理作品信息" });
-  const drama = dramaInfo?.drama || {};
-  const paidEpisodes = buildPaidEpisodePayload(favorite.platform, dramaInfo);
-  let refreshedMainCvText = "";
-  if (!isDesktopApp && countFavoriteMainCvNames(favorite.mainCvText) <= 2) {
-    try {
-      const fetchedMainCvText = await fetchFavoriteMainCvText(favorite, frontendVersion, handleVersionResponse);
-      if (countFavoriteMainCvNames(fetchedMainCvText) >= countFavoriteMainCvNames(favorite.mainCvText)) {
-        refreshedMainCvText = fetchedMainCvText;
-      }
-    } catch (error) {
-      if (isFavoriteAccessDeniedError(error)) {
-        throw error;
-      }
-      console.warn("Failed to refresh favorite main CV", error);
-    }
-  }
-  onProgress?.({ progress: 15, currentAction: "准备统计指标" });
-  let paidIdCount = favorite.platform === "manbo" && paidEpisodes.length === 0 ? 0 : null;
-
-  if (favorite.platform !== "missevan" && paidEpisodes.length > 0) {
-    try {
-      const idTask = await runStatsTask({
-        platform: favorite.platform,
-        taskType: "id",
-        payload: { episodes: paidEpisodes, source: "favorite" },
-        frontendVersion,
-        handleVersionResponse,
-        onProgress: (snapshot) => onProgress?.({
-          progress: 15 + Math.floor(clampFavoriteProgress(snapshot.progress) * 0.8),
-          currentAction: snapshot.currentAction,
-        }),
-      });
-      if (Number(idTask?.failedCount ?? 0) > 0) {
-        throw new Error(idTask.currentAction || "付费 ID 统计部分失败");
-      }
-      if (!Array.isArray(idTask?.result?.idResults)) {
-        throw new Error("付费 ID 统计未返回结果");
-      }
-      const userCounts = idTask.result.idResults.map((item) => getNullableFavoriteMetric(item?.users));
-      if (userCounts.some((value) => value == null)) {
-        throw new Error("付费 ID 统计结果不完整");
-      }
-      paidIdCount = userCounts.reduce((sum, value) => sum + value, 0);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      addFavoriteMetricError(errors, metricErrors, "paidIdCount", message);
-    }
-  }
-
-  let rewardCount = null;
-  let rewardTotal = null;
-  let giftTotal = getNullableFavoriteMetric(drama.diamond_value);
-  let paidOrListenCount = null;
-
-  if (favorite.platform === "missevan") {
-    try {
-      const revenueTask = await runStatsTask({
-        platform: favorite.platform,
-        taskType: "revenue",
-        payload: { dramaIds: [Number(favorite.dramaId)], source: "favorite" },
-        frontendVersion,
-        handleVersionResponse,
-        onProgress: (snapshot) => onProgress?.({
-          progress: 15 + Math.floor(clampFavoriteProgress(snapshot.progress) * 0.8),
-          currentAction: snapshot.currentAction,
-        }),
-      });
-      if (!Array.isArray(revenueTask?.result?.revenueResults)) {
-        throw new Error("收益统计未返回结果");
-      }
-      const revenueResult = revenueTask.result.revenueResults
-        .find((item) => String(item?.dramaId) === String(favorite.dramaId));
-      if (!revenueResult) {
-        throw new Error("收益统计未返回当前作品数据");
-      }
-      if (revenueResult.failed || Number(revenueTask?.failedCount ?? 0) > 0) {
-        throw new Error(revenueResult.error || revenueTask.currentAction || "收益统计失败");
-      }
-      rewardCount = getNullableFavoriteMetric(revenueResult.rewardNum);
-      rewardTotal = getNullableFavoriteMetric(revenueResult.rewardCoinTotal);
-      paidIdCount = getNullableFavoriteMetric(
-        revenueResult.seasonPaidUserCount ?? revenueResult.paidUserCount
-      );
-      if (rewardCount == null) {
-        addFavoriteMetricError(errors, metricErrors, "rewardCount", "打赏人数未获取");
-      }
-      if (rewardTotal == null) {
-        addFavoriteMetricError(errors, metricErrors, "rewardTotal", "打赏榜总和未获取");
-      }
-      if (paidIdCount == null) {
-        addFavoriteMetricError(errors, metricErrors, "paidIdCount", "付费 ID 未获取");
-      }
-    } catch (error) {
-      if (isFavoriteAccessDeniedError(error)) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      addFavoriteMetricError(errors, metricErrors, ["rewardCount", "rewardTotal", "paidIdCount"], message);
-    }
-  } else {
-    const payCount = getNullableFavoriteMetric(drama.pay_count);
-    const listenCount = getNullableFavoriteMetric(drama.member_listen_count);
-    paidOrListenCount = payCount != null && payCount > 0
-      ? payCount
-      : listenCount != null && listenCount > 0
-        ? listenCount
-        : payCount === 0 || listenCount === 0
-          ? 0
-          : null;
-    if (giftTotal == null) {
-      addFavoriteMetricError(errors, metricErrors, "giftTotal", "总投喂未获取");
-    }
-    if (paidOrListenCount == null) {
-      addFavoriteMetricError(errors, metricErrors, "paidOrListenCount", "付费/收听人数未获取");
-    }
-  }
-
-  const viewCount = getNullableFavoriteMetric(drama.view_count);
-  const subscriptionCount = getNullableFavoriteMetric(drama.subscription_num);
-  if (viewCount == null) {
-    addFavoriteMetricError(errors, metricErrors, "viewCount", "播放量未获取");
-  }
-  if (subscriptionCount == null) {
-    addFavoriteMetricError(errors, metricErrors, "subscriptionCount", "追剧/收藏人数未获取");
-  }
-
-  const metrics = {
-    viewCount,
-    subscriptionCount,
-    rewardCount,
-    rewardTotal,
-    giftTotal,
-    paidOrListenCount,
-    paidIdCount,
-  };
-
-  onProgress?.({ progress: 95, currentAction: "保存收藏历史" });
-  const nextFavorite = await updateFavoriteIfExists(favorite.key, (activeFavorite) => ({
-    ...activeFavorite,
-    title: String(drama.name ?? activeFavorite.title ?? "").trim() || activeFavorite.title,
-    cover: getDramaCover(dramaInfo, activeFavorite.cover),
-    dramaUpdatedAt: String(drama.updated_at ?? drama.updatedAt ?? activeFavorite.dramaUpdatedAt ?? "").trim(),
-    mainCvText: refreshedMainCvText || activeFavorite.mainCvText || "",
-    updatedAt: capturedAt,
-  }));
-  if (!nextFavorite) {
-    return null;
-  }
-
-  const snapshot = await saveSnapshot({
-    id: `${favorite.key}:${capturedAt}`,
-    favoriteKey: favorite.key,
-    platform: favorite.platform,
-    dramaId: favorite.dramaId,
-    capturedAt,
-    status: errors.length ? "partial" : "success",
-    metrics,
-    metricErrors,
-    errors,
-  });
-  if (!snapshot) {
-    return null;
-  }
-  onProgress?.({ progress: 100, currentAction: "收藏历史已保存" });
-  return { favorite: nextFavorite, snapshot };
-}
-
 function FavoriteSearchControl({ value, onChange, className = "" }) {
   return (
     <label className={`relative block h-11 min-w-0 p-1 ${className}`}>
@@ -1238,7 +873,6 @@ export function FavoritesPanel({
   const mobileMoreTriggerRef = useRef(null);
   const mobileMorePanelRef = useRef(null);
   const backfilledCvKeysRef = useRef(new Set());
-  const refreshLockRef = useRef(false);
   const mountedRef = useRef(true);
 
   async function reloadSnapshots() {
@@ -1418,6 +1052,21 @@ export function FavoritesPanel({
     });
   }
 
+  const { refreshMany } = useFavoriteRefresh({
+    frontendVersion,
+    getAccessDeniedText: getFavoriteAccessDeniedText,
+    handleVersionResponse,
+    isDesktopApp,
+    onBackgroundTaskChange,
+    onClearSelection: () => setSelectedKeys(new Set()),
+    onFavoritesChange,
+    onRefreshSettled,
+    onRefreshStateChange,
+    onReloadSnapshots: reloadSnapshots,
+    renderAccessDeniedMessage: renderFavoriteAccessDeniedMessage,
+    statisticsActionsDisabled,
+  });
+
   async function updateSettings(patch) {
     const nextSettings = normalizeFavoriteSettings({ ...settings, ...patch });
     setSettings(nextSettings);
@@ -1449,178 +1098,6 @@ export function FavoritesPanel({
     );
   }
 
-  async function refreshMany(targetFavorites) {
-    if (refreshLockRef.current) {
-      return;
-    }
-    if (statisticsActionsDisabled) {
-      toast.warning("后台任务运行中，请等待完成后再刷新收藏。");
-      return;
-    }
-    const queue = (Array.isArray(targetFavorites) ? targetFavorites : []).filter(Boolean);
-    if (!queue.length) {
-      toast.warning("请先选择收藏作品。");
-      return;
-    }
-    refreshLockRef.current = true;
-    let failedCount = 0;
-    let partialCount = 0;
-    let stoppedByAccessDenied = false;
-    let unexpectedFailure = false;
-    let latestProgress = 0;
-    let finalAction = "收藏刷新完成";
-    function reportFavoriteProgress(index, favorite, itemProgress, currentAction) {
-      latestProgress = Math.max(latestProgress, getFavoriteBatchProgress(index, queue.length, itemProgress));
-      const favoriteTitle = favorite.title || "收藏作品";
-      const action = currentAction || "正在刷新";
-      const description = action.includes(favoriteTitle) ? action : `${favoriteTitle} · ${action}`;
-      onRefreshStateChange({
-        isRunning: true,
-        progress: latestProgress,
-        currentTitle: favoriteTitle,
-        currentAction: action,
-      });
-      onBackgroundTaskChange({
-        isRunning: true,
-        status: "running",
-        type: "favorites_refresh",
-        title: "收藏刷新",
-        description,
-        progress: latestProgress,
-        action: description,
-        resultTarget: "favorites",
-        highlighted: true,
-      });
-    }
-    try {
-      onRefreshStateChange({ isRunning: true, progress: 0, currentTitle: "", currentAction: "正在准备刷新收藏" });
-      onBackgroundTaskChange({
-        isRunning: true,
-        status: "running",
-        type: "favorites_refresh",
-        title: "收藏刷新",
-        description: "正在准备刷新收藏",
-        progress: 0,
-        action: "正在准备刷新收藏",
-        resultTarget: "favorites",
-        highlighted: true,
-      });
-      for (let index = 0; index < queue.length; index += 1) {
-        const favorite = queue[index];
-        reportFavoriteProgress(index, favorite, 0, "读取作品详情");
-        try {
-          const refreshed = await refreshFavoriteSnapshot({
-            favorite,
-            frontendVersion,
-            handleVersionResponse,
-            isDesktopApp,
-            onProgress: ({ progress, currentAction }) => reportFavoriteProgress(index, favorite, progress, currentAction),
-          });
-          if (!refreshed) {
-            reportFavoriteProgress(index, favorite, 100, "收藏已移除，跳过保存");
-          } else if (refreshed.snapshot?.status === "partial") {
-            partialCount += 1;
-          }
-        } catch (error) {
-          if (isFavoriteAccessDeniedError(error)) {
-            stoppedByAccessDenied = true;
-            finalAction = getFavoriteAccessDeniedText();
-            console.warn("Stopped favorite refresh because Missevan access is denied", error);
-            break;
-          }
-          const activeFavorite = await getFavoriteByKey(favorite.key).catch(() => null);
-          if (!activeFavorite) {
-            reportFavoriteProgress(index, favorite, 100, "收藏已移除，跳过保存");
-            continue;
-          }
-          failedCount += 1;
-          console.error("Failed to refresh favorite", error);
-          const failedCapturedAt = Date.now();
-          const failedSnapshot = await saveSnapshot({
-            id: `${favorite.key}:${failedCapturedAt}`,
-            favoriteKey: favorite.key,
-            platform: favorite.platform,
-            dramaId: favorite.dramaId,
-            capturedAt: failedCapturedAt,
-            status: "failed",
-            metrics: {},
-            metricErrors: {},
-            errors: [error instanceof Error ? error.message : String(error)],
-          }).catch((saveError) => {
-            console.error("Failed to save favorite failure snapshot", saveError);
-            return null;
-          });
-          reportFavoriteProgress(
-            index,
-            favorite,
-            100,
-            failedSnapshot ? "刷新失败，已保存失败记录" : "刷新失败，失败记录未能保存"
-          );
-        }
-      }
-      await reloadSnapshots();
-      await onFavoritesChange?.();
-      if (stoppedByAccessDenied) {
-        toast.error(renderFavoriteAccessDeniedMessage());
-      } else if (failedCount > 0 || partialCount > 0) {
-        const issueParts = [
-          failedCount > 0 ? `${failedCount} 部作品刷新失败` : "",
-          partialCount > 0 ? `${partialCount} 部作品部分指标未获取` : "",
-        ].filter(Boolean);
-        finalAction = `${issueParts.join("，")}。`;
-        toast.warning(`刷新完成，${finalAction}`);
-      } else {
-        finalAction = "收藏统计记录已更新。";
-        toast.success("收藏刷新完成。");
-      }
-      if (!stoppedByAccessDenied) {
-        setSelectedKeys(new Set());
-      }
-      const terminalProgress = stoppedByAccessDenied ? latestProgress : 100;
-      onBackgroundTaskChange({
-        isRunning: false,
-        status: stoppedByAccessDenied || failedCount > 0 ? "failed" : "completed",
-        type: "favorites_refresh",
-        title: stoppedByAccessDenied
-          ? "收藏刷新已停止"
-          : failedCount > 0
-            ? "收藏刷新完成，部分失败"
-            : partialCount > 0
-              ? "收藏刷新完成，部分指标未获取"
-              : "收藏刷新完成",
-        description: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : finalAction,
-        progress: terminalProgress,
-        action: stoppedByAccessDenied ? getFavoriteAccessDeniedText() : finalAction,
-        resultTarget: "favorites",
-        highlighted: true,
-      });
-      await onRefreshSettled?.();
-    } catch (error) {
-      unexpectedFailure = true;
-      finalAction = error instanceof Error ? error.message : "收藏刷新未能完成";
-      console.error("Favorite refresh queue stopped unexpectedly", error);
-      toast.error(`收藏刷新异常中止：${finalAction}`);
-      onBackgroundTaskChange({
-        isRunning: false,
-        status: "failed",
-        type: "favorites_refresh",
-        title: "收藏刷新异常中止",
-        description: finalAction,
-        progress: latestProgress,
-        action: finalAction,
-        resultTarget: "favorites",
-        highlighted: true,
-      });
-    } finally {
-      refreshLockRef.current = false;
-      onRefreshStateChange({
-        isRunning: false,
-        progress: stoppedByAccessDenied || unexpectedFailure ? latestProgress : 100,
-        currentTitle: "",
-        currentAction: finalAction,
-      });
-    }
-  }
 
   function downloadBlob(blob, fileName) {
     const url = URL.createObjectURL(blob);
