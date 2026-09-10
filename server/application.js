@@ -114,6 +114,7 @@ import { registerStatsRoutes } from "./routes/statsRoutes.js";
 import { registerMissevanRoutes } from "./routes/missevanRoutes.js";
 import { registerManboRoutes } from "./routes/manboRoutes.js";
 import { registerImageProxyRoutes } from "./routes/imageProxyRoutes.js";
+import { registerNewDramaRoutes } from "./routes/newDramaRoutes.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
@@ -11130,41 +11131,11 @@ app.get("/search", expensiveDataLimiter, async (req, res) => {
   }
 });
 
-app.post("/register-new-drama-ids", async (req, res) => {
-  const platform = req.body?.platform;
-
-  if (!["missevan", "manbo"].includes(platform)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid platform",
-    });
-  }
-
-  const dramaIds = normalizeNewDramaIdsForPlatform(platform, req.body?.drama_ids || []);
-
-  if (!dramaIds.length) {
-    return res.json({
-      success: true,
-      count: 0,
-    });
-  }
-
-  try {
-    const missingDramaIds = await filterUntrackedNewDramaIds(platform, dramaIds);
-    if (missingDramaIds.length > 0) {
-      await queueNewDramaIdsAppend(platform, missingDramaIds);
-    }
-    return res.json({
-      success: true,
-      count: missingDramaIds.length,
-    });
-  } catch (error) {
-    void logger.error("new_drama_ids_register_failed", error, { platform });
-    return res.status(500).json({
-      success: false,
-      message: "Failed to register drama ids",
-    });
-  }
+registerNewDramaRoutes(app, {
+  filterUntrackedNewDramaIds,
+  logger,
+  normalizeNewDramaIdsForPlatform,
+  queueNewDramaIdsAppend,
 });
 
 app.post("/usage-log", async (req, res) => {

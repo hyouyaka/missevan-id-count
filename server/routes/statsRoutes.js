@@ -28,6 +28,48 @@ export function registerStatsRoutes(router, {
     res.setHeader("Expires", "0");
   }
 
+  function isStatsTaskClientDisconnected(req, res) {
+    return Boolean(req?.aborted || res?.destroyed || res?.writableEnded);
+  }
+
+  function sendCreatedStatsTask(req, res, task) {
+    let responseFinished = false;
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) {
+        return;
+      }
+      cleanedUp = true;
+      req?.removeListener?.("aborted", handleDisconnect);
+      res?.removeListener?.("close", handleResponseClose);
+      res?.removeListener?.("finish", handleResponseFinish);
+    };
+    const cancelTask = () => {
+      if (responseFinished || res?.writableFinished) {
+        cleanup();
+        return;
+      }
+      cleanup();
+      statsTaskEngine.cancel(task.taskId);
+    };
+    const handleDisconnect = () => cancelTask();
+    const handleResponseClose = () => cancelTask();
+    const handleResponseFinish = () => {
+      responseFinished = true;
+      cleanup();
+    };
+
+    req?.once?.("aborted", handleDisconnect);
+    res?.once?.("close", handleResponseClose);
+    res?.once?.("finish", handleResponseFinish);
+
+    if (isStatsTaskClientDisconnected(req, res)) {
+      cancelTask();
+      return undefined;
+    }
+    return res.json(buildStatsTaskSnapshot(task));
+  }
+
   router.get("/ranks/trends/availability", async (req, res) => {
     const platform = String(req.query.platform ?? "").trim();
     const rawIds = Array.isArray(req.query.id) ? req.query.id : [req.query.id];
@@ -279,14 +321,20 @@ export function registerStatsRoutes(router, {
 
   router.post("/stat-tasks", statsTaskCreationLimiter, async (req, res) => {
     await statsTaskEngine.whenReady();
+    if (isStatsTaskClientDisconnected(req, res)) {
+      return;
+    }
     if ((req.body?.platform === "manbo" ? "manbo" : "missevan") === "missevan") {
       await refreshMissevanCooldownState();
+      if (isStatsTaskClientDisconnected(req, res)) {
+        return;
+      }
     }
     const task = createStatsTaskFromRequest(req, res);
     if (!task) {
       return;
     }
-    return res.json(buildStatsTaskSnapshot(task));
+    return sendCreatedStatsTask(req, res, task);
   });
 
   router.get("/stat-tasks/:taskId", async (req, res) => {
@@ -311,11 +359,14 @@ export function registerStatsRoutes(router, {
 
   router.post("/manbo/stat-tasks", statsTaskCreationLimiter, async (req, res) => {
     await statsTaskEngine.whenReady();
+    if (isStatsTaskClientDisconnected(req, res)) {
+      return;
+    }
     const task = createStatsTaskFromRequest(req, res, "manbo", "id");
     if (!task) {
       return;
     }
-    return res.json(buildStatsTaskSnapshot(task));
+    return sendCreatedStatsTask(req, res, task);
   });
 
   router.get("/manbo/stat-tasks/:taskId", async (req, res) => {

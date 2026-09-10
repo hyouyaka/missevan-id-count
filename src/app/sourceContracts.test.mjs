@@ -13,6 +13,8 @@ const cvProfileViewSource = readFileSync(new URL("./CvProfileView.jsx", import.m
 const cvSearchResultsSource = readFileSync(new URL("./CvSearchResults.jsx", import.meta.url), "utf8");
 const appUtilsSource = readFileSync(new URL("./app-utils.js", import.meta.url), "utf8");
 const appIconSource = readFileSync(new URL("./AppIcon.jsx", import.meta.url), "utf8");
+const backgroundTaskCenterSource = readFileSync(new URL("./BackgroundTaskCenter.jsx", import.meta.url), "utf8");
+const favoriteHistorySource = readFileSync(new URL("./FavoriteHistory.jsx", import.meta.url), "utf8");
 const favoritesPanelSource = readFileSync(new URL("./FavoritesPanel.jsx", import.meta.url), "utf8");
 const favoritesRefreshServiceSource = readFileSync(new URL("./favoritesRefreshService.js", import.meta.url), "utf8");
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
@@ -28,6 +30,8 @@ const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", im
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
 const rankBadgeSource = readFileSync(new URL("./RankBadge.jsx", import.meta.url), "utf8");
 const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url), "utf8");
+const statsTaskClientSource = readFileSync(new URL("./statsTaskClient.js", import.meta.url), "utf8");
+const statsTaskRunSource = readFileSync(new URL("./useStatsTaskRun.js", import.meta.url), "utf8");
 const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
 const rankTrendActionsSource = readFileSync(new URL("./rankTrendActions.jsx", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
@@ -41,13 +45,16 @@ const searchWorkspaceSource = readFileSync(new URL("./SearchWorkspace.jsx", impo
 const toolViewSource = readFileSync(new URL("./ToolView.jsx", import.meta.url), "utf8");
 const dramaCompareSource = readFileSync(new URL("./DramaCompare.jsx", import.meta.url), "utf8");
 const dramaCompareUtilsSource = readFileSync(new URL("./dramaCompareUtils.js", import.meta.url), "utf8");
+const useDramaCompareSource = readFileSync(new URL("./useDramaCompare.js", import.meta.url), "utf8");
 const navigationSource = readFileSync(new URL("./navigation.jsx", import.meta.url), "utf8");
 const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
 const applicationSource = readFileSync(new URL("../../server/application.js", import.meta.url), "utf8");
 const imageProxyRoutesSource = readFileSync(new URL("../../server/routes/imageProxyRoutes.js", import.meta.url), "utf8");
+const newDramaRoutesSource = readFileSync(new URL("../../server/routes/newDramaRoutes.js", import.meta.url), "utf8");
 const serverSource = [
   applicationSource,
   imageProxyRoutesSource,
+  newDramaRoutesSource,
   readFileSync(new URL("../../server/routes/systemRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/routes/statsRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/routes/missevanRoutes.js", import.meta.url), "utf8"),
@@ -85,11 +92,10 @@ test("Manbo new ID registration preserves string identifiers", () => {
     toolViewSource,
     /normalizedPlatform === "manbo" \? String\(item\.id\) : item\.id/
   );
-  const routeStart = serverSource.indexOf('app.post("/register-new-drama-ids"');
-  const routeEnd = serverSource.indexOf('app.post("/usage-log"', routeStart);
-  const routeSource = serverSource.slice(routeStart, routeEnd);
-  assert.match(routeSource, /normalizeNewDramaIdsForPlatform\(platform, req\.body\?\.drama_ids \|\| \[\]\)/);
-  assert.doesNotMatch(routeSource, /normalizeDramaIds\(req\.body\?\.drama_ids/);
+  assert.match(applicationSource, /registerNewDramaRoutes\(app, \{[\s\S]*normalizeNewDramaIdsForPlatform/);
+  assert.match(newDramaRoutesSource, /router\.post\("\/register-new-drama-ids"/);
+  assert.match(newDramaRoutesSource, /normalizeNewDramaIdsForPlatform\(platform, req\.body\?\.drama_ids \|\| \[\]\)/);
+  assert.doesNotMatch(newDramaRoutesSource, /normalizeDramaIds\(req\.body\?\.drama_ids/);
 });
 const lazyImageSource = readFileSync(new URL("../components/ui/lazy-image.jsx", import.meta.url), "utf8");
 const indexHtmlSource = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
@@ -121,8 +127,8 @@ test("project keeps a light-only theme and semantic table headers", () => {
   assert.match(indexHtmlSource, /color-scheme:\s*light/);
   assert.doesNotMatch(indexCssSource, /\.dark|dark:/);
   assert.doesNotMatch(favoritesPanelSource, /<tr[\s\S]*role=\"button\"/);
-  assert.match(favoritesPanelSource, /<button[\s\S]*收起历史记录[\s\S]*<\/button>[\s\S]*favorite-history-responsive/);
-  assert.match(favoritesPanelSource, /<thead[\s\S]*<tr className=\"border-b/);
+  assert.match(favoriteHistorySource, /<button[\s\S]*收起历史记录[\s\S]*<\/button>[\s\S]*favorite-history-responsive/);
+  assert.match(favoriteHistorySource, /<thead[\s\S]*<tr className=\"border-b/);
   assert.match(
     changelogDialogSource,
     /data-changelog-scroll-region=\"true\"[\s\S]*role=\"region\"[\s\S]*tabIndex=\{0\}/
@@ -2230,14 +2236,11 @@ test("episode detail collection keeps request limits and reuses platform totals"
 });
 
 test("completed background tasks collapse and dismiss after opening results", () => {
-  const taskCenterStart = toolViewSource.indexOf("function BackgroundTaskCenter");
-  const taskCenterEnd = toolViewSource.indexOf("export function ToolView", taskCenterStart);
-  const taskCenterSource = toolViewSource.slice(taskCenterStart, taskCenterEnd);
   const openResultStart = toolViewSource.indexOf("function openBackgroundTaskResult");
   const openResultEnd = toolViewSource.indexOf("function getAllSearchResults", openResultStart);
   const openResultSource = toolViewSource.slice(openResultStart, openResultEnd);
 
-  assert.match(taskCenterSource, /!task\?\.isRunning && wasRunningRef\.current[\s\S]*setDesktopCollapsed\(true\)/);
+  assert.match(backgroundTaskCenterSource, /!task\?\.isRunning && wasRunningRef\.current[\s\S]*setDesktopCollapsed\(true\)/);
   assert.match(openResultSource, /scrollToPanel\(outputPanelRef\)[\s\S]*setBackgroundTask\(createIdleBackgroundTask\(\)\)/);
 });
 
@@ -2313,7 +2316,7 @@ test("favorites panel documents local storage risk and uses responsive filtered 
   assert.match(favoritesPanelSource, /buildFavoritesHistoryCsvRows\(selectedFavorites, snapshots\)/);
   assert.match(favoritesStorageSource, /export function serializeFavoritesHistoryCsv/);
   assert.doesNotMatch(indexCssSource, /body:has\(\.favorite-mobile-action-dock\) \.mobile-background-task-center/);
-  assert.match(toolViewSource, /mobile-background-task-center fixed mobile-fixed-bottom/);
+  assert.match(backgroundTaskCenterSource, /mobile-background-task-center fixed mobile-fixed-bottom/);
   assert.match(favoritesPanelSource, /<AlertDescription className="!\[text-wrap:wrap\] md:!\[text-wrap:wrap\]">/);
   assert.doesNotMatch(favoritesPanelSource, /关注增量：/);
   assert.match(favoritesPanelSource, /aria-label=\{`\$\{label\}：\$\{selectedLabel\}`\}/);
@@ -2477,57 +2480,59 @@ test("favorites snapshot details use text headers and a trend-style disclosure r
     /sortBy === "lastSnapshotAt"[\s\S]*favorite\.createdAt/,
     "recent refresh sorting should not fall back to favorite creation time"
   );
-  assert.doesNotMatch(favoritesPanelSource, /function MetricHeaderIcon/, "snapshot headers should not use unclear icon-only labels");
-  assert.match(favoritesPanelSource, /function MetricHeaderLabel/, "snapshot headers should render readable text labels");
-  assert.match(favoritesPanelSource, /function SnapshotDetailsDisclosure/);
-  assert.match(favoritesPanelSource, />历史记录（\{rows\.length\}）</);
-  assert.match(favoritesPanelSource, /label: "追剧人数"[\s\S]*subLabel: "收藏人数"/);
-  assert.match(favoritesPanelSource, /label: "打赏人数"[\s\S]*subLabel: "付费\/收听人数"/);
-  assert.match(favoritesPanelSource, /label: "打赏榜总和"[\s\S]*subLabel: "总投喂"/);
-  assert.doesNotMatch(favoritesPanelSource, /label: "总打赏"/);
-  assert.doesNotMatch(favoritesPanelSource, /rewardTotal: "总打赏"/);
-  assert.doesNotMatch(favoritesPanelSource, /label: "打赏榜总和（元）"/);
-  assert.doesNotMatch(favoritesPanelSource, /subLabel: "总投喂（元）"/);
-  assert.match(favoritesPanelSource, /label: "付费ID"/);
-  assert.match(favoritesPanelSource, /label: `\+\$\{getDeltaMetricLabel\(deltaMetric\)\}`/);
-  assert.doesNotMatch(favoritesPanelSource, /text-\[0\.62rem\][\s\S]*subLabel/, "second header line should keep the same font size");
+  assert.doesNotMatch(favoriteHistorySource, /function MetricHeaderIcon/, "snapshot headers should not use unclear icon-only labels");
+  assert.match(favoriteHistorySource, /function MetricHeaderLabel/, "snapshot headers should render readable text labels");
+  assert.match(favoriteHistorySource, /function FavoriteHistoryDetails/);
+  assert.match(favoriteHistorySource, />历史记录（\{rows\.length\}）</);
+  assert.match(favoriteHistorySource, /label: "追剧人数"[\s\S]*subLabel: "收藏人数"/);
+  assert.match(favoriteHistorySource, /label: "打赏人数"[\s\S]*subLabel: "付费\/收听人数"/);
+  assert.match(favoriteHistorySource, /label: "打赏榜总和"[\s\S]*subLabel: "总投喂"/);
+  assert.doesNotMatch(favoriteHistorySource, /label: "总打赏"/);
+  assert.doesNotMatch(favoriteHistorySource, /rewardTotal: "总打赏"/);
+  assert.doesNotMatch(favoriteHistorySource, /label: "打赏榜总和（元）"/);
+  assert.doesNotMatch(favoriteHistorySource, /subLabel: "总投喂（元）"/);
+  assert.match(favoriteHistorySource, /label: "付费ID"/);
+  assert.match(favoriteHistorySource, /label: `\+\$\{getDeltaMetricLabel\(deltaMetric, metricLabels\)\}`/);
+  assert.doesNotMatch(favoriteHistorySource, /text-\[0\.62rem\][\s\S]*subLabel/, "second header line should keep the same font size");
   assert.match(
-    favoritesPanelSource,
+    favoriteHistorySource,
     /headerClassName: "favorite-history-delta text-\[color-mix\(in_oklch,var\(--accent-success\)_88%,var\(--foreground\)\)\]"/,
     "delta header should reuse the update view success color"
   );
-  assert.match(favoritesPanelSource, /cellClassName: "favorite-history-delta font-medium text-\[color-mix\(in_oklch,var\(--accent-success\)_88%,var\(--foreground\)\)\]"/);
-  assert.match(favoritesPanelSource, /favorite-history-delta shrink-0 text-sm font-medium tabular-nums text-\[color-mix\(in_oklch,var\(--accent-success\)_88%,var\(--foreground\)\)\]/);
+  assert.match(favoriteHistorySource, /cellClassName: "favorite-history-delta font-medium text-\[color-mix\(in_oklch,var\(--accent-success\)_88%,var\(--foreground\)\)\]"/);
+  assert.match(favoriteHistorySource, /favorite-history-delta shrink-0 text-sm font-medium tabular-nums text-\[color-mix\(in_oklch,var\(--accent-success\)_88%,var\(--foreground\)\)\]/);
 });
 
 test("favorites snapshot details use a mobile timeline and a wide-container table", () => {
-  assert.match(favoritesPanelSource, /const SNAPSHOT_HISTORY_BATCH_SIZE = 5/);
-  assert.match(favoritesPanelSource, /function getHistoryMetricColumns\(platform, deltaMetric\)/);
+  assert.match(favoritesPanelSource, /import \{ FavoriteHistoryDetails \} from "@\/app\/FavoriteHistory"/);
+  assert.match(favoritesPanelSource, /<FavoriteHistoryDetails[\s\S]*formatDeltaValue=\{formatDeltaValue\}[\s\S]*formatMetricValue=\{formatMetricValue\}[\s\S]*metricLabels=\{metricLabels\}/);
+  assert.match(favoriteHistorySource, /const SNAPSHOT_HISTORY_BATCH_SIZE = 5/);
+  assert.match(favoriteHistorySource, /function getHistoryMetricColumns\(platform, deltaMetric, metricLabels\)/);
   assert.match(
-    favoritesPanelSource,
+    favoriteHistorySource,
     /key: "time"[\s\S]*key: "viewCount"[\s\S]*key: "subscriptionCount"[\s\S]*key: platform === "missevan" \? "rewardCount" : "paidOrListenCount"[\s\S]*key: platform === "missevan" \? "rewardTotal" : "giftTotal"[\s\S]*key: "paidIdCount"[\s\S]*type: "delta"/,
     "history columns should keep the requested visible order"
   );
-  assert.match(favoritesPanelSource, /function FavoriteHistoryTimeline/);
-  assert.match(favoritesPanelSource, /function FavoriteHistoryTable/);
-  assert.match(favoritesPanelSource, /const columns = getHistoryMetricColumns\(favorite\.platform, deltaMetric\)/);
-  assert.match(favoritesPanelSource, /favorite-history-responsive/);
+  assert.match(favoriteHistorySource, /function FavoriteHistoryTimeline/);
+  assert.match(favoriteHistorySource, /function FavoriteHistoryTable/);
+  assert.match(favoriteHistorySource, /const columns = getHistoryMetricColumns\(favorite\.platform, deltaMetric, metricLabels\)/);
+  assert.match(favoriteHistorySource, /favorite-history-responsive/);
   assert.match(indexCssSource, /@container \(min-width: 46rem\)/);
   assert.match(indexCssSource, /\.favorite-history-timeline[\s\S]*display: none/);
-  assert.doesNotMatch(favoritesPanelSource, /overflow-x-auto/, "narrow history should not require horizontal scrolling");
-  assert.match(favoritesPanelSource, /rows\.slice\(0, visibleCount\)/, "mobile history should render a bounded batch");
-  assert.match(favoritesPanelSource, /再显示 \{Math\.min\(SNAPSHOT_HISTORY_BATCH_SIZE/);
-  assert.match(favoritesPanelSource, /expandedSnapshotId === snapshot\.id/, "one snapshot per favorite should be expanded at a time");
-  assert.match(favoritesPanelSource, /grid-cols-\[repeat\(auto-fit,minmax\(9rem,1fr\)\)\]/);
-  assert.match(favoritesPanelSource, /min-w-0 odd:bg-background even:bg-muted\/45/);
-  assert.match(favoritesPanelSource, /border-b border-border\/45 odd:bg-background even:bg-muted\/45 last:border-b-0/);
-  assert.match(favoritesPanelSource, /id=\{detailId\} className="border-t border-border\/55 px-3 py-3"/);
-  assert.match(favoritesPanelSource, /min-h-11[\s\S]*aria-controls=\{detailId\}[\s\S]*aria-expanded=\{expanded\}/);
-  assert.match(favoritesPanelSource, /columnClassName: "w-\[8\.75rem\] whitespace-nowrap"/, "snapshot time column should stay on one line when there is room");
-  assert.match(favoritesPanelSource, /\$\{column\.columnClassName \|\| ""\}/, "snapshot header and cells should apply per-column sizing classes");
-  assert.match(favoritesPanelSource, /<table/);
-  assert.doesNotMatch(favoritesPanelSource, /headerClassName: "hidden/);
-  assert.doesNotMatch(favoritesPanelSource, /cellClassName: "hidden/);
+  assert.doesNotMatch(favoriteHistorySource, /overflow-x-auto/, "narrow history should not require horizontal scrolling");
+  assert.match(favoriteHistorySource, /rows\.slice\(0, visibleCount\)/, "mobile history should render a bounded batch");
+  assert.match(favoriteHistorySource, /再显示 \{Math\.min\(SNAPSHOT_HISTORY_BATCH_SIZE/);
+  assert.match(favoriteHistorySource, /expandedSnapshotId === snapshot\.id/, "one snapshot per favorite should be expanded at a time");
+  assert.match(favoriteHistorySource, /grid-cols-\[repeat\(auto-fit,minmax\(9rem,1fr\)\)\]/);
+  assert.match(favoriteHistorySource, /min-w-0 odd:bg-background even:bg-muted\/45/);
+  assert.match(favoriteHistorySource, /border-b border-border\/45 odd:bg-background even:bg-muted\/45 last:border-b-0/);
+  assert.match(favoriteHistorySource, /id=\{detailId\} className="border-t border-border\/55 px-3 py-3"/);
+  assert.match(favoriteHistorySource, /min-h-11[\s\S]*aria-controls=\{detailId\}[\s\S]*aria-expanded=\{expanded\}/);
+  assert.match(favoriteHistorySource, /columnClassName: "w-\[8\.75rem\] whitespace-nowrap"/, "snapshot time column should stay on one line when there is room");
+  assert.match(favoriteHistorySource, /\$\{column\.columnClassName \|\| ""\}/, "snapshot header and cells should apply per-column sizing classes");
+  assert.match(favoriteHistorySource, /<table/);
+  assert.doesNotMatch(favoriteHistorySource, /headerClassName: "hidden/);
+  assert.doesNotMatch(favoriteHistorySource, /cellClassName: "hidden/);
 });
 
 test("favorites money metrics display as yuan without mutating stored units", () => {
@@ -2556,7 +2561,7 @@ test("favorite focus metric merges reward total and gift total into one option",
     "favorite focus metric dropdown should not duplicate reward total and gift total"
   );
   assert.match(
-    favoritesPanelSource,
+    favoriteHistorySource,
     /const resolvedMetricKey = resolveFavoriteMetricKey\(platform, deltaMetric\)/,
     "snapshot deltas should map the shared metric key to the platform-specific stored field"
   );
@@ -3410,6 +3415,33 @@ test("CV rank action items use compact spacing without shrinking the trend touch
   assert.match(actionsSource, /<RankTrendButton[\s\S]*density="inline"/);
 });
 
+test("ordinary stats task transport and run lifecycle live behind the stats task boundary", () => {
+  assert.match(toolViewSource, /from "@\/app\/statsTaskClient"/);
+  assert.match(toolViewSource, /from "@\/app\/useStatsTaskRun"/);
+  assert.match(toolViewSource, /const statsTaskRun = useStatsTaskRun\(\{/);
+  assert.match(toolViewSource, /return statsTaskRun\.beginRun\(platform\)/);
+  assert.match(toolViewSource, /return statsTaskRun\.cancelRun\(platform\)/);
+  assert.match(toolViewSource, /return statsTaskRun\.startStatsTask\(platform, taskType, payload, runId, signal\)/);
+  assert.match(toolViewSource, /const pageExitHandler = \(\) => \{[\s\S]*statsTaskRun\.notifyAllActiveTaskCancels\(\)/);
+  assert.match(toolViewSource, /function applyTaskSnapshot\(platform, snapshot\)/);
+  assert.match(toolViewSource, /function recordCompletedStatsHistory\(platform, taskType, taskId, snapshot\)/);
+  assert.ok(
+    toolViewSource.indexOf("statsTaskRun.notifyAllActiveTaskCancels()") < toolViewSource.indexOf("statsTaskRun.dispose()"),
+    "page-exit notification should be declared before task cleanup"
+  );
+  assert.doesNotMatch(toolViewSource, /function buildTaskSnapshotUrl\(/);
+  assert.doesNotMatch(toolViewSource, /async function getJson\(/);
+  assert.match(statsTaskClientSource, /export async function createStatsTask/);
+  assert.match(statsTaskClientSource, /buildVersionedUrl\("\/stat-tasks", frontendVersion\)/);
+  assert.match(statsTaskClientSource, /export async function getStatsTaskSnapshot/);
+  assert.match(statsTaskClientSource, /cache: "no-store"/);
+  assert.match(statsTaskClientSource, /navigatorLike\?\.sendBeacon/);
+  assert.match(statsTaskRunSource, /export function createStatsTaskRunController/);
+  assert.match(statsTaskRunSource, /if \(!isCurrent\(context\)\) \{[\s\S]*requestTaskCancel\(taskId\)/);
+  assert.match(statsTaskRunSource, /function finishRun\(platform, runId, status = "completed"\)[\s\S]*if \(!isCurrent\(context\)\)/);
+  assert.match(statsTaskRunSource, /signal\?\.removeEventListener\?\.\("abort", handleAbort\)/);
+});
+
 test("paid ID-equivalent tasks and revenue actions pass ID-scoped stats sources", () => {
   assert.equal(
     searchResultsSource.match(/source: `\$\{getResultDramaId\(item\)\}payID`/g)?.length ?? 0,
@@ -3737,53 +3769,63 @@ test("rank trend expanded details replace the disclosure title with the table he
 });
 
 test("tool shell includes a global background task center and inline compare basket", () => {
-  assert.match(toolViewSource, /BackgroundTaskCenter/);
+  assert.match(toolViewSource, /import \{ BackgroundTaskCenter \} from "@\/app\/BackgroundTaskCenter"/);
+  assert.match(toolViewSource, /<BackgroundTaskCenter[\s\S]*task=\{backgroundTask\}[\s\S]*isDesktopApp=\{appConfig\.desktopApp\}[\s\S]*onOpenResults=\{openBackgroundTaskResult\}[\s\S]*onDismiss=\{\(\) => setBackgroundTask\(createIdleBackgroundTask\(\)\)\}/);
   assert.match(toolViewSource, /backgroundTask/);
   assert.match(toolViewSource, /statisticsActionsDisabled/);
   assert.match(toolViewSource, /DramaCompareBasket/);
   assert.match(toolViewSource, /DramaCompareDialog/);
   assert.match(dramaCompareUtilsSource, /MAX_COMPARE_ITEMS = 6/);
-  assert.match(toolViewSource, /\$\{progress\}%/);
-  assert.match(toolViewSource, /const \[compareBasketOpen, setCompareBasketOpen\] = useState\(false\)/);
+  assert.match(backgroundTaskCenterSource, /\$\{progress\}%/);
+  assert.match(toolViewSource, /import \{ useDramaCompare \} from "@\/app\/useDramaCompare"/);
+  assert.match(toolViewSource, /\} = useDramaCompare\(\);/);
+  assert.match(useDramaCompareSource, /const \[compareBasketOpen, setCompareBasketOpen\] = useState\(false\)/);
+  assert.match(useDramaCompareSource, /const \[compareDialogOpen, setCompareDialogOpen\] = useState\(false\)/);
+  assert.match(useDramaCompareSource, /const \[compareItems, setCompareItems\] = useState\(\[\]\)/);
+  assert.match(useDramaCompareSource, /const compareItemsRef = useRef\(\[\]\)/);
   assert.match(dramaCompareSource, /w-\[min\(60vw,18rem\)\]/);
   assert.match(dramaCompareSource, /max-h-\[13\.5rem\] overflow-y-auto/);
   assert.match(dramaCompareSource, /对比 \{items\.length\}\/\{MAX_COMPARE_ITEMS\}/);
-  assert.match(toolViewSource, /data-touch="compact"[\s\S]*after:inset-x-0 after:-inset-y-2[\s\S]*查看结果/);
+  assert.match(backgroundTaskCenterSource, /data-touch="compact"[\s\S]*after:inset-x-0 after:-inset-y-2[\s\S]*查看结果/);
   assert.match(dramaCompareSource, /data-touch="compact"[\s\S]*className="relative overflow-visible text-sm! after:absolute after:inset-x-0 after:-inset-y-2[\s\S]*<ArrowLeftRightIcon[\s\S]*对比/);
   assert.match(dramaCompareSource, /const compareBasketTitleSummary = items\.map/);
   assert.match(dramaCompareSource, /-ml-\d/);
   assert.match(dramaCompareSource, /aria-label="收起对比"[\s\S]*<ChevronDownIcon/);
   assert.doesNotMatch(dramaCompareSource, /对比篮/);
-  assert.match(toolViewSource, /toast\.success\("已加入对比。"\)/);
-  assert.doesNotMatch(toolViewSource, /toast\.success\("已加入对比篮。"\)/);
-  const addCompareStart = toolViewSource.indexOf("function addDramaToCompareBasket");
-  const addCompareEnd = toolViewSource.indexOf("function removeDramaFromCompareBasket", addCompareStart);
+  assert.match(useDramaCompareSource, /toast\.success\("已加入对比。"\)/);
+  assert.doesNotMatch(useDramaCompareSource, /toast\.success\("已加入对比篮。"\)/);
+  const addCompareStart = useDramaCompareSource.indexOf("function addDramaToCompareBasket");
+  const addCompareEnd = useDramaCompareSource.indexOf("function canAddDramaToCompareBasket", addCompareStart);
   assert.notEqual(addCompareStart, -1, "addDramaToCompareBasket should exist");
-  assert.notEqual(addCompareEnd, -1, "addDramaToCompareBasket should end before remove handler");
-  const addCompareSource = toolViewSource.slice(addCompareStart, addCompareEnd);
+  assert.notEqual(addCompareEnd, -1, "addDramaToCompareBasket should end before availability checks");
+  const addCompareSource = useDramaCompareSource.slice(addCompareStart, addCompareEnd);
+  assert.match(addCompareSource, /getCompareItemKey\(normalized\)/, "comparison entries should deduplicate by their normalized key");
+  assert.match(addCompareSource, /current\.some\(\(item\) => item\.key === key\)/, "comparison entries should reject duplicates");
+  assert.match(addCompareSource, /current\.length >= MAX_COMPARE_ITEMS/, "comparison entries should retain their maximum size");
+  assert.match(addCompareSource, /compareKind === "peak_series"[\s\S]*巅峰榜系列只能和其他巅峰榜系列对比/, "series comparisons should remain type-safe");
+  assert.doesNotMatch(addCompareSource, /setCompareItems\(\(current\)/);
+  assert.match(useDramaCompareSource, /function canAddDramaToCompareBasket[\s\S]*compareItemsRef\.current[\s\S]*current\.length >= MAX_COMPARE_ITEMS[\s\S]*getCompareItemKey\(\{ compareKind, platform, id \}\)/);
+  assert.match(useDramaCompareSource, /function removeDramaFromCompareBasket\(key\) \{[\s\S]*commitCompareItems\(compareItemsRef\.current\.filter\(\(item\) => item\.key !== key\)\)/);
+  assert.match(useDramaCompareSource, /function clearCompareBasket\(\) \{[\s\S]*commitCompareItems\(\[\]\);[\s\S]*setCompareBasketOpen\(false\);[\s\S]*setCompareDialogOpen\(false\);/);
   assert.doesNotMatch(addCompareSource, /setCompareBasketOpen\(true\)/);
+  assert.match(toolViewSource, /function openCompareDialogFromBasket\(\) \{[\s\S]*logCompareUsage\(compareItems\);[\s\S]*openCompareDialog\(\);/);
   assert.doesNotMatch(toolViewSource, /\{ key: "compare", label: "对比信息" \}/);
   assert.doesNotMatch(toolViewSource, /<ComparePanel/);
 
-  const backgroundTaskStart = toolViewSource.indexOf("function BackgroundTaskCenter");
-  const backgroundTaskEnd = toolViewSource.indexOf("export function ToolView", backgroundTaskStart);
-  assert.notEqual(backgroundTaskStart, -1, "BackgroundTaskCenter should exist");
-  assert.notEqual(backgroundTaskEnd, -1, "BackgroundTaskCenter should end before compare constants");
-  const backgroundTaskSource = toolViewSource.slice(backgroundTaskStart, backgroundTaskEnd);
-  assert.match(backgroundTaskSource, /const \[desktopCollapsed, setDesktopCollapsed\] = useState\(false\)/);
-  assert.match(backgroundTaskSource, /if \(task\?\.isRunning\) \{[\s\S]*setDesktopCollapsed\(false\)/);
-  assert.match(backgroundTaskSource, /function handleDesktopDismiss\(\) \{[\s\S]*if \(task\?\.isRunning\) \{[\s\S]*setDesktopCollapsed\(true\)[\s\S]*return/);
-  assert.match(backgroundTaskSource, /pointer-events-none/);
-  assert.match(backgroundTaskSource, /pointer-events-auto/);
-  assert.match(backgroundTaskSource, /desktopCollapsed \? \(/);
-  assert.match(backgroundTaskSource, /aria-label="展开后台任务中心"/);
-  assert.match(backgroundTaskSource, /grid min-w-0 w-full gap-2/);
-  assert.match(backgroundTaskSource, /flex min-w-0 w-full items-start/);
-  assert.match(backgroundTaskSource, /min-w-0 flex-1/);
-  assert.match(backgroundTaskSource, /whitespace-normal break-words text-xs leading-5[\s\S]*overflow-wrap:anywhere/);
-  assert.match(backgroundTaskSource, /h-2\.5 min-w-0 max-w-full rounded-full/);
-  assert.match(backgroundTaskSource, /box-border min-w-0 w-\[min\(21rem,calc\(100vw-1\.5rem\)\)\] overflow-hidden/);
-  assert.doesNotMatch(backgroundTaskSource, /truncate text-xs text-muted-foreground/);
+  assert.match(backgroundTaskCenterSource, /const \[desktopCollapsed, setDesktopCollapsed\] = useState\(false\)/);
+  assert.match(backgroundTaskCenterSource, /if \(task\?\.isRunning\) \{[\s\S]*setDesktopCollapsed\(false\)/);
+  assert.match(backgroundTaskCenterSource, /function handleDesktopDismiss\(\) \{[\s\S]*if \(task\?\.isRunning\) \{[\s\S]*setDesktopCollapsed\(true\)[\s\S]*return/);
+  assert.match(backgroundTaskCenterSource, /pointer-events-none/);
+  assert.match(backgroundTaskCenterSource, /pointer-events-auto/);
+  assert.match(backgroundTaskCenterSource, /desktopCollapsed \? \(/);
+  assert.match(backgroundTaskCenterSource, /aria-label="展开后台任务中心"/);
+  assert.match(backgroundTaskCenterSource, /grid min-w-0 w-full gap-2/);
+  assert.match(backgroundTaskCenterSource, /flex min-w-0 w-full items-start/);
+  assert.match(backgroundTaskCenterSource, /min-w-0 flex-1/);
+  assert.match(backgroundTaskCenterSource, /whitespace-normal break-words text-xs leading-5[\s\S]*overflow-wrap:anywhere/);
+  assert.match(backgroundTaskCenterSource, /h-2\.5 min-w-0 max-w-full rounded-full/);
+  assert.match(backgroundTaskCenterSource, /box-border min-w-0 w-\[min\(21rem,calc\(100vw-1\.5rem\)\)\] overflow-hidden/);
+  assert.doesNotMatch(backgroundTaskCenterSource, /truncate text-xs text-muted-foreground/);
 });
 
 test("favorites refresh reports through the background task center", () => {
@@ -4064,11 +4106,11 @@ test("compare action writes usage logs with ids and titles", () => {
 });
 
 test("peak rank compare entries stay playback-only and cannot mix with drama compare entries", () => {
-  assert.match(toolViewSource, /compareKind: String\(rawItem\?\.compareKind \?\? "drama"\)/);
-  assert.match(toolViewSource, /normalized\.compareKind === "peak_series"/);
-  assert.match(toolViewSource, /current\.some\(\(item\) => item\.compareKind !== normalized\.compareKind\)/);
-  assert.match(toolViewSource, /巅峰榜系列只能和其他巅峰榜系列对比/);
-  assert.match(toolViewSource, /普通剧集不能和巅峰榜系列混合对比/);
+  assert.match(useDramaCompareSource, /const compareKind = String\(rawItem\?\.compareKind \?\? "drama"\)\.trim\(\) \|\| "drama"/);
+  assert.match(useDramaCompareSource, /normalized\.compareKind === "peak_series"/);
+  assert.match(useDramaCompareSource, /current\.some\(\(item\) => item\.compareKind !== normalized\.compareKind\)/);
+  assert.match(useDramaCompareSource, /巅峰榜系列只能和其他巅峰榜系列对比/);
+  assert.match(useDramaCompareSource, /普通剧集不能和巅峰榜系列混合对比/);
   assert.match(ranksPanelSource, /compareKind: isMissevanPeak \? "peak_series" : "drama"/);
   assert.match(ranksPanelSource, /title: isMissevanPeak \? `系列：\$\{item\.name \|\| ""\}` : item\.name \|\| ""/);
 });

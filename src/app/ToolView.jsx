@@ -7,8 +7,9 @@ import {
 import { toast } from "sonner";
 
 import { AppIcon } from "@/app/AppIcon";
+import { BackgroundTaskCenter } from "@/app/BackgroundTaskCenter";
 import { DramaCompareBasket, DramaCompareDialog } from "@/app/DramaCompare";
-import { getCompareItemKey, MAX_COMPARE_ITEMS } from "@/app/dramaCompareUtils";
+import { useDramaCompare } from "@/app/useDramaCompare";
 import { ChangelogDialog, useChangelogDialog } from "@/app/ChangelogDialog";
 import { HomeView } from "@/app/HomeView";
 import { MessageDialog } from "@/app/MessageDialog";
@@ -64,6 +65,12 @@ import {
   STATS_HISTORY_LIMIT,
 } from "@/app/app-utils";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
+import {
+  createStatsTask,
+  getStatsTaskSnapshot,
+  notifyStatsTaskCancel,
+} from "@/app/statsTaskClient";
+import { useStatsTaskRun } from "@/app/useStatsTaskRun";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -76,9 +83,7 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
@@ -122,125 +127,6 @@ function createIdleBackgroundTask() {
     resultTarget: "",
     highlighted: false,
   };
-}
-
-function BackgroundTaskCenter({ task, isDesktopApp, onOpenResults, onDismiss }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [desktopCollapsed, setDesktopCollapsed] = useState(false);
-  const wasRunningRef = useRef(false);
-
-  useEffect(() => {
-    if (task?.isRunning && !wasRunningRef.current) {
-      setDesktopCollapsed(false);
-    }
-    if (!task?.isRunning && wasRunningRef.current) {
-      setDesktopCollapsed(true);
-      setMobileOpen(false);
-    }
-    wasRunningRef.current = Boolean(task?.isRunning);
-  }, [task?.isRunning]);
-
-  if (!task?.isRunning && !task?.highlighted) {
-    return null;
-  }
-
-  const title = task.title || (task.type === "favorites_refresh" ? "收藏刷新" : "后台任务");
-  const action = task.action || task.description || (task.isRunning ? "运行中" : "已完成");
-  const progress = Number(task.progress ?? 0) || 0;
-  const statusText = task.isRunning ? "进行中" : task.status === "failed" ? "失败" : task.status === "cancelled" ? "已取消" : "已完成";
-
-  function handleDesktopDismiss() {
-    if (task?.isRunning) {
-      setDesktopCollapsed(true);
-      return;
-    }
-    onDismiss?.();
-  }
-
-  function renderDetail({ allowRunningDismiss = false } = {}) {
-    return (
-      <div className="grid min-w-0 w-full gap-2">
-        <div className="flex min-w-0 w-full items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-foreground">{title}</div>
-            <div className="whitespace-normal break-words text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">{action}</div>
-          </div>
-          <Badge variant={task.isRunning ? "default" : "secondary"} className="shrink-0">{statusText}</Badge>
-        </div>
-        <Progress value={progress} className="h-2.5 min-w-0 max-w-full rounded-full bg-muted" indicatorClassName="bg-primary" />
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span className="tabular-nums">{progress}%</span>
-          <div className="flex items-center gap-1.5">
-            {task.resultTarget ? (
-              <Button
-                type="button"
-                size="xs"
-                variant="secondary"
-                data-touch="compact"
-                className="relative overflow-visible after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
-                onClick={onOpenResults}
-              >
-                查看结果
-              </Button>
-            ) : null}
-            {allowRunningDismiss || !task.isRunning ? (
-              <Button type="button" size="xs" variant="ghost" onClick={allowRunningDismiss ? handleDesktopDismiss : onDismiss}>
-                收起
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="pointer-events-none fixed inset-x-3 mobile-fixed-bottom z-40 hidden sm:block">
-        {desktopCollapsed ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-label="展开后台任务中心"
-            className={`pointer-events-auto mx-auto flex max-w-max items-center gap-2 rounded-full border-border/80 bg-surface-floating px-3 shadow-[var(--shadow-panel)] backdrop-blur-xl ${isDesktopApp ? "ring-1 ring-primary/16" : ""}`}
-            onClick={() => setDesktopCollapsed(false)}
-          >
-            <RefreshCwIcon aria-hidden="true" className={task.isRunning ? "size-3.5 animate-spin" : "size-3.5"} />
-            <span className="max-w-40 truncate text-xs font-medium">{title}</span>
-            <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
-            <Badge variant={task.isRunning ? "default" : "secondary"} className="shrink-0">{statusText}</Badge>
-            <span className="text-xs text-primary">展开</span>
-          </Button>
-        ) : (
-          <div className={`pointer-events-auto mx-auto max-w-xl rounded-lg border border-border/80 bg-surface-floating p-3 shadow-[var(--shadow-panel)] backdrop-blur-xl ${isDesktopApp ? "ring-1 ring-primary/16" : ""}`}>
-            {renderDetail({ allowRunningDismiss: true })}
-          </div>
-        )}
-      </div>
-      <div className="mobile-background-task-center fixed mobile-fixed-bottom right-3 z-40 sm:hidden">
-        <Button
-          type="button"
-          variant={task.isRunning ? "secondary" : "outline"}
-          size="icon-lg"
-          aria-expanded={mobileOpen}
-          aria-label="后台任务中心"
-          className="relative shadow-[var(--shadow-panel)]"
-          onClick={() => setMobileOpen((current) => !current)}
-        >
-          <RefreshCwIcon aria-hidden="true" className={task.isRunning ? "size-4 animate-spin" : "size-4"} />
-          <span className="absolute -right-1.5 -top-1 min-w-7 rounded-full bg-primary px-1.5 py-0.5 text-center text-[0.58rem] font-semibold leading-none text-primary-foreground tabular-nums">
-            {`${progress}%`}
-          </span>
-        </Button>
-        {mobileOpen ? (
-          <div className="absolute bottom-12 right-0 box-border min-w-0 w-[min(21rem,calc(100vw-1.5rem))] overflow-hidden rounded-lg border border-border/80 bg-surface-floating p-3 shadow-[var(--shadow-panel)] backdrop-blur-xl">
-            {renderDetail()}
-          </div>
-        ) : null}
-      </div>
-    </>
-  );
 }
 
 export function ToolView({ initialAppConfig }) {
@@ -307,9 +193,18 @@ export function ToolView({ initialAppConfig }) {
     currentAction: "",
   });
   const [backgroundTask, setBackgroundTask] = useState(() => createIdleBackgroundTask());
-  const [compareItems, setCompareItems] = useState([]);
-  const [compareBasketOpen, setCompareBasketOpen] = useState(false);
-  const [compareDialogOpen, setCompareDialogOpen] = useState(false);
+  const {
+    addDramaToCompareBasket,
+    canAddDramaToCompareBasket,
+    clearCompareBasket,
+    compareBasketOpen,
+    compareDialogOpen,
+    compareItems,
+    openCompareDialog,
+    removeDramaFromCompareBasket,
+    setCompareBasketOpen,
+    setCompareDialogOpen,
+  } = useDramaCompare();
   const [favoriteRefreshRevision, setFavoriteRefreshRevision] = useState(0);
   const [cancelFavoriteRequest, setCancelFavoriteRequest] = useState(null);
   const [mainDrawerOpen, setMainDrawerOpen] = useState(false);
@@ -341,73 +236,35 @@ export function ToolView({ initialAppConfig }) {
   const outputPanelRef = useRef(null);
   const searchMetricControllersRef = useRef(new Set());
   const refreshSearchMetricItemsRef = useRef(null);
-
-  function addDramaToCompareBasket(rawItem) {
-    const compareKind = String(rawItem?.compareKind ?? "drama").trim() || "drama";
-    const rawTitle = String(rawItem?.title ?? rawItem?.name ?? "").trim() || "未命名剧集";
-    const normalized = {
-      compareKind: String(rawItem?.compareKind ?? "drama").trim() || "drama",
-      platform: String(rawItem?.platform ?? "").trim(),
-      id: String(rawItem?.id ?? rawItem?.dramaId ?? rawItem?.trendLookupId ?? "").trim(),
-      title: compareKind === "peak_series" && !rawTitle.startsWith("系列：") ? `系列：${rawTitle}` : rawTitle,
-      cover: String(rawItem?.cover ?? rawItem?.coverUrl ?? "").trim(),
-      mainCvText: String(rawItem?.mainCvText ?? rawItem?.main_cv_text ?? "").replace(/^主要CV：/, "").trim(),
-      dramaIds: (Array.isArray(rawItem?.dramaIds) ? rawItem.dramaIds : [])
-        .map((id) => String(id ?? "").trim())
-        .filter(Boolean),
-    };
-    if (!normalized.platform || !normalized.id) {
-      toast.warning("这部剧集暂时不能加入对比。");
-      return;
-    }
-    const key = getCompareItemKey(normalized);
-    setCompareItems((current) => {
-      if (normalized.compareKind === "peak_series" && current.some((item) => item.compareKind !== normalized.compareKind)) {
-        toast.warning("巅峰榜系列只能和其他巅峰榜系列对比。");
-        return current;
-      }
-      if (normalized.compareKind !== "peak_series" && current.some((item) => item.compareKind === "peak_series")) {
-        toast.warning("普通剧集不能和巅峰榜系列混合对比。");
-        return current;
-      }
-      if (current.some((item) => item.key === key)) {
-        toast.info("已在对比中。");
-        return current;
-      }
-      if (current.length >= MAX_COMPARE_ITEMS) {
-        toast.warning(`对比最多添加 ${MAX_COMPARE_ITEMS} 部剧集。`);
-        return current;
-      }
-      toast.success("已加入对比。");
-      return [...current, { ...normalized, key }];
-    });
-  }
-
-  function canAddDramaToCompareBasket(rawItem) {
-    const compareKind = String(rawItem?.compareKind ?? "drama").trim() || "drama";
-    const platform = String(rawItem?.platform ?? "").trim();
-    const id = String(rawItem?.id ?? rawItem?.dramaId ?? rawItem?.trendLookupId ?? "").trim();
-    if (!platform || !id || compareItems.length >= MAX_COMPARE_ITEMS) {
-      return false;
-    }
-    if (compareKind === "peak_series" && compareItems.some((item) => item.compareKind !== compareKind)) {
-      return false;
-    }
-    if (compareKind !== "peak_series" && compareItems.some((item) => item.compareKind === "peak_series")) {
-      return false;
-    }
-    return !compareItems.some((item) => item.key === getCompareItemKey({ compareKind, platform, id }));
-  }
-
-  function removeDramaFromCompareBasket(key) {
-    setCompareItems((current) => current.filter((item) => item.key !== key));
-  }
-
-  function clearCompareBasket() {
-    setCompareItems([]);
-    setCompareBasketOpen(false);
-    setCompareDialogOpen(false);
-  }
+  const statsTaskRun = useStatsTaskRun({
+    getRuntimeMeta: (platform) => runtimeMetaRef.current[platform],
+    getActiveTaskId: (platform) => platformStatesRef.current[platform]?.stats?.activeTaskId || "",
+    getActiveTaskIds: () => Object.values(platformStatesRef.current)
+      .map((state) => state?.stats?.activeTaskId || ""),
+    getRunStartedAt: (platform) => platformStatesRef.current[platform]?.stats?.startedAt || 0,
+    isRunMarkedRunning: (platform) => Boolean(platformStatesRef.current[platform]?.stats?.isRunning),
+    createTask: ({ platform, taskType, payload, signal }) => createStatsTask({
+      platform,
+      taskType,
+      payload,
+      signal,
+      frontendVersion: appConfigRef.current.frontendVersion,
+      onVersionStatus: updateVersionStatusFromResponse,
+    }),
+    getTaskSnapshot: ({ taskId, signal }) => getStatsTaskSnapshot(taskId, {
+      signal,
+      frontendVersion: appConfigRef.current.frontendVersion,
+      onVersionStatus: updateVersionStatusFromResponse,
+    }),
+    notifyTaskCancel: notifyStatsTaskCancel,
+    onRunStarted: applyStatsRunStarted,
+    onElapsed: applyStatsRunElapsed,
+    onRunCancelled: applyStatsRunCancelled,
+    onRunFinished: applyStatsRunFinished,
+    onTaskCreated: applyStatsTaskCreated,
+    onSnapshot: applyStatsTaskSnapshot,
+    onCompleted: applyStatsTaskCompleted,
+  });
 
   function logCompareUsage(items = []) {
     if (!Array.isArray(items) || !items.length) {
@@ -430,7 +287,7 @@ export function ToolView({ initialAppConfig }) {
 
   function openCompareDialogFromBasket() {
     logCompareUsage(compareItems);
-    setCompareDialogOpen(true);
+    openCompareDialog();
   }
 
   useEffect(() => {
@@ -1014,52 +871,20 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  function notifyTaskCancel(taskId) {
-    if (!taskId) return;
-    const url = `/stat-tasks/${taskId}/cancel`;
-    try {
-      if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
-        navigator.sendBeacon(url);
-        return;
-      }
-    } catch (_) {
-    }
-    fetch(url, { method: "POST", keepalive: true }).catch(() => {});
-  }
-
-  function notifyAllActiveStatsTaskCancels() {
-    Object.values(platformStatesRef.current).forEach((state) => {
-      if (state?.stats?.activeTaskId) {
-        notifyTaskCancel(state.stats.activeTaskId);
-      }
-    });
-  }
-
   useEffect(() => {
-    const runtimeMeta = runtimeMetaRef.current;
     loadAppConfig();
     reloadFavoriteItems();
     const pageExitHandler = () => {
-      Object.values(platformStatesRef.current).forEach((state) => {
-        if (state?.stats?.activeTaskId) {
-          notifyTaskCancel(state.stats.activeTaskId);
-        }
-      });
+      statsTaskRun.notifyAllActiveTaskCancels();
     };
     window.addEventListener("pagehide", pageExitHandler);
     window.addEventListener("beforeunload", pageExitHandler);
     return () => {
-      Object.values(runtimeMeta).forEach((meta) => {
-        meta.activeAbortController?.abort?.();
-        if (meta.activeElapsedTimer) {
-          clearInterval(meta.activeElapsedTimer);
-          meta.activeElapsedTimer = null;
-        }
-      });
+      statsTaskRun.dispose();
       window.removeEventListener("pagehide", pageExitHandler);
       window.removeEventListener("beforeunload", pageExitHandler);
     };
-  }, []);
+  }, [statsTaskRun]);
 
   function updatePlatformState(platform, updater) {
     setPlatformStates((current) => {
@@ -1804,13 +1629,10 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function beginRun(platform) {
-    const meta = runtimeMetaRef.current[platform];
-    meta.activeRunId += 1;
-    meta.activeAbortController = new AbortController();
-    if (meta.activeElapsedTimer) {
-      clearInterval(meta.activeElapsedTimer);
-    }
-    const startedAt = Date.now();
+    return statsTaskRun.beginRun(platform);
+  }
+
+  function applyStatsRunStarted({ platform, startedAt }) {
     updatePlatformState(platform, (state) => ({
       ...state,
       stats: {
@@ -1831,33 +1653,19 @@ export function ToolView({ initialAppConfig }) {
       resultTarget: "stats",
       highlighted: true,
     });
-    meta.activeElapsedTimer = setInterval(() => {
-      updatePlatformState(platform, (state) => ({
-        ...state,
-        stats: state.stats.isRunning
-          ? {
-              ...state.stats,
-              elapsedMs: Date.now() - startedAt,
-            }
-          : state.stats,
-      }));
-    }, 1000);
-    return {
-      runId: meta.activeRunId,
-      signal: meta.activeAbortController.signal,
-    };
   }
 
-  function cancelPollingRun(platform) {
-    const meta = runtimeMetaRef.current[platform];
-    const taskId = platformStatesRef.current[platform]?.stats?.activeTaskId || "";
-    const wasRunning = Boolean(platformStatesRef.current[platform]?.stats?.isRunning || taskId);
-    meta.activeAbortController?.abort?.();
-    meta.activeAbortController = null;
-    if (meta.activeElapsedTimer) {
-      clearInterval(meta.activeElapsedTimer);
-      meta.activeElapsedTimer = null;
-    }
+  function applyStatsRunElapsed({ platform, elapsedMs }) {
+    updatePlatformState(platform, (state) => ({
+      ...state,
+      stats: {
+        ...state.stats,
+        elapsedMs: state.stats.isRunning ? elapsedMs : state.stats.elapsedMs,
+      },
+    }));
+  }
+
+  function applyStatsRunCancelled({ platform, wasRunning }) {
     updatePlatformState(platform, (state) => ({
       ...state,
       stats: {
@@ -1880,26 +1688,13 @@ export function ToolView({ initialAppConfig }) {
           }
         : current
     );
-    return taskId;
   }
 
   async function cancelActiveRun(platform = getActiveWorkPlatform()) {
-    const taskId = cancelPollingRun(platform);
-    if (taskId) {
-      notifyTaskCancel(taskId);
-    }
+    return statsTaskRun.cancelRun(platform);
   }
 
-  function finishRun(platform, runId, status = "completed") {
-    const meta = runtimeMetaRef.current[platform];
-    if (runId !== meta.activeRunId) {
-      return;
-    }
-    if (meta.activeElapsedTimer) {
-      clearInterval(meta.activeElapsedTimer);
-      meta.activeElapsedTimer = null;
-    }
-    meta.activeAbortController = null;
+  function applyStatsRunFinished({ platform, status }) {
     updatePlatformState(platform, (state) => ({
       ...state,
       stats: {
@@ -1910,6 +1705,9 @@ export function ToolView({ initialAppConfig }) {
         elapsedMs: state.stats.startedAt > 0 ? Date.now() - state.stats.startedAt : state.stats.elapsedMs,
       },
     }));
+    if (status === "completed") {
+      toast.success("统计完成，结果已更新。");
+    }
     setBackgroundTask((current) => {
       if (current.type !== "statistics") {
         return current;
@@ -1919,9 +1717,6 @@ export function ToolView({ initialAppConfig }) {
       }
       if (status === "idle") {
         return createIdleBackgroundTask();
-      }
-      if (status === "completed") {
-        toast.success("统计完成，结果已更新。");
       }
       return {
         ...current,
@@ -1936,8 +1731,26 @@ export function ToolView({ initialAppConfig }) {
     });
   }
 
-  function isRunActive(platform, runId) {
-    return platformStatesRef.current[platform]?.stats?.isRunning && runtimeMetaRef.current[platform].activeRunId === runId;
+  function finishRun(platform, runId, status = "completed") {
+    return statsTaskRun.finishRun(platform, runId, status);
+  }
+
+  function ensureStatsRunActive(platform, runId, signal) {
+    if (!signal?.aborted && statsTaskRun.isRunActive(platform, runId)) {
+      return;
+    }
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  function applyStatsTaskCreated({ platform, taskId, taskType }) {
+    updatePlatformState(platform, (state) => ({
+      ...state,
+      stats: {
+        ...state.stats,
+        activeTaskId: taskId,
+        activeTaskType: taskType,
+      },
+    }));
   }
 
   async function postJson(url, payload, signal, errorMessage) {
@@ -1956,26 +1769,6 @@ export function ToolView({ initialAppConfig }) {
       frontendVersion: appConfigRef.current.frontendVersion,
     });
     return data;
-  }
-
-  async function getJson(url, signal, errorMessage) {
-    const response = await fetch(buildVersionedUrl(url, appConfigRef.current.frontendVersion), {
-      signal,
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      throw new Error(`${errorMessage}: ${response.status}`);
-    }
-    const data = await response.json();
-    updateVersionStatusFromResponse({
-      backendVersion: getBackendVersionFromResponse(response, data),
-      frontendVersion: appConfigRef.current.frontendVersion,
-    });
-    return data;
-  }
-
-  function buildTaskSnapshotUrl(taskId) {
-    return `/stat-tasks/${String(taskId ?? "").trim()}?_ts=${Date.now()}`;
   }
 
   async function waitForTaskPoll(signal, delayMs = 2000) {
@@ -2049,67 +1842,16 @@ export function ToolView({ initialAppConfig }) {
     });
   }
 
+  function applyStatsTaskSnapshot({ platform, snapshot }) {
+    applyTaskSnapshot(platform, snapshot);
+  }
+
+  function applyStatsTaskCompleted({ platform, taskType, taskId, snapshot }) {
+    recordCompletedStatsHistory(platform, taskType, taskId, snapshot);
+  }
+
   async function startStatsTask(platform, taskType, payload, runId, signal) {
-    const task = await postJson(
-      "/stat-tasks",
-      {
-        platform,
-        taskType,
-        ...payload,
-      },
-      signal,
-      "Failed to create stats task"
-    );
-    if (!isRunActive(platform, runId)) {
-      return;
-    }
-    const taskId = String(task.taskId ?? "").trim();
-    const resolvedTaskType = task.taskType || taskType;
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      stats: {
-        ...state.stats,
-        activeTaskId: taskId,
-        activeTaskType: resolvedTaskType,
-      },
-    }));
-    applyTaskSnapshot(platform, task);
-    if (!taskId) {
-      throw new Error("Stats task missing taskId");
-    }
-
-    const initialSnapshot = await getJson(buildTaskSnapshotUrl(taskId), signal, "Failed to fetch stats task");
-    if (!isRunActive(platform, runId)) {
-      return;
-    }
-    applyTaskSnapshot(platform, initialSnapshot);
-    if (initialSnapshot.status === "completed" || initialSnapshot.status === "cancelled") {
-      if (initialSnapshot.status === "completed") {
-        recordCompletedStatsHistory(platform, resolvedTaskType, taskId, initialSnapshot);
-      }
-      return;
-    }
-    if (initialSnapshot.status === "failed") {
-      throw new Error(initialSnapshot.error || "Stats task failed");
-    }
-
-    while (isRunActive(platform, runId) && platformStatesRef.current[platform]?.stats?.activeTaskId === taskId) {
-      await waitForTaskPoll(signal);
-      const snapshot = await getJson(buildTaskSnapshotUrl(taskId), signal, "Failed to fetch stats task");
-      if (!isRunActive(platform, runId)) {
-        return;
-      }
-      applyTaskSnapshot(platform, snapshot);
-      if (snapshot.status === "completed" || snapshot.status === "cancelled") {
-        if (snapshot.status === "completed") {
-          recordCompletedStatsHistory(platform, resolvedTaskType, taskId, snapshot);
-        }
-        return;
-      }
-      if (snapshot.status === "failed") {
-        throw new Error(snapshot.error || "Stats task failed");
-      }
-    }
+    return statsTaskRun.startStatsTask(platform, taskType, payload, runId, signal);
   }
 
   async function refreshCooldownState() {
@@ -2248,7 +1990,7 @@ export function ToolView({ initialAppConfig }) {
     });
   }
 
-  async function registerApiSearchDramaIds(platform, ids) {
+  async function registerApiSearchDramaIds(platform, ids, signal) {
     const normalizedPlatform = platform === "manbo" ? "manbo" : platform === "missevan" ? "missevan" : "";
     if (!normalizedPlatform) {
       return;
@@ -2266,10 +2008,13 @@ export function ToolView({ initialAppConfig }) {
       await postJson(
         "/register-new-drama-ids",
         { platform: normalizedPlatform, drama_ids: fallbackIds },
-        undefined,
+        signal,
         "Failed to register new drama ids"
       );
     } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       console.error("Failed to register API search drama ids", error);
     }
   }
@@ -2476,21 +2221,24 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
     activateSharedOutputPlatform(platform);
-    await registerApiSearchDramaIds(
-      platform,
-      selectedEpisodes.map((episode) => episode.drama_id)
-    );
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      stats: {
-        ...state.stats,
-        currentAction: "开始统计播放量",
-        playCountSelectedEpisodeCount: selectedEpisodes.length,
-      },
-    }));
-    scrollToPanel(outputPanelRef);
     let finalStatus = "completed";
     try {
+      await registerApiSearchDramaIds(
+        platform,
+        selectedEpisodes.map((episode) => episode.drama_id),
+        signal
+      );
+      ensureStatsRunActive(platform, runId, signal);
+      updatePlatformState(platform, (state) => ({
+        ...state,
+        stats: {
+          ...state.stats,
+          currentAction: "开始统计播放量",
+          playCountSelectedEpisodeCount: selectedEpisodes.length,
+        },
+      }));
+      ensureStatsRunActive(platform, runId, signal);
+      scrollToPanel(outputPanelRef);
       const payload = { episodes: selectedEpisodes };
       if (platform === "missevan") {
         const playCountDramas = buildPlayCountDramasFromDramas(platformStatesRef.current[platform].dramas);
@@ -2499,6 +2247,7 @@ export function ToolView({ initialAppConfig }) {
         }
       }
       await startStatsTask(platform, "play_count", payload, runId, signal);
+      ensureStatsRunActive(platform, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
@@ -2539,21 +2288,24 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
     activateSharedOutputPlatform(platform);
-    await registerApiSearchDramaIds(
-      platform,
-      selectedEpisodes.map((episode) => episode.drama_id)
-    );
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      stats: {
-        ...state.stats,
-        currentAction: "开始统计弹幕与去重 ID",
-        idSelectedEpisodeCount: selectedEpisodes.length,
-      },
-    }));
-    scrollToPanel(outputPanelRef);
     let finalStatus = "completed";
     try {
+      await registerApiSearchDramaIds(
+        platform,
+        selectedEpisodes.map((episode) => episode.drama_id),
+        signal
+      );
+      ensureStatsRunActive(platform, runId, signal);
+      updatePlatformState(platform, (state) => ({
+        ...state,
+        stats: {
+          ...state.stats,
+          currentAction: "开始统计弹幕与去重 ID",
+          idSelectedEpisodeCount: selectedEpisodes.length,
+        },
+      }));
+      ensureStatsRunActive(platform, runId, signal);
+      scrollToPanel(outputPanelRef);
       await startStatsTask(
         platform,
         "id",
@@ -2561,6 +2313,7 @@ export function ToolView({ initialAppConfig }) {
         runId,
         signal
       );
+      ensureStatsRunActive(platform, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
@@ -2646,17 +2399,19 @@ export function ToolView({ initialAppConfig }) {
     resetOutputs(platform);
     const { runId, signal } = beginRun(platform);
     activateSharedOutputPlatform(platform);
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      stats: {
-        ...state.stats,
-        currentAction: "开始最低收益预估",
-      },
-    }));
-    scrollToPanel(outputPanelRef);
     let finalStatus = "completed";
     try {
-      await registerApiSearchDramaIds(platform, dramaIds);
+      await registerApiSearchDramaIds(platform, dramaIds, signal);
+      ensureStatsRunActive(platform, runId, signal);
+      updatePlatformState(platform, (state) => ({
+        ...state,
+        stats: {
+          ...state.stats,
+          currentAction: "开始最低收益预估",
+        },
+      }));
+      ensureStatsRunActive(platform, runId, signal);
+      scrollToPanel(outputPanelRef);
       await startStatsTask(
         platform,
         "revenue",
@@ -2664,6 +2419,7 @@ export function ToolView({ initialAppConfig }) {
         runId,
         signal
       );
+      ensureStatsRunActive(platform, runId, signal);
       scrollToPanel(outputPanelRef);
     } catch (error) {
       if (!isAbortError(error)) {
