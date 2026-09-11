@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCwIcon,
   AlertTriangleIcon,
@@ -28,18 +28,14 @@ import {
   saveFavorite,
 } from "@/app/favoritesStorage";
 import {
-  areToolRouteStatesEqual,
   buildCvProfileOpenUsagePayload,
   buildOngoingNavigationMenu,
   buildRanksNavigationMenu,
   buildRevenueSummary,
-  buildToolRouteUrl,
   buildVersionedUrl,
   buildPlayCountDramasFromDramas,
   collectSelectedEpisodesFromDramas,
-  createPlatformState,
   createRuntimeMeta,
-  createStatsHistoryEntry,
   createStatsState,
   extractResponseItems,
   getBackendVersionFromResponse,
@@ -48,21 +44,12 @@ import {
   getRemainingCooldownMinutes,
   getScrollBehavior,
   isAbortError,
-  loadPersistedHistoryEntries,
   mergeAppConfig,
-  mergeMissingSearchCardFields,
   MISSEVAN_DESKTOP_ACCESS_HINT,
-  normalizeToolRouteState,
   normalizeVersion,
-  readToolRouteStateFromLocation,
   readJsonResponse,
   resolveIdStatisticsSource,
-  resolveRevenueSummaryForHistory,
-  savePersistedHistoryEntries,
-  selectSearchMetricQueue,
   selectDramaEpisodesByMode,
-  shouldLoadSearchMetrics,
-  STATS_HISTORY_LIMIT,
 } from "@/app/app-utils";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
 import {
@@ -71,6 +58,19 @@ import {
   notifyStatsTaskCancel,
 } from "@/app/statsTaskClient";
 import { useStatsTaskRun } from "@/app/useStatsTaskRun";
+import { createPlatformStatesWithHistory, useStatsHistory } from "@/app/useStatsHistory";
+import { useSearchCardMetrics } from "@/app/useSearchCardMetrics";
+import {
+  appendSearchResultsPage,
+  getAllSearchResults,
+  getSearchResultCount,
+  resetSearchResultsState,
+  setManualSearchResultsState,
+  setSearchResultsState,
+  setVisibleSearchResults,
+  updateSearchResultsPage,
+} from "@/app/searchResultsState";
+import { useToolNavigation } from "@/app/useToolNavigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -130,15 +130,22 @@ function createIdleBackgroundTask() {
 }
 
 export function ToolView({ initialAppConfig }) {
-  const initialToolViewOptions = {
-    desktopApp: initialAppConfig?.desktopApp === true,
-    missevanEnabled: initialAppConfig?.missevanEnabled !== false,
-  };
-  const initialToolRouteState = typeof window === "undefined"
-    ? normalizeToolRouteState({}, initialToolViewOptions)
-    : readToolRouteStateFromLocation(window.location, initialToolViewOptions);
-  const [toolRouteState, setToolRouteState] = useState(initialToolRouteState);
-  const currentPlatform = toolRouteState.view;
+  const [appConfig, setAppConfig] = useState({
+    ...getDefaultAppConfig(),
+    ...(initialAppConfig || {}),
+  });
+  const {
+    appConfigRef,
+    currentPlatform,
+    currentPlatformRef,
+    initialToolRouteState,
+    navigateCurrentPlatform,
+    navigateToolRoute,
+    searchRouteRestoreGeneration,
+    searchRouteRestoreKeyword,
+    toolRouteState,
+    toolRouteStateRef,
+  } = useToolNavigation({ initialAppConfig, appConfig });
   const [activeSearchPlatform, setActiveSearchPlatform] = useState(() =>
     initialToolRouteState.platform === "manbo" || initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
   );
@@ -160,31 +167,11 @@ export function ToolView({ initialAppConfig }) {
   const [sharedOutputPlatform, setSharedOutputPlatform] = useState(() =>
     initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
   );
-  const [appConfig, setAppConfig] = useState({
-    ...getDefaultAppConfig(),
-    ...(initialAppConfig || {}),
-  });
-  const [platformStates, setPlatformStates] = useState(() => {
-    const persistedHistory = loadPersistedHistoryEntries();
-    return {
-      missevan: {
-        ...createPlatformState(),
-        historyEntries: persistedHistory.missevan,
-      },
-      manbo: {
-        ...createPlatformState(),
-        historyEntries: persistedHistory.manbo,
-      },
-    };
-  });
+  const [platformStates, setPlatformStates] = useState(createPlatformStatesWithHistory);
   const [notice, setNotice] = useState(null);
   const [searchJumpStatus, setSearchJumpStatus] = useState(null);
   const [searchMetricLegendOpen, setSearchMetricLegendOpen] = useState(false);
   const [globalSearchPending, setGlobalSearchPending] = useState(() => Boolean(initialToolRouteState.q));
-  const [searchRouteRestoreGeneration, setSearchRouteRestoreGeneration] = useState(0);
-  const [searchRouteRestoreKeyword, setSearchRouteRestoreKeyword] = useState(() =>
-    initialToolRouteState.view === "search" ? initialToolRouteState.q : ""
-  );
   const [favoriteItems, setFavoriteItems] = useState([]);
   const [favoriteRefreshState, setFavoriteRefreshState] = useState({
     isRunning: false,
@@ -219,12 +206,8 @@ export function ToolView({ initialAppConfig }) {
     setChangelogOpen,
   } = useChangelogDialog(appConfig.frontendVersion);
 
-  const currentPlatformRef = useRef(currentPlatform);
-  const toolRouteStateRef = useRef(toolRouteState);
-  const pendingDetailRouteReplaceRef = useRef(false);
   const activeSearchPlatformRef = useRef(activeSearchPlatform);
   const sharedOutputPlatformRef = useRef(sharedOutputPlatform);
-  const appConfigRef = useRef(appConfig);
   const platformStatesRef = useRef(platformStates);
   const favoriteRefreshStateRef = useRef(favoriteRefreshState);
   const backgroundTaskRef = useRef(backgroundTask);
@@ -234,8 +217,12 @@ export function ToolView({ initialAppConfig }) {
   });
   const resultsPanelRef = useRef(null);
   const outputPanelRef = useRef(null);
-  const searchMetricControllersRef = useRef(new Set());
-  const refreshSearchMetricItemsRef = useRef(null);
+  const statsHistory = useStatsHistory({
+    platformStates,
+    getPlatformStates: () => platformStatesRef.current,
+    getRuntimeMeta: (platform) => runtimeMetaRef.current[platform],
+    updatePlatformState,
+  });
   const statsTaskRun = useStatsTaskRun({
     getRuntimeMeta: (platform) => runtimeMetaRef.current[platform],
     getActiveTaskId: (platform) => platformStatesRef.current[platform]?.stats?.activeTaskId || "",
@@ -291,27 +278,6 @@ export function ToolView({ initialAppConfig }) {
   }
 
   useEffect(() => {
-    currentPlatformRef.current = currentPlatform;
-  }, [currentPlatform]);
-
-  useEffect(() => {
-    toolRouteStateRef.current = toolRouteState;
-  }, [toolRouteState]);
-
-  useEffect(() => {
-    function handleToolViewPopState() {
-      const nextRouteState = applyCurrentPlatformFromUrl();
-      setSearchRouteRestoreKeyword(nextRouteState.view === "search" ? nextRouteState.q : "");
-      setSearchRouteRestoreGeneration((current) => current + 1);
-    }
-
-    window.addEventListener("popstate", handleToolViewPopState);
-    return () => {
-      window.removeEventListener("popstate", handleToolViewPopState);
-    };
-  }, []);
-
-  useEffect(() => {
     activeSearchPlatformRef.current = activeSearchPlatform;
   }, [activeSearchPlatform]);
 
@@ -341,18 +307,6 @@ export function ToolView({ initialAppConfig }) {
   }, [sharedOutputPlatform]);
 
   useEffect(() => {
-    appConfigRef.current = appConfig;
-    if (typeof document !== "undefined") {
-      document.title = appConfig.titleZh || appConfig.brandName;
-    }
-    const normalizedRoute = normalizeToolRouteState(toolRouteStateRef.current, appConfig);
-    const currentRoute = toolRouteStateRef.current;
-    if (!areToolRouteStatesEqual(normalizedRoute, currentRoute)) {
-      navigateToolRoute(normalizedRoute, { replace: true });
-    }
-  }, [appConfig]);
-
-  useEffect(() => {
     platformStatesRef.current = platformStates;
   }, [platformStates]);
 
@@ -380,13 +334,6 @@ export function ToolView({ initialAppConfig }) {
     mediaQuery.addListener?.(updateDesktopState);
     return () => mediaQuery.removeListener?.(updateDesktopState);
   }, []);
-
-  useEffect(() => {
-    savePersistedHistoryEntries({
-      missevan: platformStates.missevan?.historyEntries || [],
-      manbo: platformStates.manbo?.historyEntries || [],
-    });
-  }, [platformStates.missevan?.historyEntries, platformStates.manbo?.historyEntries]);
 
   const searchPlatforms = [
     { key: "missevan", label: "猫耳" },
@@ -429,7 +376,16 @@ export function ToolView({ initialAppConfig }) {
   const sharedOutputState = platformStates[sharedOutputPlatform];
   const sharedStatsState = sharedOutputState?.stats || null;
   const sharedRevenueSummary = sharedStatsState?.revenueSummary || buildRevenueSummary(sharedStatsState?.revenueResults || [], sharedOutputPlatform);
-  const sharedHistoryEntries = getMergedHistoryEntries();
+  const sharedHistoryEntries = statsHistory.getMergedHistoryEntries();
+  const { retrySearchCardMetrics } = useSearchCardMetrics({
+    activeBrowsePlatform,
+    activeSearchCategory,
+    appConfigRef,
+    currentBrowseState,
+    currentPlatform,
+    getPlatformState: (platform) => platformStatesRef.current[platform],
+    updatePlatformState,
+  });
   useEffect(() => {
     closeMainDrawer();
   }, [currentPlatform]);
@@ -442,58 +398,6 @@ export function ToolView({ initialAppConfig }) {
 
   function closeMainDrawer() {
     setMainDrawerOpen(false);
-  }
-
-  function applyCurrentPlatformFromUrl() {
-    if (typeof window === "undefined") {
-      return toolRouteStateRef.current;
-    }
-    const nextState = readToolRouteStateFromLocation(window.location, appConfigRef.current);
-    pendingDetailRouteReplaceRef.current = false;
-    toolRouteStateRef.current = nextState;
-    currentPlatformRef.current = nextState.view;
-    setToolRouteState(nextState);
-    return nextState;
-  }
-
-  function navigateToolRoute(patch, options = {}) {
-    const nextState = normalizeToolRouteState(
-      {
-        ...toolRouteStateRef.current,
-        ...(patch || {}),
-      },
-      appConfigRef.current
-    );
-    const currentState = toolRouteStateRef.current;
-    const isDetailRoute =
-      currentState.view === "ongoing" ||
-      currentState.view === "ranks" ||
-      currentState.view === "cv";
-    const isDetailUpdate =
-      currentState.view === nextState.view &&
-      !areToolRouteStatesEqual(currentState, nextState);
-    const replace =
-      options?.replace === true || (pendingDetailRouteReplaceRef.current && isDetailRoute && isDetailUpdate);
-    if (areToolRouteStatesEqual(currentState, nextState)) {
-      return;
-    }
-    if (typeof window !== "undefined") {
-      const nextUrl = buildToolRouteUrl(window.location, nextState, appConfigRef.current);
-      window.history[
-        replace ? "replaceState" : "pushState"
-      ]({ toolRoute: nextState }, "", nextUrl);
-    }
-    pendingDetailRouteReplaceRef.current = options?.seedDetailReplace === true;
-    toolRouteStateRef.current = nextState;
-    currentPlatformRef.current = nextState.view;
-    setToolRouteState(nextState);
-  }
-
-  function navigateCurrentPlatform(nextPlatform) {
-    navigateToolRoute(
-      { view: nextPlatform },
-      { seedDetailReplace: nextPlatform === "ongoing" || nextPlatform === "ranks" }
-    );
   }
 
   function navigateToolRouteFromMenu(routePatch) {
@@ -729,7 +633,7 @@ export function ToolView({ initialAppConfig }) {
     return data;
   }
 
-  async function loadAppConfig() {
+  const loadAppConfig = useCallback(async () => {
     try {
       const response = await fetch(buildVersionedUrl("/app-config", appConfigRef.current.frontendVersion), {
         cache: "no-store",
@@ -754,7 +658,7 @@ export function ToolView({ initialAppConfig }) {
     } catch (_) {
       setAppConfig((current) => mergeAppConfig(current));
     }
-  }
+  }, [appConfigRef]);
 
   async function reloadFavoriteItems() {
     try {
@@ -884,7 +788,7 @@ export function ToolView({ initialAppConfig }) {
       window.removeEventListener("pagehide", pageExitHandler);
       window.removeEventListener("beforeunload", pageExitHandler);
     };
-  }, [statsTaskRun]);
+  }, [loadAppConfig, statsTaskRun]);
 
   function updatePlatformState(platform, updater) {
     setPlatformStates((current) => {
@@ -918,83 +822,25 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function resetSearchFlow(platform = getActiveWorkPlatform()) {
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      searchResultSource: "search",
-      searchKeyword: "",
-      searchNextOffset: 0,
-      searchHasMore: false,
-      searchCurrentPage: 1,
-      searchPageSize: 5,
-      searchTotalMatched: 0,
-      searchPageCache: {},
-      isLoadingMoreResults: false,
-      searchResults: [],
-      dramas: [],
-      selectedEpisodesSnapshot: [],
-    }));
+    updatePlatformState(platform, (state) => resetSearchResultsState(state));
   }
 
   function setSearchResults(platform, results, source = "search", meta = {}) {
-    const normalizedResults = Array.isArray(results) ? results.map((item) => ({ ...item })) : [];
-    const pageSize = Number(meta?.limit ?? normalizedResults.length ?? 5) || 5;
-    const offset = Number(meta?.offset ?? 0) || 0;
-    const page = source === "search" ? Math.floor(offset / Math.max(1, pageSize)) + 1 : 1;
-    const totalMatched = source === "search" ? Number(meta?.matchedCount ?? meta?.totalMatched ?? normalizedResults.length) || 0 : 0;
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      searchResultSource: source === "manual" ? "manual" : "search",
-      searchKeyword: source === "search" ? String(meta?.keyword ?? state.searchForm.keyword ?? "").trim() : "",
-      searchNextOffset: source === "search" ? Number(meta?.nextOffset ?? normalizedResults.length) || 0 : 0,
-      searchHasMore: source === "search" ? Boolean(meta?.hasMore) : false,
-      searchCurrentPage: page,
-      searchPageSize: Math.max(1, pageSize),
-      searchTotalMatched: totalMatched,
-      searchGeneration: Number(meta?.searchGeneration ?? Date.now()) || Date.now(),
-      searchPageCache: source === "search" ? { [page]: normalizedResults } : {},
-      isLoadingMoreResults: false,
-      searchResults: normalizedResults,
-    }));
-    if (normalizedResults.length > 0) {
+    updatePlatformState(platform, (state) => setSearchResultsState(state, results, source, meta));
+    if (Array.isArray(results) && results.length > 0) {
       scrollToPanel(resultsPanelRef);
     }
   }
 
   function setManualSearchResults(platform, results, meta = {}) {
-    const normalizedResults = Array.isArray(results) ? results.map((item) => ({ ...item })) : [];
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      searchResultSource: "manual",
-      searchKeyword: "",
-      searchNextOffset: 0,
-      searchHasMore: false,
-      searchCurrentPage: 1,
-      searchPageSize: Math.max(1, Number(meta?.limit ?? normalizedResults.length ?? 1) || 1),
-      searchTotalMatched: 0,
-      searchGeneration: Number(meta?.searchGeneration ?? Date.now()) || Date.now(),
-      searchPageCache: {},
-      isLoadingMoreResults: false,
-      searchResults: normalizedResults,
-      dramas: [],
-      selectedEpisodesSnapshot: [],
-    }));
-    if (normalizedResults.length > 0 && meta?.scroll !== false) {
+    updatePlatformState(platform, (state) => setManualSearchResultsState(state, results, meta));
+    if (Array.isArray(results) && results.length > 0 && meta?.scroll !== false) {
       scrollToPanel(resultsPanelRef);
     }
   }
 
   function setResults(nextResults, platform = getActiveWorkPlatform()) {
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      searchResults: nextResults,
-      searchPageCache:
-        state.searchResultSource === "search"
-          ? {
-              ...state.searchPageCache,
-              [state.searchCurrentPage || 1]: nextResults,
-            }
-          : state.searchPageCache,
-    }));
+    updatePlatformState(platform, (state) => setVisibleSearchResults(state, nextResults));
   }
 
   function setDramas(nextDramas, platform = getActiveWorkPlatform()) {
@@ -1011,277 +857,10 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
-  function appendHistoryEntry(platform, entry, taskId = "") {
-    if (!entry) {
-      return "";
-    }
-
-    const meta = runtimeMetaRef.current[platform];
-    const normalizedTaskId = String(taskId || "").trim();
-    if (normalizedTaskId) {
-      meta.completedHistoryTaskIds ||= new Set();
-      if (meta.completedHistoryTaskIds.has(normalizedTaskId)) {
-        return "";
-      }
-      meta.completedHistoryTaskIds.add(normalizedTaskId);
-    }
-
-    updatePlatformState(platform, (state) => {
-      const nextEntries = [entry, ...(Array.isArray(state.historyEntries) ? state.historyEntries : [])];
-      return {
-        ...state,
-        historyEntries: nextEntries.slice(0, STATS_HISTORY_LIMIT),
-      };
-    });
-
-    return entry.id;
-  }
-
-  function recordCompletedStatsHistory(platform, taskType, taskId, snapshot) {
-    const normalizedTaskId = String(taskId || snapshot?.taskId || "").trim();
-    const result = snapshot?.result || {};
-    const baseStats = platformStatesRef.current[platform]?.stats || createStatsState();
-    const completedStats = {
-      ...baseStats,
-      activeTaskType: taskType,
-      totalDanmaku: Number(snapshot?.totalDanmaku ?? baseStats.totalDanmaku ?? 0),
-      totalUsers: Number(snapshot?.totalUsers ?? baseStats.totalUsers ?? 0),
-      playCountResults: Array.isArray(result.playCountResults) ? result.playCountResults : baseStats.playCountResults,
-      playCountSelectedEpisodeCount: Array.isArray(result.playCountResults)
-        ? Number(result.playCountSelectedEpisodeCount ?? baseStats.playCountSelectedEpisodeCount ?? 0)
-        : baseStats.playCountSelectedEpisodeCount,
-      playCountTotal: Array.isArray(result.playCountResults) ? Number(result.playCountTotal ?? 0) : baseStats.playCountTotal,
-      playCountFailed: Array.isArray(result.playCountResults) ? Boolean(result.playCountFailed) : baseStats.playCountFailed,
-      idResults: Array.isArray(result.idResults) ? result.idResults : baseStats.idResults,
-      idSelectedEpisodeCount: Array.isArray(result.idResults)
-        ? Number(result.idSelectedEpisodeCount ?? baseStats.idSelectedEpisodeCount ?? 0)
-        : baseStats.idSelectedEpisodeCount,
-      revenueResults: Array.isArray(result.revenueResults) ? result.revenueResults : baseStats.revenueResults,
-      revenueSummary: Array.isArray(result.revenueResults)
-        ? resolveRevenueSummaryForHistory(result.revenueResults, platform, result.revenueSummary || null)
-        : baseStats.revenueSummary,
-    };
-
-    const historyEntry = createStatsHistoryEntry(platform, completedStats, {
-      taskType,
-      createdAt: Date.now(),
-    });
-    const historyEntryId = appendHistoryEntry(platform, historyEntry, normalizedTaskId);
-    if (historyEntryId) {
-      updatePlatformState(platform, (state) => ({
-        ...state,
-        stats: {
-          ...state.stats,
-          currentHistoryEntryId: historyEntryId,
-        },
-      }));
-    }
-  }
-
-  function deleteHistoryEntry(platform, entryId) {
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      historyEntries: (Array.isArray(state.historyEntries) ? state.historyEntries : []).filter((entry) => entry.id !== entryId),
-    }));
-  }
-
-  function clearHistoryEntries(platform) {
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      historyEntries: [],
-    }));
-  }
-
-  function clearAllHistoryEntries() {
-    clearHistoryEntries("missevan");
-    clearHistoryEntries("manbo");
-  }
-
-  function getMergedHistoryEntries() {
-    return ["missevan", "manbo"]
-      .flatMap((platform) =>
-        (Array.isArray(platformStates[platform]?.historyEntries) ? platformStates[platform].historyEntries : []).map((entry) => ({
-          ...entry,
-          platform: entry.platform || platform,
-          platformLabel: (entry.platform || platform) === "manbo" ? "漫播" : "猫耳",
-        }))
-      )
-      .sort((left, right) => Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0));
-  }
-
   function activateSharedOutputPlatform(platform) {
     setSharedOutputPlatform(platform);
     sharedOutputPlatformRef.current = platform;
   }
-
-  function patchSearchMetricItem(platform, itemId, patch, searchGeneration) {
-    const normalizedId = String(itemId ?? "");
-    updatePlatformState(platform, (state) => {
-      if (Number(state.searchGeneration ?? 0) !== Number(searchGeneration ?? 0)) {
-        return state;
-      }
-      const patchItems = (items = []) => items.map((item) => {
-        if (String(item?.id ?? "") !== normalizedId) {
-          return item;
-        }
-        const resolvedPatch = typeof patch === "function" ? patch(item) : patch;
-        return { ...item, ...resolvedPatch };
-      });
-      return {
-        ...state,
-        searchResults: patchItems(state.searchResults),
-        searchPageCache: Object.fromEntries(
-          Object.entries(state.searchPageCache || {}).map(([page, items]) => [page, patchItems(items)])
-        ),
-      };
-    });
-  }
-
-  async function refreshSearchMetricItems(platform, items, searchGeneration, controller, resultSource = "search") {
-    const queue = selectSearchMetricQueue(items, resultSource);
-    if (!queue.length) {
-      return;
-    }
-    let nextIndex = 0;
-    const concurrency = platform === "manbo" ? 2 : 1;
-    const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
-      while (nextIndex < queue.length && !controller.signal.aborted) {
-        const item = queue[nextIndex];
-        nextIndex += 1;
-        try {
-          patchSearchMetricItem(platform, item.id, {
-            metrics_status: "loading",
-            metrics_error_code: "",
-          }, searchGeneration);
-          let payload = null;
-          while (!controller.signal.aborted) {
-            const response = await fetch(buildVersionedUrl("/search-card-metrics", appConfigRef.current.frontendVersion), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                platform,
-                id: item.id,
-                ...(platform === "missevan" && item.sound_id ? { soundId: item.sound_id } : {}),
-              }),
-              signal: controller.signal,
-            });
-            payload = await readJsonResponse(response);
-            if (response.ok && payload?.success) {
-              break;
-            }
-            const code = payload?.code || "UPSTREAM_ERROR";
-            if (code === "METRICS_RATE_LIMITED" && resultSource === "manual") {
-              const headerSeconds = Number(response.headers.get("Retry-After") ?? 0);
-              const retryAfterSeconds = Math.max(
-                1,
-                Number(payload?.retryAfterSeconds ?? headerSeconds ?? 60) || 60
-              );
-              patchSearchMetricItem(platform, item.id, {
-                metrics_status: "pending",
-                metrics_error_code: code,
-              }, searchGeneration);
-              await waitForTaskPoll(controller.signal, retryAfterSeconds * 1000 + 250);
-              patchSearchMetricItem(platform, item.id, {
-                metrics_status: "loading",
-                metrics_error_code: "",
-              }, searchGeneration);
-              continue;
-            }
-            const error = new Error(payload?.message || "动态指标获取失败。");
-            error.code = code;
-            throw error;
-          }
-          if (controller.signal.aborted || !payload?.success) {
-            throw new DOMException("Aborted", "AbortError");
-          }
-          patchSearchMetricItem(platform, item.id, (currentItem) => ({
-            ...(payload.metrics || {}),
-            ...mergeMissingSearchCardFields(currentItem, payload.card_patch),
-            metrics_status: "ready",
-            metrics_error_code: "",
-          }), searchGeneration);
-        } catch (error) {
-          if (isAbortError(error) || controller.signal.aborted) {
-            patchSearchMetricItem(platform, item.id, { metrics_status: "pending" }, searchGeneration);
-            continue;
-          }
-          patchSearchMetricItem(platform, item.id, {
-            metrics_status: error?.code === "ACCESS_DENIED" ? "access_denied" : "error",
-            metrics_error_code: error?.code || "UPSTREAM_ERROR",
-          }, searchGeneration);
-        }
-      }
-    });
-    await Promise.all(workers);
-  }
-
-  useEffect(() => {
-    refreshSearchMetricItemsRef.current = refreshSearchMetricItems;
-  });
-
-  function retrySearchCardMetrics(item) {
-    const platform = activeBrowsePlatform;
-    const state = platformStatesRef.current[platform];
-    const searchGeneration = Number(state?.searchGeneration ?? 0);
-    if (!item?.id || !searchGeneration) {
-      return;
-    }
-    const controller = new AbortController();
-    searchMetricControllersRef.current.add(controller);
-    void refreshSearchMetricItems(platform, [{ ...item, metrics_status: "pending" }], searchGeneration, controller, state?.searchResultSource)
-      .finally(() => searchMetricControllersRef.current.delete(controller));
-  }
-
-  useEffect(() => {
-    if (!shouldLoadSearchMetrics(currentPlatform, activeSearchCategory, activeBrowsePlatform)) {
-      return undefined;
-    }
-    const state = platformStatesRef.current[activeBrowsePlatform];
-    const searchGeneration = Number(state?.searchGeneration ?? 0);
-    const pendingItems = (state?.searchResults || []).filter((item) =>
-      ["pending", "loading"].includes(String(item?.metrics_status || "pending"))
-    );
-    if (!searchGeneration || !pendingItems.length) {
-      return undefined;
-    }
-    const controller = new AbortController();
-    searchMetricControllersRef.current.add(controller);
-    void refreshSearchMetricItemsRef.current?.(
-      activeBrowsePlatform,
-      pendingItems,
-      searchGeneration,
-      controller,
-      state?.searchResultSource
-    )
-      .finally(() => searchMetricControllersRef.current.delete(controller));
-    const searchMetricControllers = searchMetricControllersRef.current;
-    return () => {
-      controller.abort();
-      updatePlatformState(activeBrowsePlatform, (currentState) => {
-        if (Number(currentState.searchGeneration ?? 0) !== searchGeneration) {
-          return currentState;
-        }
-        const resetLoading = (items = []) => items.map((item) =>
-          String(item?.metrics_status) === "loading"
-            ? { ...item, metrics_status: "pending", metrics_error_code: "" }
-            : item
-        );
-        return {
-          ...currentState,
-          searchResults: resetLoading(currentState.searchResults),
-          searchPageCache: Object.fromEntries(
-            Object.entries(currentState.searchPageCache || {}).map(([page, items]) => [page, resetLoading(items)])
-          ),
-        };
-      });
-      searchMetricControllers.delete(controller);
-    };
-  }, [activeBrowsePlatform, activeSearchCategory, currentPlatform, currentBrowseState?.searchGeneration, currentBrowseState?.searchResults?.length]);
-
-  useEffect(() => () => {
-    searchMetricControllersRef.current.forEach((controller) => controller.abort());
-    searchMetricControllersRef.current.clear();
-  }, []);
 
   function isAnyBackgroundTaskRunning() {
     return Boolean(
@@ -1318,79 +897,8 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  function getAllSearchResults(state) {
-    if (state?.searchResultSource !== "search") {
-      return state?.searchResults || [];
-    }
-    const pageCache = state?.searchPageCache || {};
-    const merged = new Map();
-    Object.keys(pageCache)
-      .map((key) => Number(key))
-      .filter((key) => Number.isFinite(key))
-      .sort((left, right) => left - right)
-      .forEach((page) => {
-        (Array.isArray(pageCache[page]) ? pageCache[page] : []).forEach((item) => {
-          merged.set(String(item.id), item);
-        });
-      });
-    return Array.from(merged.values());
-  }
-
-  function getPlatformResultCount(platform) {
-    const state = platformStates[platform];
-    if (!state) {
-      return 0;
-    }
-    if (state.searchResultSource === "search") {
-      return Number(state.searchTotalMatched || getAllSearchResults(state).length || state.searchResults?.length || 0) || 0;
-    }
-    return Number(state.searchResults?.length ?? 0) || 0;
-  }
-
   function updateSearchPage(platform, page, results, meta = {}) {
-    const normalizedResults = Array.isArray(results) ? results.map((item) => ({ ...item })) : [];
-    updatePlatformState(platform, (state) => ({
-      ...state,
-      searchNextOffset: Number(meta?.nextOffset ?? state.searchNextOffset) || 0,
-      searchHasMore: Boolean(meta?.hasMore),
-      searchCurrentPage: page,
-      searchPageSize: Number(meta?.limit ?? state.searchPageSize ?? 5) || 5,
-      searchTotalMatched: Number(meta?.matchedCount ?? meta?.totalMatched ?? state.searchTotalMatched ?? normalizedResults.length) || 0,
-      searchPageCache: {
-        ...state.searchPageCache,
-        [page]: normalizedResults.map((item) => {
-          const previous = (state.searchPageCache?.[page] || []).find((cached) => String(cached.id) === String(item.id));
-          return {
-            ...item,
-            checked: previous?.checked ?? item.checked,
-          };
-        }),
-      },
-      isLoadingMoreResults: false,
-      searchResults: normalizedResults.map((item) => {
-        const previous = (state.searchPageCache?.[page] || []).find((cached) => String(cached.id) === String(item.id));
-        return {
-          ...item,
-          checked: previous?.checked ?? item.checked,
-        };
-      }),
-    }));
-  }
-
-  function mergeSearchResults(existingResults = [], incomingResults = []) {
-    const existingById = new Map(existingResults.map((item) => [String(item.id), item]));
-    const mergedById = new Map();
-    existingResults.forEach((item) => {
-      mergedById.set(String(item.id), item);
-    });
-    incomingResults.forEach((item) => {
-      const previous = existingById.get(String(item.id));
-      mergedById.set(String(item.id), {
-        ...item,
-        checked: previous?.checked ?? item.checked,
-      });
-    });
-    return Array.from(mergedById.values());
+    updatePlatformState(platform, (state) => updateSearchResultsPage(state, page, results, meta));
   }
 
   async function parseVersionedJsonResponse(response) {
@@ -1771,20 +1279,6 @@ export function ToolView({ initialAppConfig }) {
     return data;
   }
 
-  async function waitForTaskPoll(signal, delayMs = 2000) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(resolve, delayMs);
-      signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          reject(new DOMException("Aborted", "AbortError"));
-        },
-        { once: true }
-      );
-    });
-  }
-
   function applyTaskSnapshot(platform, snapshot) {
     const progress = Number(snapshot?.progress ?? 0);
     const queuePosition = Number(snapshot?.queuePosition ?? 0);
@@ -1847,7 +1341,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function applyStatsTaskCompleted({ platform, taskType, taskId, snapshot }) {
-    recordCompletedStatsHistory(platform, taskType, taskId, snapshot);
+    statsHistory.recordCompletedStatsHistory(platform, taskType, taskId, snapshot);
   }
 
   async function startStatsTask(platform, taskType, payload, runId, signal) {
@@ -2166,29 +1660,13 @@ export function ToolView({ initialAppConfig }) {
       const totalMatched = Number(data.meta?.matchedCount ?? data.meta?.totalMatched ?? state.searchTotalMatched ?? 0) || 0;
       const page = Math.floor(offset / Math.max(1, pageSize)) + 1;
 
-      updatePlatformState(platform, (current) => {
-        const mergedResults = mergeSearchResults(current.searchResults || [], incomingResults);
-        return {
-          ...current,
-          searchNextOffset: nextOffset,
-          searchHasMore: Boolean(data.meta?.hasMore) && (!totalMatched || mergedResults.length < totalMatched),
-          searchCurrentPage: page,
-          searchPageSize: pageSize,
-          searchTotalMatched: totalMatched,
-          searchPageCache: {
-            ...current.searchPageCache,
-            [page]: incomingResults.map((item) => {
-              const previous = (current.searchResults || []).find((cached) => String(cached.id) === String(item.id));
-              return {
-                ...item,
-                checked: previous?.checked ?? item.checked,
-              };
-            }),
-          },
-          isLoadingMoreResults: false,
-          searchResults: mergedResults,
-        };
-      });
+      updatePlatformState(platform, (current) => appendSearchResultsPage(current, incomingResults, {
+        hasMore: data.meta?.hasMore,
+        nextOffset,
+        page,
+        pageSize,
+        totalMatched,
+      }));
     } catch (error) {
       console.error("Failed to load more search results", error);
       if (platform === "missevan" && error?.accessDenied) {
@@ -2456,8 +1934,8 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
-  const missevanResultCount = getPlatformResultCount("missevan");
-  const manboResultCount = getPlatformResultCount("manbo");
+  const missevanResultCount = getSearchResultCount(platformStates.missevan);
+  const manboResultCount = getSearchResultCount(platformStates.manbo);
   const cvResultCount = Number(cvSearchState.matchedCount ?? cvSearchState.results.length) || 0;
   const visibleSearchCategories = [
     ...searchPlatforms.filter((platform) =>
@@ -2750,8 +2228,8 @@ export function ToolView({ initialAppConfig }) {
               idSelectedEpisodeCount: sharedStatsState?.idSelectedEpisodeCount,
               isRunning: sharedStatsState?.isRunning,
               onCancelStatistics: cancelCurrentStatistics,
-              onClearHistory: clearAllHistoryEntries,
-              onDeleteHistoryEntry: (entry) => deleteHistoryEntry(entry.platform, entry.id),
+              onClearHistory: statsHistory.clearAllHistoryEntries,
+              onDeleteHistoryEntry: (entry) => statsHistory.deleteHistoryEntry(entry.platform, entry.id),
               platform: sharedOutputPlatform,
               playCountFailed: sharedStatsState?.playCountFailed,
               playCountResults: sharedStatsState?.playCountResults,

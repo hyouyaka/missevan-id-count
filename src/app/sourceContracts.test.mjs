@@ -32,6 +32,10 @@ const rankBadgeSource = readFileSync(new URL("./RankBadge.jsx", import.meta.url)
 const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url), "utf8");
 const statsTaskClientSource = readFileSync(new URL("./statsTaskClient.js", import.meta.url), "utf8");
 const statsTaskRunSource = readFileSync(new URL("./useStatsTaskRun.js", import.meta.url), "utf8");
+const statsHistorySource = readFileSync(new URL("./useStatsHistory.js", import.meta.url), "utf8");
+const searchCardMetricsSource = readFileSync(new URL("./useSearchCardMetrics.js", import.meta.url), "utf8");
+const searchResultsStateSource = readFileSync(new URL("./searchResultsState.js", import.meta.url), "utf8");
+const toolNavigationSource = readFileSync(new URL("./useToolNavigation.js", import.meta.url), "utf8");
 const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
 const rankTrendActionsSource = readFileSync(new URL("./rankTrendActions.jsx", import.meta.url), "utf8");
 const rankTrendUiSource = readFileSync(new URL("./rankTrendUi.jsx", import.meta.url), "utf8");
@@ -51,6 +55,7 @@ const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "u
 const applicationSource = readFileSync(new URL("../../server/application.js", import.meta.url), "utf8");
 const imageProxyRoutesSource = readFileSync(new URL("../../server/routes/imageProxyRoutes.js", import.meta.url), "utf8");
 const newDramaRoutesSource = readFileSync(new URL("../../server/routes/newDramaRoutes.js", import.meta.url), "utf8");
+const taskRequestServiceSource = readFileSync(new URL("../../server/stats/taskRequestService.js", import.meta.url), "utf8");
 const serverSource = [
   applicationSource,
   imageProxyRoutesSource,
@@ -60,6 +65,7 @@ const serverSource = [
   readFileSync(new URL("../../server/routes/missevanRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/routes/manboRoutes.js", import.meta.url), "utf8"),
   readFileSync(new URL("../../server/stats/taskExecution.js", import.meta.url), "utf8"),
+  taskRequestServiceSource,
   readFileSync(new URL("../../server/services/weeklyPlaybackService.js", import.meta.url), "utf8"),
 ].join("\n");
 const httpSecuritySource = readFileSync(new URL("../../server/httpSecurity.js", import.meta.url), "utf8");
@@ -1153,7 +1159,7 @@ test("app icon appears in page titles and browser chrome", () => {
   assert.doesNotMatch(appIconSource, /src="\/icon\.png"/);
   assert.match(appIconSource, /rounded-lg/);
   assert.match(appIconSource, /alt=""/);
-  assert.match(toolViewSource, /document\.title = appConfig\.titleZh \|\| appConfig\.brandName/);
+  assert.match(toolNavigationSource, /document\.title = appConfig\.titleZh \|\| appConfig\.brandName/);
   assert.match(toolViewSource, /<h1 className="mt-1 min-w-0 text-\[1\.625rem\] font-semibold leading-tight tracking-tight">/);
   assert.match(toolViewSource, /const headerHomeLabel = appConfig\.desktopApp \? "返回统计页" : "返回首页";/);
   assert.match(toolViewSource, /aria-label=\{headerHomeLabel\}/);
@@ -1287,14 +1293,27 @@ test("main navigation keeps discovery pages route-driven", () => {
   assert.match(toolViewSource, /<MainNavigationDrawer/);
   assert.match(toolViewSource, /buildOngoingNavigationMenu/);
   assert.match(toolViewSource, /buildRanksNavigationMenu/);
-  assert.match(toolViewSource, /readToolRouteStateFromLocation/);
-  assert.match(toolViewSource, /buildToolRouteUrl/);
+  assert.match(toolViewSource, /from "@\/app\/useToolNavigation"/);
+  assert.match(toolViewSource, /useToolNavigation\(\{ initialAppConfig, appConfig \}\)/);
+  assert.match(toolNavigationSource, /readToolRouteStateFromLocation/);
+  assert.match(toolNavigationSource, /buildToolRouteUrl/);
   assert.match(toolViewSource, /<RanksPanel[\s\S]*routeState=\{toolRouteState\}[\s\S]*onRouteStateChange=\{navigateToolRoute\}/);
   assert.match(toolViewSource, /<OngoingPanel[\s\S]*routeState=\{toolRouteState\}[\s\S]*onRouteStateChange=\{navigateToolRoute\}/);
   assert.match(navigationSource, /const activeRoutePatch = item\?\.activeRoutePatch \|\| item\?\.routePatch/);
   assert.match(navigationSource, /isRoutePatchActive\(activeRoutePatch, currentRoute\)/);
   assert.match(navigationSource, /activeRoutePatch: platformOngoingItem\?\.activeRoutePatch/);
   assert.match(navigationSource, /activeRoutePatch: category\.activeRoutePatch/);
+});
+
+test("tool navigation centralizes URL state coordination outside ToolView", () => {
+  assert.match(toolNavigationSource, /export function createToolNavigationController/);
+  assert.match(toolNavigationSource, /pendingDetailRouteReplace/);
+  assert.match(toolNavigationSource, /browserWindow\.history\[replace \? "replaceState" : "pushState"\]/);
+  assert.match(toolNavigationSource, /window\.addEventListener\("popstate", handleToolViewPopState\)/);
+  assert.match(toolNavigationSource, /appConfigRef\.current = appConfig;[\s\S]*normalizeToolRouteState\(toolRouteStateRef\.current, appConfig\)/);
+  assert.match(toolNavigationSource, /controller\.navigateToolRoute\(normalizedRoute, \{ replace: true \}\)/);
+  assert.doesNotMatch(toolViewSource, /function navigateToolRoute\(/);
+  assert.doesNotMatch(toolViewSource, /window\.addEventListener\("popstate"/);
 });
 
 test("search page owns compact platform result tabs", () => {
@@ -1388,8 +1407,8 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.doesNotMatch(cvProfileViewSource, /双平台总播放量|全部库内作品|<Table|dataDate/);
   assert.match(toolViewSource, /resetSearchFlow\("manbo"\);\s*clearCvSearchResults\(\);/);
   assert.match(toolViewSource, /buildCvProfileOpenUsagePayload\(cvName, context\)/);
-  assert.match(toolViewSource, /shouldLoadSearchMetrics\(currentPlatform, activeSearchCategory, activeBrowsePlatform\)/);
-  assert.match(toolViewSource, /\[activeBrowsePlatform, activeSearchCategory, currentPlatform,/);
+  assert.match(searchCardMetricsSource, /shouldLoadSearchMetrics\(\s*options\.currentPlatform,\s*options\.activeSearchCategory,\s*options\.activeBrowsePlatform/);
+  assert.match(searchCardMetricsSource, /options\.activeBrowsePlatform,\s*options\.activeSearchCategory,\s*options\.currentPlatform,/);
   assert.match(cvSearchResultsSource, /onOpenCv\?\.\(item\.name, \{[\s\S]*source: "search",[\s\S]*profileId: item\.profileId,/);
   assert.match(searchResultsSource, /if \(showingCvResults\) \{\s*return undefined;/);
   assert.match(searchResultsSource, /trendEligibilityCacheRef\.current\.get\(cacheKey\)/);
@@ -1406,7 +1425,7 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(appUtilsSource, /export function buildCvRankProfileId/);
   assert.match(appUtilsSource, /export function areToolRouteStatesEqual/);
   assert.match(appUtilsSource, /"cvKey"/);
-  assert.match(toolViewSource, /areToolRouteStatesEqual\(currentState, nextState\)/);
+  assert.match(toolNavigationSource, /routesEqual\(currentRouteState, nextRouteState\)/);
   assert.match(cvProfileUtilsSource, /rank-work:\(missevan\|manbo\)/);
   assert.doesNotMatch(cvProfileUtilsSource, /record\?\.cvId/);
   assert.match(cvProfileUtilsSource, /if \(!workIds \|\| typeof workIds !== "object"\) \{\s*return \[\];/);
@@ -1559,19 +1578,22 @@ test("backend unified search uses coupled API fallback and library card details"
 
 test("search cards refresh active-platform metrics without blocking actions", () => {
   assert.match(searchPanelSource, /searchGenerationRef/);
-  assert.match(toolViewSource, /refreshSearchMetricItems/);
-  assert.match(toolViewSource, /const concurrency = platform === "manbo" \? 2 : 1/);
+  assert.match(toolViewSource, /useSearchCardMetrics/);
+  assert.doesNotMatch(toolViewSource, /refreshSearchMetricItems/);
+  assert.match(searchCardMetricsSource, /export function createSearchCardMetricsController/);
+  assert.match(searchCardMetricsSource, /const concurrency = platform === "manbo" \? 2 : 1/);
   assert.match(appUtilsSource, /\["pending", "loading", "error", "access_denied"\]/);
-  assert.match(toolViewSource, /String\(item\?\.metrics_status\) === "loading"[\s\S]*metrics_status: "pending"/);
-  assert.match(toolViewSource, /mergeMissingSearchCardFields,/);
-  assert.match(toolViewSource, /typeof patch === "function" \? patch\(item\) : patch/);
-  assert.match(toolViewSource, /\.\.\.mergeMissingSearchCardFields\(currentItem, payload\.card_patch\)/);
-  assert.match(toolViewSource, /const queue = selectSearchMetricQueue\(items, resultSource\)/);
+  assert.match(searchCardMetricsSource, /String\(item\?\.metrics_status\) === "loading"[\s\S]*metrics_status: "pending"/);
+  assert.match(searchCardMetricsSource, /mergeMissingSearchCardFields/);
+  assert.match(searchCardMetricsSource, /typeof patch === "function" \? patch\(item\) : patch/);
+  assert.match(searchCardMetricsSource, /\.\.\.mergeFields\(currentItem, payload\.card_patch\)/);
+  assert.match(searchCardMetricsSource, /const queue = selectQueue\(items, resultSource\)/);
   assert.match(appUtilsSource, /return resultSource === "manual" \? candidates : candidates\.slice\(0, 5\)/);
-  assert.match(toolViewSource, /code === "METRICS_RATE_LIMITED" && resultSource === "manual"/);
-  assert.match(toolViewSource, /response\.headers\.get\("Retry-After"\)/);
-  assert.match(toolViewSource, /await waitForTaskPoll\(controller\.signal, retryAfterSeconds \* 1000 \+ 250\)/);
-  assert.match(toolViewSource, /\/search-card-metrics/);
+  assert.match(searchCardMetricsSource, /code === "METRICS_RATE_LIMITED" && resultSource === "manual"/);
+  assert.match(searchCardMetricsSource, /headers\?\.get\?\.\("Retry-After"\)/);
+  assert.match(searchCardMetricsSource, /await waitForRetry\(controller\.signal, retryAfterSeconds \* 1000 \+ 250\)/);
+  assert.match(searchCardMetricsSource, /\/search-card-metrics/);
+  assert.match(searchCardMetricsSource, /const scheduledBrowseState = controller\.getCurrentBrowseState\(\)/);
   assert.match(viteConfigSource, /"\/unified-search": backendTarget/);
   assert.match(viteConfigSource, /"\/search-card-metrics": backendTarget/);
   assert.match(toolViewSource, /onRetryMetrics: retrySearchCardMetrics/);
@@ -1584,6 +1606,24 @@ test("search cards refresh active-platform metrics without blocking actions", ()
   assert.match(indexCssSource, /metric-motion-reward/);
   assert.match(serverSource, /const localRecord = item\.type === "drama"[\s\S]*buildMissevanSearchFallbackCard\(localRecord\)/);
   assert.match(serverSource, /manboInfoStore\.byDramaId\.get\(String\(item\.raw\)\)[\s\S]*buildManboSearchFallbackCard\(localRecord\)/);
+});
+
+test("search result collection state stays in pure transforms outside ToolView", () => {
+  assert.match(toolViewSource, /from "@\/app\/searchResultsState"/);
+  assert.match(toolViewSource, /resetSearchResultsState\(state\)/);
+  assert.match(toolViewSource, /setSearchResultsState\(state, results, source, meta\)/);
+  assert.match(toolViewSource, /setManualSearchResultsState\(state, results, meta\)/);
+  assert.match(toolViewSource, /setVisibleSearchResults\(state, nextResults\)/);
+  assert.match(toolViewSource, /updateSearchResultsPage\(state, page, results, meta\)/);
+  assert.match(toolViewSource, /appendSearchResultsPage\(current, incomingResults, \{/);
+  assert.match(toolViewSource, /getSearchResultCount\(platformStates\.missevan\)/);
+  assert.doesNotMatch(toolViewSource, /function getAllSearchResults\(/);
+  assert.doesNotMatch(toolViewSource, /function mergeSearchResults\(/);
+  assert.match(searchResultsStateSource, /export function resetSearchResultsState/);
+  assert.match(searchResultsStateSource, /export function setSearchResultsState/);
+  assert.match(searchResultsStateSource, /export function setManualSearchResultsState/);
+  assert.match(searchResultsStateSource, /export function updateSearchResultsPage/);
+  assert.match(searchResultsStateSource, /export function appendSearchResultsPage/);
 });
 
 test("Railway leaves dependency installation to the builder and starts the server directly", () => {
@@ -1645,7 +1685,7 @@ test("global search input area supports header layout and compact controls", () 
   assert.match(searchPanelSource, /placeholder = "请输入关键词、ID、分享链接。"/);
   assert.match(searchPanelSource, /onSearchCommit/);
   assert.match(searchPanelSource, /onSearchPendingChange/);
-  assert.match(toolViewSource, /setSearchRouteRestoreKeyword\(nextRouteState\.view === "search" \? nextRouteState\.q : ""\)/);
+  assert.match(toolNavigationSource, /setSearchRouteRestoreKeyword\(nextRouteState\.view === "search" \? nextRouteState\.q : ""\)/);
   assert.match(toolViewSource, /toolRouteState\.q === searchRouteRestoreKeyword/);
   assert.match(searchPanelSource, /type="submit"[\s\S]*aria-label="搜索"/);
   assert.match(searchPanelSource, /disabled=\{isSearchPending\}/);
@@ -2097,9 +2137,11 @@ test("output stats and history are shared across platform tab switching", () => 
   assert.match(toolViewSource, /const \[sharedOutputPlatform, setSharedOutputPlatform\] = useState/);
   assert.match(toolViewSource, /const sharedOutputState = platformStates\[sharedOutputPlatform\]/);
   assert.match(toolViewSource, /const sharedStatsState = sharedOutputState\?\.stats \|\| null/);
-  assert.match(toolViewSource, /const sharedHistoryEntries = getMergedHistoryEntries\(\)/);
-  assert.match(toolViewSource, /function getMergedHistoryEntries\(\)/);
-  assert.match(toolViewSource, /platformLabel: \(entry\.platform \|\| platform\) === "manbo" \? "漫播" : "猫耳"/);
+  assert.match(toolViewSource, /from "@\/app\/useStatsHistory"/);
+  assert.match(toolViewSource, /const statsHistory = useStatsHistory\(\{/);
+  assert.match(toolViewSource, /const sharedHistoryEntries = statsHistory\.getMergedHistoryEntries\(\)/);
+  assert.match(statsHistorySource, /export function getMergedStatsHistoryEntries/);
+  assert.match(statsHistorySource, /platformLabel: entryPlatform === "manbo" \? "漫播" : "猫耳"/);
   assert.match(toolViewSource, /setSharedOutputPlatform\(platform\)/);
 
   assert.match(searchWorkspaceSource, /<OutputPanel \{\.\.\.output\} \/>/);
@@ -2108,8 +2150,8 @@ test("output stats and history are shared across platform tab switching", () => 
   assert.match(toolViewSource, /currentAction: sharedStatsState\?\.currentAction/);
   assert.doesNotMatch(toolViewSource, /currentBrowseState\?\.historyEntries/);
   assert.doesNotMatch(toolViewSource, /currentStatsState/);
-  assert.match(toolViewSource, /onClearHistory: clearAllHistoryEntries/);
-  assert.match(toolViewSource, /onDeleteHistoryEntry: \(entry\) => deleteHistoryEntry\(entry\.platform, entry\.id\)/);
+  assert.match(toolViewSource, /onClearHistory: statsHistory\.clearAllHistoryEntries/);
+  assert.match(toolViewSource, /onDeleteHistoryEntry: \(entry\) => statsHistory\.deleteHistoryEntry\(entry\.platform, entry\.id\)/);
 });
 
 test("statistics output uses a compact completed state and semantic metric grid", () => {
@@ -2237,7 +2279,7 @@ test("episode detail collection keeps request limits and reuses platform totals"
 
 test("completed background tasks collapse and dismiss after opening results", () => {
   const openResultStart = toolViewSource.indexOf("function openBackgroundTaskResult");
-  const openResultEnd = toolViewSource.indexOf("function getAllSearchResults", openResultStart);
+  const openResultEnd = toolViewSource.indexOf("function updateSearchPage", openResultStart);
   const openResultSource = toolViewSource.slice(openResultStart, openResultEnd);
 
   assert.match(backgroundTaskCenterSource, /!task\?\.isRunning && wasRunningRef\.current[\s\S]*setDesktopCollapsed\(true\)/);
@@ -3424,7 +3466,7 @@ test("ordinary stats task transport and run lifecycle live behind the stats task
   assert.match(toolViewSource, /return statsTaskRun\.startStatsTask\(platform, taskType, payload, runId, signal\)/);
   assert.match(toolViewSource, /const pageExitHandler = \(\) => \{[\s\S]*statsTaskRun\.notifyAllActiveTaskCancels\(\)/);
   assert.match(toolViewSource, /function applyTaskSnapshot\(platform, snapshot\)/);
-  assert.match(toolViewSource, /function recordCompletedStatsHistory\(platform, taskType, taskId, snapshot\)/);
+  assert.match(toolViewSource, /statsHistory\.recordCompletedStatsHistory\(platform, taskType, taskId, snapshot\)/);
   assert.ok(
     toolViewSource.indexOf("statsTaskRun.notifyAllActiveTaskCancels()") < toolViewSource.indexOf("statsTaskRun.dispose()"),
     "page-exit notification should be declared before task cleanup"
@@ -3440,6 +3482,9 @@ test("ordinary stats task transport and run lifecycle live behind the stats task
   assert.match(statsTaskRunSource, /if \(!isCurrent\(context\)\) \{[\s\S]*requestTaskCancel\(taskId\)/);
   assert.match(statsTaskRunSource, /function finishRun\(platform, runId, status = "completed"\)[\s\S]*if \(!isCurrent\(context\)\)/);
   assert.match(statsTaskRunSource, /signal\?\.removeEventListener\?\.\("abort", handleAbort\)/);
+  assert.match(statsHistorySource, /export function createStatsHistoryController/);
+  assert.match(statsHistorySource, /function recordCompletedStatsHistory\(platform, taskType, taskId, snapshot\)/);
+  assert.match(statsHistorySource, /meta\.completedHistoryTaskIds\.has\(normalizedTaskId\)/);
 });
 
 test("paid ID-equivalent tasks and revenue actions pass ID-scoped stats sources", () => {
@@ -4466,6 +4511,11 @@ test("server applies tiered rate limits and queues stats tasks by platform", () 
   assert.match(serverSource, /statsTaskEngine\.enqueue\(task\)/);
   assert.match(serverSource, /statsTaskEngine\.cancel\(req\.params\.taskId\)/);
   assert.match(serverSource, /statsTaskEngine\.restore\(\)/);
+  assert.match(applicationSource, /from "\.\/stats\/taskRequestService\.js"/);
+  assert.match(applicationSource, /const \{[\s\S]*createStatsTaskFromRequest,[\s\S]*getStatsTaskSnapshotOr404,[\s\S]*\} = createStatsTaskRequestService\(/);
+  assert.match(taskRequestServiceSource, /export function createStatsTaskRequestService/);
+  assert.match(taskRequestServiceSource, /TASK_ITEM_LIMIT_EXCEEDED/);
+  assert.match(taskRequestServiceSource, /TASK_CLIENT_QUEUE_FULL/);
   assert.match(statsRoutesSource, /router\.get\("\/admin\/task-metrics"/);
   assert.match(statsRoutesSource, /router\.post\("\/stat-tasks", statsTaskCreationLimiter/);
   assert.match(statsRoutesSource, /router\.post\("\/manbo\/stat-tasks", statsTaskCreationLimiter/);

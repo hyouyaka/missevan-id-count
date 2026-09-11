@@ -80,6 +80,13 @@ import {
   normalizeStatsTaskPersistenceDebounceMs,
 } from "./stats/taskEngine.js";
 import {
+  createStatsTaskRequestService,
+  getStatsTaskItemCounts as getStatsTaskItemCountsFromRequestService,
+  isStatsTaskItemLimitExceeded as isStatsTaskItemLimitExceededFromRequestService,
+  normalizeTaskDramaIds,
+  normalizeTaskEpisodes,
+} from "./stats/taskRequestService.js";
+import {
   createStatsTaskExecutor,
   getManboRevenueType,
 } from "./stats/taskExecution.js";
@@ -691,6 +698,19 @@ const statsTaskEngine = createStatsTaskEngine({
   onError(event, error) {
     void logger.error(event, error);
   },
+});
+const {
+  createStatsTaskFromRequest,
+  getStatsTaskSnapshotOr404,
+} = createStatsTaskRequestService({
+  cleanupExpiredStatsTasks,
+  createTaskId,
+  itemLimit: STATS_TASK_MAX_ITEMS,
+  normalizeDramaIds: normalizeTaskDramaIds,
+  normalizeEpisodes: normalizeTaskEpisodes,
+  normalizePlayCountDramas,
+  normalizeSource: normalizeStatsTaskSource,
+  statsTaskEngine,
 });
 const missevanClient = createMissevanClient({
   soundSummary: fetchSoundSummary,
@@ -11483,194 +11503,15 @@ registerManboRoutes(app, {
 
 
 
-function normalizeTaskEpisodes(rawEpisodes = []) {
-  return (Array.isArray(rawEpisodes) ? rawEpisodes : [])
-    .map((episode) => ({
-      drama_id: String(episode?.drama_id ?? "").trim(),
-      sound_id: String(episode?.sound_id ?? "").trim(),
-      drama_title: String(episode?.drama_title ?? "").trim(),
-      episode_title: String(episode?.episode_title ?? "").trim(),
-      duration: Number(episode?.duration ?? 0),
-    }))
-    .filter((episode) => episode.sound_id);
-}
-
-function normalizeTaskDramaIds(rawDramaIds = [], platform = "missevan") {
-  const values = Array.isArray(rawDramaIds) ? rawDramaIds : [];
-  return Array.from(
-    new Set(
-      values
-        .map((value) => String(value ?? "").trim())
-        .filter((value) => /^\d+$/.test(value))
-        .map((value) => (platform === "manbo" ? value : Number(value)))
-    )
-  );
-}
-
-function createStatsTask({
-  platform,
-  taskType,
-  episodes = [],
-  dramaIds = [],
-  playCountDramas = [],
-  source = "",
-  clientKey = "unknown",
-}) {
-  const taskId = createTaskId();
-  const task = {
-    taskId,
-    platform,
-    taskType,
-    status: "queued",
-    progress: 0,
-    currentAction: "任务已创建",
-    totalCount: taskType === "revenue" ? dramaIds.length : episodes.length,
-    completedCount: 0,
-    failedCount: 0,
-    totalDanmaku: 0,
-    totalUsers: 0,
-    accessDenied: false,
-    source: normalizeStatsTaskSource(source),
-    clientKey: String(clientKey ?? "").trim() || "unknown",
-    queuePosition: 0,
-    episodes,
-    dramaIds,
-    playCountDramas,
-    result: null,
-    error: "",
-    cancelled: false,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    lastSeenAt: Date.now(),
-  };
-
-  cleanupExpiredStatsTasks();
-  return task;
-}
-
-function getStatsTaskSnapshotOr404(taskId, res, { touch = false } = {}) {
-  cleanupExpiredStatsTasks();
-  const snapshot = touch
-    ? statsTaskEngine.touch(taskId)
-    : statsTaskEngine.getSnapshot(taskId);
-  if (!snapshot) {
-    res.status(404).json({ error: "Task not found" });
-    return null;
-  }
-  return snapshot;
-}
-
-export function getStatsTaskItemCounts({
-  taskType = "",
-  episodes = [],
-  dramaIds = [],
-  playCountDramas = [],
-} = {}) {
-  const normalizedPlayCountDramas = Array.isArray(playCountDramas)
-    ? playCountDramas
-    : [];
-  return {
-    primary:
-      taskType === "revenue"
-        ? (Array.isArray(dramaIds) ? dramaIds.length : 0)
-        : (Array.isArray(episodes) ? episodes.length : 0),
-    playCountDramas: normalizedPlayCountDramas.length,
-    playCountEpisodes: normalizedPlayCountDramas.reduce(
-      (count, drama) =>
-        count + (Array.isArray(drama?.episodes) ? drama.episodes.length : 0),
-      0
-    ),
-  };
+export function getStatsTaskItemCounts(options = {}) {
+  return getStatsTaskItemCountsFromRequestService(options);
 }
 
 export function isStatsTaskItemLimitExceeded(
   itemCounts,
   limit = STATS_TASK_MAX_ITEMS
 ) {
-  return (
-    Number(itemCounts?.primary ?? 0) > limit ||
-    Number(itemCounts?.playCountDramas ?? 0) > limit ||
-    Number(itemCounts?.playCountEpisodes ?? 0) > limit
-  );
-}
-
-function createStatsTaskFromRequest(req, res, forcedPlatform = null, defaultTaskType = null) {
-  const platform =
-    forcedPlatform || (req.body?.platform === "manbo" ? "manbo" : "missevan");
-  const taskType = String(req.body?.taskType ?? "").trim();
-  const normalizedTaskType = taskType || defaultTaskType || "";
-  const episodes = normalizeTaskEpisodes(req.body?.episodes);
-  const dramaIds = normalizeTaskDramaIds(req.body?.dramaIds, platform);
-  const playCountDramas = platform === "missevan" && normalizedTaskType === "play_count"
-    ? normalizePlayCountDramas(req.body?.playCountDramas)
-    : [];
-  const source = normalizeStatsTaskSource(req.body?.source);
-  const itemCounts = getStatsTaskItemCounts({
-    taskType: normalizedTaskType,
-    episodes,
-    dramaIds,
-    playCountDramas,
-  });
-
-  if (!["play_count", "id", "revenue"].includes(normalizedTaskType)) {
-    res.status(400).json({ error: "Invalid taskType" });
-    return null;
-  }
-
-  if (normalizedTaskType === "revenue" && !dramaIds.length) {
-    res.status(400).json({ error: "Missing dramaIds" });
-    return null;
-  }
-
-  if (normalizedTaskType !== "revenue" && !episodes.length) {
-    res.status(400).json({ error: "Missing episodes" });
-    return null;
-  }
-
-  if (isStatsTaskItemLimitExceeded(itemCounts)) {
-    res.status(400).json({
-      success: false,
-      code: "TASK_ITEM_LIMIT_EXCEEDED",
-      message: `单次统计最多处理 ${STATS_TASK_MAX_ITEMS} 个条目。`,
-      limit: STATS_TASK_MAX_ITEMS,
-    });
-    return null;
-  }
-
-  const task = createStatsTask({
-    platform,
-    taskType: normalizedTaskType,
-    episodes,
-    dramaIds,
-    playCountDramas,
-    source,
-    clientKey: req.ip,
-  });
-  const enqueueResult = statsTaskEngine.enqueue(task);
-  if (!enqueueResult.accepted) {
-    const code = enqueueResult.code === "TASK_CLIENT_QUEUE_FULL"
-      ? "TASK_CLIENT_QUEUE_FULL"
-      : "TASK_QUEUE_FULL";
-    const message = code === "TASK_CLIENT_QUEUE_FULL"
-      ? "当前设备排队中的统计任务已达上限，请稍后重试。"
-      : "统计任务队列已满，请稍后重试。";
-    res.setHeader("Retry-After", "30");
-    res.status(429).json({
-      success: false,
-      code,
-      message,
-      platform,
-      retryAfterSeconds: 30,
-    });
-    return null;
-  }
-  task.queuePosition = enqueueResult.queuePosition;
-  if (task.queuePosition > 0) {
-    statsTaskEngine.report(task.taskId, {
-      currentAction: `任务排队中，前方 ${task.queuePosition} 个任务`,
-    });
-  }
-  return task;
+  return isStatsTaskItemLimitExceededFromRequestService(itemCounts, limit);
 }
 
 const distDirectory = path.join(__dirname, "dist");
