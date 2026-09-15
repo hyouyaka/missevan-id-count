@@ -254,7 +254,27 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
       [...new Set(elements.map((element) => element.dataset.actionMode))]
     );
     expect(actionModes.every((mode) => ["all", "trend-more", "more-only"].includes(mode))).toBe(true);
-    if (width === 320) expect(actionModes).toEqual(["trend-more"]);
+    await expect.poll(async () =>
+      page.locator('[data-cv-work-actions="true"]').evaluateAll((elements) =>
+        elements.every((element) => {
+          const [trend, compare, more] = element.querySelectorAll(":scope > button");
+          if (!trend || !compare || !more) return false;
+          const available = element.getBoundingClientRect().width;
+          const gap = Number.parseFloat(getComputedStyle(element).columnGap) || 0;
+          const expectedMode = available + 0.5 >=
+            trend.getBoundingClientRect().width +
+              compare.getBoundingClientRect().width +
+              more.getBoundingClientRect().width +
+              gap * 2
+            ? "all"
+            : available + 0.5 >=
+                trend.getBoundingClientRect().width + more.getBoundingClientRect().width + gap
+              ? "trend-more"
+              : "more-only";
+          return element.dataset.actionMode === expectedMode;
+        })
+      )
+    ).toBe(true);
     if (width === 320 || width === 1280) {
       await page.screenshot({
         path: testInfo.outputPath(`cv-profile-${width}.png`),
