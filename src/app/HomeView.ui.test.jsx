@@ -151,3 +151,32 @@ test("home peak and CV menus expose only actions supported by their rank type", 
     frontendVersion: "1.7.9",
   });
 });
+
+test("home shows query history above weekly updates and refreshes from the shared entry", async () => {
+  const user = userEvent.setup();
+  const onReplayHistoryEntry = vi.fn();
+  renderHome({
+    historyEntries: [{
+      id: "home-history",
+      platform: "missevan",
+      createdAtLabel: "2026-09-14 10:30",
+      taskType: "id",
+      items: [{ id: "11", title: "首页更新剧", segments: [] }],
+      replay: { version: 1, operation: "paid_id", dramaIds: ["11"] },
+    }],
+    onReplayHistoryEntry,
+    onDeleteHistoryEntry: vi.fn(),
+    onClearHistory: vi.fn(),
+  });
+
+  const historyTitle = screen.getByText("查询历史");
+  const weeklyTitle = await screen.findByRole("heading", { name: "一周内更新" });
+  expect(historyTitle.compareDocumentPosition(weeklyTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  await user.click(screen.getByRole("button", { name: "展开" }));
+  const historyRegion = document.getElementById(screen.getByRole("button", { name: "收起" }).getAttribute("aria-controls"));
+  expect(historyRegion).toHaveClass("max-h-[30vh]", "overflow-y-auto", "overscroll-contain");
+
+  await user.click(screen.getByRole("button", { name: "刷新 付费ID" }));
+  expect(onReplayHistoryEntry).toHaveBeenCalledWith(expect.objectContaining({ id: "home-history" }));
+});

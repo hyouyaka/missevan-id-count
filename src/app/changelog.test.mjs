@@ -60,8 +60,22 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.8.2", () => {
-  assert.equal(packageJson.version, "1.8.2");
+test("package version is 1.8.3", () => {
+  assert.equal(packageJson.version, "1.8.3");
+});
+
+test("changelog contains the 1.8.3 Manbo, CV profile, and history updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.8.3");
+
+  assert.deepEqual(entry, {
+    version: "1.8.3",
+    changes: [
+      "修复漫播弹幕统计失效的问题。",
+      "优化CV主页设计。",
+      "为查询历史添加刷新操作，可直接重复上次统计内容（旧历史因未保留任务数据无法刷新，版本更新后进行的操作可以刷新）。",
+      "在首页添加查询历史的显示。",
+    ],
+  });
 });
 
 test("changelog contains the 1.8.2 growth rank update", () => {

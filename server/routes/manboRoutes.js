@@ -303,11 +303,12 @@ export function registerManboRoutes(router, {
 
   router.post("/manbo/getdramas", expensiveDataLimiter, async (req, res) => {
     const ids = normalizeStringIds(req.body.drama_ids || []);
+    const forceRefresh = req.body?.force_refresh === true;
     const results = [];
 
     for (const id of ids) {
       try {
-        const info = await dramaService.getManboDrama(id);
+        const info = await dramaService.getManboDrama(id, { forceRefresh });
         if (info) {
           results.push({
             success: true,

@@ -407,6 +407,10 @@ body {
   padding-top: 0;
 }
 
+.home-editorial-history {
+  margin-bottom: clamp(-3rem, -3.333vw, -1.5rem);
+}
+
 .home-editorial-section-header {
   display: flex;
   align-items: flex-end;
@@ -589,6 +593,14 @@ body {
 
 .cv-profile-work-grid > article:last-child {
   border-bottom: 0;
+}
+
+.cv-profile-platform-watermark {
+  color: color-mix(in oklch, var(--foreground) 7%, transparent);
+}
+
+.cv-profile-platform-watermark [data-platform="manbo"] {
+  color: color-mix(in oklch, var(--platform-manbo) 20%, transparent);
 }
 
 @media (min-width: 48rem) {

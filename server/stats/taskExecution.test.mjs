@@ -123,6 +123,29 @@ async function runManboRevenueTask(dramaInfo, usersBySetId = {}) {
   };
 }
 
+test("refreshed ID tasks forward their source unchanged to platform operations", async () => {
+  for (const platform of ["missevan", "manbo"]) {
+    const calls = [];
+    const client = {
+      async getDanmakuSummary(...args) {
+        calls.push(args);
+        return { success: true, danmaku: 1, users: ["a"] };
+      },
+    };
+    const task = createIdTask(platform, [{ sound_id: "1", drama_id: "123456", drama_title: "剧集", episode_title: "第一集" }]);
+    task.source = "123456payIDrefresh";
+    const executor = createStatsTaskExecutor(createDependencies({
+      [platform === "manbo" ? "manboClient" : "missevanClient"]: client,
+      isLikelyManboDanmakuOverflow: async () => ({ overflow: false, totalDanmaku: 1 }),
+    }));
+    await executor(task, { report() {} });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][3], "123456payIDrefresh");
+    assert.equal(calls[0][4].signal, task.abortSignal);
+    assert.equal(task.failedCount, 0);
+  }
+});
+
 test("Missevan episode details cover every successful episode and request totals only for capped episodes", async () => {
   const episodes = [
     {

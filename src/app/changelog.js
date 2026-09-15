@@ -4,6 +4,15 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.8.3",
+    changes: [
+      "修复漫播弹幕统计失效的问题。",
+      "优化CV主页设计。",
+      "为查询历史添加刷新操作，可直接重复上次统计内容（旧历史因未保留任务数据无法刷新，版本更新后进行的操作可以刷新）。",
+      "在首页添加查询历史的显示。",
+    ],
+  },
+  {
     version: "1.8.2",
     changes: [
       "新增猫耳、漫播飙升榜，支持查看7日和4周播放量增量，并在首页提供7日榜速览。",

@@ -1,12 +1,19 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeftRightIcon,
   ArrowLeftIcon,
   CalendarDaysIcon,
   ChevronDownIcon,
+  HandCoinsIcon,
   ImageIcon,
   MicIcon,
+  MoreHorizontalIcon,
+  PlayCircleIcon,
   RefreshCwIcon,
   SearchIcon,
+  StarIcon,
+  TrendingUpIcon,
+  UserSearchIcon,
   UsersIcon,
 } from "lucide-react";
 
@@ -19,11 +26,26 @@ import {
 import {
   PlatformDramaLink,
   PlatformGlyph,
+  PlatformIdIcon,
 } from "@/app/platformTabLabel";
+import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
+import {
+  CompareActionButton,
+  fetchRankTrendAvailabilityData,
+  fetchRankTrendData,
+  logRankTrendOpen,
+  RankTrendButton,
+} from "@/app/rankTrendActions";
+import { resolveRankTrendAvailabilityIds } from "@/app/rankTrendData";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -41,6 +63,8 @@ const WORK_CATEGORY_VARIANTS = {
 const COMPACT_BADGE_CLASS_NAME = "h-[1.05rem] px-1.5 text-[0.6rem] leading-none";
 const UNKNOWN_RELEASE_KEY = "unknown";
 const NO_PARTNER_KEY = "__none__";
+const workActionButtonClassName =
+  "relative h-8 min-h-8 min-w-11 shrink-0 justify-center gap-1 rounded-[calc(var(--radius)-0.12rem)] px-2 text-xs! after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-['']";
 
 function formatPlayback(value) {
   return Number.isFinite(value) ? formatCompactMetricValue(value) : "暂无数据";
@@ -169,10 +193,81 @@ function WorkCover({ work }) {
   );
 }
 
-function WorkRow({ work, frontendVersion, onOpenSearchResult }) {
+function useMeasuredWorkActionMode() {
+  const containerRef = useRef(null);
+  const trendButtonRef = useRef(null);
+  const compareButtonRef = useRef(null);
+  const moreButtonRef = useRef(null);
+  const [mode, setMode] = useState("more-only");
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const trend = trendButtonRef.current;
+    const compare = compareButtonRef.current;
+    const more = moreButtonRef.current;
+    if (!container || !trend || !compare || !more) return undefined;
+    let cancelled = false;
+    const measure = () => {
+      if (cancelled) return;
+      const available = container.getBoundingClientRect().width;
+      const gap = Number.parseFloat(window.getComputedStyle(container).columnGap) || 0;
+      const trendWidth = trend.getBoundingClientRect().width;
+      const compareWidth = compare.getBoundingClientRect().width;
+      const moreWidth = more.getBoundingClientRect().width;
+      const next = available + 0.5 >= trendWidth + compareWidth + moreWidth + gap * 2
+        ? "all"
+        : available + 0.5 >= trendWidth + moreWidth + gap
+          ? "trend-more"
+          : "more-only";
+      setMode((current) => current === next ? current : next);
+    };
+    requestAnimationFrame(measure);
+    document.fonts?.ready?.then(() => {
+      if (!cancelled) measure();
+    });
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const observer = new ResizeObserver(measure);
+    [container, trend, compare, more].forEach((node) => observer.observe(node));
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, []);
+
+  return { containerRef, trendButtonRef, compareButtonRef, moreButtonRef, mode };
+}
+
+function WorkRow({
+  work,
+  frontendVersion,
+  handleVersionResponse,
+  onOpenSearchResult,
+  favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
+  onToggleFavorite,
+  onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
+  trendAvailable = false,
+}) {
   const platformLabel = work.platform === "manbo" ? "漫播" : "猫耳";
   const categoryLabel = WORK_CATEGORY_LABELS[work.category] || "";
   const partnersText = work.partners?.length ? work.partners.join("、") : "—";
+  const dramaId = String(work.id ?? "").trim();
+  const favoriteKey = dramaId ? `${work.platform}:${dramaId}` : "";
+  const isFavorite = Boolean(favoriteKey && favoriteKeys?.has?.(favoriteKey));
+  const canOpenSearchResult = Boolean(onOpenSearchResult && dramaId);
+  const canShowTrend = Boolean(dramaId && trendAvailable);
+  const [isTrendOpen, setIsTrendOpen] = useState(false);
+  const [statisticsActionPending, setStatisticsActionPending] = useState("");
+  const statisticsActionLockRef = useRef(false);
+  const [trendState, setTrendState] = useState({ isLoading: false, error: "", data: null });
+  const actionLayout = useMeasuredWorkActionMode();
   const mobileDisplayTitle = getInlineTaggedTitleDisplayText(work.title, {
     hasTags: Boolean(categoryLabel),
     viewport: "mobile",
@@ -189,22 +284,142 @@ function WorkRow({ work, frontendVersion, onOpenSearchResult }) {
       {categoryLabel}
     </Badge>
   ) : null;
-  function openSearchResult() {
-    onOpenSearchResult?.({
+  function openSearchResult(options = {}) {
+    if (!canOpenSearchResult) return false;
+    return onOpenSearchResult?.({
       platform: work.platform,
       id: work.id,
       titles: [work.title],
       name: work.title,
       paymentLabel: work.needpay ? "付费" : "免费",
       contentTypeLabel: categoryLabel,
-      usageAction: "cv_profile_open_search_result",
+      usageAction: options.suppressUsageLog ? undefined : "cv_profile_open_search_result",
       usageSource: "cv_profile",
+      ...(options.suppressUsageLog === true ? { suppressUsageLog: true } : {}),
     });
   }
+  function toggleFavorite() {
+    if (!dramaId) return;
+    onToggleFavorite?.({
+      platform: work.platform,
+      dramaId,
+      title: work.title,
+      cover: work.cover || "",
+      paymentLabel: work.needpay ? "付费" : "免费",
+      contentTypeLabel: categoryLabel,
+      source: "cv_profile",
+    });
+  }
+  function addCompareItem() {
+    if (!canShowTrend) return;
+    onAddCompareItem?.({
+      platform: work.platform,
+      id: dramaId,
+      title: work.title || "",
+      cover: work.cover || "",
+      compareKind: "drama",
+    });
+  }
+  async function openTrendDialog() {
+    if (!canShowTrend) return;
+    setIsTrendOpen(true);
+    logRankTrendOpen({
+      platform: work.platform,
+      id: dramaId,
+      name: work.title,
+      source: "cv_profile",
+      frontendVersion,
+    });
+    setTrendState((current) => ({ ...current, isLoading: !current.data, error: "" }));
+    try {
+      const { response, data } = await fetchRankTrendData({
+        platform: work.platform,
+        id: dramaId,
+        frontendVersion,
+      });
+      handleVersionResponse?.({
+        ...data,
+        backendVersion: getBackendVersionFromResponse(response, data),
+        frontendVersion,
+      });
+      setTrendState(response.ok && data?.success
+        ? { isLoading: false, error: "", data }
+        : { isLoading: false, error: data?.message || "趋势数据暂不可用。", data: null });
+    } catch (error) {
+      console.error("Failed to load CV profile trend", error);
+      setTrendState({ isLoading: false, error: "趋势数据暂不可用。", data: null });
+    }
+  }
+  function logStatisticsMenuClick(action) {
+    fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: work.platform,
+        action,
+        dramaId,
+        dramaName: work.title || "",
+        source: "cv_profile",
+        success: true,
+      }),
+      keepalive: true,
+    }).catch((error) => console.error("Failed to log CV profile statistics action", error));
+  }
+  async function runStatisticsAction(action) {
+    if (statisticsActionsDisabled || statisticsActionLockRef.current || !canOpenSearchResult) return;
+    const isPaidIdAction = action === "paid_id_click";
+    const startStatistics = isPaidIdAction ? onStartDramaPaidIdStatistics : onStartRevenueEstimate;
+    if (!startStatistics) return;
+    statisticsActionLockRef.current = true;
+    setStatisticsActionPending(action);
+    logStatisticsMenuClick(action);
+    try {
+      const opened = await openSearchResult({ suppressUsageLog: true });
+      if (!opened) return;
+      if (isPaidIdAction) await startStatistics(dramaId, { platform: work.platform, source: `${dramaId}payID` });
+      else await startStatistics([dramaId], { platform: work.platform, source: `${dramaId}earn` });
+    } finally {
+      statisticsActionLockRef.current = false;
+      setStatisticsActionPending("");
+    }
+  }
+  function renderTrendButton(ref, visible = true) {
+    return <RankTrendButton ref={ref} density="inline" className={visible ? "" : "pointer-events-none invisible absolute"} disabled={!canShowTrend} aria-hidden={visible ? undefined : true} tabIndex={visible ? undefined : -1} onClick={openTrendDialog} aria-label={`查看${work.title}趋势`} title={canShowTrend ? "查看趋势" : "暂无趋势数据"} />;
+  }
+  function renderCompareButton(ref, visible = true) {
+    return <CompareActionButton ref={ref} density="inline" className={visible ? "" : "pointer-events-none invisible absolute"} disabled={!canShowTrend || !onAddCompareItem} aria-hidden={visible ? undefined : true} tabIndex={visible ? undefined : -1} onClick={addCompareItem} aria-label={`加入${work.title}对比`} title={canShowTrend ? "加入对比" : "暂无趋势数据"} />;
+  }
+  function renderActions() {
+    const mode = actionLayout.mode;
+    return (
+      <div ref={actionLayout.containerRef} data-cv-work-actions="true" data-action-mode={mode} className="relative flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2">
+        {renderTrendButton(actionLayout.trendButtonRef, mode !== "more-only")}
+        {renderCompareButton(actionLayout.compareButtonRef, mode === "all")}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button ref={actionLayout.moreButtonRef} type="button" variant="outline" data-touch="compact" className={workActionButtonClassName} aria-label={`${work.title}更多操作`} title="更多操作">
+              <MoreHorizontalIcon data-icon="inline-start" />
+              <span className="whitespace-nowrap">更多</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {mode === "more-only" ? <DropdownMenuItem disabled={!canShowTrend} onSelect={openTrendDialog}><TrendingUpIcon aria-hidden="true" />趋势</DropdownMenuItem> : null}
+            {mode !== "all" ? <DropdownMenuItem disabled={!canShowTrend || !onAddCompareItem} onSelect={addCompareItem}><ArrowLeftRightIcon aria-hidden="true" />对比</DropdownMenuItem> : null}
+            <DropdownMenuItem disabled={favoriteActionsDisabled || !dramaId} onSelect={toggleFavorite}><StarIcon aria-hidden="true" className={isFavorite ? "fill-primary text-primary" : ""} />{isFavorite ? "取消收藏" : "收藏"}</DropdownMenuItem>
+            <DropdownMenuItem disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)} onSelect={() => runStatisticsAction("paid_id_click")}><UserSearchIcon aria-hidden="true" />付费ID</DropdownMenuItem>
+            <DropdownMenuItem disabled={statisticsActionsDisabled || Boolean(statisticsActionPending)} onSelect={() => runStatisticsAction("revenue_click")}><HandCoinsIcon aria-hidden="true" />收益</DropdownMenuItem>
+            <DropdownMenuItem asChild><PlatformDramaLink appearance="menu" platform={work.platform} dramaId={dramaId} source="cv_profile" dramaTitle={work.title} frontendVersion={frontendVersion} /></DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
+  }
   return (
-    <article className="relative grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-3 py-4 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4">
-      <WorkCover work={work} />
-      <div className="flex min-w-0 flex-col pr-10">
+    <article className="relative isolate grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-3 py-4 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-x-4">
+      <div data-cv-work-cover="true" className="relative z-10 flex self-center">
+        <WorkCover work={work} />
+      </div>
+      <div data-cv-work-meta="true" className="relative z-10 flex min-w-0 self-center flex-col">
         {onOpenSearchResult ? (
           <button
             type="button"
@@ -224,16 +439,9 @@ function WorkRow({ work, frontendVersion, onOpenSearchResult }) {
             {categoryBadge}
           </h4>
         )}
-        <div className="mt-2">
-          <PlatformDramaLink
-            platform={work.platform}
-            dramaId={work.id}
-            idLabel="作品ID"
-            source="cv_profile"
-            dramaTitle={work.title}
-            frontendVersion={frontendVersion}
-            className="my-0 py-0"
-          />
+        <div className="mt-2 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground" aria-label={`作品ID：${dramaId}`} title={`作品ID：${dramaId}`}>
+          <PlatformIdIcon aria-hidden="true" className="mt-[1px] size-3.5 shrink-0" platform={work.platform} tone="inherit" />
+          <span className="min-w-0 break-all">{dramaId || "暂无"}</span>
         </div>
         <div
           className="mt-2 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground"
@@ -257,17 +465,19 @@ function WorkRow({ work, frontendVersion, onOpenSearchResult }) {
           />
           <span className="min-w-0 break-words">{partnersText}</span>
         </div>
-        <strong className="mt-auto self-end pt-3 text-base font-semibold whitespace-nowrap tabular-nums">
-          {formatPlayback(work.playCount)}
-        </strong>
       </div>
-      <span
-        aria-label={`${platformLabel}平台`}
-        className="absolute top-3.5 right-2 inline-flex"
-        role="img"
-      >
-        <PlatformGlyph platform={work.platform} className="size-5" />
+      <div data-cv-work-footer="true" className="relative z-10 col-span-2 mt-3 flex min-h-8 min-w-0 items-center gap-2">
+        <div data-cv-work-playback="true" className="flex min-w-0 shrink items-center gap-1.5 text-base font-semibold text-foreground" aria-label={`播放量：${formatPlayback(work.playCount)}`} title={`播放量：${formatPlayback(work.playCount)}`}>
+          <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 whitespace-nowrap tabular-nums">{formatPlayback(work.playCount)}</span>
+        </div>
+        {renderActions()}
+      </div>
+      <span aria-hidden="true" data-cv-work-watermark="true" className="cv-profile-platform-watermark pointer-events-none absolute right-3 top-3 z-0 inline-flex select-none">
+        <PlatformGlyph platform={work.platform} tone="inherit" className="size-[4.75rem] sm:size-[5.5rem]" />
       </span>
+      <span className="sr-only">{platformLabel}平台</span>
+      {isTrendOpen ? <LazyRankTrendDialog open={isTrendOpen} onOpenChange={setIsTrendOpen} item={{ ...work, id: dramaId, name: work.title }} platform={work.platform} trendState={trendState} frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} /> : null}
     </article>
   );
 }
@@ -380,6 +590,104 @@ function selectionsEqual(left, right) {
   return left.size === right.size && [...left].every((key) => right.has(key));
 }
 
+function MultiSelectFilterContent({
+  label,
+  options,
+  draftSelection,
+  onApply,
+  onQueryChange,
+  onToggle,
+  query,
+  searchable,
+  title,
+  visibleOptions,
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {title ? <div className="shrink-0 font-semibold text-foreground">{title}</div> : null}
+      {searchable ? (
+        <div className="relative shrink-0">
+          <SearchIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            value={query}
+            className="h-8 min-h-8 pl-8"
+            placeholder="搜索搭档"
+            aria-label="搜索搭档"
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {visibleOptions.length ? (
+          <div className="flex flex-wrap content-start gap-x-2 gap-y-0 py-0.5">
+            {visibleOptions.map((option) => {
+              const selected = draftSelection.has(option.key);
+              return (
+                <Button
+                  key={option.key}
+                  type="button"
+                  variant="ghost"
+                  className="h-auto min-h-11 max-w-full shrink whitespace-normal border-0! bg-transparent! px-0 py-1 shadow-none! hover:bg-transparent! focus-visible:ring-2"
+                  aria-pressed={selected}
+                  aria-label={`筛选${option.label}，${option.count}部作品`}
+                  onClick={() => onToggle(option.key)}
+                >
+                  <span className={`pointer-events-none flex h-auto min-h-9 min-w-0 max-w-full items-center justify-center rounded-full border px-3 py-1.5 text-left text-sm leading-5 ${selected
+                    ? "border-[color-mix(in_oklch,var(--primary)_24%,transparent)] bg-primary font-semibold text-primary-foreground shadow-[var(--shadow-control)]"
+                    : "border-border/75 bg-background text-foreground group-hover/button:border-[var(--border-warm)] group-hover/button:bg-surface-hover-strong"}`}>
+                    <span className="min-w-0 break-words">{option.label} · <span className="tabular-nums">{option.count}</span></span>
+                  </span>
+                </Button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+            {searchable ? "未找到匹配的搭档" : "暂无可筛选选项"}
+          </div>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center justify-between gap-2 border-t pt-2">
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-touch="compact"
+            className="h-7 min-h-7 rounded-full px-2.5"
+            onClick={() => onToggle(null, true)}
+          >
+            全选
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-touch="compact"
+            className="h-7 min-h-7 rounded-full px-2.5"
+            onClick={() => onToggle(null, false)}
+          >
+            清空
+          </Button>
+        </div>
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          data-touch="compact"
+          className="h-7 min-h-7 rounded-full px-3"
+          onClick={onApply}
+        >
+          应用
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function MultiSelectFilter({
   label,
   options,
@@ -387,8 +695,8 @@ function MultiSelectFilter({
   onCommit,
   searchable = false,
 }) {
-  const baseId = useId();
   const selectionKey = [...selection].sort().join("\u0000");
+  const triggerRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [draftSelection, setDraftSelection] = useState(() => new Set(selection));
   const [query, setQuery] = useState("");
@@ -398,6 +706,43 @@ function MultiSelectFilter({
     setDraftSelection(new Set(selection));
     setQuery("");
   }, [selection, selectionKey]);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") {
+      return undefined;
+    }
+    const visualViewport = window.visualViewport;
+    let animationFrame = 0;
+    const keepTriggerInViewport = () => {
+      const ensureTriggerIsVisible = () => {
+        const trigger = triggerRef.current;
+        if (!trigger) return;
+        const triggerBounds = trigger.getBoundingClientRect();
+        const viewportTop = visualViewport?.offsetTop ?? 0;
+        const viewportLeft = visualViewport?.offsetLeft ?? 0;
+        const viewportBottom = viewportTop + (visualViewport?.height ?? window.innerHeight);
+        const viewportRight = viewportLeft + (visualViewport?.width ?? window.innerWidth);
+        if (
+          triggerBounds.top < viewportTop ||
+          triggerBounds.bottom > viewportBottom ||
+          triggerBounds.left < viewportLeft ||
+          triggerBounds.right > viewportRight
+        ) {
+          trigger.scrollIntoView({ behavior: "instant", block: "nearest", inline: "nearest" });
+        }
+      };
+      ensureTriggerIsVisible();
+      cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(ensureTriggerIsVisible);
+    };
+    window.addEventListener("resize", keepTriggerInViewport);
+    visualViewport?.addEventListener("resize", keepTriggerInViewport);
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", keepTriggerInViewport);
+      visualViewport?.removeEventListener("resize", keepTriggerInViewport);
+    };
+  }, [open]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase("zh-Hans-CN");
   const visibleOptions = normalizedQuery
@@ -414,11 +759,17 @@ function MultiSelectFilter({
         ? "未选择"
         : `${selectedCount}/${options.length}`;
 
-  function commitDraftSelection() {
+  const commitDraftSelection = useCallback(() => {
     if (!selectionsEqual(draftSelection, selection)) {
       onCommit(new Set(draftSelection));
     }
-  }
+  }, [draftSelection, onCommit, selection]);
+
+  const closeAndCommit = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+    commitDraftSelection();
+  }, [commitDraftSelection]);
 
   function handleOpenChange(nextOpen) {
     if (nextOpen) {
@@ -427,132 +778,63 @@ function MultiSelectFilter({
       setOpen(true);
       return;
     }
-    setOpen(false);
-    setQuery("");
-    commitDraftSelection();
+    closeAndCommit();
   }
 
-  function applyDraftSelection() {
-    setOpen(false);
-    setQuery("");
-    commitDraftSelection();
-  }
-
-  function toggleOption(key, checked) {
+  function toggleOption(key, selectAll) {
     setDraftSelection((current) => {
+      if (key == null) {
+        return selectAll ? new Set(options.map((option) => option.key)) : new Set();
+      }
       const next = new Set(current);
-      if (checked) {
-        next.add(key);
-      } else {
+      if (next.has(key)) {
         next.delete(key);
+      } else {
+        next.add(key);
       }
       return next;
     });
   }
 
+  const filterContentProps = {
+    label,
+    options,
+    draftSelection,
+    onApply: closeAndCommit,
+    onQueryChange: setQuery,
+    onToggle: toggleOption,
+    query,
+    searchable,
+    visibleOptions,
+  };
+  const trigger = (
+    <Button
+      ref={triggerRef}
+      type="button"
+      size="sm"
+      variant="outline"
+      data-touch="compact"
+      className="h-8 min-h-8 w-fit max-w-full justify-start gap-[3px]! rounded-full px-1.5! text-[13px]! leading-none has-data-[icon=inline-end]:pr-1.5! sm:w-auto sm:min-w-28 sm:justify-between sm:gap-1.5! sm:px-3! sm:text-sm! sm:has-data-[icon=inline-end]:pr-2!"
+      aria-label={`${label}筛选，${summary}`}
+    >
+      <span className="truncate sm:hidden">{label}·{summary === "全部" ? "全" : summary}</span>
+      <span className="hidden truncate sm:inline">{label} · {summary}</span>
+      <ChevronDownIcon data-icon="inline-end" className="size-3 shrink-0 sm:size-3.5" />
+    </Button>
+  );
+
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          data-touch="compact"
-          className="h-8 min-h-8 w-full justify-between rounded-full px-3 text-sm! leading-none sm:w-auto sm:min-w-28"
-          aria-label={`${label}筛选，${summary}`}
-        >
-          <span className="truncate">{label} · {summary}</span>
-          <ChevronDownIcon data-icon="inline-end" />
-        </Button>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-[min(20rem,calc(100vw-2rem))] gap-2 p-3"
+        collisionPadding={8}
+        sticky="always"
+        className="max-h-[var(--radix-popover-content-available-height)] w-[min(20rem,calc(100vw-2rem))] overflow-hidden p-3"
         aria-label={`${label}筛选选项`}
-        onOpenAutoFocus={searchable
-          ? (event) => event.preventDefault()
-          : undefined}
+        onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        {searchable ? (
-          <div className="relative">
-            <SearchIcon
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
-              value={query}
-              className="h-8 pl-8"
-              placeholder="搜索搭档"
-              aria-label="搜索搭档"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-        ) : null}
-        <div className="max-h-64 overflow-y-auto overscroll-contain py-1">
-          {visibleOptions.length ? (
-            <div className="flex flex-col gap-1">
-              {visibleOptions.map((option) => {
-                const optionId = `${baseId}-${option.key}`;
-                return (
-                  <label
-                    key={option.key}
-                    htmlFor={optionId}
-                    className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
-                  >
-                    <Checkbox
-                      id={optionId}
-                      aria-label={option.label}
-                      checked={draftSelection.has(option.key)}
-                      onCheckedChange={(checked) => toggleOption(option.key, checked === true)}
-                    />
-                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                      {option.count}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-              未找到匹配的搭档
-            </div>
-          )}
-        </div>
-        <div className="flex items-center justify-between gap-2 border-t pt-2">
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-touch="compact"
-              className="h-7 min-h-7 rounded-full px-2.5"
-              onClick={() => setDraftSelection(new Set(options.map((option) => option.key)))}
-            >
-              全选
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-touch="compact"
-              className="h-7 min-h-7 rounded-full px-2.5"
-              onClick={() => setDraftSelection(new Set())}
-            >
-              清空
-            </Button>
-          </div>
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            data-touch="compact"
-            className="h-7 min-h-7 rounded-full px-3"
-            onClick={applyDraftSelection}
-          >
-            应用
-          </Button>
-        </div>
+        <MultiSelectFilterContent {...filterContentProps} title={`${label}筛选`} />
       </PopoverContent>
     </Popover>
   );
@@ -562,7 +844,7 @@ function WorksToolbar({
   groups,
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+    <div className="flex flex-wrap items-center gap-1 sm:gap-2">
       {groups.map((group) => (
         <MultiSelectFilter
           key={group.key}
@@ -589,6 +871,13 @@ export function CvProfileView({
   partnersFilter = "all",
   onRouteStateChange,
   onOpenSearchResult,
+  favoriteKeys = new Set(),
+  favoriteActionsDisabled = false,
+  statisticsActionsDisabled = false,
+  onToggleFavorite,
+  onAddCompareItem,
+  onStartDramaPaidIdStatistics,
+  onStartRevenueEstimate,
 }) {
   const [requestRevision, setRequestRevision] = useState(0);
   const [state, setState] = useState({
@@ -820,6 +1109,77 @@ export function CvProfileView({
     appliedSelections,
     works,
   ]);
+  const renderedWorks = useMemo(
+    () => filteredWorks.length > PROGRESSIVE_RENDER_THRESHOLD
+      ? filteredWorks.slice(0, visibleCount)
+      : filteredWorks,
+    [filteredWorks, visibleCount]
+  );
+  const trendLookupByPlatform = useMemo(() => ({
+    missevan: Array.from(new Set(
+      renderedWorks.filter((work) => work?.platform !== "manbo")
+        .map((work) => String(work?.id ?? "").trim())
+        .filter(Boolean)
+    )).sort(),
+    manbo: Array.from(new Set(
+      renderedWorks.filter((work) => work?.platform === "manbo")
+        .map((work) => String(work?.id ?? "").trim())
+        .filter(Boolean)
+    )).sort(),
+  }), [renderedWorks]);
+  const missevanTrendLookupKey = trendLookupByPlatform.missevan.join("|");
+  const manboTrendLookupKey = trendLookupByPlatform.manbo.join("|");
+  const [trendEligibility, setTrendEligibility] = useState({
+    missevan: { ids: new Set(), lookupKey: "" },
+    manbo: { ids: new Set(), lookupKey: "" },
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    [
+      ["missevan", trendLookupByPlatform.missevan, missevanTrendLookupKey],
+      ["manbo", trendLookupByPlatform.manbo, manboTrendLookupKey],
+    ].forEach(([platform, ids, lookupKey]) => {
+      setTrendEligibility((current) => ({
+        ...current,
+        [platform]: { ids: new Set(), lookupKey },
+      }));
+      if (!ids.length) return;
+      fetchRankTrendAvailabilityData({ platform, ids, frontendVersion })
+        .then(({ response, data } = {}) => {
+          if (cancelled) return;
+          setTrendEligibility((current) => ({
+            ...current,
+            [platform]: {
+              lookupKey,
+              ids: response?.ok && data?.success
+                ? resolveRankTrendAvailabilityIds({ response, data, requestedIds: ids })
+                : new Set(),
+            },
+          }));
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.error(`Failed to load CV profile ${platform} trend eligibility`, error);
+            setTrendEligibility((current) => ({
+              ...current,
+              [platform]: { ids: new Set(), lookupKey },
+            }));
+          }
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [frontendVersion, manboTrendLookupKey, missevanTrendLookupKey, trendLookupByPlatform]);
+  const availableTrendIdsByPlatform = useMemo(() => ({
+    missevan: trendEligibility.missevan.lookupKey === missevanTrendLookupKey
+      ? trendEligibility.missevan.ids
+      : new Set(),
+    manbo: trendEligibility.manbo.lookupKey === manboTrendLookupKey
+      ? trendEligibility.manbo.ids
+      : new Set(),
+  }), [missevanTrendLookupKey, manboTrendLookupKey, trendEligibility]);
 
   if (state.status === "loading") {
     return <CvProfileSkeleton />;
@@ -881,9 +1241,6 @@ export function CvProfileView({
       ];
     })
   );
-  const renderedWorks = filteredWorks.length > PROGRESSIVE_RENDER_THRESHOLD
-    ? filteredWorks.slice(0, visibleCount)
-    : filteredWorks;
   const hasMore = renderedWorks.length < filteredWorks.length;
   const emptyLabel = works.length ? "当前筛选下暂无作品" : "暂无作品数据";
 
@@ -990,7 +1347,16 @@ export function CvProfileView({
                   key={`${work.platform}:${work.id}`}
                   work={work}
                   frontendVersion={frontendVersion}
+                  handleVersionResponse={handleVersionResponse}
                   onOpenSearchResult={onOpenSearchResult}
+                  favoriteKeys={favoriteKeys}
+                  favoriteActionsDisabled={favoriteActionsDisabled}
+                  statisticsActionsDisabled={statisticsActionsDisabled}
+                  onToggleFavorite={onToggleFavorite}
+                  onAddCompareItem={onAddCompareItem}
+                  onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+                  onStartRevenueEstimate={onStartRevenueEstimate}
+                  trendAvailable={availableTrendIdsByPlatform[work.platform === "manbo" ? "manbo" : "missevan"].has(String(work.id))}
                 />
               ))}
             </div>

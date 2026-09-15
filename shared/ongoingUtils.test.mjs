@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildOngoingCvOptions,
   buildOngoingResponse,
+  filterOngoingItemsByCvNames,
   isOngoingNewDrama,
   isOngoingEmptyPaidDanmakuMetric,
   normalizeOngoingIdList,
@@ -37,6 +39,37 @@ test("normalizeOngoingIdList accepts Upstash ongoing record snapshots", () => {
     }),
     ["85562", "86684"]
   );
+});
+
+test("ongoing CV options count each main role once per drama and sort predictably", () => {
+  const options = buildOngoingCvOptions([
+    { id: "1", main_cvs: [" 阿杰 ", "边江", "阿杰"] },
+    { id: "2", main_cvs: ["边江", "锦鲤"] },
+    { id: "3", main_cvs: ["阿杰", "", null] },
+    { id: "4", main_cvs: null },
+  ]);
+
+  assert.deepEqual(options, [
+    { name: "阿杰", count: 2 },
+    { name: "边江", count: 2 },
+    { name: "锦鲤", count: 1 },
+  ]);
+});
+
+test("ongoing CV filtering uses immediate OR matching without reordering source items", () => {
+  const items = [
+    { id: "3", main_cvs: ["甲"] },
+    { id: "1", main_cvs: ["乙", "丙"] },
+    { id: "2", main_cvs: ["丁"] },
+    { id: "4", main_cvs: [] },
+  ];
+
+  assert.equal(filterOngoingItemsByCvNames(items, new Set()), items);
+  assert.deepEqual(
+    filterOngoingItemsByCvNames(items, new Set([" 丙 ", "甲"])).map((item) => item.id),
+    ["3", "1"]
+  );
+  assert.deepEqual(filterOngoingItemsByCvNames(items, new Set(["不存在"])), []);
 });
 
 test("buildOngoingResponse filters listed dramas and computes window deltas", () => {

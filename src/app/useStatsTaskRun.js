@@ -60,6 +60,15 @@ function getRunKey(platform, runId) {
   return `${platform}:${runId}`;
 }
 
+function cloneRunData(value) {
+  if (value == null) return null;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return null;
+  }
+}
+
 export function createStatsTaskRunController(initialOptions = {}) {
   let latestOptions = initialOptions;
   const contexts = new Map();
@@ -154,7 +163,7 @@ export function createStatsTaskRunController(initialOptions = {}) {
     }
   }
 
-  function beginRun(platform) {
+  function beginRun(platform, runData = null) {
     const meta = getMeta(platform);
     const previous = activeContexts.get(platform);
     if (previous) {
@@ -181,6 +190,7 @@ export function createStatsTaskRunController(initialOptions = {}) {
       elapsedTimer: null,
       activeTaskId: "",
       isActive: true,
+      runData: cloneRunData(runData),
     };
     contexts.set(getRunKey(platform, context.runId), context);
     activeContexts.set(platform, context);
@@ -314,7 +324,7 @@ export function createStatsTaskRunController(initialOptions = {}) {
         return true;
       }
       if (snapshot.status === "completed") {
-        getOptions().onCompleted?.({ platform, runId, taskId, taskType: resolvedTaskType, snapshot });
+        getOptions().onCompleted?.({ platform, runId, taskId, taskType: resolvedTaskType, snapshot, runData: context.runData });
         return true;
       }
       if (snapshot.status === "cancelled") {

@@ -1200,7 +1200,48 @@ test("stats task source is normalized for favorite refresh logs", async () => {
 
   assert.equal(normalizeStatsTaskSource(" favorite "), "favorite");
   assert.equal(normalizeStatsTaskSource("x".repeat(80)), "x".repeat(40));
+  assert.equal(normalizeStatsTaskSource(" 123456payIDrefresh "), "123456payIDrefresh");
+  assert.equal(normalizeStatsTaskSource(`${"x".repeat(40)}refresh`), `${"x".repeat(40)}refresh`);
+  assert.equal(normalizeStatsTaskSource(`${"x".repeat(80)}refresh`), `${"x".repeat(40)}refresh`);
   assert.equal(normalizeStatsTaskSource(""), "");
+});
+
+test("refreshed task sources survive request creation and terminal usage logging", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeStatsTaskSource, buildStatsTaskCompletedUsageLog, normalizeUsageLogFields, buildOperationTraceLog } = await import("./server.js");
+  const { createStatsTaskRequestService } = await import("./server/stats/taskRequestService.js");
+  const tasks = [];
+  const service = createStatsTaskRequestService({
+    createTaskId: () => `refresh-${tasks.length}`,
+    normalizeSource: normalizeStatsTaskSource,
+    statsTaskEngine: {
+      enqueue(task) { tasks.push(task); return { accepted: true, queuePosition: 0 }; },
+      getSnapshot() { return null; },
+      touch() { return null; },
+      report() {},
+    },
+  });
+  for (const platform of ["missevan", "manbo"]) {
+    for (const [taskType, baseSource] of [["id", "123456payID"], ["id", "custom"], ["play_count", "custom"], ["revenue", "x".repeat(40)]]) {
+      const source = `${baseSource}refresh`;
+      const res = { setHeader() {}, json() {}, status() { return this; } };
+      service.createStatsTaskFromRequest({ body: {
+        platform, taskType, source, dramaIds: ["123456"],
+        episodes: [{ drama_id: "123456", sound_id: "1" }],
+      } }, res);
+      const task = tasks.at(-1);
+      assert.equal(task.source, source);
+      const log = buildStatsTaskCompletedUsageLog({ ...task, status: "completed" });
+      assert.equal(log.source, source);
+      assert.equal(log.taskType, taskType);
+      assert.equal(log.platform, platform);
+      assert.equal(normalizeUsageLogFields(log, "calculate").source, source);
+      const operationLog = buildOperationTraceLog({ fields: { source: task.source }, attempts: [] }, {
+        action: "danmaku_summary", source: task.source, success: true,
+      });
+      assert.equal(operationLog.fields.source, source);
+    }
+  }
 });
 
 test("danmaku operation logs merge normal requests and retain anomalous attempts", async () => {

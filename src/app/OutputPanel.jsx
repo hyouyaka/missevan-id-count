@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { BeanIcon, ChevronDownIcon, ChevronUpIcon, CoinsIcon, GemIcon, HandCoinsIcon, MessagesSquareIcon, PauseCircleIcon, PlayCircleIcon, ShoppingCartIcon, Trash2Icon, UsersRoundIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, CoinsIcon, GemIcon, HandCoinsIcon, PauseCircleIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { StatsHistoryList } from "@/app/StatsHistoryList";
 import {
   buildRevenueSummary,
   buildRevenuePaidMetricSegments,
@@ -287,132 +288,6 @@ function getEpisodeDetailsForDrama(dramaId, details = []) {
   return filteredTitles;
 }
 
-const HISTORY_METRIC_ICON_MAP = {
-  playCount: PlayCircleIcon,
-  danmakuCount: MessagesSquareIcon,
-  uniqueUsers: UsersRoundIcon,
-  paidCount: ShoppingCartIcon,
-  rewardNum: GemIcon,
-  revenue: HandCoinsIcon,
-};
-
-function getHistoryMetricIcon(metric, platform) {
-  if (metric?.key === "rewardTotal") {
-    return platform === "manbo" ? BeanIcon : CoinsIcon;
-  }
-  return HISTORY_METRIC_ICON_MAP[getHistoryMetricIconKey(metric)] || null;
-}
-
-function HistoryMetric({ metric, platform }) {
-  const Icon = getHistoryMetricIcon(metric, platform);
-
-  return (
-    <div className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-      {Icon ? <Icon className="size-3.5 shrink-0 text-foreground/72" aria-hidden="true" /> : null}
-      <span className="sr-only">{metric.label}</span>
-      <span className="font-medium text-foreground">{metric.value}</span>
-    </div>
-  );
-}
-
-function getHistoryPlatformLabel(entry) {
-  return entry?.platformLabel || (entry?.platform === "manbo" ? "漫播" : "猫耳");
-}
-
-function ResultHistory({ entries = [], onDeleteHistoryEntry, onClearHistory }) {
-  const [collapsed, setCollapsed] = useState(true);
-
-  if (!entries?.length) {
-    return null;
-  }
-
-  return (
-    <div className="grid gap-2 rounded-lg border border-border/80 bg-background/55 p-2.5 sm:px-3">
-      <div className="flex min-h-7 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <div className="shrink-0 text-xs font-semibold text-foreground/80">查询历史</div>
-          <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[0.62rem] tabular-nums">
-            {entries.length}
-          </Badge>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-touch="compact"
-            className="relative h-7 overflow-visible px-1.5 text-[10px] text-muted-foreground after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
-            aria-expanded={!collapsed}
-            aria-controls="stats-result-history"
-            onClick={() => setCollapsed((current) => !current)}
-          >
-            {collapsed ? <ChevronDownIcon data-icon="inline-start" /> : <ChevronUpIcon data-icon="inline-start" />}
-            {collapsed ? "展开" : "收起"}
-          </Button>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-touch="compact"
-          className="relative h-7 overflow-visible px-1.5 text-[10px] text-muted-foreground after:absolute after:inset-x-0 after:-inset-y-2 after:rounded-md after:content-['']"
-          onClick={onClearHistory}
-        >
-          <Trash2Icon data-icon="inline-start" />
-          清空
-        </Button>
-      </div>
-
-      {!collapsed ? <div id="stats-result-history" className="grid gap-2 border-t border-border/70 pt-2">
-        {entries.map((entry, index) => (
-          <div
-            key={entry.id}
-            className={cn("grid gap-1.5", index > 0 && "border-t border-border/70 pt-2")}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="text-[11px] font-medium text-foreground/78">{entry.createdAtLabel} {getHistoryPlatformLabel(entry)}</div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-6 text-muted-foreground"
-                onClick={() => onDeleteHistoryEntry?.(entry)}
-                aria-label={`删除 ${entry.createdAtLabel} ${getHistoryPlatformLabel(entry)} 这条历史`}
-              >
-                <XIcon />
-              </Button>
-            </div>
-
-            {entry.summaryMetrics?.length ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <div className="text-[11px] font-medium text-foreground/78">汇总：</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {entry.summaryMetrics.map((metric) => (
-                    <HistoryMetric key={`${entry.id}-${metric.key}`} metric={metric} platform={entry.platform} />
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="grid gap-1 text-[11px] leading-5 text-foreground/76">
-              {entry.items?.map((item) => (
-                <div key={item.id} className="flex flex-wrap items-center gap-1.5 break-words">
-                  <span className="font-medium text-foreground/82">{item.title}：</span>
-                  {item.segments?.map((segment) => (
-                    <HistoryMetric
-                      key={`${item.id}-${segment.metricKey}-${segment.value}-${segment.unit || "none"}`}
-                      metric={segment}
-                      platform={entry.platform}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div> : null}
-    </div>
-  );
-}
-
 export function OutputPanel({
   platform,
   progress,
@@ -435,6 +310,11 @@ export function OutputPanel({
   onCancelStatistics,
   onDeleteHistoryEntry,
   onClearHistory,
+  onReplayHistoryEntry,
+  isReplayPreparing = false,
+  replayPreparingEntryIds = [],
+  historyActionsDisabled = false,
+  onCancelReplayPreparation,
 }) {
   const resolvedRevenueSummary = resolveRevenueSummaryForDisplay(
     revenueResults,
@@ -480,35 +360,35 @@ export function OutputPanel({
       : historyEntries;
   const hasHistoryEntries = Boolean(visibleHistoryEntries?.length);
 
-  if (!isRunning && !hasAnyResults && !hasHistoryEntries) {
+  if (!isRunning && !isReplayPreparing && !hasAnyResults && !hasHistoryEntries) {
     return null;
   }
 
   return (
     <div className="grid gap-3">
-      {isRunning ? (
+      {isRunning || isReplayPreparing ? (
         <div role="status" aria-live="polite" className="grid gap-2 rounded-lg border border-border/80 bg-card p-3 shadow-[var(--shadow-card)]">
           <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
             <div className="min-w-0 break-words text-sm font-semibold leading-5 text-foreground">
-              {currentAction || "等待执行操作"}
+              {isReplayPreparing && !isRunning ? "正在重新加载作品当前数据" : currentAction || "等待执行操作"}
             </div>
             <div className="flex min-w-0 items-center justify-between gap-2 sm:justify-end">
-              <span className="mr-auto shrink-0 text-[11px] text-muted-foreground sm:mr-0">处理用时：{formatElapsed(elapsedMs)}</span>
-              <span className="text-sm font-semibold text-foreground tabular-nums">{progress}%</span>
+              <span className="mr-auto shrink-0 text-[11px] text-muted-foreground sm:mr-0">{isReplayPreparing && !isRunning ? "正在准备" : `处理用时：${formatElapsed(elapsedMs)}`}</span>
+              {isReplayPreparing && !isRunning ? null : <span className="text-sm font-semibold text-foreground tabular-nums">{progress}%</span>}
               <Badge>进行中</Badge>
               <Button
                 variant="secondary"
                 size="sm"
                 data-touch="compact"
                 className="relative overflow-visible after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-['']"
-                onClick={onCancelStatistics}
+                onClick={isReplayPreparing && !isRunning ? onCancelReplayPreparation : onCancelStatistics}
               >
                 <PauseCircleIcon data-icon="inline-start" />
                 取消
               </Button>
             </div>
           </div>
-          <Progress value={progress} aria-label="统计进度" className="h-2 rounded-full bg-muted" indicatorClassName="bg-primary" />
+          <Progress value={isReplayPreparing && !isRunning ? 0 : progress} aria-label="统计进度" className="h-2 rounded-full bg-muted" indicatorClassName="bg-primary" />
         </div>
       ) : null}
 
@@ -665,7 +545,15 @@ export function OutputPanel({
           </div>
         ) : null}
 
-      <ResultHistory entries={visibleHistoryEntries} onDeleteHistoryEntry={onDeleteHistoryEntry} onClearHistory={onClearHistory} />
+      <StatsHistoryList
+        entries={visibleHistoryEntries}
+        onDeleteHistoryEntry={onDeleteHistoryEntry}
+        onClearHistory={onClearHistory}
+        onReplayHistoryEntry={onReplayHistoryEntry}
+        isReplayPreparing={isReplayPreparing}
+        replayPreparingEntryIds={replayPreparingEntryIds}
+        actionsDisabled={historyActionsDisabled || isRunning}
+      />
     </div>
   );
 }

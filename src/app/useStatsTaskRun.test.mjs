@@ -149,6 +149,29 @@ test("completed snapshots record once and failed snapshots reject the task run",
   failed.controller.finishRun("manbo", failedRun.runId, "failed");
 });
 
+test("completion receives an immutable copy of the run replay context", async () => {
+  const harness = createControllerHarness({
+    getTaskSnapshot: async () => ({ status: "completed", result: { idResults: [] } }),
+  });
+  const replay = {
+    version: 1,
+    operation: "id",
+    dramas: [{ dramaId: "100", episodeIds: ["10"] }],
+  };
+  const run = harness.controller.beginRun("missevan", { replay });
+  replay.dramas[0].episodeIds.push("changed-after-start");
+  await harness.controller.startStatsTask("missevan", "id", {}, run.runId, run.signal);
+
+  assert.deepEqual(harness.events.completed[0].runData, {
+    replay: {
+      version: 1,
+      operation: "id",
+      dramas: [{ dramaId: "100", episodeIds: ["10"] }],
+    },
+  });
+  harness.controller.finishRun("missevan", run.runId, "completed");
+});
+
 test("cancellation and disposal clear elapsed and pending poll timers", async () => {
   const snapshots = [
     { status: "running" },

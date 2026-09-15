@@ -1,23 +1,7 @@
+import { getManboRevenueType as resolveManboRevenueType, getRevenueEpisodesForDrama } from "../../shared/revenueEpisodeSelection.js";
+
 export function getManboRevenueType(info, isMemberDramaInfo) {
-  const drama = info?.drama || {};
-  const episodes = Array.isArray(info?.episodes?.episode) ? info.episodes.episode : [];
-  const isMemberDrama = typeof isMemberDramaInfo === "function"
-    ? isMemberDramaInfo(info)
-    : false;
-  const hasPaidEpisodes = episodes.some((episode) => Number(episode?.price ?? 0) > 0);
-  const hasEpisodePricing =
-    Number(drama.pay_type ?? 0) !== 1
-    && (Number(drama.price ?? 0) > 0 || Number(drama.member_price ?? 0) > 0);
-  if (isMemberDrama) {
-    return "member";
-  }
-  if (Number(drama.pay_type ?? 0) !== 1 && (hasPaidEpisodes || hasEpisodePricing)) {
-    return "episode";
-  }
-  if (Number(drama.pay_type ?? 0) === 1) {
-    return "season";
-  }
-  return "unknown";
+  return resolveManboRevenueType(info, typeof isMemberDramaInfo === "function" ? isMemberDramaInfo : () => false);
 }
 
 function createEpisodeDetail({
@@ -236,42 +220,11 @@ export function createStatsTaskExecutor(dependencies = {}) {
   }
 
   function getManboRevenueType(info) {
-    const drama = info?.drama || {};
-    const episodes = Array.isArray(info?.episodes?.episode) ? info.episodes.episode : [];
-    const isMemberDrama = isManboMemberDramaInfo(info);
-    const hasPaidEpisodes = episodes.some((episode) => Number(episode?.price ?? 0) > 0);
-    const hasEpisodePricing =
-      Number(drama.pay_type ?? 0) !== 1
-      && (Number(drama.price ?? 0) > 0 || Number(drama.member_price ?? 0) > 0);
-    if (isMemberDrama) {
-      return "member";
-    }
-    if (
-      Number(drama.pay_type ?? 0) !== 1 &&
-      (hasPaidEpisodes || hasEpisodePricing)
-    ) {
-      return "episode";
-    }
-    if (
-      Number(drama.pay_type ?? 0) === 1
-    ) {
-      return "season";
-    }
-    return "unknown";
+    return resolveManboRevenueType(info, isManboMemberDramaInfo);
   }
 
   function getManboRevenueEpisodes(info, revenueType) {
-    const episodes = Array.isArray(info?.episodes?.episode) ? info.episodes.episode : [];
-    if (revenueType === "member") {
-      return episodes.filter((episode) => Number(episode?.vip_free ?? 0) === 1);
-    }
-    if (revenueType === "season") {
-      return episodes.filter((episode) => Number(episode?.pay_type ?? 0) === 1);
-    }
-    if (revenueType === "episode") {
-      return episodes.filter((episode) => Number(episode?.price ?? 0) > 0);
-    }
-    return [];
+    return getRevenueEpisodesForDrama("manbo", info, { revenueType });
   }
 
   function resolveManboSeasonPricing(dramaInfo) {
@@ -977,12 +930,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
           vip: dramaInfo?.drama?.vip,
           isMember,
         });
-        const shouldCollectPaidEpisodeUsers = revenueInfo.revenueType !== "reward_only";
-        const paidEpisodes = shouldCollectPaidEpisodeUsers
-          ? dramaInfo?.episodes?.episode?.filter((episode) => {
-              return Number(episode.need_pay ?? 0) === 1 || Number(episode.price ?? 0) > 0;
-            }) || []
-          : [];
+        const paidEpisodes = getRevenueEpisodesForDrama("missevan", dramaInfo, { revenueType: revenueInfo.revenueType });
         dramaUnit = createRevenueDramaUnit(task, title, paidEpisodes.length, 2);
         task.progressTotalUnits += Math.max(0, dramaUnit.totalUnits - 1);
         advanceRevenueProgress(task, 1, `正在统计收益：${title} / 详情`);

@@ -106,3 +106,26 @@ test("Missevan missing pay_type keeps legacy whole-drama deduped formula", () =>
   assert.equal(result.paidUserCount, 4);
   assert.equal(result.estimatedRevenueYuan, 18);
 });
+import { getRevenueEpisodesForDrama } from "./revenueEpisodeSelection.js";
+
+test("revenue search selections follow the executor's platform revenue rules", () => {
+  const episode = [
+    { sound_id: "paid", price: 1, need_pay: 1, pay_type: 1 },
+    { sound_id: "member", price: 0, vip_free: 1 },
+    { sound_id: "free", price: 0 },
+  ];
+  const cases = [
+    ["missevan", { pay_type: 0 }, []],
+    ["missevan", { pay_type: 1, vip: 1 }, []],
+    ["missevan", { pay_type: 1 }, ["paid"]],
+    ["missevan", { pay_type: 2 }, ["paid"]],
+    ["missevan", {}, ["paid"]],
+    ["manbo", { pay_type: 0, price: 0, member_price: 0 }, ["member"]],
+    ["manbo", { pay_type: 1, price: 5 }, ["paid"]],
+    ["manbo", { pay_type: 0, price: 5 }, ["paid"]],
+  ];
+  for (const [platform, drama, expectedIds] of cases) {
+    assert.deepEqual(getRevenueEpisodesForDrama(platform, { drama, episodes: { episode } }).map((item) => item.sound_id), expectedIds);
+  }
+  assert.deepEqual(getRevenueEpisodesForDrama("manbo", { drama: {}, episodes: { episode: [episode[2]] } }), []);
+});

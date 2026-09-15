@@ -33,6 +33,7 @@ const ranksDataSource = readFileSync(new URL("./ranksData.js", import.meta.url),
 const statsTaskClientSource = readFileSync(new URL("./statsTaskClient.js", import.meta.url), "utf8");
 const statsTaskRunSource = readFileSync(new URL("./useStatsTaskRun.js", import.meta.url), "utf8");
 const statsHistorySource = readFileSync(new URL("./useStatsHistory.js", import.meta.url), "utf8");
+const statsHistoryListSource = readFileSync(new URL("./StatsHistoryList.jsx", import.meta.url), "utf8");
 const searchCardMetricsSource = readFileSync(new URL("./useSearchCardMetrics.js", import.meta.url), "utf8");
 const searchResultsStateSource = readFileSync(new URL("./searchResultsState.js", import.meta.url), "utf8");
 const toolNavigationSource = readFileSync(new URL("./useToolNavigation.js", import.meta.url), "utf8");
@@ -269,7 +270,7 @@ test("ongoing platform pills include both cached platform counts", () => {
   assert.match(ongoingPanelSource, /fetchOngoingData\(\{[\s\S]*platform,[\s\S]*frontendVersion,[\s\S]*revalidate: false/);
   assert.match(ongoingPanelSource, /<PlatformTabLabel platform=\{platform\} \/>[\s\S]*platformCounts\[platform\] \?\? "—"/);
   assert.doesNotMatch(ongoingPanelSource, /\{platformLabel\}一周内更新：共\{sortedItems\.length\}部/);
-  assert.match(ongoingPanelSource, /更新：\{formatOngoingUpdatedAt\(ongoingData\?\.updatedAt\)\}/);
+  assert.match(ongoingPanelSource, /更新：\{formatOngoingUpdatedAt\(currentOngoingData\?\.updatedAt\)\}/);
 });
 
 test("desktop rank toolbar keeps pills left and compact legend right", () => {
@@ -1226,7 +1227,7 @@ test("mobile compact controls preserve visual density with non-layout hit areas"
 test("running statistics cancel keeps a compact visual with an expanded hit area", () => {
   assert.match(
     outputPanelSource,
-    /<Button[\s\S]*variant="secondary"[\s\S]*size="sm"[\s\S]*data-touch="compact"[\s\S]*after:-inset-y-1\.5[\s\S]*onClick=\{onCancelStatistics\}/
+    /<Button[\s\S]*variant="secondary"[\s\S]*size="sm"[\s\S]*data-touch="compact"[\s\S]*after:-inset-y-1\.5[\s\S]*onClick=\{isReplayPreparing && !isRunning \? onCancelReplayPreparation : onCancelStatistics\}/
   );
   assert.match(buttonSource, /sm: "h-8 /);
 });
@@ -1383,11 +1384,24 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(cvProfileViewSource, /releaseFilter/);
   assert.match(cvProfileViewSource, /partnersFilter/);
   assert.match(cvProfileViewSource, /<Popover open=\{open\} onOpenChange=\{handleOpenChange\}>/);
-  assert.match(cvProfileViewSource, /<Checkbox/);
+  assert.match(cvProfileViewSource, /collisionPadding=\{8\}/);
+  assert.match(cvProfileViewSource, /sticky="always"/);
+  assert.match(cvProfileViewSource, /trigger\.scrollIntoView\(\{ behavior: "instant", block: "nearest", inline: "nearest" \}\)/);
+  assert.match(cvProfileViewSource, /visualViewport\?\.addEventListener\("resize", keepTriggerInViewport\)/);
+  assert.match(cvProfileViewSource, /max-h-\[var\(--radix-popover-content-available-height\)\]/);
+  assert.match(cvProfileViewSource, /aria-pressed=\{selected\}/);
+  assert.match(cvProfileViewSource, /gap-x-2 gap-y-0/);
+  assert.match(cvProfileViewSource, /h-auto min-h-11 max-w-full shrink whitespace-normal border-0! bg-transparent! px-0 py-1/);
+  assert.match(cvProfileViewSource, /h-auto min-h-9 min-w-0 max-w-full items-center justify-center rounded-full border px-3 py-1\.5/);
+  assert.doesNotMatch(cvProfileViewSource, /<Checkbox/);
+  assert.doesNotMatch(cvProfileViewSource, /components\/ui\/sheet|useIsDesktopViewport|mobileTitleRef/);
+  assert.match(cvProfileViewSource, /gap-\[3px\]! rounded-full px-1\.5! text-\[13px\]!/);
+  assert.match(cvProfileViewSource, /\{label\}·\{summary === "全部" \? "全" : summary\}/);
+  assert.match(cvProfileViewSource, /className="flex flex-wrap items-center gap-1 sm:gap-2"/);
   assert.match(cvProfileViewSource, /搜索搭档/);
-  assert.match(cvProfileViewSource, /function commitDraftSelection/);
+  assert.match(cvProfileViewSource, /const commitDraftSelection = useCallback/);
   assert.match(cvProfileViewSource, />\s*应用\s*<\/Button>/);
-  assert.match(cvProfileViewSource, /onOpenAutoFocus=\{searchable[\s\S]*event\.preventDefault\(\)/);
+  assert.match(cvProfileViewSource, /onOpenAutoFocus=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(cvProfileViewSource, /matchesWorkSelections\(work, appliedSelections, "platform"\)/);
   assert.match(cvProfileViewSource, /matchesWorkSelections\(work, appliedSelections, "partners"\)/);
   assert.match(cvProfileViewSource, /getReleaseYear/);
@@ -2178,24 +2192,24 @@ test("revenue result cards append reward and revenue after paid calculation metr
 });
 
 test("running statistics keep long mobile progress copy visible", () => {
-  const runningStart = outputPanelSource.indexOf("{isRunning ? (");
+  const runningStart = outputPanelSource.indexOf("{isRunning || isReplayPreparing ? (");
   const runningEnd = outputPanelSource.indexOf("{!isRunning && hasAnyResults", runningStart);
   const runningSource = outputPanelSource.slice(runningStart, runningEnd);
 
   assert.match(runningSource, /break-words text-sm font-semibold leading-5/);
   assert.match(runningSource, /sm:grid-cols-\[minmax\(0,1fr\)_auto\]/);
   assert.doesNotMatch(runningSource, /truncate/);
-  assert.match(runningSource, /处理用时：\{formatElapsed\(elapsedMs\)\}/);
+  assert.match(runningSource, /处理用时：\$\{formatElapsed\(elapsedMs\)\}/);
   assert.match(runningSource, /\{progress\}%/);
 });
 
 test("history toolbar keeps desktop density with mobile touch targets", () => {
   assert.match(
-    outputPanelSource,
+    statsHistoryListSource,
     /data-touch="compact"[\s\S]*className="relative h-7 overflow-visible px-1\.5 text-\[10px\][\s\S]*\{collapsed \? "展开" : "收起"\}/
   );
   assert.match(
-    outputPanelSource,
+    statsHistoryListSource,
     /data-touch="compact"[\s\S]*className="relative h-7 overflow-visible px-1\.5 text-\[10px\][\s\S]*after:-inset-y-2[\s\S]*onClick=\{onClearHistory\}/
   );
   assert.doesNotMatch(
@@ -2206,7 +2220,7 @@ test("history toolbar keeps desktop density with mobile touch targets", () => {
 
 test("episode details use the requested column order and an accessible responsive table", () => {
   const helperStart = outputPanelSource.indexOf("function getEpisodeDetailsForDrama");
-  const helperEnd = outputPanelSource.indexOf("const HISTORY_METRIC_ICON_MAP", helperStart);
+  const helperEnd = outputPanelSource.indexOf("export function OutputPanel", helperStart);
   const helperSource = outputPanelSource.slice(helperStart, helperEnd);
   const detailListStart = outputPanelSource.indexOf("function EpisodeDetailList");
   const detailListEnd = outputPanelSource.indexOf("function getEpisodeDetailsForDrama", detailListStart);
@@ -2287,10 +2301,10 @@ test("completed background tasks collapse and dismiss after opening results", ()
 });
 
 test("history timestamps include platform label", () => {
-  assert.match(outputPanelSource, /function getHistoryPlatformLabel\(entry\)/);
-  assert.match(outputPanelSource, /entry\.createdAtLabel\}\s*\{getHistoryPlatformLabel\(entry\)/);
-  assert.match(outputPanelSource, /onDeleteHistoryEntry\?\.\(entry\)/);
-  assert.match(outputPanelSource, /aria-label=\{`删除 \$\{entry\.createdAtLabel\} \$\{getHistoryPlatformLabel\(entry\)\} 这条历史`\}/);
+  assert.match(statsHistoryListSource, /function getHistoryPlatformLabel\(entry\)/);
+  assert.match(statsHistoryListSource, /entry\.createdAtLabel\}[\s\S]*getHistoryPlatformLabel\(entry\)/);
+  assert.match(statsHistoryListSource, /onDeleteHistoryEntry\?\.\(entry\)/);
+  assert.match(statsHistoryListSource, /aria-label=\{`删除 \$\{entry\.createdAtLabel\} \$\{getHistoryPlatformLabel\(entry\)\} 这条历史`\}/);
 });
 
 test("header omits description and desktop link while access notices keep desktop guidance", () => {
@@ -2458,7 +2472,7 @@ test("favorites panel uses a static mobile two-row toolbar and a desktop two-row
   assert.match(favoritesPanelSource, /grid-cols-\[minmax\(12rem,1\.4fr\)_repeat\(3,minmax\(6rem,\.7fr\)\)_repeat\(2,minmax\(8rem,1fr\)\)\]/);
   assert.match(favoritesPanelSource, /<FavoriteMoreMenu/);
   assert.match(favoritesPanelSource, /<PopoverContent align="end" className="w-40 p-1\.5">/);
-  assert.match(favoritesPanelSource, /variant="primary"[\s\S]*?<FilterIcon[\s\S]*?variant="primary"[\s\S]*?<MoreHorizontalIcon/);
+  assert.match(favoritesPanelSource, /variant="primary"[\s\S]*?<SlidersHorizontalIcon[\s\S]*?variant="primary"[\s\S]*?<MoreHorizontalIcon/);
   assert.doesNotMatch(favoritesPanelSource, /<span className="truncate">筛选\{activeFilterCount/);
   assert.doesNotMatch(favoritesPanelSource, /<span className="truncate">更多<\/span>/);
   assert.match(favoritesPanelSource, /TrendingUpIcon/, "metric menu should use an increment icon");
@@ -3140,7 +3154,7 @@ test("ongoing refresh timestamp uses device timezone display", () => {
   const updatedAtFormatter = ongoingPanelSource.slice(updatedAtStart, updatedAtEnd);
 
   assert.match(ongoingPanelSource, /formatDeviceDateTime/, "ongoing panel should use shared device-time formatter");
-  assert.match(ongoingPanelSource, /更新：\{formatOngoingUpdatedAt\(ongoingData\?\.updatedAt\)\}/);
+  assert.match(ongoingPanelSource, /更新：\{formatOngoingUpdatedAt\(currentOngoingData\?\.updatedAt\)\}/);
   assert.match(ongoingPanelSource, /flex min-w-0 flex-wrap items-baseline justify-between/);
   assert.match(ongoingPanelSource, /className="shrink-0 text-xs leading-5 text-muted-foreground"/);
   assert.doesNotMatch(ongoingPanelSource, /ml-auto shrink-0 text-right text-xs leading-5 text-muted-foreground/);
@@ -3461,12 +3475,12 @@ test("ordinary stats task transport and run lifecycle live behind the stats task
   assert.match(toolViewSource, /from "@\/app\/statsTaskClient"/);
   assert.match(toolViewSource, /from "@\/app\/useStatsTaskRun"/);
   assert.match(toolViewSource, /const statsTaskRun = useStatsTaskRun\(\{/);
-  assert.match(toolViewSource, /return statsTaskRun\.beginRun\(platform\)/);
+  assert.match(toolViewSource, /statsTaskRun\.beginRun\(platform, \{ replay \}\)/);
   assert.match(toolViewSource, /return statsTaskRun\.cancelRun\(platform\)/);
   assert.match(toolViewSource, /return statsTaskRun\.startStatsTask\(platform, taskType, payload, runId, signal\)/);
   assert.match(toolViewSource, /const pageExitHandler = \(\) => \{[\s\S]*statsTaskRun\.notifyAllActiveTaskCancels\(\)/);
   assert.match(toolViewSource, /function applyTaskSnapshot\(platform, snapshot\)/);
-  assert.match(toolViewSource, /statsHistory\.recordCompletedStatsHistory\(platform, taskType, taskId, snapshot\)/);
+  assert.match(toolViewSource, /statsHistory\.recordCompletedStatsHistory\(platform, taskType, taskId, snapshot, runData\?\.replay \|\| null\)/);
   assert.ok(
     toolViewSource.indexOf("statsTaskRun.notifyAllActiveTaskCancels()") < toolViewSource.indexOf("statsTaskRun.dispose()"),
     "page-exit notification should be declared before task cleanup"
@@ -3483,7 +3497,7 @@ test("ordinary stats task transport and run lifecycle live behind the stats task
   assert.match(statsTaskRunSource, /function finishRun\(platform, runId, status = "completed"\)[\s\S]*if \(!isCurrent\(context\)\)/);
   assert.match(statsTaskRunSource, /signal\?\.removeEventListener\?\.\("abort", handleAbort\)/);
   assert.match(statsHistorySource, /export function createStatsHistoryController/);
-  assert.match(statsHistorySource, /function recordCompletedStatsHistory\(platform, taskType, taskId, snapshot\)/);
+  assert.match(statsHistorySource, /function recordCompletedStatsHistory\(platform, taskType, taskId, snapshot, replay = null\)/);
   assert.match(statsHistorySource, /meta\.completedHistoryTaskIds\.has\(normalizedTaskId\)/);
 });
 
@@ -3498,11 +3512,11 @@ test("paid ID-equivalent tasks and revenue actions pass ID-scoped stats sources"
   );
   assert.match(
     toolViewSource,
-    /startIdStatisticsForEpisodes\(\s*selectedPaidEpisodes,[\s\S]*?\{ platform, source: options\?\.source \}\s*\)/
+    /const paidSource = resolveIdStatisticsSource\(\{ platform, dramas: nextDramas, selectedEpisodes: selectedPaidEpisodes, source: options\?\.source \}\);[\s\S]*?\{ platform, source: paidSource, replay: options\?\.replay/
   );
   assert.match(
     toolViewSource,
-    /const source = resolveIdStatisticsSource\(\{[\s\S]*platform,[\s\S]*dramas: platformStatesRef\.current\[platform\]\?\.dramas,[\s\S]*selectedEpisodes,[\s\S]*source: options\?\.source,[\s\S]*\}\)/
+    /const resolvedSource = resolveIdStatisticsSource\(\{[\s\S]*platform,[\s\S]*dramas: options\.dramas \|\| platformStatesRef\.current\[platform\]\?\.dramas,[\s\S]*selectedEpisodes,[\s\S]*source: options\?\.source,[\s\S]*\}\)/
   );
   assert.match(
     toolViewSource,
@@ -3560,7 +3574,7 @@ test("ongoing paid ID and revenue shortcuts log once, suppress jump logs, and st
   assert.match(manboRoutesSource, /const suppressUsageLog = req\.body\?\.suppressUsageLog === true/);
   assert.match(manboRoutesSource, /if \(items\.length && !suppressUsageLog\)/);
   assert.match(serverSource, /\["paid_id_click", "revenue_click"\]\.includes\(action\)/);
-  assert.match(serverSource, /!\["ongoing", "ranks", "homeview"\]\.includes\(source\)/);
+  assert.match(serverSource, /!\["ongoing", "ranks", "cv_profile", "homeview"\]\.includes\(source\)/);
   assert.match(serverSource, /payload\.success !== true/);
   assert.match(serverSource, /platform,[\s\S]*action,[\s\S]*dramaId,[\s\S]*dramaName,[\s\S]*source,[\s\S]*success: true/);
 });
@@ -3586,7 +3600,35 @@ test("rank drama cards use responsive actions, plain IDs, compact metrics, and s
   assert.match(cardSource, /source: `\$\{favoriteDramaId\}payID`/);
   assert.match(cardSource, /source: `\$\{favoriteDramaId\}earn`/);
   assert.match(toolViewSource, /<RanksPanel[\s\S]*statisticsActionsDisabled=\{statisticsActionsDisabled\}[\s\S]*onStartDramaPaidIdStatistics=\{startDramaPaidIdStatistics\}[\s\S]*onStartRevenueEstimate=\{startRevenueEstimate\}/);
-  assert.match(serverSource, /!\["ongoing", "ranks", "homeview"\]\.includes\(source\)/);
+  assert.match(serverSource, /!\["ongoing", "ranks", "cv_profile", "homeview"\]\.includes\(source\)/);
+});
+
+test("CV profile work cards reuse responsive actions and platform watermarks", () => {
+  const workRowStart = cvProfileViewSource.indexOf("function WorkRow");
+  const workRowEnd = cvProfileViewSource.indexOf("function decodeFilterSelection", workRowStart);
+  const workRowSource = cvProfileViewSource.slice(workRowStart, workRowEnd);
+
+  assert.match(cvProfileViewSource, /function useMeasuredWorkActionMode/);
+  assert.match(cvProfileViewSource, /"all"[\s\S]*"trend-more"[\s\S]*"more-only"/);
+  assert.match(cvProfileViewSource, /fetchRankTrendAvailabilityData/);
+  assert.match(cvProfileViewSource, /renderedWorks\.filter/);
+  assert.match(workRowSource, /<PlatformIdIcon[\s\S]*\{dramaId \|\| "暂无"\}/);
+  assert.doesNotMatch(workRowSource, /idLabel="作品ID"/);
+  assert.match(workRowSource, /<PlayCircleIcon[\s\S]*formatPlayback\(work\.playCount\)/);
+  assert.match(workRowSource, /mode === "more-only"[\s\S]*TrendingUpIcon[\s\S]*mode !== "all"[\s\S]*ArrowLeftRightIcon/);
+  assert.match(workRowSource, /StarIcon[\s\S]*UserSearchIcon[\s\S]*HandCoinsIcon[\s\S]*appearance="menu"/);
+  assert.match(workRowSource, /source: "cv_profile",[\s\S]*success: true/);
+  assert.match(workRowSource, /suppressUsageLog: true/);
+  assert.match(workRowSource, /source: `\$\{dramaId\}payID`/);
+  assert.match(workRowSource, /source: `\$\{dramaId\}earn`/);
+  assert.match(workRowSource, /data-cv-work-cover[\s\S]*data-cv-work-meta[\s\S]*self-center/);
+  assert.match(workRowSource, /data-cv-work-footer[\s\S]*data-cv-work-playback/);
+  assert.match(workRowSource, /data-cv-work-actions/);
+  assert.match(workRowSource, /data-cv-work-watermark[\s\S]*tone="inherit"/);
+  assert.match(toolViewSource, /<CvProfileView[\s\S]*favoriteKeys=\{favoriteKeySet\}[\s\S]*onAddCompareItem=\{addDramaToCompareBasket\}[\s\S]*onStartRevenueEstimate=\{startRevenueEstimate\}/);
+  assert.match(serverSource, /!\["ongoing", "ranks", "cv_profile", "homeview"\]\.includes\(source\)/);
+  assert.match(indexCssSource, /\.cv-profile-platform-watermark[\s\S]*var\(--foreground\) 7%/);
+  assert.match(indexCssSource, /\.cv-profile-platform-watermark \[data-platform="manbo"\][\s\S]*var\(--platform-manbo\) 20%/);
 });
 
 test("Missevan peak and CV ranks use the shared responsive visual language", () => {
@@ -4616,4 +4658,54 @@ test("rank cards and metric trends handle skipped paid ID capture explicitly", (
     /每日数据统计榜单前50名及7日内更新剧集（资源有限会跳过31-50名的付费ID抓取），每周数据统计全部剧集/
   );
   assert.match(rankTrendUiSource, /return value == null \? "暂无数据" : formatTrendValue\(value\)/);
+});
+
+test("ongoing CV filtering keeps desktop and mobile controls responsive without refetching", () => {
+  assert.match(ongoingPanelSource, /buildOngoingCvOptions\(currentOngoingItems\)/);
+  assert.match(ongoingPanelSource, /filterOngoingItemsByCvNames\(sortedItems, selectedCvNames\)/);
+  assert.match(ongoingPanelSource, /ongoingCvSelectionStore/);
+  assert.match(ongoingPanelSource, /<SheetTrigger asChild>[\s\S]*<OngoingCvFilterTrigger/);
+  assert.match(ongoingPanelSource, /<PopoverTrigger asChild>[\s\S]*<OngoingCvFilterTrigger/);
+  assert.match(ongoingPanelSource, /side="bottom"/);
+  assert.match(ongoingPanelSource, /className="sm:hidden"[\s\S]*<Sheet/);
+  assert.match(ongoingPanelSource, /<Popover[\s\S]*<OngoingCvFilterTrigger[\s\S]*<Tabs value=\{selectedPlatform\}/);
+  assert.match(ongoingPanelSource, /rank=\{originalRanksById\.get\(String\(item\.id\)\) \|\| 1\}/);
+  assert.match(ongoingPanelSource, /<SlidersHorizontalIcon aria-hidden="true" className="size-3\.5 shrink-0"/);
+  assert.match(ongoingPanelSource, /ongoingActionButtonClassName\} border-\[color-mix\(in_oklch,var\(--primary\)_24%,transparent\)\] bg-primary text-primary-foreground/);
+  assert.match(ongoingPanelSource, /rounded-\[calc\(var\(--radius\)-0\.12rem\)\]/);
+  assert.match(ongoingPanelSource, /gap-x-2 gap-y-0/);
+  assert.match(ongoingPanelSource, /h-auto min-h-11 max-w-full shrink whitespace-normal border-0! bg-transparent! px-0 py-1/);
+  assert.match(ongoingPanelSource, /h-auto min-h-9 min-w-0 max-w-full items-center justify-center rounded-full border px-3 py-1\.5/);
+  assert.match(ongoingPanelSource, /collisionPadding=\{8\}[\s\S]*max-h-\[var\(--radix-popover-content-available-height\)\]/);
+  assert.match(ongoingPanelSource, /onOpenAutoFocus=\{\(event\) => \{[\s\S]*desktopCvFilterSearchRef\.current\?\.focus\(\)/);
+  assert.match(sheetSource, /side = "right"/);
+  assert.match(sheetSource, /side === "bottom"/);
+});
+
+test("statistics history replay keeps responsive actions and refreshes works before replay", () => {
+  assert.match(statsHistoryListSource, /inline-block whitespace-nowrap">\{entry\.createdAtLabel\}[\s\S]*inline-block whitespace-nowrap">\{getHistoryPlatformLabel\(entry\)\}[\s\S]*inline-block whitespace-nowrap">\{getHistoryTaskLabel\(entry\)\}/);
+  assert.match(statsHistoryListSource, /RotateCwIcon/);
+  assert.match(statsHistoryListSource, /h-8 min-w-11[\s\S]*sm:text-xs/);
+  assert.match(statsHistoryListSource, /旧记录未保存刷新参数，无法刷新/);
+  assert.match(outputPanelSource, /historyActionsDisabled \|\| isRunning/);
+  assert.match(homeViewSource, /<StatsHistoryList[\s\S]*constrainHeight/);
+  assert.match(statsHistoryListSource, /max-h-\[30vh\] overflow-y-auto overscroll-contain/);
+  assert.match(indexCssSource, /\.home-editorial-history\s*\{[\s\S]*margin-bottom: clamp\(-3rem, -3\.333vw, -1\.5rem\)/);
+  assert.match(toolViewSource, /fetchDramasByIds\(platform, dramaIds, preparationAbortController\.signal, \{ forceRefresh: true \}\)/);
+  assert.match(toolViewSource, /if \(options\.forceRefresh === true\) \{[\s\S]*payload\.force_refresh = true;/);
+  assert.match(missevanRoutesSource, /const forceRefresh = req\.body\?\.force_refresh === true;[\s\S]*fetchDramaInfo\(id, soundId > 0 \? soundId : null, \{[\s\S]*forceRefresh,/);
+  assert.match(manboRoutesSource, /const forceRefresh = req\.body\?\.force_refresh === true;[\s\S]*dramaService\.getManboDrama\(id, \{ forceRefresh \}\)/);
+  const missevanDetailSource = serverSource.slice(
+    serverSource.indexOf("async function fetchDramaInfo"),
+    serverSource.indexOf("async function fetchRewardSummary")
+  );
+  const manboDetailSource = serverSource.slice(
+    serverSource.indexOf("async function fetchManboDramaDetail"),
+    serverSource.indexOf("async function fetchManboDramaPayload")
+  );
+  assert.match(missevanDetailSource, /cached && !options\.forceRefresh/);
+  assert.match(manboDetailSource, /cached && !options\.forceRefresh/);
+  assert.match(toolViewSource, /replayPreparationAbortControllerRef\.current\?\.abort/);
+  assert.match(toolViewSource, /isAnyBackgroundTaskRunning\(\)/);
+  assert.match(toolViewSource, /buildPlayCountDramasFromDramas\(playCountDramas\)/);
 });

@@ -793,6 +793,32 @@ export function createStatsState() {
 export const STATS_HISTORY_LIMIT = 20;
 export const STATS_HISTORY_STORAGE_KEY = "missevan-counter.history.v1";
 export const STATS_HISTORY_STORAGE_VERSION = 1;
+export const STATS_HISTORY_REPLAY_VERSION = 1;
+
+export function normalizeStatsHistoryReplay(value) {
+  if (!value || typeof value !== "object" || Number(value.version) !== STATS_HISTORY_REPLAY_VERSION) return null;
+  const operation = String(value.operation ?? "").trim();
+  if (!["paid_id", "revenue", "id", "play_count"].includes(operation)) return null;
+  const rawDramaIds = Array.isArray(value.dramaIds) ? value.dramaIds : null;
+  if (["paid_id", "revenue"].includes(operation) && (!rawDramaIds?.length || rawDramaIds.some((id) => !String(id ?? "").trim()))) return null;
+  const dramaIds = Array.from(new Set((rawDramaIds || []).map((id) => String(id ?? "").trim())));
+  if (["paid_id", "revenue"].includes(operation)) {
+    const source = String(value.source ?? "").trim();
+    return dramaIds.length ? { version: STATS_HISTORY_REPLAY_VERSION, operation, dramaIds, ...(source ? { source } : {}) } : null;
+  }
+  const rawDramas = Array.isArray(value.dramas) ? value.dramas : null;
+  if (!rawDramas?.length) return null;
+  const dramas = rawDramas.map((drama) => {
+    const dramaId = String(drama?.dramaId ?? "").trim();
+    const rawEpisodeIds = Array.isArray(drama?.episodeIds) ? drama.episodeIds : null;
+    if (!dramaId || !rawEpisodeIds?.length || rawEpisodeIds.some((id) => !String(id ?? "").trim())) return null;
+    return { dramaId, episodeIds: Array.from(new Set(rawEpisodeIds.map((id) => String(id).trim()))) };
+  });
+  if (dramas.some((drama) => !drama)) return null;
+  return dramas.length
+    ? { version: STATS_HISTORY_REPLAY_VERSION, operation, source: Object.hasOwn(value, "source") ? String(value.source ?? "").trim() : "custom", dramas }
+    : null;
+}
 
 function getHistoryStorage(storage = null) {
   if (storage) {
@@ -870,6 +896,7 @@ function normalizeHistoryEntry(entry) {
   if (!id || !platform || !Number.isFinite(createdAt) || !createdAtLabel || !taskType || items.length === 0) {
     return null;
   }
+  const replay = normalizeStatsHistoryReplay(entry.replay);
   return {
     id,
     platform,
@@ -878,6 +905,7 @@ function normalizeHistoryEntry(entry) {
     taskType,
     summaryMetrics,
     items,
+    ...(replay ? { replay } : {}),
   };
 }
 
@@ -916,18 +944,42 @@ export function loadPersistedHistoryEntries(storage = null) {
 export function savePersistedHistoryEntries(historyByPlatform = {}, storage = null) {
   const historyStorage = getHistoryStorage(storage);
   if (!historyStorage) {
-    return;
+    return { persisted: false, historyByPlatform };
   }
-
-  const payload = {
-    version: STATS_HISTORY_STORAGE_VERSION,
+  const normalizedHistory = {
     missevan: normalizeHistoryEntryCollection(historyByPlatform.missevan),
     manbo: normalizeHistoryEntryCollection(historyByPlatform.manbo),
   };
-
+  const save = (candidate) => historyStorage.setItem(
+    STATS_HISTORY_STORAGE_KEY,
+    JSON.stringify({ version: STATS_HISTORY_STORAGE_VERSION, ...candidate })
+  );
   try {
-    historyStorage.setItem(STATS_HISTORY_STORAGE_KEY, JSON.stringify(payload));
-  } catch (_) {
+    save(normalizedHistory);
+    return { persisted: true, historyByPlatform: normalizedHistory, evictedEntryIds: [] };
+  } catch (error) {
+    if (error?.name !== "QuotaExceededError") {
+      return { persisted: false, historyByPlatform: normalizedHistory, evictedEntryIds: [] };
+    }
+    const candidate = { ...normalizedHistory, missevan: [...normalizedHistory.missevan], manbo: [...normalizedHistory.manbo] };
+    const evictedEntryIds = [];
+    while (candidate.missevan.length || candidate.manbo.length) {
+      const oldest = ["missevan", "manbo"].flatMap((platform) => candidate[platform]
+        .map((entry, index) => ({ platform, index, entry })))
+        .sort((left, right) => Number(left.entry.createdAt) - Number(right.entry.createdAt))[0];
+      candidate[oldest.platform].splice(oldest.index, 1);
+      evictedEntryIds.push(oldest.entry.id);
+      try {
+        save(candidate);
+        return { persisted: true, historyByPlatform: candidate, evictedEntryIds };
+      } catch (retryError) {
+        if (retryError?.name !== "QuotaExceededError") {
+          return { persisted: false, historyByPlatform: normalizedHistory, evictedEntryIds: [] };
+        }
+        // Only remove this feature's oldest history; leave all other site storage alone.
+      }
+    }
+    return { persisted: false, historyByPlatform: normalizedHistory, evictedEntryIds: [] };
   }
 }
 
@@ -1798,6 +1850,7 @@ export function createStatsHistoryEntry(platform, stats, options = {}) {
   const normalizedPlatform = String(platform || "").trim();
   const createdAt = Number(options.createdAt ?? Date.now());
   const taskType = String(options.taskType ?? stats?.activeTaskType ?? "").trim();
+  const replay = normalizeStatsHistoryReplay(options.replay);
   if (!normalizedPlatform || !stats || !taskType) {
     return null;
   }
@@ -1829,6 +1882,7 @@ export function createStatsHistoryEntry(platform, stats, options = {}) {
           : [],
       }))
       .filter((item) => item.segments.length > 0),
+    ...(replay ? { replay } : {}),
   };
 }
 

@@ -5,6 +5,10 @@ import { useState } from "react";
 
 import { CvProfileView } from "@/app/CvProfileView";
 
+vi.mock("@/app/LazyRankTrendDialog", () => ({
+  LazyRankTrendDialog: ({ open }) => open ? <div data-testid="trend-dialog" /> : null,
+}));
+
 function createProfileData(workCount = 3) {
   const works = Array.from({ length: workCount }, (_, index) => ({
     platform: index === 1 ? "manbo" : "missevan",
@@ -49,10 +53,35 @@ function createProfileData(workCount = 3) {
 }
 
 function mockProfileFetch(data) {
-  return vi.spyOn(globalThis, "fetch").mockResolvedValue({
-    ok: true,
-    headers: { get: () => null },
-    json: async () => data,
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = String(input);
+    if (url.includes("/ranks/trends/availability?")) {
+      const ids = new URL(url, "https://example.test").searchParams.getAll("id");
+      return Promise.resolve({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => ({ success: true, ids }),
+      });
+    }
+    if (url.includes("/usage-log")) {
+      return Promise.resolve({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => ({ success: true }),
+      });
+    }
+    if (url.includes("/ranks/trends?")) {
+      return Promise.resolve({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => ({ success: true, metrics: [], snapshots: [] }),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => data,
+    });
   });
 }
 
@@ -60,6 +89,7 @@ function ProfileHarness({
   profileId = "",
   onRouteStateChange = () => {},
   onOpenSearchResult = () => {},
+  ...viewProps
 }) {
   const [platform, setPlatform] = useState("all");
   const [payment, setPayment] = useState("all");
@@ -76,6 +106,7 @@ function ProfileHarness({
       releaseFilter={release}
       partnersFilter={partners}
       onOpenSearchResult={onOpenSearchResult}
+      {...viewProps}
       onRouteStateChange={(patch) => {
         if (patch.platform) {
           setPlatform(patch.platform);
@@ -139,10 +170,14 @@ test("CV profile commits popover filters on close and recalculates platform stat
   expect(screen.getAllByLabelText("时间")[0].parentElement).toHaveTextContent("2026.01");
   expect(screen.getAllByLabelText("时间")[1].parentElement).toHaveTextContent("暂无");
   expect(screen.getAllByLabelText("搭档")[0].parentElement).toHaveTextContent("—");
+  expect(screen.getByLabelText("播放量：暂无数据")).toBeInTheDocument();
   const missevanStats = screen.getByRole("article", { name: "猫耳平台数据" });
   expect(within(missevanStats).getByText("2")).toBeInTheDocument();
   expect(within(missevanStats).getByText("1000")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "平台筛选，全部" })).toHaveAttribute("data-touch", "compact");
+  const platformFilterTrigger = screen.getByRole("button", { name: "平台筛选，全部" });
+  expect(platformFilterTrigger).toHaveAttribute("data-touch", "compact");
+  expect(platformFilterTrigger).toHaveClass("w-fit", "px-1.5!", "text-[13px]!");
+  expect(within(platformFilterTrigger).getByText("平台·全", { exact: true })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "付费筛选，全部" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "时间筛选，全部" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "搭档筛选，全部" })).toBeInTheDocument();
@@ -151,7 +186,9 @@ test("CV profile commits popover filters on close and recalculates platform stat
   const platformTrigger = screen.getByRole("button", { name: "平台筛选，全部" });
   await user.click(platformTrigger);
   expect(screen.getByLabelText("平台筛选选项")).toBeInTheDocument();
-  await user.click(screen.getByLabelText("猫耳"));
+  const catEarOption = screen.getByRole("button", { name: "筛选猫耳，2部作品" });
+  await user.click(catEarOption);
+  expect(catEarOption).toHaveAttribute("aria-pressed", "false");
   expect(screen.getByRole("button", { name: "作品1" })).toBeInTheDocument();
   expect(within(missevanStats).getByText("2")).toBeInTheDocument();
   expect(routeChange).not.toHaveBeenCalled();
@@ -176,10 +213,11 @@ test("CV profile commits popover filters on close and recalculates platform stat
     usageAction: "cv_profile_open_search_result",
     usageSource: "cv_profile",
   });
+  expect(screen.queryByRole("link", { name: /打开作品ID/ })).not.toBeInTheDocument();
 
   const paymentTrigger = screen.getByRole("button", { name: "付费筛选，全部" });
   await user.click(paymentTrigger);
-  await user.click(screen.getByLabelText("免费"));
+  await user.click(screen.getByRole("button", { name: "筛选免费，1部作品" }));
   await user.click(screen.getByRole("button", { name: "应用" }));
   expect(routeChange).toHaveBeenCalledWith({ payment: "paid" });
   expect(scrollIntoView).not.toHaveBeenCalled();
@@ -192,6 +230,85 @@ test("CV profile commits popover filters on close and recalculates platform stat
     partners: "all",
   });
 
+});
+
+test("CV profile work cards provide library-backed actions and a plain platform ID", async () => {
+  const user = userEvent.setup();
+  const openSearchResult = vi.fn(async () => true);
+  const toggleFavorite = vi.fn();
+  const addCompareItem = vi.fn();
+  const startPaidIdStatistics = vi.fn();
+  const startRevenueEstimate = vi.fn();
+  mockProfileFetch(createProfileData());
+  render(
+    <ProfileHarness
+      onOpenSearchResult={openSearchResult}
+      onToggleFavorite={toggleFavorite}
+      onAddCompareItem={addCompareItem}
+      onStartDramaPaidIdStatistics={startPaidIdStatistics}
+      onStartRevenueEstimate={startRevenueEstimate}
+    />
+  );
+
+  await screen.findByRole("button", { name: "作品1" });
+  const firstCard = screen.getByRole("button", { name: "作品1" }).closest("article");
+  expect(firstCard?.querySelector("[data-cv-work-cover]")).toBeTruthy();
+  expect(firstCard?.querySelector("[data-cv-work-meta] [data-platform=\"missevan\"]")).toBeTruthy();
+  expect(firstCard?.querySelector("[data-cv-work-watermark] [data-platform=\"missevan\"]")).toBeTruthy();
+  expect(firstCard?.querySelector("[data-cv-work-playback]")).toHaveTextContent("1000");
+
+  await user.click(await screen.findByRole("button", { name: "加入作品1对比" }));
+  expect(addCompareItem).toHaveBeenCalledWith(expect.objectContaining({
+    platform: "missevan",
+    id: "1",
+    title: "作品1",
+  }));
+  await user.click(await screen.findByRole("button", { name: "查看作品2趋势" }));
+  expect(await screen.findByTestId("trend-dialog")).toBeInTheDocument();
+  expect(globalThis.fetch).toHaveBeenCalledWith(
+    expect.stringContaining("/ranks/trends?"),
+    expect.objectContaining({ cache: "no-store" })
+  );
+  expect(globalThis.fetch.mock.calls.some(([url]) => String(url).includes("platform=manbo") && String(url).includes("id=2"))).toBe(true);
+
+  await user.click(screen.getByRole("button", { name: "作品1更多操作" }));
+  expect(screen.getByRole("menuitem", { name: "收藏" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "付费ID" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "收益" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: /在猫耳打开作品ID 1/ })).toBeInTheDocument();
+  await user.click(screen.getByRole("menuitem", { name: "收藏" }));
+  expect(toggleFavorite).toHaveBeenCalledWith(expect.objectContaining({
+    platform: "missevan",
+    dramaId: "1",
+    source: "cv_profile",
+  }));
+
+  await user.click(screen.getByRole("button", { name: "作品1更多操作" }));
+  await user.click(screen.getByRole("menuitem", { name: "付费ID" }));
+  await waitFor(() => expect(openSearchResult).toHaveBeenLastCalledWith(expect.objectContaining({
+    id: "1",
+    suppressUsageLog: true,
+  })));
+  expect(startPaidIdStatistics).toHaveBeenCalledWith("1", {
+    platform: "missevan",
+    source: "1payID",
+  });
+
+  await user.click(screen.getByRole("button", { name: "作品2更多操作" }));
+  await user.click(screen.getByRole("menuitem", { name: "收益" }));
+  await waitFor(() => expect(startRevenueEstimate).toHaveBeenCalledWith(["2"], {
+    platform: "manbo",
+    source: "2earn",
+  }));
+
+  openSearchResult.mockResolvedValueOnce(false);
+  await user.click(screen.getByRole("button", { name: "作品1更多操作" }));
+  await user.click(screen.getByRole("menuitem", { name: "付费ID" }));
+  await waitFor(() => expect(openSearchResult).toHaveBeenLastCalledWith(expect.objectContaining({
+    id: "1",
+    suppressUsageLog: true,
+  })));
+  expect(startPaidIdStatistics).toHaveBeenCalledTimes(1);
 });
 
 test("CV profile filters release years and exposes counts under current filters", async () => {
@@ -208,11 +325,19 @@ test("CV profile filters release years and exposes counts under current filters"
   expect(await screen.findByRole("button", { name: "时间筛选，全部" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "时间筛选，全部" }));
   const releasePopover = screen.getByLabelText("时间筛选选项");
-  expect(within(releasePopover).getByText("2026").parentElement).toHaveTextContent("1");
-  expect(within(releasePopover).getByText("2025").parentElement).toHaveTextContent("1");
-  expect(within(releasePopover).getByText("暂无").parentElement).toHaveTextContent("2");
+  expect(within(releasePopover).getByRole("button", { name: "筛选2026，1部作品" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选暂无，2部作品" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(within(releasePopover).getByRole("button", { name: "全选" }));
   await user.click(screen.getByRole("button", { name: "清空" }));
-  await user.click(screen.getByLabelText("2025"));
+  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" })).toHaveAttribute("aria-pressed", "false");
+  await user.click(screen.getByRole("button", { name: "筛选2025，1部作品" }));
+  await user.click(screen.getByRole("button", { name: "筛选2026，1部作品" }));
+  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选2026，1部作品" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(within(releasePopover).getByRole("button", { name: "全选" }));
+  await user.click(within(releasePopover).getByRole("button", { name: "清空" }));
+  await user.click(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" }));
   await user.click(screen.getByRole("button", { name: "应用" }));
   expect(routeChange).toHaveBeenCalledWith({ release: "2025" });
   expect(await screen.findByRole("button", { name: "作品3" })).toBeInTheDocument();
@@ -224,13 +349,13 @@ test("CV profile filters release years and exposes counts under current filters"
   expect(partnerTrigger).toHaveFocus();
   expect(screen.getByRole("textbox", { name: "搜索搭档" })).not.toHaveFocus();
   await user.type(screen.getByRole("textbox", { name: "搜索搭档" }), "逗号");
-  expect(within(partnerPopover).getByText("名字,带逗号").parentElement).toHaveTextContent("0");
-  expect(within(partnerPopover).queryByText("搭档甲")).not.toBeInTheDocument();
+  expect(within(partnerPopover).getByRole("button", { name: "筛选名字,带逗号，0部作品" })).toBeInTheDocument();
+  expect(within(partnerPopover).queryByRole("button", { name: /筛选搭档甲/ })).not.toBeInTheDocument();
   await user.clear(screen.getByRole("textbox", { name: "搜索搭档" }));
-  expect(within(partnerPopover).getByText("搭档甲").parentElement).toHaveTextContent("1");
-  expect(within(partnerPopover).getByText("无搭档").parentElement).toHaveTextContent("0");
+  expect(within(partnerPopover).getByRole("button", { name: "筛选搭档甲，1部作品" })).toBeInTheDocument();
+  expect(within(partnerPopover).getByRole("button", { name: "筛选无搭档，0部作品" })).toBeInTheDocument();
   await user.click(within(partnerPopover).getByRole("button", { name: "清空" }));
-  await user.click(within(partnerPopover).getByLabelText("无搭档"));
+  await user.click(within(partnerPopover).getByRole("button", { name: "筛选无搭档，0部作品" }));
   await user.click(screen.getByRole("button", { name: "应用" }));
   expect(routeChange).toHaveBeenCalledWith({
     partners: JSON.stringify(["__none__"]),

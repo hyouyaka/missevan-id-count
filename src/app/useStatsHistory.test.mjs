@@ -121,6 +121,17 @@ test("completed stats history keeps completion data and records each task once",
   assert.equal(harness.createdEntries[0].stats.idSelectedEpisodeCount, 4);
 });
 
+test("completed history carries the replay snapshot bound to its run", () => {
+  const harness = createHistoryHarness();
+  const replay = { version: 1, operation: "revenue", dramaIds: ["100", "200"] };
+  harness.controller.recordCompletedStatsHistory("missevan", "revenue", "task-replay", {
+    taskId: "task-replay",
+    result: { revenueResults: [{ dramaId: "100" }] },
+  }, replay);
+
+  assert.deepEqual(harness.createdEntries[0].options.replay, replay);
+});
+
 test("history entries respect the cap and can be deleted or cleared", () => {
   const harness = createHistoryHarness({ historyLimit: 2 });
 

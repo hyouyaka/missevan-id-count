@@ -26,14 +26,17 @@ function SheetOverlay({ className, ...props }) {
   );
 }
 
-function SheetContent({ className, children, showCloseButton = true, ...props }) {
+function SheetContent({ className, children, showCloseButton = true, side = "right", ...props }) {
+  const positionClassName = side === "bottom"
+    ? "fixed bottom-0 left-0 z-50 w-full overflow-y-auto overscroll-contain border-t border-border bg-background shadow-[var(--shadow-panel)] outline-none"
+    : "fixed right-0 top-0 z-50 h-dvh w-[230px] max-w-[calc(100vw-0.75rem)] overflow-y-auto overscroll-contain border-l border-border bg-background p-3 shadow-[var(--shadow-panel)] outline-none sm:w-[260px]";
   return (
     <SheetPortal>
       <SheetOverlay />
       <DialogPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          "fixed right-0 top-0 z-50 h-dvh w-[230px] max-w-[calc(100vw-0.75rem)] overflow-y-auto overscroll-contain border-l border-border bg-background p-3 shadow-[var(--shadow-panel)] outline-none sm:w-[260px]",
+          positionClassName,
           className
         )}
         {...props}

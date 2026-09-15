@@ -49,6 +49,7 @@ import {
   normalizeVersion,
   readJsonResponse,
   resolveIdStatisticsSource,
+  normalizeStatsHistoryReplay,
   selectDramaEpisodesByMode,
 } from "@/app/app-utils";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
@@ -86,6 +87,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
+import { getRevenueEpisodesForDrama } from "../../shared/revenueEpisodeSelection.js";
 
 const RanksPanel = lazy(() =>
   import("@/app/RanksPanel").then((module) => ({ default: module.RanksPanel }))
@@ -217,11 +219,24 @@ export function ToolView({ initialAppConfig }) {
   });
   const resultsPanelRef = useRef(null);
   const outputPanelRef = useRef(null);
+  const replayPreparingRef = useRef(new Set());
+  const replayPreparationAbortControllerRef = useRef(null);
+  const replayCardsAbortControllerRef = useRef(null);
+  const refreshRunUnlinksRef = useRef(new Map());
+  const replaySearchGenerationRef = useRef(0);
+  const historyPersistenceFailureRef = useRef(false);
+  const [replayPreparingEntryIds, setReplayPreparingEntryIds] = useState([]);
   const statsHistory = useStatsHistory({
     platformStates,
     getPlatformStates: () => platformStatesRef.current,
     getRuntimeMeta: (platform) => runtimeMetaRef.current[platform],
     updatePlatformState,
+    onPersistenceFailure: () => {
+      if (!historyPersistenceFailureRef.current) {
+        historyPersistenceFailureRef.current = true;
+        toast.warning("查询历史未能保存到本机，当前结果仍保留在本次页面中。");
+      }
+    },
   });
   const statsTaskRun = useStatsTaskRun({
     getRuntimeMeta: (platform) => runtimeMetaRef.current[platform],
@@ -377,6 +392,12 @@ export function ToolView({ initialAppConfig }) {
   const sharedStatsState = sharedOutputState?.stats || null;
   const sharedRevenueSummary = sharedStatsState?.revenueSummary || buildRevenueSummary(sharedStatsState?.revenueResults || [], sharedOutputPlatform);
   const sharedHistoryEntries = statsHistory.getMergedHistoryEntries();
+  const historyActionsDisabled = Boolean(
+    backgroundTask?.isRunning ||
+      favoriteRefreshState?.isRunning ||
+      replayPreparingEntryIds.length ||
+      Object.values(platformStates || {}).some((state) => state?.stats?.isRunning)
+  );
   const { retrySearchCardMetrics } = useSearchCardMetrics({
     activeBrowsePlatform,
     activeSearchCategory,
@@ -421,6 +442,8 @@ export function ToolView({ initialAppConfig }) {
   const headerHomeLabel = appConfig.desktopApp ? "返回统计页" : "返回首页";
 
   function commitGlobalSearchNavigation(action = {}) {
+    replaySearchGenerationRef.current += 1;
+    replayCardsAbortControllerRef.current?.abort();
     if (action?.action === "import") {
       clearCvSearchResults();
       navigateToolRoute({ view: "search", q: "" });
@@ -784,6 +807,8 @@ export function ToolView({ initialAppConfig }) {
     window.addEventListener("pagehide", pageExitHandler);
     window.addEventListener("beforeunload", pageExitHandler);
     return () => {
+      replayPreparationAbortControllerRef.current?.abort?.();
+      replayCardsAbortControllerRef.current?.abort?.();
       statsTaskRun.dispose();
       window.removeEventListener("pagehide", pageExitHandler);
       window.removeEventListener("beforeunload", pageExitHandler);
@@ -822,10 +847,14 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function resetSearchFlow(platform = getActiveWorkPlatform()) {
+    replaySearchGenerationRef.current += 1;
+    replayCardsAbortControllerRef.current?.abort?.();
     updatePlatformState(platform, (state) => resetSearchResultsState(state));
   }
 
   function setSearchResults(platform, results, source = "search", meta = {}) {
+    replaySearchGenerationRef.current += 1;
+    replayCardsAbortControllerRef.current?.abort?.();
     updatePlatformState(platform, (state) => setSearchResultsState(state, results, source, meta));
     if (Array.isArray(results) && results.length > 0) {
       scrollToPanel(resultsPanelRef);
@@ -833,6 +862,8 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function setManualSearchResults(platform, results, meta = {}) {
+    replaySearchGenerationRef.current += 1;
+    replayCardsAbortControllerRef.current?.abort?.();
     updatePlatformState(platform, (state) => setManualSearchResultsState(state, results, meta));
     if (Array.isArray(results) && results.length > 0 && meta?.scroll !== false) {
       scrollToPanel(resultsPanelRef);
@@ -840,6 +871,8 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function setResults(nextResults, platform = getActiveWorkPlatform()) {
+    replaySearchGenerationRef.current += 1;
+    replayCardsAbortControllerRef.current?.abort?.();
     updatePlatformState(platform, (state) => setVisibleSearchResults(state, nextResults));
   }
 
@@ -1136,8 +1169,24 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
-  function beginRun(platform) {
-    return statsTaskRun.beginRun(platform);
+  function beginRun(platform, replay = null, refreshSignal = null) {
+    if (refreshSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const run = statsTaskRun.beginRun(platform, { replay });
+    if (refreshSignal) {
+      const key = `${platform}:${run.runId}`;
+      const cancelRefreshRun = () => {
+        if (statsTaskRun.isRunActive(platform, run.runId)) void cancelActiveRun(platform);
+      };
+      const unlink = () => {
+        refreshSignal.removeEventListener("abort", cancelRefreshRun);
+        run.signal.removeEventListener("abort", unlink);
+        refreshRunUnlinksRef.current.delete(key);
+      };
+      refreshRunUnlinksRef.current.set(key, unlink);
+      refreshSignal.addEventListener("abort", cancelRefreshRun, { once: true });
+      run.signal.addEventListener("abort", unlink, { once: true });
+    }
+    return run;
   }
 
   function applyStatsRunStarted({ platform, startedAt }) {
@@ -1240,6 +1289,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function finishRun(platform, runId, status = "completed") {
+    refreshRunUnlinksRef.current.get(`${platform}:${runId}`)?.();
     return statsTaskRun.finishRun(platform, runId, status);
   }
 
@@ -1340,8 +1390,8 @@ export function ToolView({ initialAppConfig }) {
     applyTaskSnapshot(platform, snapshot);
   }
 
-  function applyStatsTaskCompleted({ platform, taskType, taskId, snapshot }) {
-    statsHistory.recordCompletedStatsHistory(platform, taskType, taskId, snapshot);
+  function applyStatsTaskCompleted({ platform, taskType, taskId, snapshot, runData }) {
+    statsHistory.recordCompletedStatsHistory(platform, taskType, taskId, snapshot, runData?.replay || null);
   }
 
   async function startStatsTask(platform, taskType, payload, runId, signal) {
@@ -1421,8 +1471,10 @@ export function ToolView({ initialAppConfig }) {
     const loadedById = new Map();
     const missingIds = [];
     requestedIds.forEach((id) => {
-      const loaded = (Array.isArray(options.loadedDramas) ? options.loadedDramas : []).find((item) => String(item?.drama?.id) === id)
-        || getLoadedDramaById(platform, id);
+      const loaded = options.forceRefresh === true
+        ? null
+        : (Array.isArray(options.loadedDramas) ? options.loadedDramas : []).find((item) => String(item?.drama?.id) === id)
+          || getLoadedDramaById(platform, id);
       if (loaded) {
         loadedById.set(id, loaded);
         return;
@@ -1441,6 +1493,9 @@ export function ToolView({ initialAppConfig }) {
 
     const searchResults = Array.isArray(options.searchResults) ? options.searchResults : getAllSearchResults(platformStatesRef.current[platform]);
     const payload = { drama_ids: missingIds };
+    if (options.forceRefresh === true) {
+      payload.force_refresh = true;
+    }
     if (platform === "missevan") {
       const soundIdMap = {};
       missingIds.forEach((id) => {
@@ -1681,6 +1736,89 @@ export function ToolView({ initialAppConfig }) {
     }
   }
 
+  function buildSelectedEpisodesReplay(operation, selectedEpisodes, source = "custom") {
+    const byDrama = new Map();
+    (Array.isArray(selectedEpisodes) ? selectedEpisodes : []).forEach((episode) => {
+      const dramaId = String(episode?.drama_id ?? "").trim();
+      const episodeId = String(episode?.sound_id ?? "").trim();
+      if (!dramaId || !episodeId) return;
+      const ids = byDrama.get(dramaId) || [];
+      ids.push(episodeId);
+      byDrama.set(dramaId, ids);
+    });
+    return {
+      version: 1,
+      operation,
+      source,
+      dramas: Array.from(byDrama, ([dramaId, episodeIds]) => ({ dramaId, episodeIds: Array.from(new Set(episodeIds)) })),
+    };
+  }
+
+  function appendRefreshSource(source) {
+    const normalized = String(source ?? "").trim();
+    return `${normalized}refresh`;
+  }
+
+  function applyReplaySelection(dramas, selectedEpisodes) {
+    const selected = new Set((selectedEpisodes || []).map((episode) => `${episode.drama_id}:${episode.sound_id}`));
+    return (dramas || []).map((drama) => ({
+      ...drama,
+      episodes: { ...drama.episodes, episode: (drama.episodes?.episode || []).map((episode) => ({ ...episode, selected: selected.has(`${drama?.drama?.id}:${episode.sound_id}`) })) },
+    }));
+  }
+
+  function updateReplaySearch(platform, generation, dramaIds, patch) {
+    updatePlatformState(platform, (state) => {
+      if (replaySearchGenerationRef.current !== generation) return state;
+      const dramas = patch.dramas ?? state.dramas;
+      const currentCardsById = new Map((state.searchResults || []).map((card) => [String(card.id), card]));
+      const cardsById = new Map((patch.cards ?? state.searchResults ?? []).map((card) => [String(card.id), card]));
+      const dramasById = new Map((dramas || []).map((drama) => [String(drama?.drama?.id), drama]));
+      const cards = dramaIds.flatMap((id) => {
+        const card = cardsById.get(String(id));
+        const detail = dramasById.get(String(id))?.drama;
+        if (!card && !detail) return [];
+        const currentCard = currentCardsById.get(String(id));
+        // Cards and episode details arrive independently of the metric queue.
+        // Keep its status and completed metrics when either response arrives late.
+        const completedMetrics = currentCard?.metrics_status === "ready"
+          ? Object.fromEntries(["view_count", "subscription_num", "reward_num", "diamond_value", "pay_count", "member_listen_count"]
+            .filter((field) => Object.hasOwn(currentCard, field))
+            .map((field) => [field, currentCard[field]]))
+          : {};
+        return [{
+          ...card,
+          ...detail,
+          ...completedMetrics,
+          id: String(id),
+          title: detail?.name || card?.title || "",
+          platform,
+          checked: true,
+          metrics_status: currentCard?.metrics_status || "pending",
+          metrics_error_code: currentCard?.metrics_error_code || "",
+        }];
+      });
+      return {
+        ...state,
+        searchResults: cards,
+        searchPageCache: {},
+        searchResultSource: "manual",
+        searchCurrentPage: 1,
+        searchPageSize: Math.max(1, cards.length),
+        searchHasMore: false,
+        searchNextOffset: 0,
+        searchTotalMatched: cards.length,
+        searchKeyword: "",
+        searchGeneration: generation,
+        isLoadingMoreResults: false,
+        ...(patch.dramas ? {
+          dramas: applyReplaySelection(patch.dramas, patch.selectedEpisodes || []),
+          selectedEpisodesSnapshot: patch.selectedEpisodes || [],
+        } : {}),
+      };
+    });
+  }
+
   async function startPlayCountStatistics(soundIds, options = {}) {
     if (warnIfBackgroundTaskRunning()) {
       return;
@@ -1692,7 +1830,11 @@ export function ToolView({ initialAppConfig }) {
     const selectedEpisodes = selectedEpisodeSource.filter((episode) => soundIds.includes(episode.sound_id));
     await cancelActiveRun(platform);
     resetOutputs(platform);
-    const { runId, signal } = beginRun(platform);
+    const source = options.isHistoryRefresh
+      ? String(options.source ?? "custom").trim()
+      : String(options?.source ?? "custom").trim() || "custom";
+    const replay = options.replay ? { ...options.replay, source } : buildSelectedEpisodesReplay("play_count", selectedEpisodes, source);
+    const { runId, signal } = beginRun(platform, replay, options.refreshSignal);
     if (!selectedEpisodes.length) {
       toast.warning("请先选择分集。");
       finishRun(platform, runId, "idle");
@@ -1717,9 +1859,9 @@ export function ToolView({ initialAppConfig }) {
       }));
       ensureStatsRunActive(platform, runId, signal);
       scrollToPanel(outputPanelRef);
-      const payload = { episodes: selectedEpisodes };
+      const payload = { episodes: selectedEpisodes, source: options.isHistoryRefresh ? appendRefreshSource(source) : source };
       if (platform === "missevan") {
-        const playCountDramas = buildPlayCountDramasFromDramas(platformStatesRef.current[platform].dramas);
+        const playCountDramas = options.playCountDramas || buildPlayCountDramasFromDramas(platformStatesRef.current[platform].dramas);
         if (playCountDramas.length) {
           payload.playCountDramas = playCountDramas;
         }
@@ -1751,15 +1893,20 @@ export function ToolView({ initialAppConfig }) {
       return;
     }
     const platform = resolveStatsPlatform(options?.platform);
-    const source = resolveIdStatisticsSource({
+    const resolvedSource = resolveIdStatisticsSource({
       platform,
-      dramas: platformStatesRef.current[platform]?.dramas,
+      dramas: options.dramas || platformStatesRef.current[platform]?.dramas,
       selectedEpisodes,
       source: options?.source,
     });
     await cancelActiveRun(platform);
     resetOutputs(platform);
-    const { runId, signal } = beginRun(platform);
+    const baseSource = options.isHistoryRefresh ? String(options.source ?? resolvedSource).trim() : resolvedSource;
+    const source = options.isHistoryRefresh ? appendRefreshSource(baseSource) : resolvedSource;
+    const replay = options.replay
+      ? { ...options.replay, source: options.isHistoryRefresh ? baseSource : resolvedSource }
+      : buildSelectedEpisodesReplay("id", selectedEpisodes, resolvedSource);
+    const { runId, signal } = beginRun(platform, replay, options.refreshSignal);
     if (!selectedEpisodes.length) {
       toast.warning(emptyMessage);
       finishRun(platform, runId, "idle");
@@ -1832,13 +1979,15 @@ export function ToolView({ initialAppConfig }) {
     }
     const platform = resolveStatsPlatform(options?.platform);
     const addDramasForContext = options?.addDramas || addDramas;
-    const importResult = await addDramasForContext([dramaId], {
+    const importResult = options?.freshDramas
+      ? { dramas: options.freshDramas }
+      : await addDramasForContext([dramaId], {
       autoCheck: true,
       expandImported: true,
       preserveScroll: true,
       selectMode: "paid",
       platform,
-    });
+      });
     const nextDramas = importResult?.dramas || platformStatesRef.current[platform]?.dramas || [];
     const drama = nextDramas.find((item) => String(item?.drama?.id) === normalizedDramaId);
     const episodes = Array.isArray(drama?.episodes?.episode) ? drama.episodes.episode : [];
@@ -1857,10 +2006,11 @@ export function ToolView({ initialAppConfig }) {
       episode_title: episode.name,
       duration: Number(episode.duration ?? 0),
     }));
+    const paidSource = resolveIdStatisticsSource({ platform, dramas: nextDramas, selectedEpisodes: selectedPaidEpisodes, source: options?.source });
     await startIdStatisticsForEpisodes(
       selectedPaidEpisodes,
       "没有可统计的付费分集。",
-      { platform, source: options?.source }
+      { platform, source: paidSource, replay: options?.replay || { version: 1, operation: "paid_id", dramaIds: [normalizedDramaId], source: paidSource } }
     );
   }
 
@@ -1875,7 +2025,8 @@ export function ToolView({ initialAppConfig }) {
     const platform = resolveStatsPlatform(options?.platform);
     await cancelActiveRun(platform);
     resetOutputs(platform);
-    const { runId, signal } = beginRun(platform);
+    const replay = options.replay || { version: 1, operation: "revenue", dramaIds: Array.from(new Set(dramaIds.map((id) => String(id)))), ...(options?.source ? { source: options.source } : {}) };
+    const { runId, signal } = beginRun(platform, replay, options.refreshSignal);
     activateSharedOutputPlatform(platform);
     let finalStatus = "completed";
     try {
@@ -1919,6 +2070,10 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function cancelCurrentStatistics() {
+    if (replayPreparationAbortControllerRef.current) {
+      replayPreparationAbortControllerRef.current.abort();
+    }
+    replayCardsAbortControllerRef.current?.abort?.();
     const platform = sharedOutputPlatformRef.current;
     const stats = platformStatesRef.current[platform]?.stats;
     if (!stats?.isRunning && !stats?.activeTaskId) {
@@ -1932,6 +2087,200 @@ export function ToolView({ initialAppConfig }) {
         currentAction: "统计已取消",
       },
     }));
+  }
+
+  async function replayHistoryEntry(entry) {
+    const replay = normalizeStatsHistoryReplay(entry?.replay);
+    const entryId = String(entry?.id ?? "").trim();
+    const platform = entry?.platform === "manbo" ? "manbo" : entry?.platform === "missevan" ? "missevan" : "";
+    if (!entryId || !platform || !replay) {
+      toast.warning("旧记录未保存刷新参数，无法刷新。");
+      return;
+    }
+    if (replayPreparingRef.current.size > 0 || isAnyBackgroundTaskRunning()) {
+      toast.warning("统计任务运行中，请等待完成后再刷新。");
+      return;
+    }
+    replayPreparingRef.current.add(entryId);
+    setReplayPreparingEntryIds(Array.from(replayPreparingRef.current));
+    const preparationAbortController = new AbortController();
+    replayPreparationAbortControllerRef.current = preparationAbortController;
+    const cardsAbortController = new AbortController();
+    replayCardsAbortControllerRef.current?.abort?.();
+    replayCardsAbortControllerRef.current = cardsAbortController;
+    let resolveFreshDetails = null;
+    let statisticsStarted = false;
+    try {
+      const dramaIds = replay.operation === "id" || replay.operation === "play_count"
+        ? replay.dramas.map((drama) => drama.dramaId)
+        : replay.dramaIds;
+      const searchGeneration = ++replaySearchGenerationRef.current;
+      let freshDramasForCards = [];
+      const freshDetailsReady = new Promise((resolve) => { resolveFreshDetails = resolve; });
+      updatePlatformState(platform, (state) => setManualSearchResultsState(state, [], { searchGeneration }));
+      openSearchPlatform(platform);
+      void (async () => {
+        const endpoint = platform === "manbo" ? "/manbo/getdramacards" : "/getdramacards";
+        const body = platform === "manbo" ? { items: dramaIds.map((raw) => ({ raw })), suppressUsageLog: true } : { drama_ids: dramaIds, suppressUsageLog: true };
+        const response = await fetch(buildVersionedUrl(endpoint, appConfigRef.current.frontendVersion), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: cardsAbortController.signal,
+        });
+        const data = await parseVersionedJsonResponse(response);
+        if (cardsAbortController.signal.aborted || replaySearchGenerationRef.current !== searchGeneration) return;
+        const cards = Array.isArray(data?.results) ? data.results : [];
+        if (response.ok && data?.success && cards.length) {
+          updateReplaySearch(platform, searchGeneration, dramaIds, { cards });
+        } else if (data?.accessDenied) {
+          preparationAbortController.abort();
+          cardsAbortController.abort();
+          if (platform === "missevan") await showMissevanAccessHint();
+          else toast.error(data.message || "任务剧集加载受限，已停止刷新。");
+        } else {
+          await freshDetailsReady;
+          if (!cardsAbortController.signal.aborted && replaySearchGenerationRef.current === searchGeneration && freshDramasForCards.length) {
+            updateReplaySearch(platform, searchGeneration, dramaIds, {});
+            toast.warning("刷新未能加载任务卡片，已使用最新作品详情继续统计。");
+          }
+        }
+      })().catch(async (error) => {
+        if (isAbortError(error)) return;
+        await freshDetailsReady;
+        if (!cardsAbortController.signal.aborted && replaySearchGenerationRef.current === searchGeneration && freshDramasForCards.length) {
+          updateReplaySearch(platform, searchGeneration, dramaIds, {});
+          toast.warning("刷新未能加载任务卡片，已使用最新作品详情继续统计。");
+        }
+      }).finally(() => {
+        if (replayCardsAbortControllerRef.current === cardsAbortController) {
+          replayCardsAbortControllerRef.current = null;
+        }
+      });
+      const refreshed = await fetchDramasByIds(platform, dramaIds, preparationAbortController.signal, { forceRefresh: true });
+      if (preparationAbortController.signal.aborted || replayPreparationAbortControllerRef.current !== preparationAbortController) {
+        return;
+      }
+      if (replaySearchGenerationRef.current !== searchGeneration) return;
+      if (isAnyBackgroundTaskRunning()) {
+        toast.warning("统计任务运行中，已停止刷新准备。");
+        return;
+      }
+      const failed = refreshed.find((result) => !result?.success || !result?.drama);
+      if (failed) {
+        if (failed.accessDenied) {
+          preparationAbortController.abort();
+          if (platform === "missevan") await showMissevanAccessHint();
+        }
+        toast.error(`无法重新加载作品 ${failed.id}，未开始刷新。`);
+        return;
+      }
+      const freshDramas = refreshed.map((result) => result.drama);
+      freshDramasForCards = freshDramas;
+      resolveFreshDetails();
+      updateReplaySearch(platform, searchGeneration, dramaIds, { dramas: freshDramas });
+      if (replay.operation === "revenue") {
+        const selectedEpisodes = freshDramas.flatMap((drama) => getRevenueEpisodesForDrama(platform, drama).map((episode) => ({
+          drama_id: String(drama?.drama?.id ?? ""), sound_id: String(episode?.sound_id ?? ""), drama_title: drama?.drama?.name || "", episode_title: episode?.name || "", duration: Number(episode?.duration ?? 0),
+        })).filter((episode) => episode.drama_id && episode.sound_id));
+        updateReplaySearch(platform, searchGeneration, dramaIds, { dramas: freshDramas, selectedEpisodes });
+        statisticsStarted = true;
+        await startRevenueEstimate(replay.dramaIds, { platform, replay, source: appendRefreshSource(replay.source), refreshSignal: preparationAbortController.signal });
+        return;
+      }
+      if (replay.operation === "paid_id") {
+        const selectedPaidEpisodes = freshDramas.flatMap((drama) => (drama?.episodes?.episode || [])
+          .filter((episode) => isPaidEpisode(platform, episode) || isMemberEpisode(platform, episode))
+          .map((episode) => ({
+            drama_id: String(drama?.drama?.id ?? ""),
+            sound_id: episode.sound_id,
+            drama_title: drama?.drama?.name || "",
+            episode_title: episode.name,
+            duration: Number(episode.duration ?? 0),
+          }))
+        );
+        if (!selectedPaidEpisodes.length) {
+          toast.warning("当前作品没有可统计的付费分集。");
+          return;
+        }
+        updateReplaySearch(platform, searchGeneration, dramaIds, { dramas: freshDramas, selectedEpisodes: selectedPaidEpisodes });
+        statisticsStarted = true;
+        await startIdStatisticsForEpisodes(selectedPaidEpisodes, "当前作品没有可统计的付费分集。", {
+          platform,
+          replay,
+          dramas: freshDramas,
+          source: replay.source ?? (freshDramas.length === 1 ? `${freshDramas[0].drama?.id}payID` : ""),
+          isHistoryRefresh: true,
+          refreshSignal: preparationAbortController.signal,
+        });
+        return;
+      }
+      const selectedEpisodes = [];
+      for (const replayDrama of replay.dramas) {
+        const freshDrama = freshDramas.find((drama) => String(drama?.drama?.id) === replayDrama.dramaId);
+        const episodesById = new Map((freshDrama?.episodes?.episode || []).map((episode) => [String(episode.sound_id), episode]));
+        const missingEpisodeId = replayDrama.episodeIds.find((episodeId) => !episodesById.has(episodeId));
+        if (missingEpisodeId) {
+          toast.error(`作品《${freshDrama?.drama?.name || replayDrama.dramaId}》缺少原选分集 ${missingEpisodeId}，未开始刷新。`);
+          return;
+        }
+        replayDrama.episodeIds.forEach((episodeId) => {
+          const episode = episodesById.get(episodeId);
+          selectedEpisodes.push({
+            drama_id: replayDrama.dramaId,
+            sound_id: episodeId,
+            drama_title: freshDrama?.drama?.name || "",
+            episode_title: episode?.name || "",
+            duration: Number(episode?.duration ?? 0),
+          });
+        });
+      }
+      if (replay.operation === "id") {
+        updateReplaySearch(platform, searchGeneration, dramaIds, { dramas: freshDramas, selectedEpisodes });
+        statisticsStarted = true;
+        await startIdStatisticsForEpisodes(selectedEpisodes, "原选分集不可用。", {
+          platform,
+          replay,
+          source: replay.source,
+          dramas: freshDramas,
+          isHistoryRefresh: true,
+          refreshSignal: preparationAbortController.signal,
+        });
+        return;
+      }
+      const selectedIds = new Set(selectedEpisodes.map((episode) => `${episode.drama_id}:${episode.sound_id}`));
+      const playCountDramas = freshDramas.map((drama) => ({
+        ...drama,
+        episodes: {
+          ...drama.episodes,
+          episode: (drama.episodes?.episode || []).map((episode) => ({
+            ...episode,
+            selected: selectedIds.has(`${drama.drama?.id}:${episode.sound_id}`),
+          })),
+        },
+      }));
+      updateReplaySearch(platform, searchGeneration, dramaIds, { dramas: playCountDramas, selectedEpisodes });
+      statisticsStarted = true;
+      await startPlayCountStatistics(selectedEpisodes.map((episode) => episode.sound_id), {
+        platform,
+        selectedEpisodes,
+        playCountDramas: buildPlayCountDramasFromDramas(playCountDramas),
+        replay,
+        source: replay.source ?? "custom",
+        isHistoryRefresh: true,
+        refreshSignal: preparationAbortController.signal,
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        console.error("Failed to replay stats history", error);
+        toast.error(getStatsRequestErrorMessage(error));
+      }
+    } finally {
+      if (!statisticsStarted || preparationAbortController.signal.aborted) cardsAbortController.abort();
+      resolveFreshDetails?.();
+      if (replayPreparationAbortControllerRef.current === preparationAbortController) {
+        replayPreparationAbortControllerRef.current = null;
+      }
+      replayPreparingRef.current.delete(entryId);
+      setReplayPreparingEntryIds(Array.from(replayPreparingRef.current));
+    }
   }
 
   const missevanResultCount = getSearchResultCount(platformStates.missevan);
@@ -2073,6 +2422,13 @@ export function ToolView({ initialAppConfig }) {
           onAddCompareItem={addDramaToCompareBasket}
           onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
           onStartRevenueEstimate={startRevenueEstimate}
+          historyEntries={sharedHistoryEntries}
+          onDeleteHistoryEntry={(entry) => statsHistory.deleteHistoryEntry(entry.platform, entry.id)}
+          onClearHistory={statsHistory.clearAllHistoryEntries}
+          onReplayHistoryEntry={replayHistoryEntry}
+          isReplayPreparing={replayPreparingEntryIds.length > 0}
+          replayPreparingEntryIds={replayPreparingEntryIds}
+          historyActionsDisabled={historyActionsDisabled}
         />
       ) : currentPlatform === "ranks" ? (
         <Suspense
@@ -2151,6 +2507,13 @@ export function ToolView({ initialAppConfig }) {
             partnersFilter={toolRouteState.partners}
             onRouteStateChange={(patch) => navigateToolRoute(patch, { replace: true })}
             onOpenSearchResult={openDramaInSearch}
+            favoriteKeys={favoriteKeySet}
+            favoriteActionsDisabled={favoriteActionsDisabled}
+            statisticsActionsDisabled={statisticsActionsDisabled}
+            onToggleFavorite={toggleFavorite}
+            onAddCompareItem={addDramaToCompareBasket}
+            onStartDramaPaidIdStatistics={startDramaPaidIdStatistics}
+            onStartRevenueEstimate={startRevenueEstimate}
           />
         </Suspense>
       ) : currentPlatform === "favorites" ? (
@@ -2230,6 +2593,11 @@ export function ToolView({ initialAppConfig }) {
               onCancelStatistics: cancelCurrentStatistics,
               onClearHistory: statsHistory.clearAllHistoryEntries,
               onDeleteHistoryEntry: (entry) => statsHistory.deleteHistoryEntry(entry.platform, entry.id),
+              onReplayHistoryEntry: replayHistoryEntry,
+              isReplayPreparing: replayPreparingEntryIds.length > 0,
+              replayPreparingEntryIds,
+              historyActionsDisabled,
+              onCancelReplayPreparation: cancelCurrentStatistics,
               platform: sharedOutputPlatform,
               playCountFailed: sharedStatsState?.playCountFailed,
               playCountResults: sharedStatsState?.playCountResults,

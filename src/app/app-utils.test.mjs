@@ -33,6 +33,7 @@ import {
   loadPersistedHistoryEntries,
   mergeMissingSearchCardFields,
   normalizeOngoingWindow,
+  normalizeStatsHistoryReplay,
   normalizeSearchRouteQuery,
   parseRawItems,
   readToolRouteStateFromLocation,
@@ -2023,6 +2024,50 @@ test("loadPersistedHistoryEntries falls back to empty histories for corrupted da
     missevan: [],
     manbo: [],
   });
+});
+
+test("history replay parameters reject malformed episode ranges instead of shrinking them", () => {
+  assert.equal(normalizeStatsHistoryReplay({
+    version: 1,
+    operation: "id",
+    dramas: [{ dramaId: "100", episodeIds: ["10", ""] }],
+  }), null);
+  assert.deepEqual(normalizeStatsHistoryReplay({
+    version: 1,
+    operation: "play_count",
+    dramas: [{ dramaId: "100", episodeIds: ["10", "11"] }],
+    source: "custom",
+  }), {
+    version: 1,
+    operation: "play_count",
+    source: "custom",
+    dramas: [{ dramaId: "100", episodeIds: ["10", "11"] }],
+  });
+});
+
+test("history persistence evicts only the oldest entries after quota errors", () => {
+  const writes = [];
+  const storage = {
+    setItem(_key, value) {
+      writes.push(JSON.parse(value));
+      if (JSON.parse(value).missevan.length + JSON.parse(value).manbo.length > 1) {
+        const error = new Error("quota");
+        error.name = "QuotaExceededError";
+        throw error;
+      }
+    },
+  };
+  const result = savePersistedHistoryEntries({
+    missevan: [
+      { id: "new", platform: "missevan", createdAt: 2, createdAtLabel: "new", taskType: "id", items: [{ id: "1", title: "new", segments: [{ metricKey: "uniqueUsers", label: "ID", value: "1" }] }] },
+      { id: "old", platform: "missevan", createdAt: 1, createdAtLabel: "old", taskType: "id", items: [{ id: "2", title: "old", segments: [{ metricKey: "uniqueUsers", label: "ID", value: "1" }] }] },
+    ],
+    manbo: [],
+  }, storage);
+  assert.equal(result.persisted, true);
+  assert.deepEqual(result.evictedEntryIds, ["old"]);
+  assert.deepEqual(result.historyByPlatform.missevan.map((entry) => entry.id), ["new"]);
+  assert.equal(writes.length, 2);
 });
 
 test("selectDramaEpisodesByMode selects all or matching episodes and expands selected dramas", () => {

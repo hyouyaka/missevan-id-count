@@ -12,6 +12,8 @@ const {
   resolveMissevanPlayCountDramaTotal,
   normalizePlayCountDramas,
   buildFetchOptions,
+  buildManboWebApiUrls,
+  fetchManboWebJsonWithFallback,
   buildMissevanFallbackUrl,
   buildMissevanRouteCooldownStateAfterAccessDenied,
   createTimeoutSignal,
@@ -256,6 +258,41 @@ test("Manbo fetch options use a native-fetch dispatcher", () => {
 
   assert.equal(typeof options.dispatcher?.dispatch, "function");
   assert.equal("agent" in options, false);
+});
+
+test("Manbo Web APIs prefer kilaaudio and fall back to kilamanbo", async () => {
+  assert.deepEqual(buildManboWebApiUrls("/getDanmaKuPgList?pageNo=1"), [
+    "https://manbo.kilaaudio.com/web_manbo/getDanmaKuPgList?pageNo=1",
+    "https://www.kilamanbo.com/web_manbo/getDanmaKuPgList?pageNo=1",
+  ]);
+
+  const requestedUrls = [];
+  const data = await fetchManboWebJsonWithFallback("dramaDetail?dramaId=1", async (url) => {
+    requestedUrls.push(url);
+    if (url.includes("manbo.kilaaudio.com")) {
+      throw new Error("primary unavailable");
+    }
+    return { code: 200, data: { radioDramaId: "1" } };
+  });
+
+  assert.equal(data.data.radioDramaId, "1");
+  assert.deepEqual(requestedUrls, [
+    "https://manbo.kilaaudio.com/web_manbo/dramaDetail?dramaId=1",
+    "https://www.kilamanbo.com/web_manbo/dramaDetail?dramaId=1",
+  ]);
+});
+
+test("Manbo Web API fallback stays idle when the primary succeeds", async () => {
+  const requestedUrls = [];
+  const data = await fetchManboWebJsonWithFallback("dramaSetDetail?dramaSetId=2", async (url) => {
+    requestedUrls.push(url);
+    return { code: 200, data: { setId: "2" } };
+  });
+
+  assert.equal(data.data.setId, "2");
+  assert.deepEqual(requestedUrls, [
+    "https://manbo.kilaaudio.com/web_manbo/dramaSetDetail?dramaSetId=2",
+  ]);
 });
 
 test("Missevan fallback URL maps upstream URLs to Render proxy", () => {

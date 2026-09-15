@@ -399,6 +399,36 @@ export function isOngoingEmptyPaidDanmakuMetric(metric) {
   return fromValue === 0 && toValue === 0;
 }
 
+export function buildOngoingCvOptions(items) {
+  const counts = new Map();
+
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const dramaNames = new Set(
+      normalizeStringArray(item?.main_cvs).map((name) => normalizeText(name)).filter(Boolean)
+    );
+    dramaNames.forEach((name) => {
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+  });
+
+  return Array.from(counts, ([name, count]) => ({ name, count }))
+    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, "zh-CN"));
+}
+
+export function filterOngoingItemsByCvNames(items, selectedNames) {
+  const selection = new Set(
+    Array.from(selectedNames || []).map((name) => normalizeText(name)).filter(Boolean)
+  );
+  const sourceItems = Array.isArray(items) ? items : [];
+  if (!selection.size) {
+    return sourceItems;
+  }
+
+  return sourceItems.filter((item) => normalizeStringArray(item?.main_cvs)
+    .map((name) => normalizeText(name))
+    .some((name) => selection.has(name)));
+}
+
 export function buildOngoingResponse({
   platform,
   ongoingIds,

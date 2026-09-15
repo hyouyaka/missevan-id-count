@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
+  SlidersHorizontalIcon,
   HandCoinsIcon,
   HeartIcon,
   MicIcon,
   MoreHorizontalIcon,
   PlayCircleIcon,
   RefreshCwIcon,
+  SearchIcon,
   ShoppingCartIcon,
   StarIcon,
   TrendingUpIcon,
@@ -43,8 +45,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LazyImage } from "@/components/ui/lazy-image";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  buildOngoingCvOptions,
+  filterOngoingItemsByCvNames,
   isOngoingEmptyPaidDanmakuMetric,
   sortOngoingItemsByWindowDelta,
 } from "../../shared/ongoingUtils.js";
@@ -53,6 +60,12 @@ const platformLabels = {
   missevan: "猫耳",
   manbo: "漫播",
 };
+
+const ongoingCvSelectionStore = {
+  missevan: new Set(),
+  manbo: new Set(),
+};
+const emptyOngoingItems = [];
 
 const mobileOngoingTextTabsListClassName =
   "grid h-9 min-h-9 w-fit justify-start";
@@ -96,6 +109,119 @@ const ongoingTrendButtonClassName =
   `${ongoingActionButtonClassName} border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]`;
 const ongoingCompareButtonClassName =
   `${ongoingActionButtonClassName} border-[color-mix(in_oklch,var(--accent-compare)_34%,transparent)] bg-[var(--accent-compare)] text-[var(--accent-compare-foreground)] shadow-[0_12px_24px_-16px_var(--accent-compare)] hover:bg-[var(--accent-compare-hover)] hover:text-[var(--accent-compare-foreground)]`;
+const ongoingCvFilterTriggerClassName =
+  `${ongoingActionButtonClassName} border-[color-mix(in_oklch,var(--primary)_24%,transparent)] bg-primary text-primary-foreground shadow-[var(--shadow-control)] hover:bg-[var(--primary-hover)] hover:text-primary-foreground aria-expanded:bg-[var(--primary-hover)] aria-expanded:text-primary-foreground`;
+
+function OngoingCvFilterTrigger({ className, selectedCount, ...props }) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      data-touch="compact"
+      className={`${ongoingCvFilterTriggerClassName} ${className || ""}`}
+      {...props}
+    >
+      <SlidersHorizontalIcon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="whitespace-nowrap">CV筛选{selectedCount ? ` · ${selectedCount}` : ""}</span>
+    </Button>
+  );
+}
+
+function OngoingCvFilterContent({
+  cvOptions,
+  matchedCount,
+  onClose,
+  onQueryChange,
+  onToggle,
+  query,
+  selectedCvNames,
+  showTitle = true,
+  inputRef,
+  visibleCvOptions,
+}) {
+  const selectedCount = selectedCvNames.size;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {showTitle ? (
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="font-semibold text-foreground">CV筛选</div>
+            <div className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">按主役剧集数排序</div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-touch="compact"
+            className="h-8 min-h-8 rounded-full px-2.5"
+            disabled={!selectedCount}
+            onClick={() => onToggle(null)}
+          >
+            清空
+          </Button>
+        </div>
+      ) : null}
+      <div className="relative shrink-0">
+        <SearchIcon
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          ref={inputRef}
+          value={query}
+          className="h-10 min-h-10 pl-9"
+          placeholder="搜索CV名称"
+          aria-label="搜索CV名称"
+          onChange={(event) => onQueryChange(event.target.value)}
+        />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {!cvOptions.length ? (
+          <div className="px-2 py-8 text-center text-sm text-muted-foreground">暂无可筛选的主役CV</div>
+        ) : visibleCvOptions.length ? (
+          <div className="flex flex-wrap content-start gap-x-2 gap-y-0 py-0.5" aria-label="CV筛选选项">
+            {visibleCvOptions.map((option) => {
+              const selected = selectedCvNames.has(option.name);
+              return (
+                <Button
+                  key={option.name}
+                  type="button"
+                  variant="ghost"
+                  className="h-auto min-h-11 max-w-full shrink whitespace-normal border-0! bg-transparent! px-0 py-1 shadow-none! hover:bg-transparent! focus-visible:ring-2"
+                  aria-pressed={selected}
+                  aria-label={`筛选${option.name}，${option.count}部作品`}
+                  onClick={() => onToggle(option.name)}
+                >
+                  <span className={`pointer-events-none flex h-auto min-h-9 min-w-0 max-w-full items-center justify-center rounded-full border px-3 py-1.5 text-left text-sm leading-5 ${selected
+                    ? "border-[color-mix(in_oklch,var(--primary)_24%,transparent)] bg-primary font-semibold text-primary-foreground shadow-[var(--shadow-control)]"
+                    : "border-border/75 bg-background text-foreground group-hover/button:border-[var(--border-warm)] group-hover/button:bg-surface-hover-strong"}`}>
+                    <span className="min-w-0 break-words">{option.name} · <span className="tabular-nums">{option.count}</span></span>
+                  </span>
+                </Button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="px-2 py-8 text-center text-sm text-muted-foreground">未找到匹配的CV</div>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t pt-3">
+        <div className="min-w-0 text-xs text-muted-foreground">
+          已选 {selectedCount} 位 · 共 {matchedCount} 部作品
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          data-touch="compact"
+          className="h-10 min-h-10 shrink-0 rounded-full px-4"
+          onClick={onClose}
+        >
+          完成
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function OngoingActionLayout({ children }) {
   const containerRef = useRef(null);
@@ -735,6 +861,12 @@ export function OngoingPanel({
   const [selectedWindow, setSelectedWindow] = useState(() =>
     ["3d", "7d", "30d"].includes(routeState?.window) ? routeState.window : "3d"
   );
+  const [selectedCvNames, setSelectedCvNames] = useState(() =>
+    new Set(ongoingCvSelectionStore[routeState?.platform === "manbo" ? "manbo" : "missevan"])
+  );
+  const [cvFilterQuery, setCvFilterQuery] = useState("");
+  const [desktopCvFilterOpen, setDesktopCvFilterOpen] = useState(false);
+  const [mobileCvFilterOpen, setMobileCvFilterOpen] = useState(false);
   const [ongoingData, setOngoingData] = useState(null);
   const [platformCounts, setPlatformCounts] = useState({
     missevan: null,
@@ -749,6 +881,8 @@ export function OngoingPanel({
   });
   const loggedOngoingRef = useRef(new Set());
   const handleVersionResponseRef = useRef(handleVersionResponse);
+  const desktopCvFilterSearchRef = useRef(null);
+  const mobileCvFilterTitleRef = useRef(null);
 
   useEffect(() => {
     handleVersionResponseRef.current = handleVersionResponse;
@@ -758,9 +892,28 @@ export function OngoingPanel({
     if (routeState?.view !== "ongoing") {
       return;
     }
-    setSelectedPlatform(routeState.platform === "manbo" ? "manbo" : "missevan");
+    const nextPlatform = routeState.platform === "manbo" ? "manbo" : "missevan";
+    setSelectedPlatform(nextPlatform);
+    setSelectedCvNames(new Set(ongoingCvSelectionStore[nextPlatform]));
     setSelectedWindow(["3d", "7d", "30d"].includes(routeState.window) ? routeState.window : "3d");
+    setCvFilterQuery("");
+    setDesktopCvFilterOpen(false);
+    setMobileCvFilterOpen(false);
   }, [routeState?.view, routeState?.platform, routeState?.window]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia("(min-width: 640px)");
+    const closeCvFilter = () => {
+      setDesktopCvFilterOpen(false);
+      setMobileCvFilterOpen(false);
+      setCvFilterQuery("");
+    };
+    mediaQuery.addEventListener("change", closeCvFilter);
+    return () => mediaQuery.removeEventListener("change", closeCvFilter);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -867,7 +1020,7 @@ export function OngoingPanel({
   }, [frontendVersion]);
 
   useEffect(() => {
-    if (isLoading || errorMessage || !ongoingData?.success) {
+    if (isLoading || errorMessage || !ongoingData?.success || ongoingData.platform !== selectedPlatform) {
       return;
     }
 
@@ -890,9 +1043,11 @@ export function OngoingPanel({
     }).catch((error) => {
       console.error("Failed to log ongoing view", error);
     });
-  }, [errorMessage, frontendVersion, isLoading, ongoingData?.success, selectedPlatform]);
+  }, [errorMessage, frontendVersion, isLoading, ongoingData?.platform, ongoingData?.success, selectedPlatform]);
 
-  const windows = ongoingData?.windows || {};
+  const currentOngoingData = ongoingData?.platform === selectedPlatform ? ongoingData : null;
+  const currentOngoingItems = currentOngoingData?.items || emptyOngoingItems;
+  const windows = currentOngoingData?.windows || {};
   const availableWindows = ["3d", "7d", "30d"].filter((key) => windows[key]);
   const activeWindow = availableWindows.includes(selectedWindow)
     ? selectedWindow
@@ -912,16 +1067,50 @@ export function OngoingPanel({
     );
   }, [activeWindow, availableWindows.length, onRouteStateChange, routeState?.view, selectedPlatform, selectedWindow]);
   const sortedItems = useMemo(
-    () => sortOngoingItemsByWindowDelta(ongoingData?.items || [], activeWindow),
-    [activeWindow, ongoingData?.items]
+    () => sortOngoingItemsByWindowDelta(currentOngoingItems, activeWindow),
+    [activeWindow, currentOngoingItems]
   );
+  const cvOptions = useMemo(
+    () => buildOngoingCvOptions(currentOngoingItems),
+    [currentOngoingItems]
+  );
+  const visibleCvOptions = useMemo(() => {
+    const normalizedQuery = cvFilterQuery.trim().toLocaleLowerCase();
+    if (!normalizedQuery) {
+      return cvOptions;
+    }
+    return cvOptions.filter((option) => option.name.toLocaleLowerCase().includes(normalizedQuery));
+  }, [cvFilterQuery, cvOptions]);
+  const filteredItems = useMemo(
+    () => filterOngoingItemsByCvNames(sortedItems, selectedCvNames),
+    [selectedCvNames, sortedItems]
+  );
+  const originalRanksById = useMemo(
+    () => new Map(sortedItems.map((item, index) => [String(item.id), index + 1])),
+    [sortedItems]
+  );
+
+  useEffect(() => {
+    if (!ongoingData?.success || ongoingData.platform !== selectedPlatform) {
+      return;
+    }
+    const validNames = new Set(cvOptions.map((option) => option.name));
+    setSelectedCvNames((current) => {
+      const next = new Set(Array.from(current).filter((name) => validNames.has(name)));
+      if (next.size === current.size) {
+        return current;
+      }
+      ongoingCvSelectionStore[selectedPlatform] = next;
+      return next;
+    });
+  }, [cvOptions, ongoingData?.platform, ongoingData?.success, selectedPlatform]);
   const trendLookupIds = useMemo(
     () => Array.from(new Set(
-      (ongoingData?.items || [])
+      currentOngoingItems
         .map((item) => String(item?.id ?? "").trim())
         .filter(Boolean)
     )).sort(),
-    [ongoingData?.items]
+    [currentOngoingItems]
   );
   const trendLookupKey = trendLookupIds.join("|");
 
@@ -979,6 +1168,10 @@ export function OngoingPanel({
   function updatePlatform(platform) {
     const nextPlatform = platform === "manbo" ? "manbo" : "missevan";
     setSelectedPlatform(nextPlatform);
+    setSelectedCvNames(new Set(ongoingCvSelectionStore[nextPlatform]));
+    setCvFilterQuery("");
+    setDesktopCvFilterOpen(false);
+    setMobileCvFilterOpen(false);
     onRouteStateChange?.({
       view: "ongoing",
       platform: nextPlatform,
@@ -996,13 +1189,85 @@ export function OngoingPanel({
     });
   }
 
+  function updateCvFilterOpen(setOpen, open) {
+    setOpen(open);
+    if (!open) {
+      setCvFilterQuery("");
+    }
+  }
+
+  function toggleCvSelection(name) {
+    setSelectedCvNames((current) => {
+      const next = new Set(current);
+      if (name == null) {
+        next.clear();
+      } else if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      ongoingCvSelectionStore[selectedPlatform] = next;
+      return next;
+    });
+  }
+
+  const cvFilterContentProps = {
+    cvOptions,
+    matchedCount: filteredItems.length,
+    onQueryChange: setCvFilterQuery,
+    onToggle: toggleCvSelection,
+    query: cvFilterQuery,
+    selectedCvNames,
+    visibleCvOptions,
+  };
+
   return (
     <div className="grid gap-4 sm:gap-5">
       <div className="px-1 py-1">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <div className="shrink-0 text-xs leading-5 text-muted-foreground">
-              更新：{formatOngoingUpdatedAt(ongoingData?.updatedAt)}
+              更新：{formatOngoingUpdatedAt(currentOngoingData?.updatedAt)}
+            </div>
+            <div className="sm:hidden">
+              <Sheet open={mobileCvFilterOpen} onOpenChange={(open) => updateCvFilterOpen(setMobileCvFilterOpen, open)}>
+                <SheetTrigger asChild>
+                  <OngoingCvFilterTrigger selectedCount={selectedCvNames.size} />
+                </SheetTrigger>
+                <SheetContent
+                  side="bottom"
+                  showCloseButton={false}
+                  className="flex h-[min(80dvh,42rem)] max-h-[calc(100dvh-1rem)] flex-col rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+                  onOpenAutoFocus={(event) => {
+                    event.preventDefault();
+                    mobileCvFilterTitleRef.current?.focus();
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <SheetTitle ref={mobileCvFilterTitleRef} tabIndex={-1} className="shrink-0 text-base">CV筛选</SheetTitle>
+                      <div className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">按主役剧集数排序</div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      data-touch="compact"
+                      className="h-10 min-h-10 rounded-full px-3"
+                      disabled={!selectedCvNames.size}
+                      onClick={() => toggleCvSelection(null)}
+                    >
+                      清空
+                    </Button>
+                  </div>
+                  <SheetDescription className="sr-only">筛选当前平台连载中作品的主役CV。</SheetDescription>
+                  <OngoingCvFilterContent
+                    {...cvFilterContentProps}
+                    showTitle={false}
+                    onClose={() => updateCvFilterOpen(setMobileCvFilterOpen, false)}
+                  />
+                </SheetContent>
+              </Sheet>
             </div>
           </div>
           <div className="flex min-h-8 items-center justify-between gap-3 sm:hidden">
@@ -1050,23 +1315,46 @@ export function OngoingPanel({
             </Tabs>
           </div>
           <div className="hidden flex-col gap-1 sm:flex sm:flex-row sm:items-center sm:justify-end sm:gap-10 lg:flex-row lg:gap-12">
-            <Tabs value={selectedPlatform} onValueChange={updatePlatform}>
-              <TabsList aria-label="选择平台" className={`${desktopOngoingTextTabsListClassName} gap-4`}>
-                {["missevan", "manbo"].map((platform) => (
-                  <TabsTrigger
-                    key={platform}
-                    data-platform={platform}
-                    className={`${desktopOngoingTabClassName} ${
-                      platform === selectedPlatform ? desktopOngoingSelectedPlatformTabClassName : ""
-                    }`}
-                    value={platform}
-                  >
-                    <PlatformTabLabel platform={platform} />
-                    <span className="tabular-nums">{platformCounts[platform] ?? "—"}</span>
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
+            <div className="flex items-center gap-2">
+              <Popover open={desktopCvFilterOpen} onOpenChange={(open) => updateCvFilterOpen(setDesktopCvFilterOpen, open)}>
+                <PopoverTrigger asChild>
+                  <OngoingCvFilterTrigger selectedCount={selectedCvNames.size} />
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  collisionPadding={8}
+                  className="h-[min(34rem,calc(100dvh-2rem))] max-h-[var(--radix-popover-content-available-height)] w-[min(23rem,calc(100vw-2rem))] p-3"
+                  aria-label="CV筛选选项"
+                  onOpenAutoFocus={(event) => {
+                    event.preventDefault();
+                    desktopCvFilterSearchRef.current?.focus();
+                  }}
+                >
+                  <OngoingCvFilterContent
+                    {...cvFilterContentProps}
+                    inputRef={desktopCvFilterSearchRef}
+                    onClose={() => updateCvFilterOpen(setDesktopCvFilterOpen, false)}
+                  />
+                </PopoverContent>
+              </Popover>
+              <Tabs value={selectedPlatform} onValueChange={updatePlatform}>
+                <TabsList aria-label="选择平台" className={`${desktopOngoingTextTabsListClassName} gap-4`}>
+                  {["missevan", "manbo"].map((platform) => (
+                    <TabsTrigger
+                      key={platform}
+                      data-platform={platform}
+                      className={`${desktopOngoingTabClassName} ${
+                        platform === selectedPlatform ? desktopOngoingSelectedPlatformTabClassName : ""
+                      }`}
+                      value={platform}
+                    >
+                      <PlatformTabLabel platform={platform} />
+                      <span className="tabular-nums">{platformCounts[platform] ?? "—"}</span>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </div>
             <Tabs value={activeWindow} onValueChange={updateWindow}>
               <TabsList aria-label="选择增量周期" className={`${desktopOngoingTextTabsListClassName} gap-4`}>
                 {["3d", "7d", "30d"].map((key) => (
@@ -1106,14 +1394,37 @@ export function OngoingPanel({
         </div>
       ) : null}
 
-      {!isLoading && !errorMessage && sortedItems.length ? (
+      {!isLoading && !errorMessage && sortedItems.length && selectedCvNames.size ? (
+        <div className="flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+          <span>已匹配 {filteredItems.length} / {sortedItems.length} 部作品</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-touch="compact"
+            className="h-8 min-h-8 rounded-full px-2.5"
+            onClick={() => toggleCvSelection(null)}
+          >
+            清空筛选
+          </Button>
+        </div>
+      ) : null}
+
+      {!isLoading && !errorMessage && sortedItems.length && !filteredItems.length ? (
+        <div className="rounded-lg border border-dashed border-border/80 bg-muted/30 px-6 py-10 text-center">
+          <div className="text-base font-semibold">没有匹配的作品</div>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">尝试清空CV筛选后查看全部作品。</p>
+        </div>
+      ) : null}
+
+      {!isLoading && !errorMessage && filteredItems.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {sortedItems.map((item, index) => (
+          {filteredItems.map((item) => (
             <OngoingCard
               key={`${selectedPlatform}-${item.id}`}
               item={item}
               platform={selectedPlatform}
-              rank={index + 1}
+              rank={originalRanksById.get(String(item.id)) || 1}
               windowKey={activeWindow}
               frontendVersion={frontendVersion}
               handleVersionResponse={handleVersionResponse}

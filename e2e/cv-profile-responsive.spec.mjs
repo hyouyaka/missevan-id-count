@@ -96,7 +96,7 @@ const profileResponse = {
   ],
 };
 
-test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }) => {
+test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }, testInfo) => {
   await page.addInitScript((version) => {
     window.localStorage.setItem("missevan-changelog-seen-version", version);
   }, appVersion);
@@ -107,6 +107,14 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
       body: JSON.stringify(profileResponse),
     })
   );
+  await page.route("**/ranks/trends/availability?**", (route) => {
+    const ids = new URL(route.request().url()).searchParams.getAll("id");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, ids }),
+    });
+  });
 
   await page.setViewportSize({ width: 376, height: 800 });
   await page.goto("/?view=cv&cv=%E5%93%8D%E5%BA%94%E5%BC%8F%E6%B5%8B%E8%AF%95%20CV&sort=plays_asc");
@@ -114,7 +122,7 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
 
   await expect(page.getByRole("button", { name: /当前按播放量/ })).toHaveCount(0);
   const getVisibleTitleText = (accessibleName) =>
-    page.getByRole("button", { name: accessibleName }).evaluate((button) =>
+    page.getByRole("button", { name: accessibleName, exact: true }).evaluate((button) =>
       Array.from(button.children)
         .filter((element) => getComputedStyle(element).display !== "none")
         .map((element) => element.textContent)
@@ -125,7 +133,7 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
     `${Array.from(longTitle).slice(0, 18).join("")}...广播剧`
   );
 
-  const titleButtons = page.locator(".cv-profile-work-grid > article > div > button");
+  const titleButtons = page.locator(".cv-profile-work-grid > article button[aria-label]").filter({ hasText: shortTitle });
   await expect(titleButtons.first()).toHaveAttribute("aria-label", shortTitle);
   const filterButtons = page.locator('button[aria-label*="筛选，"]');
   await expect(filterButtons).toHaveCount(4);
@@ -133,27 +141,82 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
     buttons.map((button) => button.getBoundingClientRect().height)
   );
   expect(filterHeights.every((height) => height <= 32)).toBe(true);
+  for (const width of [375, 390, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    const mobileToolbar = await filterButtons.evaluateAll((buttons) => buttons.map((button) => {
+      const visibleLabel = [...button.querySelectorAll("span")]
+        .find((span) => getComputedStyle(span).display !== "none")?.textContent;
+      const bounds = button.getBoundingClientRect();
+      return { text: visibleLabel, y: bounds.y };
+    }));
+    expect(mobileToolbar.map((item) => item.text)).toEqual(["平台·全", "付费·全", "时间·全", "搭档·全"]);
+    if (width >= 375) {
+      expect(new Set(mobileToolbar.map((item) => Math.round(item.y))).size).toBe(1);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 376, height: 800 });
   await page.getByRole("button", { name: "时间筛选，全部" }).click();
-  const releaseOptions = page.getByLabel("时间筛选选项");
-  await expect(releaseOptions.getByText("2024", { exact: true })).toBeVisible();
-  await expect(releaseOptions.getByText("暂无", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "时间筛选，全部" }).click();
+  const releaseOptions = page.getByRole("dialog", { name: "时间筛选选项", exact: true });
+  await expect(releaseOptions).toHaveAttribute("data-slot", "popover-content");
+  await expect(releaseOptions.getByRole("button", { name: /筛选2024，\d+部作品/ })).toBeVisible();
+  await expect(releaseOptions.getByRole("button", { name: /筛选暂无，\d+部作品/ })).toBeVisible();
+  const releaseChip = releaseOptions.getByRole("button", { name: /筛选2024，\d+部作品/ });
+  await releaseOptions.evaluate(async (element) => {
+    await Promise.all(element.getAnimations({ subtree: true }).map((animation) =>
+      animation.finished.catch(() => undefined)
+    ));
+  });
+  const releaseChipDimensions = await releaseChip.evaluate((button) => {
+    const visualChip = button.querySelector("span");
+    return {
+      buttonHeight: button.getBoundingClientRect().height,
+      visualHeight: visualChip?.getBoundingClientRect().height,
+    };
+  });
+  expect(releaseChipDimensions.buttonHeight).toBe(44);
+  expect(releaseChipDimensions.visualHeight).toBe(36);
+  await page.keyboard.press("Escape");
   const loadMoreButton = page.getByRole("button", { name: "加载更多" });
   await expect(loadMoreButton).toHaveAttribute("data-touch", "compact");
   const loadMoreBox = await loadMoreButton.boundingBox();
   expect(loadMoreBox?.height).toBeLessThanOrEqual(32);
 
   const firstArticle = page.locator(".cv-profile-work-grid > article").first();
+  const coverBox = await firstArticle.locator("[data-cv-work-cover]").boundingBox();
+  const metaBox = await firstArticle.locator("[data-cv-work-meta]").boundingBox();
+  const playbackBox = await firstArticle.locator("[data-cv-work-playback]").boundingBox();
+  const watermarkBox = await firstArticle.locator("[data-cv-work-watermark]").boundingBox();
   const articleBox = await firstArticle.boundingBox();
-  const platformIconBox = await firstArticle.getByRole("img", { name: "猫耳平台" }).boundingBox();
-  expect((articleBox?.x ?? 0) + (articleBox?.width ?? 0) - ((platformIconBox?.x ?? 0) + (platformIconBox?.width ?? 0))).toBeGreaterThanOrEqual(7);
+  expect(Math.abs(((coverBox?.y ?? 0) + (coverBox?.height ?? 0) / 2) - ((metaBox?.y ?? 0) + (metaBox?.height ?? 0) / 2))).toBeLessThanOrEqual(1);
+  expect(Math.abs((coverBox?.x ?? 0) - (playbackBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect((playbackBox?.y ?? 0)).toBeGreaterThan((metaBox?.y ?? 0) + (metaBox?.height ?? 0));
+  expect((watermarkBox?.x ?? 0) + (watermarkBox?.width ?? 0)).toBeLessThanOrEqual((articleBox?.x ?? 0) + (articleBox?.width ?? 0));
+  await expect(firstArticle.getByRole("link", { name: /打开作品ID/ })).toHaveCount(0);
+  await expect(firstArticle.locator("[data-cv-work-meta] [data-platform=\"missevan\"]")).toHaveCount(1);
 
   const partnerTrigger = page.getByRole("button", { name: "搭档筛选，全部" });
   await partnerTrigger.click();
   await expect(page.getByRole("textbox", { name: "搜索搭档" })).not.toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(partnerTrigger).toBeFocused();
+
+  await page.setViewportSize({ width: 375, height: 700 });
+  await partnerTrigger.scrollIntoViewIfNeeded();
   await partnerTrigger.click();
+  await page.getByRole("textbox", { name: "搜索搭档" }).fill("测试");
+  await page.setViewportSize({ width: 375, height: 420 });
+  const partnerPopover = page.getByRole("dialog", { name: "搭档筛选选项", exact: true });
+  const applyButton = partnerPopover.getByRole("button", { name: "应用" });
+  await expect(applyButton).toBeVisible();
+  await expect.poll(async () => {
+    const bounds = await applyButton.boundingBox();
+    return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 420);
+  }).toBe(true);
+  await applyButton.click();
 
   const expectedColumns = [
+    { width: 320, count: 1 },
     { width: 376, count: 1 },
     { width: 768, count: 2 },
     { width: 1280, count: 3 },
@@ -187,5 +250,25 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
       document.documentElement.scrollWidth > document.documentElement.clientWidth
     );
     expect(hasHorizontalOverflow).toBe(false);
+    const actionModes = await page.locator('[data-cv-work-actions="true"]').evaluateAll((elements) =>
+      [...new Set(elements.map((element) => element.dataset.actionMode))]
+    );
+    expect(actionModes.every((mode) => ["all", "trend-more", "more-only"].includes(mode))).toBe(true);
+    if (width === 320) expect(actionModes).toEqual(["trend-more"]);
+    if (width === 320 || width === 1280) {
+      await page.screenshot({
+        path: testInfo.outputPath(`cv-profile-${width}.png`),
+        fullPage: true,
+      });
+    }
+  }
+
+  const firstWorkActions = page.locator('[data-cv-work-actions="true"]').first();
+  for (const [width, mode] of [["15rem", "all"], ["10rem", "trend-more"], ["6rem", "more-only"]]) {
+    await firstWorkActions.evaluate((element, flexBasis) => {
+      element.style.flex = `0 0 ${flexBasis}`;
+      element.style.width = flexBasis;
+    }, width);
+    await expect(firstWorkActions).toHaveAttribute("data-action-mode", mode);
   }
 });

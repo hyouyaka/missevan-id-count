@@ -141,6 +141,7 @@ export function registerMissevanRoutes(router, {
     }
     const ids = normalizeDramaIds(req.body.drama_ids || []);
     const soundIdMap = req.body.sound_id_map || {};
+    const forceRefresh = req.body?.force_refresh === true;
     const results = [];
 
     await refreshMissevanCooldownState();
@@ -150,7 +151,9 @@ export function registerMissevanRoutes(router, {
       const id = ids[index];
       try {
         const soundId = Number(soundIdMap[String(id)] ?? soundIdMap[id] ?? 0);
-        const info = await fetchDramaInfo(id, soundId > 0 ? soundId : null);
+        const info = await fetchDramaInfo(id, soundId > 0 ? soundId : null, {
+          forceRefresh,
+        });
 
         if (info) {
           results.push({

@@ -7,7 +7,7 @@ import {
   CoinsIcon,
   DownloadIcon,
   FileDownIcon,
-  FilterIcon,
+  SlidersHorizontalIcon,
   GemIcon,
   HeartIcon,
   MicIcon,
@@ -873,7 +873,7 @@ export function FavoritesPanel({
                 title={activeFilterCount ? `筛选，已启用 ${activeFilterCount} 项` : "筛选"}
                 onClick={() => setMobilePanel((current) => current === "filters" ? null : "filters")}
               >
-                <FilterIcon aria-hidden="true" className="size-4 shrink-0" />
+                <SlidersHorizontalIcon aria-hidden="true" className="size-4 shrink-0" />
               </MobileToolbarButton>
             </div>
           </div>

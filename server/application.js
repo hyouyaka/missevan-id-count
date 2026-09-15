@@ -179,10 +179,11 @@ const MISSEVAN_COOLDOWN_MS = MISSEVAN_COOLDOWN_HOURS * 60 * 60 * 1000;
 const MISSEVAN_REPEAT_COOLDOWN_MS =
   MISSEVAN_REPEAT_COOLDOWN_HOURS * 60 * 60 * 1000;
 
-const MANBO_API_BASE = "https://www.kilamanbo.com/web_manbo";
+const MANBO_API_BASE = "https://manbo.kilaaudio.com/web_manbo";
+const MANBO_API_FALLBACK_BASE = "https://www.kilamanbo.com/web_manbo";
 const MANBO_API_V530_BASE = "https://api.kilamanbo.com/api/v530/radio/drama";
 const MANBO_SEARCH_API_BASE = "https://api.kilamanbo.com/api/v530/search/page/content/new";
-const MANBO_API_HOST = "www.kilamanbo.com";
+const MANBO_API_FALLBACK_HOST = "www.kilamanbo.com";
 const CV_INFO_KEY = "cvid-map:v1";
 const INFO_V2_KEYS = Object.freeze({
   manbo: "manbo:info:v2",
@@ -2181,7 +2182,11 @@ export function buildCompatibilitySearchUsageLog(platform, keyword) {
 }
 
 export function normalizeStatsTaskSource(value) {
-  return normalizeTextValue(value).slice(0, 40);
+  const source = normalizeTextValue(value);
+  const refreshSuffix = "refresh";
+  return source.endsWith(refreshSuffix)
+    ? `${source.slice(0, -refreshSuffix.length).slice(0, 40)}${refreshSuffix}`
+    : source.slice(0, 40);
 }
 
 const STATS_TASK_RESULT_LIST_KEYS = Object.freeze({
@@ -8228,7 +8233,7 @@ export function buildFetchOptions(url, options = {}) {
     redirect: options.redirect,
   };
 
-  if (!fetchOptions.dispatcher && targetUrl.hostname === MANBO_API_HOST) {
+  if (!fetchOptions.dispatcher && targetUrl.hostname === MANBO_API_FALLBACK_HOST) {
     fetchOptions.dispatcher = manboFetchDispatcher;
   }
 
@@ -8252,7 +8257,7 @@ function getRequestLogPlatform(url) {
     if (hostname.includes("missevan.com")) {
       return "missevan";
     }
-    if (hostname.includes("kilamanbo.com")) {
+    if (hostname.includes("kilamanbo.com") || hostname.includes("kilaaudio.com")) {
       return "manbo";
     }
     return hostname || "external";
@@ -8890,7 +8895,7 @@ function writeWatchCountUsageLog({
 async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
   const cacheKey = soundId ? `sound:${soundId}` : `drama:${dramaId}`;
   const cached = getCachedValue(dramaCache, cacheKey, DRAMA_CACHE_TTL_MS);
-  if (cached) {
+  if (cached && !options.forceRefresh) {
     return cached;
   }
 
@@ -9125,11 +9130,9 @@ async function fetchManboLegacyDramaPayload(dramaId, options = {}) {
     return null;
   }
 
-  const data = await fetchJsonWithRetry(
-    `${MANBO_API_BASE}/dramaDetail?dramaId=${normalizedDramaId}`,
-    2,
-    250,
-    { signal: options.signal }
+  const data = await fetchManboWebJsonWithFallback(
+    `/dramaDetail?dramaId=${normalizedDramaId}`,
+    (url) => fetchJsonWithRetry(url, 2, 250, { signal: options.signal })
   );
 
   if (Number(data?.code) !== 200 || !data?.data) {
@@ -9517,6 +9520,35 @@ function resolveManboEpisodeTitle(setId, episodeTitle = "") {
   return cachedTitle;
 }
 
+export function buildManboWebApiUrls(path) {
+  const normalizedPath = `/${String(path ?? "").replace(/^\/+/, "")}`;
+  return [MANBO_API_BASE, MANBO_API_FALLBACK_BASE].map(
+    (baseUrl) => `${baseUrl}${normalizedPath}`
+  );
+}
+
+function isAvailableManboWebPayload(data) {
+  return Number(data?.code) === 200 && Boolean(data?.data);
+}
+
+export async function fetchManboWebJsonWithFallback(path, requestJson) {
+  let lastError = null;
+
+  for (const url of buildManboWebApiUrls(path)) {
+    try {
+      const data = await requestJson(url);
+      if (isAvailableManboWebPayload(data)) {
+        return data;
+      }
+      lastError = new Error(`Manbo API unavailable: ${url}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error("Manbo API unavailable");
+}
+
 async function fetchManboDramaDetail(dramaId, options = {}) {
   const normalizedDramaId = String(dramaId ?? "").trim();
   const cached = getCachedValue(
@@ -9524,7 +9556,7 @@ async function fetchManboDramaDetail(dramaId, options = {}) {
     normalizedDramaId,
     MANBO_DRAMA_CACHE_TTL_MS
   );
-  if (cached) {
+  if (cached && !options.forceRefresh) {
     return cached;
   }
 
@@ -9581,11 +9613,9 @@ async function fetchManboSetDetail(setId, options = {}) {
     return cached;
   }
 
-  const data = await fetchJsonWithRetry(
-    `${MANBO_API_BASE}/dramaSetDetail?dramaSetId=${normalizedSetId}`,
-    2,
-    250,
-    { signal: options.signal }
+  const data = await fetchManboWebJsonWithFallback(
+    `/dramaSetDetail?dramaSetId=${normalizedSetId}`,
+    (url) => fetchJsonWithRetry(url, 2, 250, { signal: options.signal })
   );
   if (Number(data?.code) !== 200 || !data?.data) {
     return null;
@@ -10081,17 +10111,19 @@ async function fetchManboDanmakuSummary(
         const users = new Set();
         const fetchPage = (pageNo, phase) => {
           const rescue = phase === "rescue";
-          const url = `${MANBO_API_BASE}/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=${pageNo}`;
           return manboDanmakuPageGate.run(
             sharedSignal,
-            () => fetchJsonWithRetry(
-              url,
-              rescue ? MANBO_DANMAKU_RESCUE_RETRIES : 2,
-              rescue ? MANBO_DANMAKU_RESCUE_DELAY_MS : 250,
-              {
-                timeoutMs: rescue ? MANBO_DANMAKU_RESCUE_TIMEOUT_MS : MANBO_FETCH_TIMEOUT_MS,
-                signal: sharedSignal,
-              }
+            () => fetchManboWebJsonWithFallback(
+              `/getDanmaKuPgList?pageSize=${pageSize}&dramaSetId=${setId}&pageNo=${pageNo}`,
+              (url) => fetchJsonWithRetry(
+                url,
+                rescue ? MANBO_DANMAKU_RESCUE_RETRIES : 2,
+                rescue ? MANBO_DANMAKU_RESCUE_DELAY_MS : 250,
+                {
+                  timeoutMs: rescue ? MANBO_DANMAKU_RESCUE_TIMEOUT_MS : MANBO_FETCH_TIMEOUT_MS,
+                  signal: sharedSignal,
+                }
+              )
             )
           );
         };
@@ -11226,7 +11258,7 @@ app.post("/usage-log", async (req, res) => {
         !["missevan", "manbo"].includes(platform) ||
         !isNumericId(dramaId) ||
         !dramaName ||
-        !["ongoing", "ranks", "homeview"].includes(source) ||
+        !["ongoing", "ranks", "cv_profile", "homeview"].includes(source) ||
         payload.success !== true
       ) {
         return res.status(400).json({

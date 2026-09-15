@@ -26,6 +26,7 @@ import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankWatermark } from "@/app/RankBadge";
+import { StatsHistoryList } from "@/app/StatsHistoryList";
 import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
 import {
   fetchRankTrendAvailabilityData,
@@ -832,6 +833,13 @@ export function HomeView({
   onAddCompareItem,
   onStartDramaPaidIdStatistics,
   onStartRevenueEstimate,
+  historyEntries = [],
+  onDeleteHistoryEntry,
+  onClearHistory,
+  onReplayHistoryEntry,
+  isReplayPreparing = false,
+  replayPreparingEntryIds = [],
+  historyActionsDisabled = false,
 }) {
   const handleVersionResponseRef = useRef(handleVersionResponse);
   const [selectedRankPlatform, setSelectedRankPlatform] = useState("missevan");
@@ -1099,6 +1107,18 @@ export function HomeView({
 
   return (
     <div className="home-editorial" aria-busy={isLoading}>
+      <div className="home-editorial-history">
+        <StatsHistoryList
+          entries={historyEntries}
+          onDeleteHistoryEntry={onDeleteHistoryEntry}
+          onClearHistory={onClearHistory}
+          onReplayHistoryEntry={onReplayHistoryEntry}
+          isReplayPreparing={isReplayPreparing}
+          replayPreparingEntryIds={replayPreparingEntryIds}
+          actionsDisabled={historyActionsDisabled}
+          constrainHeight
+        />
+      </div>
       {isLoading && !hasVisibleContent ? <HomeSkeleton /> : null}
       {!isLoading && errorMessage ? (
         <Alert className="home-editorial-error">

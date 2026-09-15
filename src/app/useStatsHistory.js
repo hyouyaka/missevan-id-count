@@ -48,7 +48,7 @@ export function getStatsHistoryByPlatform(platformStates = {}) {
 }
 
 export function persistStatsHistoryEntries(historyByPlatform = {}, saveHistoryEntries = savePersistedHistoryEntries) {
-  saveHistoryEntries({
+  return saveHistoryEntries({
     missevan: Array.isArray(historyByPlatform.missevan) ? historyByPlatform.missevan : [],
     manbo: Array.isArray(historyByPlatform.manbo) ? historyByPlatform.manbo : [],
   });
@@ -133,7 +133,7 @@ export function createStatsHistoryController(initialOptions = {}) {
     return entry.id;
   }
 
-  function recordCompletedStatsHistory(platform, taskType, taskId, snapshot) {
+  function recordCompletedStatsHistory(platform, taskType, taskId, snapshot, replay = null) {
     const options = getOptions();
     const normalizedTaskId = String(taskId || snapshot?.taskId || "").trim();
     const result = snapshot?.result || {};
@@ -166,6 +166,7 @@ export function createStatsHistoryController(initialOptions = {}) {
     const historyEntry = (options.createStatsHistoryEntry || createStatsHistoryEntry)(platform, completedStats, {
       taskType,
       createdAt: (options.now || Date.now)(),
+      replay,
     });
     const historyEntryId = appendHistoryEntry(platform, historyEntry, normalizedTaskId);
     if (historyEntryId) {
@@ -229,7 +230,24 @@ export function useStatsHistory(options = {}) {
   const manboHistoryEntries = historyByPlatform.manbo;
   const saveHistoryEntries = options.saveHistoryEntries || savePersistedHistoryEntries;
   useEffect(() => {
-    persistStatsHistoryEntries({ missevan: missevanHistoryEntries, manbo: manboHistoryEntries }, saveHistoryEntries);
+    const result = persistStatsHistoryEntries(
+      { missevan: missevanHistoryEntries, manbo: manboHistoryEntries },
+      saveHistoryEntries
+    );
+    if (result?.persisted === false) {
+      optionsRef.current.onPersistenceFailure?.();
+      return;
+    }
+    if (result?.evictedEntryIds?.length) {
+      const evictedIds = new Set(result.evictedEntryIds);
+      STATS_HISTORY_PLATFORMS.forEach((platform) => {
+        optionsRef.current.updatePlatformState?.(platform, (state) => ({
+          ...state,
+          historyEntries: getPlatformHistoryEntries({ [platform]: state }, platform)
+            .filter((entry) => !evictedIds.has(entry.id)),
+        }));
+      });
+    }
   }, [manboHistoryEntries, missevanHistoryEntries, saveHistoryEntries]);
 
   return controllerRef.current;
