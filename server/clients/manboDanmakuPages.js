@@ -34,9 +34,74 @@ async function runSettled(items, concurrency, signal, worker) {
 }
 
 function isTimeoutError(error) {
+  if (Array.isArray(error?.failureKinds) && error.failureKinds.length > 0) {
+    return error.failureKinds.every((kind) => kind === "timeout");
+  }
   return error?.requestTimedOut === true ||
     error?.name === "TimeoutError" ||
     /timeout/i.test(String(error?.message || ""));
+}
+
+function collectFailureSummary(failures = []) {
+  const samples = [];
+  const failureKinds = new Set();
+  const failedHosts = new Set();
+  for (const failure of failures) {
+    const error = failure?.error || failure;
+    if (Array.isArray(error?.failureKinds)) {
+      error.failureKinds.forEach((kind) => failureKinds.add(String(kind)));
+    }
+    if (Array.isArray(error?.failedHosts)) {
+      error.failedHosts.forEach((host) => failedHosts.add(String(host)));
+    }
+    if (Array.isArray(error?.failureSamples)) {
+      samples.push(...error.failureSamples);
+    } else if (error?.failureKind || error?.manboFailureKind || error?.upstreamHost) {
+      samples.push({
+        ...(error.upstreamHost ? { upstreamHost: String(error.upstreamHost).slice(0, 120) } : {}),
+        ...(error.upstreamRoute ? { upstreamRoute: String(error.upstreamRoute).slice(0, 40) } : {}),
+        failureKind: String(error.failureKind || error.manboFailureKind || "network").slice(0, 40),
+        ...(error.errorName ? { errorName: String(error.errorName).slice(0, 80) } : {}),
+        ...(error.errorCode || error.code ? { errorCode: String(error.errorCode || error.code).slice(0, 80) } : {}),
+        ...(error.errorMessage || error.message
+          ? { errorMessage: String(error.errorMessage || error.message).replace(/https?:\/\/[^\s]+/gi, "[upstream-url]").slice(0, 200) }
+          : {}),
+        ...(Number.isFinite(Number(error.httpStatus || error.status))
+          ? { httpStatus: Number(error.httpStatus || error.status) }
+          : {}),
+        ...(error.upstreamCode || error.manboCode
+          ? { upstreamCode: String(error.upstreamCode || error.manboCode).slice(0, 80) }
+          : {}),
+      });
+    }
+  }
+  const normalizedSamples = samples
+    .filter((sample) => sample && typeof sample === "object")
+    .map((sample) => ({
+      ...(sample.upstreamHost ? { upstreamHost: String(sample.upstreamHost).slice(0, 120) } : {}),
+      ...(sample.upstreamRoute ? { upstreamRoute: String(sample.upstreamRoute).slice(0, 40) } : {}),
+      ...(sample.failureKind ? { failureKind: String(sample.failureKind).slice(0, 40) } : {}),
+      ...(sample.errorName ? { errorName: String(sample.errorName).slice(0, 80) } : {}),
+      ...(sample.errorCode ? { errorCode: String(sample.errorCode).slice(0, 80) } : {}),
+      ...(sample.errorMessage
+        ? { errorMessage: String(sample.errorMessage).replace(/https?:\/\/[^\s]+/gi, "[upstream-url]").slice(0, 200) }
+        : {}),
+      ...(Number.isFinite(Number(sample.httpStatus)) ? { httpStatus: Number(sample.httpStatus) } : {}),
+      ...(sample.upstreamCode ? { upstreamCode: String(sample.upstreamCode).slice(0, 80) } : {}),
+    }));
+  normalizedSamples.forEach((sample) => {
+    if (sample.failureKind) {
+      failureKinds.add(sample.failureKind);
+    }
+    if (sample.upstreamHost) {
+      failedHosts.add(sample.upstreamHost);
+    }
+  });
+  return {
+    failureKinds: [...failureKinds],
+    failedHosts: [...failedHosts],
+    failureSamples: normalizedSamples.slice(0, 3),
+  };
 }
 
 export class ManboDanmakuPageBatchError extends Error {
@@ -50,6 +115,10 @@ export class ManboDanmakuPageBatchError extends Error {
     this.rescuedPageCount = rescuedPageCount;
     this.outcome = failures.every(({ error }) => isTimeoutError(error)) ? "timeout" : "error";
     this.cause = failures[0]?.error;
+    const failureSummary = collectFailureSummary(failures);
+    this.failureKinds = failureSummary.failureKinds;
+    this.failedHosts = failureSummary.failedHosts;
+    this.failureSamples = failureSummary.failureSamples;
   }
 }
 

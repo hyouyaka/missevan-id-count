@@ -1578,7 +1578,7 @@ test("backend unified search uses coupled API fallback and library card details"
   assert.match(routeSource, /SEARCH_CARD_METRICS_TIMEOUT_MS/);
   assert.match(routeSource, /METRICS_BUSY/);
   assert.match(routeSource, /card_patch: result\.cardPatch/);
-  assert.match(serverSource, /let rewardNum = null;[\s\S]*fetchRewardDetailMeta\(id, \{ signal \}\)[\s\S]*if \(signal\?\.aborted \|\| isMissevanAccessDenied\(error\)\)[\s\S]*reward_num: rewardNum/);
+  assert.match(serverSource, /let rewardNum = null;[\s\S]*fetchRewardDetailMeta\(id, \{[\s\S]*\.\.\.requestOptions,[\s\S]*signal,[\s\S]*\}\)[\s\S]*if \(failureFields\.failureKind === "cancelled" \|\| isMissevanAccessDenied\(error\)\)[\s\S]*reward_num: rewardNum/);
   assert.match(serverSource, /needpay: Boolean\(record\?\.needpay\)/);
   assert.match(serverSource, /vipFree: Number\(record\?\.vipFree/);
   assert.match(serverSource, /is_member: Boolean\(node\?\.is_member\)/);
@@ -2969,7 +2969,12 @@ test("Missevan external request logs are endpoint-scoped and query-free", () => 
     serverSource.indexOf("function writeMissevanRequestUsageLog"),
     serverSource.indexOf("\nfunction ensureMissevanFetchOptions")
   );
+  const genericLogHelperSource = serverSource.slice(
+    serverSource.indexOf("function recordGenericRequestAttempt"),
+    serverSource.indexOf("\nfunction writeMissevanRequestUsageLog")
+  );
   assert.notEqual(logHelperSource.length, 0, "Missevan request log helper should exist");
+  assert.notEqual(genericLogHelperSource.length, 0, "generic request log helper should exist");
   assert.match(serverSource, /function getMissevanRequestLogEndpoint/);
   assert.match(serverSource, /action: "missevan_request"/);
   assert.match(serverSource, /endpoint/);
@@ -2977,6 +2982,14 @@ test("Missevan external request logs are endpoint-scoped and query-free", () => 
   assert.match(serverSource, /status/);
   assert.match(serverSource, /durationMs/);
   assert.match(serverSource, /cooldownBlocked/);
+  assert.match(
+    logHelperSource,
+    /details\.success \|\| details\.cooldownBlocked[\s\S]*buildRequestFailureLogFields/
+  );
+  assert.match(
+    genericLogHelperSource,
+    /details\.success \|\| details\.cooldownBlocked[\s\S]*buildRequestFailureLogFields/
+  );
   assert.doesNotMatch(
     logHelperSource,
     /\burl\s*:/,
@@ -3026,8 +3039,28 @@ test("Missevan JSON and text requests can use Render fallback with usage log mar
   assert.match(serverSource, /isMissevanFallbackRouteInCooldown\(route\)[\s\S]*status:\s*"cooldown"[\s\S]*fallbackRoute:\s*route\.fallbackRoute/);
   assert.match(serverSource, /response\.status === 418[\s\S]*markMissevanFallbackRouteCooldown\(route\)/);
   assert.match(serverSource, /function classifyRequestFailureOutcome[\s\S]*return "timeout";[\s\S]*return "cancelled";/);
+  assert.match(
+    serverSource,
+    /function classifyRequestFailureKind[\s\S]*error\?\.name === "SyntaxError"[\s\S]*return "invalid_payload"/
+  );
+  assert.match(
+    serverSource,
+    /kind === "http_status"[\s\S]*numericStatus < 200[\s\S]*numericStatus >= 300/
+  );
   assert.match(serverSource, /const failureStatus = classifyRequestFailureOutcome\(\{[\s\S]*timeoutState: timeout/);
   assert.match(serverSource, /createMissevanFallbackError[\s\S]*failureStatus/);
+  assert.match(
+    serverSource,
+    /function createMissevanFallbackError[\s\S]*Object\.defineProperty\(error, "cause"/
+  );
+  assert.match(
+    serverSource,
+    /const failureKind = classifyRequestFailureKind\(\{[\s\S]*responseStatus,[\s\S]*timeoutState: timeout/
+  );
+  assert.match(
+    serverSource,
+    /createMissevanFallbackError\([\s\S]*\{ cause: error, failureKind \}/
+  );
   assert.match(fetchJsonSource, /fetchMissevanJsonWithFallbackChain/);
   assert.match(fetchJsonSource, /getForcedMissevanFallbackRoute/);
   assert.match(fetchJsonSource, /reason:\s*"forced"/);
@@ -3038,6 +3071,18 @@ test("Missevan JSON and text requests can use Render fallback with usage log mar
   assert.match(logHelperSource, /fallbackUsed/);
   assert.match(logHelperSource, /fallbackRoute/);
   assert.match(logHelperSource, /fallbackReason/);
+  assert.match(serverSource, /const SEARCH_CARD_METRICS_TIMEOUT_MS = 20_000/);
+  assert.match(serverSource, /primary:\s*8_000/);
+  assert.match(serverSource, /secondary:\s*6_000/);
+  assert.match(serverSource, /function getMissevanFallbackTimeoutMs/);
+  assert.match(serverSource, /function recordSkippedMissevanFallbackRoute/);
+  assert.match(serverSource, /fallbackSkipReason/);
+  assert.match(serverSource, /fallbackTimeoutMsByRoute/);
+  assert.match(serverSource, /failureKind/);
+  assert.match(serverSource, /upstreamHost/);
+  assert.match(serverSource, /upstreamRoute/);
+  assert.match(serverSource, /failureSamples/);
+  assert.doesNotMatch(logHelperSource, /\burl\s*:/);
 });
 
 test("Missevan cooldown availability checks fallback routes in priority order", () => {

@@ -183,6 +183,7 @@ const MANBO_API_BASE = "https://manbo.kilaaudio.com/web_manbo";
 const MANBO_API_FALLBACK_BASE = "https://www.kilamanbo.com/web_manbo";
 const MANBO_API_V530_BASE = "https://api.kilamanbo.com/api/v530/radio/drama";
 const MANBO_SEARCH_API_BASE = "https://api.kilamanbo.com/api/v530/search/page/content/new";
+const MANBO_API_PRIMARY_HOST = new URL(MANBO_API_BASE).hostname;
 const MANBO_API_FALLBACK_HOST = "www.kilamanbo.com";
 const CV_INFO_KEY = "cvid-map:v1";
 const INFO_V2_KEYS = Object.freeze({
@@ -461,7 +462,11 @@ const MANBO_FETCH_TIMEOUT_MS = Math.max(
 const manboDanmakuPageGate = createRequestConcurrencyGate(
   MANBO_DANMAKU_GLOBAL_CONCURRENCY
 );
-const SEARCH_CARD_METRICS_TIMEOUT_MS = 12_000;
+const SEARCH_CARD_METRICS_TIMEOUT_MS = 20_000;
+const SEARCH_CARD_METRICS_FALLBACK_TIMEOUTS_MS = Object.freeze({
+  primary: 8_000,
+  secondary: 6_000,
+});
 const SEARCH_CARD_METRICS_MAX_ACTIVE = 20;
 const MISSEVAN_GETDM_MIN_INTERVAL_MS = 200;
 const MISSEVAN_GETDM_MAX_INTERVAL_MS = 400;
@@ -7698,6 +7703,40 @@ function runWithOperationTrace(event, fields, callback) {
   return runWithLogContext({ operationId }, () => operationTraceStorage.run(trace, callback));
 }
 
+function selectFailureSamples(samples = [], limit = 3) {
+  const normalizedSamples = Array.isArray(samples)
+    ? samples.filter((sample) => sample && typeof sample === "object")
+    : [];
+  const selected = [];
+  const selectedIndexes = new Set();
+  const seenHosts = new Set();
+  normalizedSamples.forEach((sample, index) => {
+    const host = String(sample.upstreamHost || "").trim();
+    if (!host || seenHosts.has(host) || selected.length >= limit) {
+      return;
+    }
+    seenHosts.add(host);
+    selectedIndexes.add(index);
+    selected.push(sample);
+  });
+  normalizedSamples.forEach((sample, index) => {
+    if (selected.length >= limit || selectedIndexes.has(index)) {
+      return;
+    }
+    selected.push(sample);
+  });
+  return selected;
+}
+
+function buildManboAttemptFailureSummary(attempts = [], extraSamples = []) {
+  const failureAttempts = attempts.filter((attempt) =>
+    attempt?.platform === "manbo" &&
+    attempt?.success === false &&
+    attempt?.failureKind
+  );
+  return collectManboFailureSummary([...failureAttempts, ...(extraSamples || [])]);
+}
+
 export function buildOperationTraceLog(trace = {}, entry = {}, now = Date.now()) {
   const attempts = Array.isArray(trace.attempts) ? trace.attempts : [];
   const lastAttempt = attempts.at(-1) || {};
@@ -7712,6 +7751,8 @@ export function buildOperationTraceLog(trace = {}, entry = {}, now = Date.now())
     0
   );
   const fallbackAttempt = [...attempts].reverse().find((attempt) => attempt.fallbackUsed);
+  const fallbackSkipAttempt = [...attempts].reverse().find((attempt) => attempt.fallbackSkipReason);
+  const manboFailureSummary = buildManboAttemptFailureSummary(attempts, entry?.failureSamples);
   const finalFields = {
     ...trace.fields,
     ...normalizeUsageLogFields(entry, normalizeTextValue(entry?.action)),
@@ -7722,7 +7763,9 @@ export function buildOperationTraceLog(trace = {}, entry = {}, now = Date.now())
     fallbackUsed: attempts.some((attempt) => attempt.fallbackUsed),
     fallbackRoute: fallbackAttempt?.fallbackRoute || "",
     fallbackReason: fallbackAttempt?.fallbackReason || "",
+    fallbackSkipReason: fallbackSkipAttempt?.fallbackSkipReason || "",
     durationMs: Math.max(0, now - (Number(trace.startedAt) || now)),
+    ...manboFailureSummary,
     ...(anomalousAttempts.length > 0 ? { attempts: anomalousAttempts } : {}),
   };
   const level = finalFields.cancelled || finalFields.outcome === "cancelled"
@@ -7747,7 +7790,7 @@ export function normalizeOperationAttemptLogFields(attempt = {}) {
 }
 
 export function getOperationAttemptLogLevel(attempt = {}) {
-  return attempt.status === "cancelled" || attempt.outcome === "cancelled"
+  return attempt.status === "cancelled" || attempt.outcome === "cancelled" || attempt.failureKind === "cancelled"
     ? "info"
     : attempt.success === false
       ? "warn"
@@ -7929,15 +7972,23 @@ export function classifyRequestFailureOutcome({
   externalSignal,
   responseStatus = "",
   timeoutState,
+  failureKind = "",
 } = {}) {
-  if (responseStatus !== "" && responseStatus != null) {
-    return responseStatus;
+  if (REQUEST_FAILURE_KINDS.has(failureKind)) {
+    return failureKind;
+  }
+  if (REQUEST_FAILURE_KINDS.has(error?.failureKind)) {
+    return error.failureKind;
+  }
+  if (error?.manboFailureKind === "invalid_payload") {
+    return "invalid_payload";
   }
   const externalAbortReason = externalSignal?.reason;
   const externalAbortIsCancellation = externalAbortReason?.name === "AbortError";
   if (
     timeoutState?.timedOut ||
     error?.requestTimedOut === true ||
+    error?.name === "TimeoutError" ||
     externalAbortReason?.name === "TimeoutError" ||
     (externalSignal?.aborted && !externalAbortIsCancellation)
   ) {
@@ -7946,7 +7997,141 @@ export function classifyRequestFailureOutcome({
   if (externalSignal?.aborted || error?.name === "AbortError") {
     return "cancelled";
   }
-  return "error";
+  if (error?.name === "SyntaxError" || error instanceof SyntaxError) {
+    return "invalid_payload";
+  }
+  const numericStatus = Number(
+    responseStatus !== "" && responseStatus != null ? responseStatus : error?.status
+  );
+  return Number.isFinite(numericStatus) && numericStatus > 0 &&
+    (numericStatus < 200 || numericStatus >= 300)
+    ? numericStatus
+    : "error";
+}
+
+const REQUEST_FAILURE_KINDS = new Set([
+  "timeout",
+  "cancelled",
+  "http_status",
+  "network",
+  "invalid_payload",
+]);
+
+function normalizeRequestErrorMessage(error) {
+  const rawMessage = String(error?.message || error || "Request failed")
+    .replace(/https?:\/\/[^\s]+/gi, "[upstream-url]")
+    .trim();
+  return rawMessage.slice(0, 200);
+}
+
+function classifyRequestFailureKind({
+  error,
+  externalSignal,
+  responseStatus = "",
+  timeoutState,
+  failureKind = "",
+} = {}) {
+  const explicitFailureKind = REQUEST_FAILURE_KINDS.has(failureKind)
+    ? failureKind
+    : REQUEST_FAILURE_KINDS.has(error?.failureKind)
+      ? error.failureKind
+      : "";
+  if (explicitFailureKind) return explicitFailureKind;
+  if (error?.manboFailureKind === "invalid_payload") {
+    return "invalid_payload";
+  }
+  if (error?.status === "timeout" || error?.failureKind === "timeout") {
+    return "timeout";
+  }
+  if (error?.status === "cancelled" || error?.failureKind === "cancelled") {
+    return "cancelled";
+  }
+  const externalAbortReason = externalSignal?.reason;
+  const externalAbortIsCancellation = externalAbortReason?.name === "AbortError";
+  if (
+    timeoutState?.timedOut ||
+    error?.requestTimedOut === true ||
+    error?.name === "TimeoutError" ||
+    externalAbortReason?.name === "TimeoutError" ||
+    (externalSignal?.aborted && !externalAbortIsCancellation)
+  ) {
+    return "timeout";
+  }
+  if (externalSignal?.aborted || error?.name === "AbortError") {
+    return "cancelled";
+  }
+  if (error?.name === "SyntaxError" || error instanceof SyntaxError) {
+    return "invalid_payload";
+  }
+  const numericStatus = Number(
+    responseStatus !== "" && responseStatus != null ? responseStatus : error?.status
+  );
+  if (
+    Number.isFinite(numericStatus) &&
+    numericStatus > 0 &&
+    (numericStatus < 200 || numericStatus >= 300)
+  ) {
+    return "http_status";
+  }
+  return "network";
+}
+
+function buildRequestFailureLogFields({
+  error,
+  externalSignal,
+  responseStatus = "",
+  timeoutState,
+  failureKind = "",
+  errorName = "",
+  errorCode = "",
+  errorMessage = "",
+  upstreamCode = "",
+} = {}) {
+  const kind = classifyRequestFailureKind({
+    error,
+    externalSignal,
+    responseStatus,
+    timeoutState,
+    failureKind,
+  });
+  const normalizedErrorName = String(errorName || error?.name || "Error").slice(0, 80);
+  const rawErrorCode = errorCode || error?.code || error?.errorCode || "";
+  const normalizedErrorCode = typeof rawErrorCode === "string"
+    ? rawErrorCode.slice(0, 80)
+    : "";
+  const normalizedErrorMessage = errorMessage
+    ? String(errorMessage).replace(/https?:\/\/[^\s]+/gi, "[upstream-url]").slice(0, 200)
+    : normalizeRequestErrorMessage(error);
+  const numericStatus = Number(
+    responseStatus !== "" && responseStatus != null ? responseStatus : error?.status
+  );
+  const normalizedUpstreamCode = String(
+    upstreamCode ?? error?.upstreamCode ?? error?.manboCode ?? ""
+  ).slice(0, 80);
+  return {
+    failureKind: kind,
+    errorName: normalizedErrorName,
+    ...(normalizedErrorCode ? { errorCode: normalizedErrorCode } : {}),
+    errorMessage: normalizedErrorMessage,
+    ...(kind === "http_status" &&
+    Number.isFinite(numericStatus) &&
+    numericStatus > 0 &&
+    (numericStatus < 200 || numericStatus >= 300)
+      ? { httpStatus: numericStatus }
+      : {}),
+    ...(normalizedUpstreamCode ? { upstreamCode: normalizedUpstreamCode } : {}),
+  };
+}
+
+function attachRequestFailureKind(error, failureKind) {
+  if (error && typeof error === "object" && REQUEST_FAILURE_KINDS.has(failureKind)) {
+    try {
+      error.failureKind = failureKind;
+    } catch (_) {
+      // Preserve the original error when it cannot be annotated.
+    }
+  }
+  return error;
 }
 
 function buildMissevanFetchHeaders(headers = {}) {
@@ -8063,15 +8248,68 @@ function buildMissevanFallbackFetchOptions(route, options = {}, signal = undefin
   };
 }
 
-function createMissevanFallbackError(message, status = "") {
+function createMissevanFallbackError(message, status = "", { cause, failureKind = "" } = {}) {
   const error = new Error(message);
   error.missevanFallback = true;
   error.status = status;
+  if (cause !== undefined) {
+    Object.defineProperty(error, "cause", {
+      value: cause,
+      configurable: true,
+      writable: true,
+    });
+  }
+  if (REQUEST_FAILURE_KINDS.has(failureKind)) {
+    error.failureKind = failureKind;
+  }
   return error;
 }
 
 function isMissevanFallbackError(error) {
   return error?.missevanFallback === true;
+}
+
+function getMissevanFallbackTimeoutMs(route, options = {}) {
+  const routeTimeout = options.fallbackTimeoutMsByRoute?.[route?.key];
+  const timeoutMs = routeTimeout ?? options.fallbackTimeoutMs ?? route?.timeoutMs;
+  return Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : undefined;
+}
+
+function getAbortReason(signal) {
+  return signal?.reason || new DOMException("Aborted", "AbortError");
+}
+
+function getMissevanFallbackSkipReason(signal) {
+  if (!signal?.aborted) {
+    return "";
+  }
+  return signal.reason?.name === "AbortError" ? "cancelled" : "budget_exhausted";
+}
+
+function recordSkippedMissevanFallbackRoute(url, route, options = {}, details = {}) {
+  const fallbackSkipReason = getMissevanFallbackSkipReason(options.signal);
+  if (!fallbackSkipReason) {
+    return;
+  }
+  writeMissevanRequestUsageLog(url, {
+    attempt: details.attempt,
+    status: "skipped",
+    success: false,
+    accessDenied: false,
+    fallbackUsed: true,
+    fallbackRoute: route?.fallbackRoute,
+    fallbackReason: details.reason,
+    fallbackSkipReason,
+    failureKind: fallbackSkipReason === "cancelled" ? "cancelled" : "timeout",
+    cancelled: fallbackSkipReason === "cancelled",
+    errorName: fallbackSkipReason === "cancelled" ? "AbortError" : "TimeoutError",
+    errorMessage:
+      fallbackSkipReason === "cancelled"
+        ? "Missevan fallback skipped after client cancellation"
+        : "Missevan fallback skipped after parent budget was exhausted",
+  });
 }
 
 async function fetchMissevanViaFallbackRoute(url, route, options = {}, details = {}) {
@@ -8094,7 +8332,7 @@ async function fetchMissevanViaFallbackRoute(url, route, options = {}, details =
   }
 
   const timeout = createTimeoutSignal(
-    options.fallbackTimeoutMs ?? route.timeoutMs,
+    getMissevanFallbackTimeoutMs(route, options),
     options.signal
   );
   const requestStartedAt = Date.now();
@@ -8111,6 +8349,9 @@ async function fetchMissevanViaFallbackRoute(url, route, options = {}, details =
       if (response.status === 418) {
         markMissevanFallbackRouteCooldown(route);
       }
+      const responseError = createMissevanFallbackError(`HTTP ${response.status}`, response.status);
+      responseError.name = "MissevanFallbackHttpError";
+      responseError.code = `HTTP_${response.status}`;
       writeMissevanRequestUsageLog(url, {
         attempt: details.attempt,
         status: response.status,
@@ -8120,8 +8361,11 @@ async function fetchMissevanViaFallbackRoute(url, route, options = {}, details =
         fallbackUsed: true,
         fallbackRoute: route.fallbackRoute,
         fallbackReason: details.reason,
+        failureKind: "http_status",
+        error: responseError,
+        httpStatus: response.status,
       });
-      throw createMissevanFallbackError(`HTTP ${response.status}`, response.status);
+      throw responseError;
     }
 
     const payload = details.responseType === "text"
@@ -8141,11 +8385,18 @@ async function fetchMissevanViaFallbackRoute(url, route, options = {}, details =
 
     return payload;
   } catch (error) {
+    const failureKind = classifyRequestFailureKind({
+      error,
+      externalSignal: options.signal,
+      responseStatus,
+      timeoutState: timeout,
+    });
     const failureStatus = classifyRequestFailureOutcome({
       error,
       externalSignal: options.signal,
       responseStatus,
       timeoutState: timeout,
+      failureKind,
     });
     if (!isMissevanFallbackError(error)) {
       writeMissevanRequestUsageLog(url, {
@@ -8157,11 +8408,22 @@ async function fetchMissevanViaFallbackRoute(url, route, options = {}, details =
         fallbackUsed: true,
         fallbackRoute: route.fallbackRoute,
         fallbackReason: details.reason,
+        error,
+        timeoutState: timeout,
+        externalSignal: options.signal,
+        failureKind,
       });
+    }
+    if (options.signal?.aborted) {
+      throw getAbortReason(options.signal);
     }
     throw isMissevanFallbackError(error)
       ? error
-      : createMissevanFallbackError(error?.message || "Missevan fallback failed", failureStatus);
+      : createMissevanFallbackError(
+          normalizeRequestErrorMessage(error) || "Missevan fallback failed",
+          responseStatus !== "" && responseStatus != null ? responseStatus : failureStatus,
+          { cause: error, failureKind }
+        );
   } finally {
     timeout.cleanup();
   }
@@ -8182,7 +8444,9 @@ function fetchMissevanTextViaFallbackRoute(url, route, options = {}, details = {
 }
 
 async function fetchMissevanWithFallbackChain(url, options = {}, details = {}) {
-  const routes = getEnabledMissevanFallbackRoutes();
+  const routes = getEnabledMissevanFallbackRoutes(
+    options.fallbackRoutes ?? MISSEVAN_FALLBACK_ROUTES
+  );
   if (!routes.length) {
     throw createMissevanFallbackError("Missevan fallback is not configured");
   }
@@ -8190,6 +8454,13 @@ async function fetchMissevanWithFallbackChain(url, options = {}, details = {}) {
   let lastError;
   for (let index = 0; index < routes.length; index += 1) {
     const route = routes[index];
+    if (options.signal?.aborted) {
+      recordSkippedMissevanFallbackRoute(url, route, options, {
+        ...details,
+        reason: index === 0 ? details.reason : "primary_failed",
+      });
+      break;
+    }
     try {
       return await fetchMissevanViaFallbackRoute(url, route, options, {
         ...details,
@@ -8197,18 +8468,31 @@ async function fetchMissevanWithFallbackChain(url, options = {}, details = {}) {
       });
     } catch (error) {
       lastError = error;
+      if (options.signal?.aborted) {
+        const nextRoute = routes[index + 1];
+        if (nextRoute) {
+          recordSkippedMissevanFallbackRoute(url, nextRoute, options, {
+            ...details,
+            reason: "primary_failed",
+          });
+        }
+        break;
+      }
     }
   }
 
+  if (options.signal?.aborted) {
+    throw getAbortReason(options.signal);
+  }
   const accessDeniedCooldownUntil = getMissevanAccessDeniedCooldownUntil();
   if (accessDeniedCooldownUntil > Date.now()) {
     throw createCooldownError(accessDeniedCooldownUntil - Date.now());
   }
 
-  throw lastError;
+  throw lastError || getAbortReason(options.signal);
 }
 
-function fetchMissevanJsonWithFallbackChain(url, options = {}, details = {}) {
+export function fetchMissevanJsonWithFallbackChain(url, options = {}, details = {}) {
   return fetchMissevanWithFallbackChain(url, options, {
     ...details,
     responseType: "json",
@@ -8266,10 +8550,34 @@ function getRequestLogPlatform(url) {
   }
 }
 
+function getRequestLogHost(url) {
+  try {
+    return String((typeof url === "string" ? new URL(url) : url).hostname || "")
+      .slice(0, 120);
+  } catch (_) {
+    return "";
+  }
+}
+
+function getManboUpstreamRoute(url) {
+  const hostname = getRequestLogHost(url);
+  if (hostname === MANBO_API_PRIMARY_HOST) {
+    return "primary";
+  }
+  if (hostname === MANBO_API_FALLBACK_HOST) {
+    return "legacy_fallback";
+  }
+  return "";
+}
+
 function recordGenericRequestAttempt(url, details = {}) {
   const pageNo = getRequestLogPageNo(url);
   recordOperationAttempt({
     platform: getRequestLogPlatform(url),
+    upstreamHost: getRequestLogHost(url),
+    ...(getManboUpstreamRoute(url)
+      ? { upstreamRoute: getManboUpstreamRoute(url) }
+      : {}),
     endpoint: getMissevanRequestLogEndpoint(url),
     attempt: Math.max(0, Number(details.attempt ?? 0) || 0),
     status: details.status ?? "",
@@ -8280,6 +8588,21 @@ function recordGenericRequestAttempt(url, details = {}) {
     fallbackUsed: Boolean(details.fallbackUsed),
     fallbackRoute: String(details.fallbackRoute || ""),
     fallbackReason: String(details.fallbackReason || ""),
+    fallbackSkipReason: String(details.fallbackSkipReason || ""),
+    cancelled: Boolean(details.cancelled),
+    ...(details.success || details.cooldownBlocked
+      ? {}
+      : buildRequestFailureLogFields({
+          error: details.error,
+          externalSignal: details.externalSignal,
+          responseStatus: details.httpStatus ?? details.status,
+          timeoutState: details.timeoutState,
+          failureKind: details.failureKind,
+          errorName: details.errorName,
+          errorCode: details.errorCode,
+          errorMessage: details.errorMessage,
+          upstreamCode: details.upstreamCode,
+        })),
     ...(pageNo ? { pageNo } : {}),
   });
 }
@@ -8297,6 +8620,21 @@ function writeMissevanRequestUsageLog(url, details = {}) {
     fallbackUsed: Boolean(details.fallbackUsed),
     fallbackRoute: String(details.fallbackRoute || ""),
     fallbackReason: String(details.fallbackReason || ""),
+    fallbackSkipReason: String(details.fallbackSkipReason || ""),
+    cancelled: Boolean(details.cancelled),
+    ...(details.success || details.cooldownBlocked
+      ? {}
+      : buildRequestFailureLogFields({
+          error: details.error,
+          externalSignal: details.externalSignal,
+          responseStatus: details.httpStatus ?? details.status,
+          timeoutState: details.timeoutState,
+          failureKind: details.failureKind,
+          errorName: details.errorName,
+          errorCode: details.errorCode,
+          errorMessage: details.errorMessage,
+          upstreamCode: details.upstreamCode,
+        })),
   };
   if (recordOperationAttempt(entry)) {
     return;
@@ -8311,6 +8649,16 @@ function ensureMissevanFetchOptions(options = {}) {
   return {
     ...options,
     beforeAttempt: () => waitForMissevanRequestSlot(options.signal),
+  };
+}
+
+function buildMissevanRequestOptions(options = {}) {
+  return {
+    missevan: true,
+    signal: options.signal,
+    ...(options.fallbackTimeoutMsByRoute
+      ? { fallbackTimeoutMsByRoute: options.fallbackTimeoutMsByRoute }
+      : {}),
   };
 }
 
@@ -8400,6 +8748,13 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
             status: response.status,
             durationMs: Date.now() - requestStartedAt,
             success: false,
+            failureKind: "http_status",
+            error: Object.assign(new Error(`HTTP ${response.status}`), {
+              name: "HttpStatusError",
+              status: response.status,
+              code: `HTTP_${response.status}`,
+            }),
+            httpStatus: response.status,
           });
           requestLogged = true;
         }
@@ -8410,7 +8765,11 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
             reason: "direct_418",
           });
         }
-        throw new Error(`HTTP ${response.status}`);
+        throw Object.assign(new Error(`HTTP ${response.status}`), {
+          name: "HttpStatusError",
+          status: response.status,
+          code: `HTTP_${response.status}`,
+        });
       }
 
       const data = await response.json();
@@ -8441,6 +8800,14 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
       if (isCooldownError(error)) {
         throw error;
       }
+
+      const failureKind = classifyRequestFailureKind({
+        error,
+        externalSignal: options.signal,
+        responseStatus,
+        timeoutState,
+      });
+      attachRequestFailureKind(error, failureKind);
 
       if (isMissevanFallbackError(error)) {
         throw error;
@@ -8473,6 +8840,11 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
           accessDenied: false,
+          error,
+          externalSignal: options.signal,
+          responseStatus,
+          timeoutState,
+          failureKind,
         });
       } else if (!options.missevan && !requestLogged && getActiveOperationTrace()) {
         recordGenericRequestAttempt(url, {
@@ -8485,6 +8857,11 @@ async function fetchJsonWithRetry(url, retries = 2, delayMs = 250, options = {})
           }),
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
+          error,
+          externalSignal: options.signal,
+          responseStatus,
+          timeoutState,
+          failureKind,
         });
       }
 
@@ -8592,7 +8969,11 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
             reason: "direct_418",
           });
         }
-        throw new Error(`HTTP ${response.status}`);
+        throw Object.assign(new Error(`HTTP ${response.status}`), {
+          name: "HttpStatusError",
+          status: response.status,
+          code: `HTTP_${response.status}`,
+        });
       }
 
       const text = await response.text();
@@ -8635,6 +9016,12 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
       }
 
       if (options.missevan && !requestLogged) {
+        const failureKind = classifyRequestFailureKind({
+          error,
+          externalSignal: options.signal,
+          responseStatus,
+          timeoutState,
+        });
         writeMissevanRequestUsageLog(url, {
           attempt: attempt + 1,
           status: classifyRequestFailureOutcome({
@@ -8646,6 +9033,11 @@ async function fetchTextWithRetry(url, retries = 2, delayMs = 250, options = {})
           durationMs: requestStartedAt ? Date.now() - requestStartedAt : 0,
           success: false,
           accessDenied: false,
+          error,
+          externalSignal: options.signal,
+          responseStatus,
+          timeoutState,
+          failureKind,
         });
       }
 
@@ -8837,7 +9229,7 @@ async function fetchSoundSummary(soundId, options = {}) {
     `https://www.missevan.com/sound/getsound?soundid=${soundId}`,
     2,
     250,
-    { missevan: true, signal: options.signal }
+    buildMissevanRequestOptions(options)
   );
   const sound = data?.info?.sound || data?.info || {};
   const viewCount = Number(sound.view_count ?? 0);
@@ -8905,7 +9297,7 @@ async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
       : `https://www.missevan.com/dramaapi/getdrama?drama_id=${dramaId}`,
     2,
     250,
-    { missevan: true, signal: options.signal }
+    buildMissevanRequestOptions(options)
   );
 
   if (data.success && data.info) {
@@ -8923,7 +9315,7 @@ async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
           `https://www.missevan.com/dramaapi/getdramabysound?sound_id=${resolvedSoundId}`,
           2,
           250,
-          { missevan: true, signal: options.signal }
+          buildMissevanRequestOptions(options)
         );
         if (bySoundData?.success && bySoundData?.info) {
           const bySoundNormalized = normalizeMissevanDramaInfo(bySoundData.info);
@@ -8941,6 +9333,9 @@ async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
           }
         }
       } catch (error) {
+        if (options.signal?.aborted) {
+          throw error;
+        }
         void logger.error("missevan_subscription_backfill_failed", error, {
           platform: "missevan",
           dramaId,
@@ -8980,7 +9375,7 @@ async function fetchRewardSummary(dramaId, options = {}) {
     `https://www.missevan.com/reward/user-reward-rank?period=3&drama_id=${dramaId}`,
     2,
     250,
-    { missevan: true, signal: options.signal }
+    buildMissevanRequestOptions(options)
   );
   const rankList = data?.info?.list || data?.info?.data || data?.list || [];
   const rewardCoinTotal = rankList.reduce((sum, item) => {
@@ -9013,7 +9408,7 @@ async function fetchRewardDetailMeta(dramaId, options = {}) {
     `https://www.missevan.com/reward/drama-reward-detail?drama_id=${dramaId}`,
     2,
     250,
-    { missevan: true, signal: options.signal }
+    buildMissevanRequestOptions(options)
   );
   const rewardNum = Number(data?.info?.reward_num ?? data?.info?.data?.reward_num);
   const summary = {
@@ -9132,7 +9527,8 @@ async function fetchManboLegacyDramaPayload(dramaId, options = {}) {
 
   const data = await fetchManboWebJsonWithFallback(
     `/dramaDetail?dramaId=${normalizedDramaId}`,
-    (url) => fetchJsonWithRetry(url, 2, 250, { signal: options.signal })
+    (url) => fetchJsonWithRetry(url, 2, 250, { signal: options.signal }),
+    { signal: options.signal }
   );
 
   if (Number(data?.code) !== 200 || !data?.data) {
@@ -9531,22 +9927,176 @@ function isAvailableManboWebPayload(data) {
   return Number(data?.code) === 200 && Boolean(data?.data);
 }
 
-export async function fetchManboWebJsonWithFallback(path, requestJson) {
-  let lastError = null;
+function buildManboFailureSample({
+  error,
+  upstreamHost,
+  upstreamRoute,
+  responseStatus = "",
+  upstreamCode = "",
+  failureKind = "",
+} = {}) {
+  const failureFields = buildRequestFailureLogFields({
+    error,
+    responseStatus: responseStatus || error?.status || "",
+    failureKind,
+    upstreamCode,
+  });
+  return {
+    upstreamHost: String(upstreamHost || "").slice(0, 120),
+    ...(upstreamRoute ? { upstreamRoute } : {}),
+    ...failureFields,
+  };
+}
+
+function collectManboFailureSummary(errors = []) {
+  const samples = [];
+  for (const error of Array.isArray(errors) ? errors : [errors]) {
+    if (Array.isArray(error?.failureSamples)) {
+      samples.push(...error.failureSamples);
+    } else if (error?.failureKind) {
+      samples.push(error);
+    } else if (error) {
+      samples.push({
+        upstreamHost: String(error?.upstreamHost || "").slice(0, 120),
+        ...(error?.upstreamRoute ? { upstreamRoute: error.upstreamRoute } : {}),
+        ...buildRequestFailureLogFields({
+          error,
+          responseStatus: error?.status || "",
+          failureKind: error?.manboFailureKind || error?.failureKind || "",
+          upstreamCode: error?.upstreamCode || error?.manboCode || "",
+        }),
+      });
+    }
+  }
+  const normalizedSamples = samples
+    .filter((sample) => sample && typeof sample === "object")
+    .map((sample) => ({
+      ...(sample.upstreamHost ? { upstreamHost: String(sample.upstreamHost).slice(0, 120) } : {}),
+      ...(sample.upstreamRoute ? { upstreamRoute: String(sample.upstreamRoute).slice(0, 40) } : {}),
+      ...(sample.failureKind ? { failureKind: String(sample.failureKind).slice(0, 40) } : {}),
+      ...(sample.errorName ? { errorName: String(sample.errorName).slice(0, 80) } : {}),
+      ...(sample.errorCode ? { errorCode: String(sample.errorCode).slice(0, 80) } : {}),
+      ...(sample.errorMessage
+        ? {
+            errorMessage: String(sample.errorMessage)
+              .replace(/https?:\/\/[^\s]+/gi, "[upstream-url]")
+              .slice(0, 200),
+          }
+        : {}),
+      ...(Number.isFinite(Number(sample.httpStatus))
+        ? { httpStatus: Number(sample.httpStatus) }
+        : {}),
+      ...(sample.upstreamCode ? { upstreamCode: String(sample.upstreamCode).slice(0, 80) } : {}),
+    }));
+  return {
+    failureKinds: [...new Set(normalizedSamples.map((sample) => sample.failureKind).filter(Boolean))],
+    failedHosts: [...new Set(normalizedSamples.map((sample) => sample.upstreamHost).filter(Boolean))],
+    failureSamples: selectFailureSamples(normalizedSamples, 3),
+  };
+}
+
+class ManboApiUnavailableError extends Error {
+  constructor(hostFailures = [], { failureKind = "", failureSamples = [] } = {}) {
+    super(`Manbo API unavailable after ${hostFailures.length} upstream attempt(s)`);
+    this.name = "ManboApiUnavailableError";
+    this.code = "MANBO_API_UNAVAILABLE";
+    this.hostFailures = hostFailures.slice(0, 2);
+    const summary = collectManboFailureSummary([...hostFailures, ...failureSamples]);
+    this.failureKinds = summary.failureKinds;
+    this.failedHosts = summary.failedHosts;
+    this.failureSamples = summary.failureSamples;
+    this.manboFailureKind = summary.failureKinds[0] || failureKind || "network";
+  }
+}
+
+export async function fetchManboWebJsonWithFallback(path, requestJson, options = {}) {
+  const hostFailures = [];
+  const parentSignal = options?.signal;
+
+  if (parentSignal?.aborted) {
+    const failureKind = parentSignal.reason?.name === "AbortError" ? "cancelled" : "timeout";
+    const abortError = parentSignal.reason || new Error("Manbo request was aborted before it started");
+    throw new ManboApiUnavailableError([], {
+      failureKind,
+      failureSamples: [buildManboFailureSample({
+        error: abortError,
+        failureKind,
+      })],
+    });
+  }
 
   for (const url of buildManboWebApiUrls(path)) {
+    if (parentSignal?.aborted) {
+      break;
+    }
+    const upstreamHost = getRequestLogHost(url);
+    const upstreamRoute = getManboUpstreamRoute(url);
+    const startedAt = Date.now();
     try {
-      const data = await requestJson(url);
+      const data = await requestJson(url, { signal: parentSignal });
       if (isAvailableManboWebPayload(data)) {
         return data;
       }
-      lastError = new Error(`Manbo API unavailable: ${url}`);
+      const payloadError = new Error("Manbo API returned an invalid payload");
+      payloadError.name = "ManboInvalidPayloadError";
+      payloadError.code = "MANBO_INVALID_PAYLOAD";
+      payloadError.manboFailureKind = "invalid_payload";
+      payloadError.manboCode = data?.code ?? "";
+      payloadError.upstreamHost = upstreamHost;
+      payloadError.upstreamRoute = upstreamRoute;
+      const sample = buildManboFailureSample({
+        error: payloadError,
+        upstreamHost,
+        upstreamRoute,
+        upstreamCode: data?.code ?? "",
+        failureKind: "invalid_payload",
+      });
+      recordGenericRequestAttempt(url, {
+        attempt: 0,
+        status: "invalid_payload",
+        durationMs: Date.now() - startedAt,
+        success: false,
+        failureKind: "invalid_payload",
+        error: payloadError,
+        upstreamCode: data?.code ?? "",
+      });
+      hostFailures.push({
+        upstreamHost,
+        upstreamRoute,
+        ...sample,
+      });
+      if (parentSignal?.aborted) {
+        break;
+      }
     } catch (error) {
-      lastError = error;
+      const parentAbortFailureKind = parentSignal?.aborted
+        ? (parentSignal.reason?.name === "AbortError" ? "cancelled" : "timeout")
+        : "";
+      const failureKind = parentAbortFailureKind || classifyRequestFailureKind({
+        error,
+        responseStatus: error?.status || "",
+        failureKind: error?.manboFailureKind || error?.failureKind || "",
+      });
+      const sample = buildManboFailureSample({
+        error,
+        upstreamHost,
+        upstreamRoute,
+        responseStatus: error?.status || "",
+        upstreamCode: error?.upstreamCode || error?.manboCode || "",
+        failureKind,
+      });
+      hostFailures.push({
+        upstreamHost,
+        upstreamRoute,
+        ...sample,
+      });
+      if (parentSignal?.aborted) {
+        break;
+      }
     }
   }
 
-  throw lastError ?? new Error("Manbo API unavailable");
+  throw new ManboApiUnavailableError(hostFailures);
 }
 
 async function fetchManboDramaDetail(dramaId, options = {}) {
@@ -9615,7 +10165,8 @@ async function fetchManboSetDetail(setId, options = {}) {
 
   const data = await fetchManboWebJsonWithFallback(
     `/dramaSetDetail?dramaSetId=${normalizedSetId}`,
-    (url) => fetchJsonWithRetry(url, 2, 250, { signal: options.signal })
+    (url) => fetchJsonWithRetry(url, 2, 250, { signal: options.signal }),
+    { signal: options.signal }
   );
   if (Number(data?.code) !== 200 || !data?.data) {
     return null;
@@ -10123,7 +10674,8 @@ async function fetchManboDanmakuSummary(
                   timeoutMs: rescue ? MANBO_DANMAKU_RESCUE_TIMEOUT_MS : MANBO_FETCH_TIMEOUT_MS,
                   signal: sharedSignal,
                 }
-              )
+              ),
+              { signal: sharedSignal }
             )
           );
         };
@@ -10235,6 +10787,15 @@ async function fetchManboDanmakuSummary(
           failedPages.length,
           Number(error?.failedPageCount) || 0
         );
+        const failureKinds = Array.isArray(error?.failureKinds)
+          ? error.failureKinds.slice(0, 10)
+          : [];
+        const failedHosts = Array.isArray(error?.failedHosts)
+          ? error.failedHosts.slice(0, 10)
+          : [];
+        const failureSamples = Array.isArray(error?.failureSamples)
+          ? error.failureSamples.slice(0, 3)
+          : [];
         if (sharedSignal.aborted && failureOutcome === "cancelled") {
           void writeUsageLog({
             platform: "manbo",
@@ -10254,6 +10815,9 @@ async function fetchManboDanmakuSummary(
             failedPageCount,
             ...(failedPages.length > 0 ? { failedPages } : {}),
             ...(totalPages > 0 ? { totalPages } : {}),
+            ...(failureKinds.length > 0 ? { failureKinds } : {}),
+            ...(failedHosts.length > 0 ? { failedHosts } : {}),
+            ...(failureSamples.length > 0 ? { failureSamples } : {}),
             durationMs: Date.now() - startedAt,
           });
           return {
@@ -10292,6 +10856,9 @@ async function fetchManboDanmakuSummary(
           failedPageCount,
           ...(failedPages.length > 0 ? { failedPages } : {}),
           ...(totalPages > 0 ? { totalPages } : {}),
+          ...(failureKinds.length > 0 ? { failureKinds } : {}),
+          ...(failedHosts.length > 0 ? { failedHosts } : {}),
+          ...(failureSamples.length > 0 ? { failureSamples } : {}),
           durationMs: Date.now() - startedAt,
         });
 
@@ -10690,29 +11257,45 @@ export function buildManboSearchCardPatch(info) {
   });
 }
 
-async function fetchSearchCardMetrics(platform, id, soundId, signal) {
+export async function fetchSearchCardMetrics(
+  platform,
+  id,
+  soundId,
+  signal,
+  requestOptions = {}
+) {
   const cached = getSearchCardMetricsCacheState(platform, id, soundId);
   if (platform === "missevan") {
     await refreshMissevanCooldownState();
     if (shouldBlockMissevanAccessForCooldown()) {
       throw createCooldownError();
     }
-    const info = await fetchDramaInfo(id, soundId, { signal });
+    const info = await fetchDramaInfo(id, soundId, {
+      ...requestOptions,
+      signal,
+    });
     if (!info?.drama) {
       throw new Error("Missevan drama metrics are unavailable");
     }
     let rewardNum = null;
     try {
-      const reward = await fetchRewardDetailMeta(id, { signal });
+      const reward = await fetchRewardDetailMeta(id, {
+        ...requestOptions,
+        signal,
+      });
       rewardNum = normalizeOptionalFiniteNumber(reward?.reward_num);
     } catch (error) {
-      if (signal?.aborted || isMissevanAccessDenied(error)) {
+      const failureFields = buildRequestFailureLogFields({
+        error,
+        externalSignal: signal,
+      });
+      if (failureFields.failureKind === "cancelled" || isMissevanAccessDenied(error)) {
         throw error;
       }
       void logger.warn("missevan_search_reward_metric_failed", {
         platform: "missevan",
         dramaId: id,
-        errorMessage: formatImageProxyError(error),
+        ...failureFields,
       });
     }
     return {
@@ -10726,7 +11309,7 @@ async function fetchSearchCardMetrics(platform, id, soundId, signal) {
     };
   }
 
-  const info = await fetchManboDramaDetail(id, { signal });
+  const info = await fetchManboDramaDetail(id, { ...requestOptions, signal });
   const card = normalizeManboCardFromDramaInfo(info);
   if (!card) {
     throw new Error("Manbo drama metrics are unavailable");
@@ -11011,7 +11594,9 @@ app.post("/search-card-metrics", searchCardMetricsLimiter, async (req, res) => {
       async (sharedSignal) => {
         const timeout = createTimeoutSignal(SEARCH_CARD_METRICS_TIMEOUT_MS, sharedSignal);
         try {
-          return await fetchSearchCardMetrics(platform, id, soundId, timeout.signal);
+          return await fetchSearchCardMetrics(platform, id, soundId, timeout.signal, {
+            fallbackTimeoutMsByRoute: SEARCH_CARD_METRICS_FALLBACK_TIMEOUTS_MS,
+          });
         } catch (error) {
           if (timeout.timedOut) {
             error.searchMetricsTimeout = true;

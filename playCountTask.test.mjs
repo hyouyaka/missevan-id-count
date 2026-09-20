@@ -13,8 +13,11 @@ const {
   normalizePlayCountDramas,
   buildFetchOptions,
   buildManboWebApiUrls,
+  classifyRequestFailureOutcome,
   fetchManboWebJsonWithFallback,
   buildMissevanFallbackUrl,
+  fetchMissevanJsonWithFallbackChain,
+  fetchSearchCardMetrics,
   buildMissevanRouteCooldownStateAfterAccessDenied,
   createTimeoutSignal,
   getNearestMissevanAccessUntil,
@@ -41,6 +44,269 @@ test("request timeout signal distinguishes its own deadline", async () => {
   assert.equal(timeout.signal.aborted, true);
   assert.equal(timeout.timedOut, true);
   timeout.cleanup();
+});
+
+function createTestMissevanFallbackRoutes() {
+  return [
+    {
+      key: "primary",
+      fallbackRoute: "render",
+      baseUrl: "https://render.test/missevan",
+      proxyToken: "render-token",
+      timeoutMs: 100,
+    },
+    {
+      key: "secondary",
+      fallbackRoute: "deno",
+      baseUrl: "https://deno.test/missevan",
+      proxyToken: "deno-token",
+      timeoutMs: 100,
+    },
+  ];
+}
+
+test("Missevan fallback gives Deno an independent window after Render times out", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), signal: options.signal });
+    if (String(url).includes("render.test")) {
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    }
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const parent = new AbortController();
+    const result = await fetchMissevanJsonWithFallbackChain(
+      "https://www.missevan.com/sound/getsound?soundid=1",
+      {
+        signal: parent.signal,
+        fallbackRoutes: createTestMissevanFallbackRoutes(),
+        fallbackTimeoutMsByRoute: { primary: 10, secondary: 100 },
+      }
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].url, /render\.test/);
+    assert.match(calls[1].url, /deno\.test/);
+    assert.equal(parent.signal.aborted, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Missevan fallback does not call Deno when Render succeeds", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  };
+
+  try {
+    await fetchMissevanJsonWithFallbackChain(
+      "https://www.missevan.com/sound/getsound?soundid=2",
+      {
+        fallbackRoutes: createTestMissevanFallbackRoutes(),
+        fallbackTimeoutMsByRoute: { primary: 100, secondary: 100 },
+      }
+    );
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /render\.test/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Missevan fallback stops immediately on client cancellation", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const controller = new AbortController();
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push(String(url));
+    return new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    });
+  };
+
+  try {
+    const request = fetchMissevanJsonWithFallbackChain(
+      "https://www.missevan.com/sound/getsound?soundid=3",
+      {
+        signal: controller.signal,
+        fallbackRoutes: createTestMissevanFallbackRoutes(),
+        fallbackTimeoutMsByRoute: { primary: 100, secondary: 100 },
+      }
+    );
+    setTimeout(() => controller.abort(new DOMException("Client disconnected", "AbortError")), 5);
+    await assert.rejects(request, (error) => error?.name === "AbortError");
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Missevan single fallback preserves invalid JSON cause and failure kind", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("{", { status: 200 });
+
+  try {
+    await assert.rejects(
+      fetchMissevanJsonWithFallbackChain(
+        "https://www.missevan.com/sound/getsound?soundid=3",
+        {
+          fallbackRoutes: [createTestMissevanFallbackRoutes()[0]],
+          fallbackTimeoutMsByRoute: { primary: 100 },
+        }
+      ),
+      (error) => {
+        assert.equal(error.failureKind, "invalid_payload");
+        assert.equal(error.status, 200);
+        assert.equal(error.cause?.name, "SyntaxError");
+        assert.equal(classifyRequestFailureOutcome({ error }), "invalid_payload");
+        assert.doesNotMatch(JSON.stringify(error), /render-token|https:\/\//);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Missevan Render and Deno invalid JSON failures remain invalid_payload", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response("{", { status: 200 });
+  };
+
+  try {
+    await assert.rejects(
+      fetchMissevanJsonWithFallbackChain(
+        "https://www.missevan.com/sound/getsound?soundid=4",
+        {
+          fallbackRoutes: createTestMissevanFallbackRoutes(),
+          fallbackTimeoutMsByRoute: { primary: 100, secondary: 100 },
+        }
+      ),
+      (error) => {
+        assert.equal(error.failureKind, "invalid_payload");
+        assert.equal(error.status, 200);
+        assert.equal(error.cause?.name, "SyntaxError");
+        assert.equal(classifyRequestFailureOutcome({ error }), "invalid_payload");
+        return true;
+      }
+    );
+    assert.equal(calls.length, 2);
+    assert.match(calls[0], /render\.test/);
+    assert.match(calls[1], /deno\.test/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Missevan fallback skips Deno after the parent budget is exhausted", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const controller = new AbortController();
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push(String(url));
+    return new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    });
+  };
+
+  try {
+    const request = fetchMissevanJsonWithFallbackChain(
+      "https://www.missevan.com/sound/getsound?soundid=4",
+      {
+        signal: controller.signal,
+        fallbackRoutes: createTestMissevanFallbackRoutes(),
+        fallbackTimeoutMsByRoute: { primary: 100, secondary: 100 },
+      }
+    );
+    setTimeout(() => controller.abort(new Error("Search-card budget exhausted")), 5);
+    await assert.rejects(request);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /render\.test/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("search-card reward timeout degrades to a null reward metric", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.includes("getdrama")) {
+      return new Response(JSON.stringify({
+        success: true,
+        info: {
+          drama: {
+            id: 991234,
+            name: "测试剧",
+            cover: "",
+            vip: 0,
+            price: 0,
+            view_count: 10,
+            subscription_num: 2,
+          },
+          episodes: { episode: [] },
+          cvs: [],
+        },
+      }), { status: 200 });
+    }
+    setTimeout(() => controller.abort(new Error("Request timeout after 20ms")), 5);
+    return new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    });
+  };
+
+  try {
+    const result = await fetchSearchCardMetrics("missevan", 991234, null, controller.signal);
+    assert.equal(result.metrics.reward_num, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("search-card reward client cancellation is still propagated", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes("getdrama")) {
+      return new Response(JSON.stringify({
+        success: true,
+        info: {
+          drama: { id: 991235, name: "测试剧", cover: "", vip: 0, price: 0, view_count: 10 },
+          episodes: { episode: [] },
+          cvs: [],
+        },
+      }), { status: 200 });
+    }
+    setTimeout(() => controller.abort(new DOMException("Client disconnected", "AbortError")), 5);
+    return new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    });
+  };
+
+  try {
+    await assert.rejects(
+      fetchSearchCardMetrics("missevan", 991235, null, controller.signal),
+      (error) => error?.name === "AbortError"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Missevan play count plan requests selected episodes when selected is no larger", () => {
@@ -293,6 +559,260 @@ test("Manbo Web API fallback stays idle when the primary succeeds", async () => 
   assert.deepEqual(requestedUrls, [
     "https://manbo.kilaaudio.com/web_manbo/dramaSetDetail?dramaSetId=2",
   ]);
+});
+
+test("Manbo parent timeout records only the primary host and skips legacy fallback", async () => {
+  const controller = new AbortController();
+  const requestedUrls = [];
+
+  await assert.rejects(
+    fetchManboWebJsonWithFallback(
+      "dramaDetail?dramaId=3",
+      async (url, { signal } = {}) => {
+        requestedUrls.push(url);
+        controller.abort(new Error("parent budget exhausted"));
+        throw signal?.reason || new Error("parent budget exhausted");
+      },
+      { signal: controller.signal }
+    ),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["timeout"]);
+      assert.deepEqual(error.failedHosts, ["manbo.kilaaudio.com"]);
+      assert.equal(error.failureSamples[0].failureKind, "timeout");
+      return true;
+    }
+  );
+
+  assert.deepEqual(requestedUrls, [
+    "https://manbo.kilaaudio.com/web_manbo/dramaDetail?dramaId=3",
+  ]);
+});
+
+test("Manbo client cancellation records cancelled and skips legacy fallback", async () => {
+  const controller = new AbortController();
+  const requestedUrls = [];
+
+  await assert.rejects(
+    fetchManboWebJsonWithFallback(
+      "dramaDetail?dramaId=4",
+      async (url, { signal } = {}) => {
+        requestedUrls.push(url);
+        controller.abort(new DOMException("client disconnected", "AbortError"));
+        throw signal?.reason || new DOMException("client disconnected", "AbortError");
+      },
+      { signal: controller.signal }
+    ),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["cancelled"]);
+      assert.deepEqual(error.failedHosts, ["manbo.kilaaudio.com"]);
+      assert.equal(error.failureSamples[0].failureKind, "cancelled");
+      return true;
+    }
+  );
+
+  assert.deepEqual(requestedUrls, [
+    "https://manbo.kilaaudio.com/web_manbo/dramaDetail?dramaId=4",
+  ]);
+});
+
+test("Manbo pre-aborted timeout does not request a host and keeps failed hosts empty", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("parent budget exhausted before Manbo request"));
+  let requestCount = 0;
+
+  await assert.rejects(
+    fetchManboWebJsonWithFallback(
+      "dramaDetail?dramaId=5",
+      async () => {
+        requestCount += 1;
+        return { code: 200, data: { radioDramaId: "5" } };
+      },
+      { signal: controller.signal }
+    ),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["timeout"]);
+      assert.deepEqual(error.failedHosts, []);
+      assert.deepEqual(error.hostFailures, []);
+      assert.equal(error.manboFailureKind, "timeout");
+      return true;
+    }
+  );
+
+  assert.equal(requestCount, 0);
+});
+
+test("Manbo pre-aborted client cancellation does not request a host and keeps failed hosts empty", async () => {
+  const controller = new AbortController();
+  controller.abort(new DOMException("client disconnected", "AbortError"));
+  let requestCount = 0;
+
+  await assert.rejects(
+    fetchManboWebJsonWithFallback(
+      "dramaDetail?dramaId=6",
+      async () => {
+        requestCount += 1;
+        return { code: 200, data: { radioDramaId: "6" } };
+      },
+      { signal: controller.signal }
+    ),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["cancelled"]);
+      assert.deepEqual(error.failedHosts, []);
+      assert.deepEqual(error.hostFailures, []);
+      assert.equal(error.manboFailureKind, "cancelled");
+      return true;
+    }
+  );
+
+  assert.equal(requestCount, 0);
+});
+
+test("Manbo local timeout or network failure still falls back when the parent is active", async () => {
+  for (const failureKind of ["timeout", "network"]) {
+    const controller = new AbortController();
+    const requestedUrls = [];
+    const data = await fetchManboWebJsonWithFallback(
+      `dramaDetail?dramaId=${failureKind}`,
+      async (url) => {
+        requestedUrls.push(url);
+        if (url.includes("manbo.kilaaudio.com")) {
+          throw Object.assign(new Error(`${failureKind} at primary`), { failureKind });
+        }
+        return { code: 200, data: { radioDramaId: failureKind } };
+      },
+      { signal: controller.signal }
+    );
+
+    assert.equal(data.data.radioDramaId, failureKind);
+    assert.equal(requestedUrls.length, 2);
+    assert.match(requestedUrls[1], /www\.kilamanbo\.com/);
+    assert.equal(controller.signal.aborted, false);
+  }
+});
+
+test("Manbo Web API failure aggregates safe host summaries", async () => {
+  await assert.rejects(
+    fetchManboWebJsonWithFallback("dramaDetail?visitor_id=secret-value", async (url) => {
+      if (url.includes("manbo.kilaaudio.com")) {
+        throw Object.assign(
+          new Error("fetch failed for https://manbo.kilaaudio.com/web_manbo?visitor_id=secret-value"),
+          { code: "ENOTFOUND" }
+        );
+      }
+      return { code: 503, data: null };
+    }),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["network", "invalid_payload"]);
+      assert.deepEqual(error.failedHosts, ["manbo.kilaaudio.com", "www.kilamanbo.com"]);
+      assert.equal(error.failureSamples.length, 2);
+      assert.equal(error.hostFailures[0].error, undefined);
+      const serialized = JSON.stringify(error);
+      assert.doesNotMatch(serialized, /visitor_id|secret-value|https:\/\//);
+      return true;
+    }
+  );
+});
+
+test("Manbo Web API host failures classify HTTP status separately from network errors", async () => {
+  await assert.rejects(
+    fetchManboWebJsonWithFallback("dramaDetail?dramaId=1", async (url) => {
+      if (url.includes("manbo.kilaaudio.com")) {
+        throw Object.assign(new Error("upstream HTTP 503"), {
+          name: "HttpStatusError",
+          status: 503,
+          code: "HTTP_503",
+        });
+      }
+      throw Object.assign(new Error("socket unavailable"), { code: "ECONNRESET" });
+    }),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["http_status", "network"]);
+      assert.equal(error.failureSamples[0].httpStatus, 503);
+      assert.equal(error.failureSamples[0].errorCode, "HTTP_503");
+      return true;
+    }
+  );
+});
+
+test("Manbo HTTP 200 JSON parse failures are invalid payloads without httpStatus", async () => {
+  await assert.rejects(
+    fetchManboWebJsonWithFallback("dramaDetail?dramaId=7", async () => {
+      const response = new Response("{", { status: 200 });
+      try {
+        await response.json();
+      } catch (error) {
+        error.status = response.status;
+        throw error;
+      }
+    }),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["invalid_payload"]);
+      assert.ok(error.failureSamples.every((sample) => sample.httpStatus === undefined));
+      return true;
+    }
+  );
+});
+
+test("Manbo HTTP 200 body timeouts are timeout failures without httpStatus", async () => {
+  await assert.rejects(
+    fetchManboWebJsonWithFallback("dramaDetail?dramaId=8", async () => {
+      throw Object.assign(new Error("response body timed out"), {
+        name: "TimeoutError",
+        status: 200,
+      });
+    }),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["timeout"]);
+      assert.ok(error.failureSamples.every((sample) => sample.httpStatus === undefined));
+      return true;
+    }
+  );
+});
+
+test("Manbo HTTP 200 client cancellation is cancelled without httpStatus", async () => {
+  const controller = new AbortController();
+  const requestedUrls = [];
+
+  await assert.rejects(
+    fetchManboWebJsonWithFallback(
+      "dramaDetail?dramaId=9",
+      async (url) => {
+        requestedUrls.push(url);
+        const error = Object.assign(new Error("client disconnected"), {
+          name: "AbortError",
+          status: 200,
+        });
+        controller.abort(error);
+        throw error;
+      },
+      { signal: controller.signal }
+    ),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["cancelled"]);
+      assert.deepEqual(error.failedHosts, ["manbo.kilaaudio.com"]);
+      assert.ok(error.failureSamples.every((sample) => sample.httpStatus === undefined));
+      return true;
+    }
+  );
+
+  assert.equal(requestedUrls.length, 1);
+});
+
+test("Manbo HTTP 500 remains http_status with httpStatus 500", async () => {
+  await assert.rejects(
+    fetchManboWebJsonWithFallback("dramaDetail?dramaId=10", async () => {
+      throw Object.assign(new Error("upstream HTTP 500"), {
+        name: "HttpStatusError",
+        status: 500,
+        code: "HTTP_500",
+      });
+    }),
+    (error) => {
+      assert.deepEqual(error.failureKinds, ["http_status"]);
+      assert.ok(error.failureSamples.every((sample) => sample.httpStatus === 500));
+      return true;
+    }
+  );
 });
 
 test("Missevan fallback URL maps upstream URLs to Render proxy", () => {

@@ -1301,6 +1301,58 @@ test("danmaku operation logs merge normal requests and retain anomalous attempts
   assert.equal(paginated.anomalousAttempts.length, 0);
   assert.equal("attempts" in paginated.fields, false);
 
+  const manboFailure = buildOperationTraceLog({
+    event: "danmaku_summary",
+    fields: { platform: "manbo", soundId: "2235647356781461610" },
+    startedAt: 1000,
+    attempts: [
+      {
+        platform: "manbo",
+        upstreamHost: "manbo.kilaaudio.com",
+        upstreamRoute: "primary",
+        endpoint: "web_manbo/getDanmaKuPgList",
+        pageNo: 1,
+        attempt: 1,
+        status: 503,
+        httpStatus: 503,
+        durationMs: 100,
+        success: false,
+        failureKind: "http_status",
+        errorName: "HttpStatusError",
+        errorCode: "HTTP_503",
+        errorMessage: "HTTP 503",
+      },
+      {
+        platform: "manbo",
+        upstreamHost: "www.kilamanbo.com",
+        upstreamRoute: "legacy_fallback",
+        endpoint: "web_manbo/getDanmaKuPgList",
+        pageNo: 1,
+        attempt: 1,
+        status: "timeout",
+        durationMs: 200,
+        success: false,
+        failureKind: "timeout",
+        errorName: "TimeoutError",
+        errorMessage: "Request timeout after 10000ms",
+      },
+    ],
+  }, {
+    action: "danmaku_summary",
+    platform: "manbo",
+    success: false,
+    error: "upstream unavailable",
+  }, 1400);
+
+  assert.equal(manboFailure.fields.failureKinds.length, 2);
+  assert.deepEqual(manboFailure.fields.failedHosts, [
+    "manbo.kilaaudio.com",
+    "www.kilamanbo.com",
+  ]);
+  assert.equal(manboFailure.fields.failureSamples.length, 2);
+  assert.equal(manboFailure.fields.failureSamples[0].httpStatus, 503);
+  assert.doesNotMatch(JSON.stringify(manboFailure.fields.failureSamples), /\?/);
+
   const fallback = buildOperationTraceLog({
     event: "danmaku_summary",
     fields: { platform: "missevan", soundId: 9169699 },
@@ -1415,6 +1467,24 @@ test("operation log levels distinguish normal cancellation from timeouts", async
   assert.equal(classifyRequestFailureOutcome({ externalSignal: parentTimeout.signal }), "timeout");
   assert.equal(classifyRequestFailureOutcome({ timeoutState: { timedOut: true } }), "timeout");
   assert.equal(classifyRequestFailureOutcome({ responseStatus: 504 }), 504);
+  assert.equal(
+    classifyRequestFailureOutcome({ responseStatus: 200, error: new SyntaxError("invalid JSON") }),
+    "invalid_payload"
+  );
+  assert.equal(
+    classifyRequestFailureOutcome({
+      responseStatus: 200,
+      error: Object.assign(new Error("response body timed out"), { name: "TimeoutError" }),
+    }),
+    "timeout"
+  );
+  const responseCancelled = new AbortController();
+  responseCancelled.abort(new DOMException("Client disconnected", "AbortError"));
+  assert.equal(
+    classifyRequestFailureOutcome({ responseStatus: 200, externalSignal: responseCancelled.signal }),
+    "cancelled"
+  );
+  assert.equal(classifyRequestFailureOutcome({ responseStatus: 500 }), 500);
   assert.equal(classifyRequestFailureOutcome({ error: new Error("upstream failed") }), "error");
 });
 

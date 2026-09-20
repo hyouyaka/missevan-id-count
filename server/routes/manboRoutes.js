@@ -1,3 +1,38 @@
+function getManboFailureLogFields(error) {
+  const failureSamples = Array.isArray(error?.failureSamples)
+    ? error.failureSamples
+        .filter((sample) => sample && typeof sample === "object")
+        .slice(0, 3)
+        .map((sample) => ({
+          ...(sample.upstreamHost ? { upstreamHost: String(sample.upstreamHost).slice(0, 120) } : {}),
+          ...(sample.upstreamRoute ? { upstreamRoute: String(sample.upstreamRoute).slice(0, 40) } : {}),
+          ...(sample.failureKind ? { failureKind: String(sample.failureKind).slice(0, 40) } : {}),
+          ...(sample.errorName ? { errorName: String(sample.errorName).slice(0, 80) } : {}),
+          ...(sample.errorCode ? { errorCode: String(sample.errorCode).slice(0, 80) } : {}),
+          ...(sample.errorMessage
+            ? {
+                errorMessage: String(sample.errorMessage)
+                  .replace(/https?:\/\/[^\s]+/gi, "[upstream-url]")
+                  .slice(0, 200),
+              }
+            : {}),
+          ...(Number.isFinite(Number(sample.httpStatus))
+            ? { httpStatus: Number(sample.httpStatus) }
+            : {}),
+          ...(sample.upstreamCode ? { upstreamCode: String(sample.upstreamCode).slice(0, 80) } : {}),
+        }))
+    : [];
+  return {
+    ...(Array.isArray(error?.failureKinds) && error.failureKinds.length > 0
+      ? { failureKinds: error.failureKinds.slice(0, 10).map((kind) => String(kind).slice(0, 40)) }
+      : {}),
+    ...(Array.isArray(error?.failedHosts) && error.failedHosts.length > 0
+      ? { failedHosts: error.failedHosts.slice(0, 10).map((host) => String(host).slice(0, 120)) }
+      : {}),
+    ...(failureSamples.length > 0 ? { failureSamples } : {}),
+  };
+}
+
 export function registerManboRoutes(router, {
   buildCompatibilitySearchUsageLog,
   buildKeywordTooShortSearchResponse,
@@ -185,6 +220,7 @@ export function registerManboRoutes(router, {
       void logger.error("manbo_library_search_failed", error, {
         platform: "manbo",
         keyword,
+        ...getManboFailureLogFields(error),
       });
       return res.status(500).json({
         success: false,
@@ -261,6 +297,7 @@ export function registerManboRoutes(router, {
         void logger.error("manbo_drama_card_fetch_failed", error, {
           platform: "manbo",
           item: item.raw,
+          ...getManboFailureLogFields(error),
         });
         failedItems.push(item.raw);
       }
@@ -325,6 +362,7 @@ export function registerManboRoutes(router, {
         void logger.error("manbo_drama_fetch_failed", error, {
           platform: "manbo",
           dramaId: id,
+          ...getManboFailureLogFields(error),
         });
         results.push({ success: false, id, accessDenied });
       }
@@ -345,6 +383,7 @@ export function registerManboRoutes(router, {
         void logger.error("manbo_set_summary_fetch_failed", error, {
           platform: "manbo",
           soundId: setId,
+          ...getManboFailureLogFields(error),
         });
         results.push({
           sound_id: Number(setId),

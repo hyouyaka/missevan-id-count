@@ -63,7 +63,12 @@ test("Manbo pagination waits for all workers and reports pages that rescue canno
       rescueConcurrency: 1,
       async fetchPage(pageNo, phase) {
         if (pageNo === 3) {
-          throw Object.assign(new Error("Request timeout"), { requestTimedOut: true });
+          throw Object.assign(new Error("Request timeout"), {
+            requestTimedOut: true,
+            failureKind: "timeout",
+            upstreamHost: "manbo.kilaaudio.com",
+            upstreamRoute: "primary",
+          });
         }
         await new Promise((resolve) => setImmediate(resolve));
         completed.push(`${phase}:${pageNo}`);
@@ -74,6 +79,9 @@ test("Manbo pagination waits for all workers and reports pages that rescue canno
       assert.ok(error instanceof ManboDanmakuPageBatchError);
       assert.deepEqual(error.failedPages, [3]);
       assert.equal(error.outcome, "timeout");
+      assert.deepEqual(error.failureKinds, ["timeout"]);
+      assert.deepEqual(error.failedHosts, ["manbo.kilaaudio.com"]);
+      assert.equal(error.failureSamples[0].upstreamRoute, "primary");
       return true;
     }
   );
