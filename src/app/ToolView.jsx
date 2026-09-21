@@ -60,7 +60,10 @@ import {
 } from "@/app/statsTaskClient";
 import { useStatsTaskRun } from "@/app/useStatsTaskRun";
 import { createPlatformStatesWithHistory, useStatsHistory } from "@/app/useStatsHistory";
-import { useSearchCardMetrics } from "@/app/useSearchCardMetrics";
+import {
+  clearSearchCardDynamicMetrics,
+  useSearchCardMetrics,
+} from "@/app/useSearchCardMetrics";
 import {
   appendSearchResultsPage,
   getAllSearchResults,
@@ -1781,21 +1784,28 @@ export function ToolView({ initialAppConfig }) {
         const currentCard = currentCardsById.get(String(id));
         // Cards and episode details arrive independently of the metric queue.
         // Keep its status and completed metrics when either response arrives late.
-        const completedMetrics = currentCard?.metrics_status === "ready"
+        const metricsStatus = String(
+          currentCard?.metrics_status || card?.metrics_status || "pending"
+        );
+        const completedMetrics = metricsStatus === "ready"
           ? Object.fromEntries(["view_count", "subscription_num", "reward_num", "diamond_value", "pay_count", "member_listen_count"]
-            .filter((field) => Object.hasOwn(currentCard, field))
+            .filter((field) => currentCard && Object.hasOwn(currentCard, field))
             .map((field) => [field, currentCard[field]]))
+          : {};
+        const terminalFailureMetrics = ["error", "access_denied"].includes(metricsStatus)
+          ? clearSearchCardDynamicMetrics()
           : {};
         return [{
           ...card,
           ...detail,
           ...completedMetrics,
+          ...terminalFailureMetrics,
           id: String(id),
           title: detail?.name || card?.title || "",
           platform,
           checked: true,
-          metrics_status: currentCard?.metrics_status || "pending",
-          metrics_error_code: currentCard?.metrics_error_code || "",
+          metrics_status: metricsStatus,
+          metrics_error_code: currentCard?.metrics_error_code || card?.metrics_error_code || "",
         }];
       });
       return {

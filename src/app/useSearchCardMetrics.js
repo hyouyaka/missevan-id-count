@@ -12,6 +12,22 @@ import { waitForStatsTaskPoll } from "./useStatsTaskRun.js";
 
 export const waitForSearchCardMetricRetry = waitForStatsTaskPoll;
 
+export const SEARCH_CARD_DYNAMIC_METRIC_FIELDS = [
+  "view_count",
+  "subscription_num",
+  "reward_num",
+  "diamond_value",
+  "pay_count",
+  "member_listen_count",
+];
+
+export function clearSearchCardDynamicMetrics() {
+  return {
+    ...Object.fromEntries(SEARCH_CARD_DYNAMIC_METRIC_FIELDS.map((field) => [field, null])),
+    playCountWan: "",
+  };
+}
+
 function patchSearchMetricItems(items, itemId, patch) {
   const normalizedId = String(itemId ?? "");
   return (Array.isArray(items) ? items : []).map((item) => {
@@ -120,7 +136,13 @@ export function createSearchCardMetricsController(initialOptions = {}) {
     };
   }
 
-  async function refreshSearchMetricItems(platform, items, searchGeneration, controller, resultSource = "search") {
+  async function refreshSearchMetricItems(
+    platform,
+    items,
+    searchGeneration,
+    controller,
+    resultSource = "search"
+  ) {
     const options = getOptions();
     const selectQueue = options.selectSearchMetricQueue || selectSearchMetricQueue;
     const queue = selectQueue(items, resultSource);
@@ -183,10 +205,10 @@ export function createSearchCardMetricsController(initialOptions = {}) {
         } catch (error) {
           const isAborted = (getOptions().isAbortError || isAbortError)(error) || controller.signal.aborted;
           if (isAborted) {
-            patchSearchMetricItem(platform, item.id, { metrics_status: "pending" }, searchGeneration);
             continue;
           }
           patchSearchMetricItem(platform, item.id, {
+            ...clearSearchCardDynamicMetrics(),
             metrics_status: error?.code === "ACCESS_DENIED" ? "access_denied" : "error",
             metrics_error_code: error?.code || "UPSTREAM_ERROR",
           }, searchGeneration);
@@ -200,8 +222,15 @@ export function createSearchCardMetricsController(initialOptions = {}) {
   function startRefresh(platform, items, searchGeneration, resultSource = "search") {
     const controller = new AbortController();
     activeControllers.add(controller);
-    const promise = refreshSearchMetricItems(platform, items, searchGeneration, controller, resultSource)
-      .finally(() => activeControllers.delete(controller));
+    const promise = refreshSearchMetricItems(
+      platform,
+      items,
+      searchGeneration,
+      controller,
+      resultSource
+    ).finally(() => {
+      activeControllers.delete(controller);
+    });
     return { controller, promise };
   }
 

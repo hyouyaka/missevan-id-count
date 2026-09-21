@@ -38,7 +38,7 @@ import { LazyImage } from "@/components/ui/lazy-image";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { formatPlainNumber, getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
+import { getBackendVersionFromResponse, selectDramaEpisodesByMode } from "@/app/app-utils";
 import {
   fetchRankTrendAvailabilityData,
   fetchRankTrendData,
@@ -47,6 +47,11 @@ import {
 import { PlatformDramaLink, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { CvSearchResults } from "@/app/CvSearchResults";
+import {
+  buildSearchCardMetricDisplay,
+  getSearchCardMetricStatus,
+  hasSearchCardMetricFailure,
+} from "@/app/searchCardMetricDisplay";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 function buildProxyImageUrl(url) {
@@ -357,7 +362,6 @@ export function SearchResults({
 }) {
   const idLabel = "作品ID";
   const episodeIdLabel = platform === "manbo" ? "Set ID" : "Sound ID";
-  const extraMetaLabel = platform === "manbo" ? "收藏数" : "追剧人数";
   const actionResults = allResults.length ? allResults : results;
   const selectedDramaCount = actionResults.filter((result) => result.checked).length;
   const selectedEpisodeCount = selectedEpisodes.length;
@@ -893,60 +897,6 @@ export function SearchResults({
     return isPaidEpisode(platform, episode) ? "付费" : "";
   }
 
-  function getResultMetrics(item) {
-    const metricsStatus = String(item?.metrics_status || "ready");
-    if (metricsStatus !== "ready") {
-      const value = metricsStatus === "loading" || metricsStatus === "pending"
-        ? "正在获取"
-        : metricsStatus === "access_denied"
-          ? "暂不可用"
-          : "获取失败";
-      return [
-        { label: "总播放量", value, loading: metricsStatus === "loading" || metricsStatus === "pending" },
-        { label: extraMetaLabel, value, loading: metricsStatus === "loading" || metricsStatus === "pending" },
-        platform === "missevan"
-          ? { label: "打赏人数", value, loading: metricsStatus === "loading" || metricsStatus === "pending" }
-          : { label: "投喂总数", value, loading: metricsStatus === "loading" || metricsStatus === "pending" },
-      ];
-    }
-    return [
-      {
-        label: "总播放量",
-        value: formatPlainNumber(item.view_count),
-      },
-      item?.subscription_num != null
-        ? {
-            label: extraMetaLabel,
-            value: formatPlainNumber(item.subscription_num),
-          }
-        : null,
-      platform === "manbo" && !item?.is_member && item?.revenue_type !== "episode" && Number.isFinite(Number(item?.pay_count)) && Number(item.pay_count) > 0
-        ? {
-            label: "付费人数",
-            value: formatPlainNumber(item.pay_count),
-          }
-        : null,
-      platform === "manbo" && item?.is_member && Number.isFinite(Number(item?.member_listen_count)) && Number(item.member_listen_count) > 0
-        ? {
-            label: "收听人数",
-            value: formatPlainNumber(item.member_listen_count),
-          }
-        : null,
-      platform === "missevan" && item?.reward_num != null && Number.isFinite(Number(item.reward_num))
-        ? {
-            label: "打赏人数",
-            value: formatPlainNumber(item.reward_num),
-          }
-        : null,
-      platform === "manbo"
-        ? {
-            label: "投喂总数",
-            value: formatPlainNumber(item.diamond_value),
-          }
-        : null,
-    ].filter(Boolean);
-  }
-
   const actionButtonBaseClass = "h-9 w-full justify-start px-2.5 text-[14px]!";
   const mobileBatchTextClass = "text-xs! font-medium";
   const mobileActionHitAreaClass = "relative h-11 min-h-11 w-full min-w-0 bg-transparent! p-0 shadow-none! hover:bg-transparent! active:translate-y-0";
@@ -1209,9 +1159,9 @@ export function SearchResults({
               const originalAuthorText = String(item.author ?? "").trim();
               const paymentTag = getSearchResultPaymentTag(item);
               const titleTags = getSearchResultTitleTags(item);
-              const metrics = getResultMetrics(item);
-              const metricsStatus = String(item?.metrics_status || "ready");
-              const metricsFailed = metricsStatus === "error" || metricsStatus === "access_denied";
+              const metrics = buildSearchCardMetricDisplay(platform, item);
+              const metricsStatus = getSearchCardMetricStatus(item);
+              const metricsFailed = hasSearchCardMetricFailure(platform, item);
               const canShowTrend = canShowSearchTrend(item);
               const allEpisodesSelected = importedDrama ? areAllEpisodesSelected(item.id) : false;
               const paidEpisodesSelected = importedDrama ? arePaidEpisodesSelected(item.id) : false;
