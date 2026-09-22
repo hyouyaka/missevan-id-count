@@ -299,7 +299,7 @@ Snapshot values may expose `view_count`, `watch_count`, or `play_count` records 
 `envConfig.js` only loads a controlled allowlist of keys. Major knobs include:
 - runtime placement: `APP_DATA_DIR`, `DESKTOP_APP`, `DESKTOP_EXE_DIR`, `DESKTOP_PACKAGED_APP`
 - backend exposure: `PORT`, `JSON_BODY_LIMIT`, `START_SERVER_ON_IMPORT`, `ENABLE_MISSEVAN`
-- feature links: `MISSEVAN_DESKTOP_APP_URL`, `FEATURE_SUGGESTION_URL`
+- feature links: `MISSEVAN_DESKTOP_APP_URL`; anonymous feedback uses server-only `RESEND_API_KEY`, `FEEDBACK_FROM_EMAIL`, and `FEEDBACK_RECIPIENT_EMAIL`
 - persistence: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
 - Upstash v2 probes: `INFO_STORE_META_POLL_INTERVAL_MS` (5 minutes by default)
 - cooldown: `MISSEVAN_PERSISTENT_COOLDOWN`, `MISSEVAN_COOLDOWN_KEY`, `MISSEVAN_COOLDOWN_HOURS`

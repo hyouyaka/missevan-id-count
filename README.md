@@ -104,7 +104,11 @@ Windows 桌面版会直接在界面中提示这一步。
 | `MISSEVAN_PERSISTENT_COOLDOWN` | 是否持久化 cooldown | 本地不启用；Railway 自动启用 |
 | `MISSEVAN_COOLDOWN_KEY` | 当前部署的 cooldown key | `missevan:cooldown:v1` |
 | `MISSEVAN_DESKTOP_APP_URL` | 网页版提示下载桌面版的地址 | — |
-| `FEATURE_SUGGESTION_URL` | 功能建议收集链接 | — |
+| `RESEND_API_KEY` | Resend 服务器 API Key；仅 hosted web feedback 使用 | — |
+| `FEEDBACK_FROM_EMAIL` | Resend 发件人地址，例如 `MMToolkit Feedback <feedback@notify.mmtoolkit.app>` | — |
+| `FEEDBACK_RECIPIENT_EMAIL` | 管理员私人收件地址 | — |
+
+建议反馈为匿名表单，不保存反馈数据库，也不向浏览器暴露 Resend 配置。以上变量只能配置在 server/Railway 环境中，不要提交 `.env`。
 
 ### 猫耳备用代理
 
@@ -222,7 +226,9 @@ UPSTASH_REDIS_REST_URL=https://your-upstash-endpoint.upstash.io
 UPSTASH_REDIS_REST_TOKEN=your-upstash-token
 MISSEVAN_PERSISTENT_COOLDOWN=false
 MISSEVAN_COOLDOWN_KEY=missevan:cooldown:v1
-FEATURE_SUGGESTION_URL=https://your-feedback-form.example.com
+RESEND_API_KEY=re_xxxxxxxxx
+FEEDBACK_FROM_EMAIL=MMToolkit Feedback <feedback@notify.mmtoolkit.app>
+FEEDBACK_RECIPIENT_EMAIL=admin@example.com
 ```
 
 桌面版 `.env` 读取优先顺序：

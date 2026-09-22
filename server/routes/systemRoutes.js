@@ -2,7 +2,7 @@ export function registerSystemRoutes(router, {
   appVersion,
   desktopApp,
   desktopAppUrl,
-  featureSuggestionUrl,
+  feedbackEnabled,
   getDesktopFavoritesFilePath,
   getFrontendVersionFromRequest,
   getMissevanAccessDeniedCooldownUntil,
@@ -30,7 +30,7 @@ export function registerSystemRoutes(router, {
       cooldownHours: missevanCooldownHours,
       cooldownUntil: getMissevanAccessDeniedCooldownUntil(),
       desktopAppUrl: desktopAppUrl,
-      featureSuggestionUrl,
+      feedbackEnabled: Boolean(feedbackEnabled),
       frontendVersion,
       versionMismatch: frontendVersion !== appVersion,
     });

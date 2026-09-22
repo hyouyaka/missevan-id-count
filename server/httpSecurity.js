@@ -149,24 +149,14 @@ export function createRequestId(value = "") {
   return supplied && /^[A-Za-z0-9._:-]{1,128}$/.test(supplied) ? supplied : randomUUID();
 }
 
-export function buildContentSecurityPolicy({ twikooUrl = "" } = {}) {
-  const connectOrigins = ["'self'"];
-  try {
-    const url = new URL(String(twikooUrl || "").trim());
-    if (url.protocol === "https:") {
-      connectOrigins.push(url.origin);
-    }
-  } catch (_) {
-    // Invalid optional configuration must not weaken the default policy.
-  }
-
+export function buildContentSecurityPolicy() {
   return [
     "default-src 'self'",
     `script-src 'self' ${MANBO_CRYPTO_SCRIPT_ORIGIN}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: blob: https:",
-    `connect-src ${connectOrigins.join(" ")}`,
+    "connect-src 'self'",
     "object-src 'none'",
     "frame-src 'none'",
     "frame-ancestors 'none'",
@@ -174,8 +164,8 @@ export function buildContentSecurityPolicy({ twikooUrl = "" } = {}) {
   ].join("; ");
 }
 
-export function applySecurityHeaders(res, { twikooUrl = "" } = {}) {
-  res.setHeader("Content-Security-Policy", buildContentSecurityPolicy({ twikooUrl }));
+export function applySecurityHeaders(res) {
+  res.setHeader("Content-Security-Policy", buildContentSecurityPolicy());
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -186,16 +176,15 @@ export function applySecurityHeaders(res, { twikooUrl = "" } = {}) {
 /**
  * @param {{
  *   desktopApp?: boolean,
- *   twikooUrl?: string,
  *   logger?: { warn: (event: string, fields?: Record<string, unknown>) => void } | null,
  * }} [options]
  */
-export function createRequestSecurityMiddleware({ desktopApp = false, twikooUrl = "", logger = null } = {}) {
+export function createRequestSecurityMiddleware({ desktopApp = false, logger = null } = {}) {
   return (req, res, next) => {
     const requestId = createRequestId(req.headers["x-request-id"]);
     req.requestId = requestId;
     res.setHeader("X-Request-Id", requestId);
-    applySecurityHeaders(res, { twikooUrl });
+    applySecurityHeaders(res);
 
     const reason = getOriginRejectionReason(req, { desktopApp });
     if (reason) {

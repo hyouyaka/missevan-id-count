@@ -972,7 +972,7 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(toolViewSource, /function openDrawerChangelog\(\)/);
   assert.match(toolViewSource, /function openDrawerFeedback\(\)/);
   assert.match(toolViewSource, /navigateToolRoute\(\{ view: "feedback" \}\)/);
-  assert.doesNotMatch(toolViewSource, /window\.open\(appConfig\.featureSuggestionUrl/);
+  assert.doesNotMatch(toolViewSource, /window\.open\(appConfig\.feedbackEnabled/);
   assert.doesNotMatch(toolViewSource, /handleMainDrawerKeyDown/);
   assert.match(toolViewSource, /<Sheet open=\{mainDrawerOpen\} onOpenChange=\{setMainDrawerOpen\}>/);
   assert.equal((toolViewSource.match(/<SheetTrigger asChild>/g) || []).length, 1);
@@ -1019,8 +1019,10 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(navigationSource, /更新日志/);
   assert.match(navigationSource, /桌面版/);
   assert.match(navigationSource, /<MonitorIcon aria-hidden="true"/);
-  assert.match(navigationSource, /!desktopApp && featureSuggestionUrl \? \(/);
-  assert.match(navigationSource, /建议反馈/);
+  assert.match(navigationSource, /!desktopApp \? \(/);
+  assert.doesNotMatch(navigationSource, /!desktopApp && feedbackEnabled/);
+  assert.match(navigationSource, /label: "说明与反馈"/);
+  assert.doesNotMatch(navigationSource, /label: "建议反馈"/);
   assert.doesNotMatch(toolViewSource, /功能建议/);
   assert.match(toolViewSource, /const drawerRootItemClassName = appConfig\.desktopApp/);
   assert.match(toolViewSource, /const drawerChildItemClassName = appConfig\.desktopApp/);
@@ -1031,8 +1033,8 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   assert.match(sheetSource, /border-l border-border bg-background p-3 shadow-\[var\(--shadow-panel\)\]/);
 });
 
-test("web feedback route initializes the npm Twikoo client inside its own view", () => {
-  assert.match(packageSource, /"twikoo": "\^1\.7\.14"/);
+test("web feedback route uses the anonymous Resend-backed form", () => {
+  assert.match(packageSource, /"resend":/);
   assert.match(
     toolViewSource,
     /const FeedbackView = lazy\(\(\) =>[\s\S]*import\("@\/app\/FeedbackView"\)[\s\S]*default: module\.FeedbackView/
@@ -1040,35 +1042,56 @@ test("web feedback route initializes the npm Twikoo client inside its own view",
   assert.match(navigationSource, /feedback: MessageSquarePlusIcon/);
   assert.match(
     toolViewSource,
-    /currentPlatform === "feedback" \? \([\s\S]*<Suspense[\s\S]*正在加载建议反馈[\s\S]*<FeedbackView[\s\S]*featureSuggestionUrl=\{appConfig\.featureSuggestionUrl\}[\s\S]*frontendVersion=\{appConfig\.frontendVersion\}[\s\S]*\/>[\s\S]*<\/Suspense>/
+    /currentPlatform === "feedback" \? \([\s\S]*<Suspense[\s\S]*正在加载建议反馈[\s\S]*<FeedbackView[\s\S]*feedbackEnabled=\{Boolean\(appConfig\.feedbackEnabled && !appConfig\.desktopApp\)\}[\s\S]*frontendVersion=\{appConfig\.frontendVersion\}[\s\S]*\/>[\s\S]*<\/Suspense>/
   );
 
-  assert.match(
-    feedbackViewSource,
-    /export function FeedbackView\(\{ featureSuggestionUrl, frontendVersion \}\)/
-  );
-  assert.match(feedbackViewSource, /import\("twikoo"\)/);
-  assert.doesNotMatch(feedbackViewSource, /window\.twikoo/);
-  assert.match(feedbackViewSource, /typeof twikooModule\.init === "function"/);
-  assert.doesNotMatch(feedbackViewSource, /twikooModule\.default \|\| twikooModule/);
-  assert.match(feedbackViewSource, /String\(featureSuggestionUrl \|\| ""\)\.trim\(\)\.replace\(\/\\\/\+\$\/, ""\)/);
-  assert.match(feedbackViewSource, /envId: normalizedEnvId/);
-  assert.match(feedbackViewSource, /el: feedbackElement/);
-  assert.match(feedbackViewSource, /path: "\/feedback"/);
-  assert.match(feedbackViewSource, /lang: "zh-CN"/);
-  assert.match(feedbackViewSource, /建议反馈暂未启用/);
-  assert.match(feedbackViewSource, /反馈区加载失败，请稍后刷新重试。/);
-  assert.match(feedbackViewSource, /可以提交Bug、数据异常、新功能建议等，我的回复也会显示在这里。也可私信小红书账号/);
+  assert.match(feedbackViewSource, /export function FeedbackView\(\{ frontendVersion, feedbackEnabled = false \}\)/);
+  assert.match(feedbackViewSource, /import \{ BookOpenTextIcon, MessageSquarePlusIcon \} from "lucide-react"/);
+  assert.match(feedbackViewSource, /fetch\("\/feedback"/);
+  assert.match(feedbackViewSource, /credentials: "omit"/);
+  assert.match(feedbackViewSource, /type,\n\s+message: trimmedMessage,\n\s+website,\n\s+frontendVersion/);
+  assert.match(feedbackViewSource, /正在提交…/);
+  assert.match(feedbackViewSource, /提交反馈/);
+  assert.match(feedbackViewSource, /请检查反馈内容后重试。/);
+  assert.match(feedbackViewSource, /提交过于频繁，请稍后再试。/);
+  assert.match(feedbackViewSource, /反馈暂时无法发送，请稍后再试。/);
+  assert.match(feedbackViewSource, /反馈已提交，感谢你的建议。/);
   assert.match(
     feedbackViewSource,
     /href="https:\/\/xhslink\.cn\/o\/9hUXfAAAP8I"[\s\S]*target="_blank"[\s\S]*rel="noreferrer"[\s\S]*MMToolkit/
   );
-  assert.doesNotMatch(feedbackViewSource, /可以匿名提交 Bug、数据异常、新功能建议/);
-  assert.match(feedbackViewSource, />参考提交格式<\/h2>/);
-  assert.doesNotMatch(feedbackViewSource, />建议提交格式<\/h2>/);
-  assert.match(feedbackViewSource, /类型：Bug \/ 数据异常 \/ 新功能建议/);
-  assert.match(feedbackViewSource, /详细描述：说明现象、期望或建议内容/);
-  assert.match(feedbackViewSource, /昵称和联系方式（选填）：便于进一步确认/);
+  assert.match(feedbackViewSource, /请填写表格提交反馈，也可私信小红书账号/);
+  assert.match(feedbackViewSource, /<CardTitle>建议反馈<\/CardTitle>/);
+  assert.match(feedbackViewSource, /<CardTitle>统计说明<\/CardTitle>/);
+  assert.match(feedbackViewSource, /feedbackEnabled \?/);
+  assert.match(feedbackViewSource, /反馈暂未启用/);
+  assert.match(feedbackViewSource, /如需交流，可私信小红书账号/);
+  assert.match(feedbackViewSource, /当前站点尚未配置反馈服务/);
+  assert.match(
+    feedbackViewSource,
+    /<BookOpenTextIcon aria-hidden="true" className="size-5" \/>/
+  );
+  assert.match(
+    feedbackViewSource,
+    /<CardTitle>统计说明<\/CardTitle>[\s\S]*<AccordionTrigger>收益预估计算说明<\/AccordionTrigger>/
+  );
+  assert.equal((feedbackViewSource.match(/<Card className=/g) || []).length, 2);
+  assert.ok(
+    feedbackViewSource.indexOf("收益预估计算说明")
+      < feedbackViewSource.indexOf("<CardTitle>建议反馈</CardTitle>")
+  );
+  assert.match(feedbackViewSource, /<form className="grid gap-4" onSubmit=\{handleSubmit\}>/);
+  assert.match(feedbackViewSource, /w-fit min-w-\[7rem\] max-w-full/);
+  assert.match(feedbackViewSource, /<div className="flex justify-end">[\s\S]*min-w-\[6rem\]/);
+  assert.match(feedbackViewSource, /name="website"/);
+  assert.match(feedbackViewSource, /tabIndex=\{-1\}/);
+  assert.match(feedbackViewSource, /autoComplete="off"/);
+  assert.match(feedbackViewSource, /MAX_FEEDBACK_MESSAGE_LENGTH = 3000/);
+  assert.match(feedbackViewSource, /MIN_FEEDBACK_MESSAGE_LENGTH = 5/);
+  assert.match(feedbackViewSource, /value: "bug"/);
+  assert.match(feedbackViewSource, /value: "data"/);
+  assert.match(feedbackViewSource, /value: "feature"/);
+  assert.match(feedbackViewSource, /value: "other"/);
   assert.match(
     feedbackViewSource,
     /import revenueCalculationMarkdown from "\.\.\/\.\.\/REVENUE_CALCULATION\.md\?raw"/
@@ -1093,35 +1116,11 @@ test("web feedback route initializes the npm Twikoo client inside its own view",
     feedbackViewSource,
     /<AlertDescription className="!\[text-wrap:wrap\] text-left md:!\[text-wrap:wrap\]">/
   );
-  assert.match(feedbackViewSource, /<div id="twikoo-feedback" ref=\{feedbackRef\} \/>/);
   assert.match(feedbackViewSource, /action: "feedback_explanation_open"/);
   assert.match(feedbackViewSource, /logExplanationOpen\("revenue_calculation", frontendVersion\)/);
   assert.match(feedbackViewSource, /logExplanationOpen\("danmaku_overflow", frontendVersion\)/);
   assert.match(serverSource, /if \(action === "feedback_explanation_open"\)/);
   assert.match(serverSource, /\["revenue_calculation", "danmaku_overflow"\]\.includes\(section\)/);
-});
-
-test("Twikoo feedback font fallback stays scoped to its container", () => {
-  const expectedCss = `#twikoo-feedback,
-#twikoo-feedback * {
-  font-family:
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    "Apple Color Emoji",
-    "Segoe UI Emoji",
-    "Segoe UI Symbol",
-    "Noto Color Emoji",
-    "Noto Sans SC",
-    "Microsoft YaHei",
-    sans-serif;
-}`;
-
-  assert.ok(
-    indexCssSource.replace(/\r\n/g, "\n").trimEnd().endsWith(expectedCss),
-    "Twikoo font fallback should be the final scoped rule in the global stylesheet"
-  );
 });
 
 test("header uses plain version text, full-width desktop search, and no desktop link", () => {

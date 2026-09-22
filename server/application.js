@@ -5,6 +5,7 @@ import compression from "compression";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
 import { createRequire } from "module";
+import { Resend } from "resend";
 import path from "path";
 import { fileURLToPath } from "url";
 import { Agent as UndiciAgent } from "undici";
@@ -122,6 +123,7 @@ import { registerMissevanRoutes } from "./routes/missevanRoutes.js";
 import { registerManboRoutes } from "./routes/manboRoutes.js";
 import { registerImageProxyRoutes } from "./routes/imageProxyRoutes.js";
 import { registerNewDramaRoutes } from "./routes/newDramaRoutes.js";
+import { registerFeedbackRoutes } from "./routes/feedbackRoutes.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
@@ -169,9 +171,13 @@ const MISSEVAN_REPEAT_COOLDOWN_HOURS = 1;
 const MISSEVAN_DESKTOP_APP_URL = String(
   process.env.MISSEVAN_DESKTOP_APP_URL || ""
 ).trim();
-const FEATURE_SUGGESTION_URL = String(
-  process.env.FEATURE_SUGGESTION_URL || ""
-).trim();
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
+const FEEDBACK_FROM_EMAIL = String(process.env.FEEDBACK_FROM_EMAIL || "").trim();
+const FEEDBACK_RECIPIENT_EMAIL = String(process.env.FEEDBACK_RECIPIENT_EMAIL || "").trim();
+const FEEDBACK_ENABLED = Boolean(
+  RESEND_API_KEY && FEEDBACK_FROM_EMAIL && FEEDBACK_RECIPIENT_EMAIL
+);
+const resendClient = FEEDBACK_ENABLED ? new Resend(RESEND_API_KEY) : null;
 const MISSEVAN_COOLDOWN_KEY = String(
   process.env.MISSEVAN_COOLDOWN_KEY || "missevan:cooldown:v1"
 ).trim() || "missevan:cooldown:v1";
@@ -647,6 +653,17 @@ const imageProxyLimiter = rateLimit({
     60
   ),
 });
+const feedbackLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: createJsonRateLimitHandler(
+    "FEEDBACK_RATE_LIMITED",
+    "提交过于频繁，请稍后再试。",
+    60 * 60
+  ),
+});
 
 const statsTaskInstanceId = String(
   process.env.RAILWAY_REPLICA_ID ||
@@ -760,7 +777,6 @@ statsTaskExecutor = createStatsTaskExecutor({
 
 app.use(createRequestSecurityMiddleware({
   desktopApp: DESKTOP_APP,
-  twikooUrl: FEATURE_SUGGESTION_URL,
   logger,
 }));
 app.use(createRequestLoggerMiddleware({ logger }));
@@ -789,6 +805,13 @@ app.use((error, req, res, next) => {
       });
     }
     return;
+  }
+
+  if (error?.type === "entity.parse.failed" && req.path === "/feedback") {
+    return res.status(400).json({
+      success: false,
+      message: "请检查反馈内容后重试。",
+    });
   }
 
   if (error?.type !== "entity.too.large") {
@@ -991,7 +1014,7 @@ registerSystemRoutes(app, {
   appVersion: APP_VERSION,
   desktopApp: DESKTOP_APP,
   desktopAppUrl: MISSEVAN_DESKTOP_APP_URL,
-  featureSuggestionUrl: FEATURE_SUGGESTION_URL,
+  feedbackEnabled: FEEDBACK_ENABLED,
   getDesktopFavoritesFilePath,
   getFrontendVersionFromRequest,
   getMissevanAccessDeniedCooldownUntil,
@@ -1005,6 +1028,17 @@ registerSystemRoutes(app, {
   buildDesktopFavoritesReadErrorPayload,
   buildFavoriteMetaFromInfoStore,
   ensureDesktopFavoritesRequest,
+});
+
+registerFeedbackRoutes(app, {
+  feedbackEnabled: FEEDBACK_ENABLED,
+  feedbackFromEmail: FEEDBACK_FROM_EMAIL,
+  feedbackRecipientEmail: FEEDBACK_RECIPIENT_EMAIL,
+  feedbackLimiter,
+  logger,
+  sendEmail: resendClient
+    ? (payload) => resendClient.emails.send(payload)
+    : null,
 });
 
 function sleep(ms, signal) {

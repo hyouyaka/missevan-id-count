@@ -87,18 +87,15 @@ test("desktop requests require loopback, matching port, and same-origin writes",
   );
 });
 
-test("content security policy only includes a valid HTTPS Twikoo origin", () => {
-  const policy = buildContentSecurityPolicy({ twikooUrl: "https://twikoo.example.com/" });
+test("content security policy only allows same-origin API connections", () => {
+  const policy = buildContentSecurityPolicy();
   assert.match(policy, /default-src 'self'/);
   assert.match(policy, new RegExp(`script-src 'self' ${MANBO_CRYPTO_SCRIPT_ORIGIN.replaceAll(".", "\\.")}`));
   assert.doesNotMatch(policy, /script-src[^;]*\*/);
   assert.doesNotMatch(policy, /script-src[^;]*https:(?:;|$)/);
-  assert.match(policy, /connect-src 'self' https:\/\/twikoo\.example\.com/);
+  assert.match(policy, /connect-src 'self'/);
+  assert.doesNotMatch(policy, /resend/i);
   assert.doesNotMatch(policy, /upgrade-insecure-requests/);
-  assert.doesNotMatch(
-    buildContentSecurityPolicy({ twikooUrl: "javascript:alert(1)" }),
-    /javascript:/
-  );
 });
 
 test("request ids accept safe caller ids and replace unsafe values", () => {

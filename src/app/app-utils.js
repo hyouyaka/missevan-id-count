@@ -49,20 +49,6 @@ export function buildCvRankProfileId(platform, item = {}) {
   return dramaId ? `rank-work:${normalizedPlatform}:${dramaId}` : "";
 }
 
-function normalizeExternalHttpUrl(value) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    return "";
-  }
-
-  try {
-    const url = new URL(normalized);
-    return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
-  } catch (_) {
-    return "";
-  }
-}
-
 export function getDefaultAppConfig() {
   return {
     missevanEnabled: true,
@@ -73,7 +59,7 @@ export function getDefaultAppConfig() {
     cooldownHours: 4,
     cooldownUntil: 0,
     desktopAppUrl: "",
-    featureSuggestionUrl: "",
+    feedbackEnabled: false,
     frontendVersion: typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0",
     backendVersion: "0.0.0",
     versionMismatch: false,
@@ -99,7 +85,9 @@ export function mergeAppConfig(currentConfig, config = {}) {
     cooldownHours: Number(config.cooldownHours ?? defaults.cooldownHours) || defaults.cooldownHours,
     cooldownUntil: Number(config.cooldownUntil ?? 0) || 0,
     desktopAppUrl: String(config.desktopAppUrl || "").trim(),
-    featureSuggestionUrl: normalizeExternalHttpUrl(config.featureSuggestionUrl),
+    feedbackEnabled: config.feedbackEnabled == null
+      ? Boolean(currentConfig?.feedbackEnabled ?? defaults.feedbackEnabled)
+      : Boolean(config.feedbackEnabled),
     frontendVersion,
     backendVersion,
     versionMismatch:

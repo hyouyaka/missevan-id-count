@@ -438,7 +438,6 @@ export function MainNavigationDrawer({
   onCommitRoute,
   onOpenChangelog,
   onOpenFeedback,
-  featureSuggestionUrl,
   desktopApp,
   desktopAppUrl,
 }) {
@@ -612,9 +611,9 @@ export function MainNavigationDrawer({
           </div>
         ))}
         <div className="my-2 border-t border-dashed border-border/80" />
-        {!desktopApp && featureSuggestionUrl ? (
+        {!desktopApp ? (
           <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} onClick={onOpenFeedback}>
-            <MainNavigationTabLabel platform={{ key: "feedback", label: "建议反馈" }} />
+            <MainNavigationTabLabel platform={{ key: "feedback", label: "说明与反馈" }} />
           </Button>
         ) : null}
         <Button type="button" variant="ghost" size="sm" className={drawerUtilityItemClassName} onClick={onOpenChangelog}>

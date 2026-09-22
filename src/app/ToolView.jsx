@@ -505,7 +505,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   function openDrawerFeedback() {
-    if (appConfig.desktopApp || !appConfig.featureSuggestionUrl) {
+    if (appConfig.desktopApp) {
       return;
     }
     navigateToolRoute({ view: "feedback" });
@@ -2327,7 +2327,6 @@ export function ToolView({ initialAppConfig }) {
           onCommitRoute={navigateToolRouteFromMenu}
           onOpenChangelog={openDrawerChangelog}
           onOpenFeedback={openDrawerFeedback}
-          featureSuggestionUrl={appConfig.featureSuggestionUrl}
           desktopApp={appConfig.desktopApp}
           desktopAppUrl={appConfig.desktopAppUrl}
         />
@@ -2499,7 +2498,7 @@ export function ToolView({ initialAppConfig }) {
           }
         >
           <FeedbackView
-            featureSuggestionUrl={appConfig.featureSuggestionUrl}
+            feedbackEnabled={Boolean(appConfig.feedbackEnabled && !appConfig.desktopApp)}
             frontendVersion={appConfig.frontendVersion}
           />
         </Suspense>
