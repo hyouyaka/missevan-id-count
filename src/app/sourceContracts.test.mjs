@@ -25,6 +25,10 @@ const lazyRankTrendDialogSource = readSourceIfExists("./LazyRankTrendDialog.jsx"
 const landingViewSource = readSourceIfExists("./LandingView.jsx");
 const ongoingDataSource = readSourceIfExists("./ongoingData.js");
 const ongoingPanelSource = readFileSync(new URL("./OngoingPanel.jsx", import.meta.url), "utf8");
+const ongoingShareSource = readSourceIfExists("./ongoingShare.js");
+const ranksShareSource = readSourceIfExists("./ranksShare.js");
+const shareImagePreviewSource = readSourceIfExists("./ShareImagePreviewDialog.jsx");
+const sharedOngoingUtilsSource = readSourceIfExists("../../shared/ongoingUtils.js");
 const outputPanelSource = readFileSync(new URL("./OutputPanel.jsx", import.meta.url), "utf8");
 const platformTabLabelSource = readFileSync(new URL("./platformTabLabel.jsx", import.meta.url), "utf8");
 const ranksPanelSource = readFileSync(new URL("./RanksPanel.jsx", import.meta.url), "utf8");
@@ -271,7 +275,15 @@ test("ongoing platform pills include both cached platform counts", () => {
   assert.match(ongoingPanelSource, /fetchOngoingData\(\{[\s\S]*platform,[\s\S]*frontendVersion,[\s\S]*revalidate: false/);
   assert.match(ongoingPanelSource, /<PlatformTabLabel platform=\{platform\} \/>[\s\S]*platformCounts\[platform\] \?\? "—"/);
   assert.doesNotMatch(ongoingPanelSource, /\{platformLabel\}一周内更新：共\{sortedItems\.length\}部/);
-  assert.match(ongoingPanelSource, /更新：\{formatOngoingUpdatedAt\(currentOngoingData\?\.updatedAt\)\}/);
+  assert.match(ongoingPanelSource, /按7日增量排列，更新于：\{formatOngoingUpdatedAt\(currentOngoingData\?\.updatedAt\)\}/);
+  assert.match(ongoingPanelSource, /sortOngoingItemsByMetricDelta\(currentOngoingItems, selectedPlatform, selectedMetric\)/);
+  assert.match(ongoingPanelSource, /const activeWindow = "7d"/);
+  assert.match(ongoingPanelSource, /platform: nextPlatform,[\s\S]*metric: selectedMetric/);
+  assert.match(appUtilsSource, /export function normalizeOngoingMetric\(value\)/);
+  assert.match(appUtilsSource, /metric: normalizeOngoingMetric\(routeState\.metric\)/);
+  assert.match(appUtilsSource, /metric: params\.get\(TOOL_ROUTE_QUERY_PARAMS\.metric\)/);
+  assert.match(appUtilsSource, /if \(nextState\.metric !== "playback"\)[\s\S]*params\.set\(TOOL_ROUTE_QUERY_PARAMS\.metric, nextState\.metric\)/);
+  assert.doesNotMatch(appUtilsSource, /params\.set\(TOOL_ROUTE_QUERY_PARAMS\.window, nextState\.window\)/);
 });
 
 test("desktop rank toolbar keeps pills left and compact legend right", () => {
@@ -615,8 +627,10 @@ test("home view maps requested sections and see-more routes", () => {
   assert.match(homeViewSource, /漫播巅峰榜[\s\S]*漫播7日飙升榜[\s\S]*漫播CV总榜/);
   assert.match(homeViewSource, /categoryKey: "growth"[\s\S]*rankKey: "growth_weekly"/);
   assert.match(homeViewSource, /categoryKey: "cv"[\s\S]*rankKey: "cv"/);
-  assert.match(homeViewSource, /window: "7d"/);
-  assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ongoing",\s*platform,\s*window: "7d"/);
+  assert.match(homeViewSource, /metric: "playback"/);
+  assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ongoing",\s*platform,\s*metric: "playback"/);
+  assert.match(homeViewSource, /sortOngoingItemsByWindowDelta\(ongoingByPlatform\.missevan\?\.items \|\| \[\], "7d"\)/);
+  assert.match(homeViewSource, /sortOngoingItemsByWindowDelta\(ongoingByPlatform\.manbo\?\.items \|\| \[\], "7d"\)/);
   assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ranks",\s*platform,\s*category: rankConfig\.categoryKey,\s*rank: rankConfig\.rankKey/);
 });
 
@@ -944,6 +958,14 @@ test("home view keeps cached data when background refresh partially fails", () =
 test("ongoing page keeps usage logging route helper after data extraction", () => {
   assert.match(ongoingPanelSource, /import \{[\s\S]*buildVersionedUrl[\s\S]*\} from "@\/app\/app-utils"/);
   assert.match(ongoingPanelSource, /fetch\(buildVersionedUrl\("\/usage-log", frontendVersion\)/);
+  assert.match(ongoingPanelSource, /if \(nextMetric === selectedMetric\) return;/);
+  assert.match(ongoingPanelSource, /action: "ongoing_metric_change"[\s\S]*previousMetric: selectedMetric[\s\S]*metric: nextMetric/);
+  assert.match(ongoingPanelSource, /action: "share_image_generate"[\s\S]*itemCount: currentRequest\.items\.length[\s\S]*isRetry[\s\S]*metric: currentRequest\.metric/);
+  assert.match(ongoingPanelSource, /onRetry=\{\(\) => generateShareImage\(shareRequestRef\.current, true\)\}/);
+  assert.match(ranksPanelSource, /action: "share_image_generate"[\s\S]*itemCount: currentRequest\.rank\.items\.length[\s\S]*isRetry[\s\S]*categoryKey: currentRequest\.categoryKey[\s\S]*rankKey: currentRequest\.rank\.key/);
+  assert.match(ranksPanelSource, /onRetry=\{\(\) => generateShareImage\(shareRequestRef\.current, true\)\}/);
+  assert.match(serverSource, /if \(action === "ongoing_metric_change"\) \{[\s\S]*buildOngoingMetricChangeUsageLog\(payload\)[\s\S]*await writeUsageLog\(entry\)/);
+  assert.match(serverSource, /if \(action === "share_image_generate"\) \{[\s\S]*buildShareImageGenerateUsageLog\(payload\)[\s\S]*await writeUsageLog\(entry\)/);
 });
 
 test("desktop navigation keeps statistics and favorites", () => {
@@ -1208,10 +1230,10 @@ test("mobile compact controls preserve visual density with non-layout hit areas"
   assert.match(ranksPanelSource, /className="ml-auto w-fit shrink-0 items-end gap-0"/);
   assert.doesNotMatch(ranksPanelSource, /className="flex h-9 items-center gap-2 px-1\.5"/);
   assert.match(ongoingPanelSource, /const mobileOngoingPlatformTabClassName =\s*\n\s*"h-7 min-h-7/);
-  assert.match(ongoingPanelSource, /const mobileOngoingWindowTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center/);
+  assert.match(ongoingPanelSource, /const mobileOngoingMetricTabClassName =\s*\n\s*"h-auto min-h-8 min-w-max flex-none justify-center/);
   assert.match(ongoingPanelSource, /data-platform=\{platform\}/);
   assert.match(ongoingPanelSource, /data-touch="compact"[\s\S]*data-platform=\{platform\}/);
-  assert.match(ongoingPanelSource, /className="flex min-h-8 items-center justify-between gap-3 sm:hidden"/);
+  assert.match(ongoingPanelSource, /className="flex min-h-8 flex-wrap items-center justify-between gap-2 sm:hidden"/);
   assert.doesNotMatch(ongoingPanelSource, /className="flex h-\[2\.375rem\] items-center gap-1\.5 px-1\.5"/);
   assert.doesNotMatch(ranksPanelSource, /grid gap-0 overflow-hidden rounded-lg border border-border\/80 bg-card\/80 shadow-sm lg:hidden/);
   assert.doesNotMatch(ongoingPanelSource, /grid gap-0 overflow-hidden rounded-lg border border-border\/80 bg-card\/80 shadow-sm sm:hidden/);
@@ -1809,21 +1831,28 @@ test("title display truncation does not replace original search payload names", 
 test("ongoing mobile filter tabs use compact borderless pills", () => {
   assert.match(ongoingPanelSource, /const mobileOngoingTextTabsListClassName =\s*\n\s*"grid h-9 min-h-9 w-fit/);
   assert.match(ongoingPanelSource, /const mobileOngoingPlatformTabClassName =\s*\n\s*"h-7 min-h-7 min-w-0 px-3 text-sm!"/);
-  assert.match(ongoingPanelSource, /const mobileOngoingWindowTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center px-2 text-xs!"/);
-  assert.match(ongoingPanelSource, /variant="line"[\s\S]*className=\{`\$\{mobileOngoingTextTabsListClassName\} grid-cols-2`\}/);
-  assert.match(ongoingPanelSource, /variant="line"[\s\S]*className=\{`\$\{mobileOngoingTextTabsListClassName\} grid-cols-3 justify-end`\}/);
+  assert.match(ongoingPanelSource, /const mobileOngoingMetricTabClassName =\s*\n\s*"h-auto min-h-8 min-w-max flex-none justify-center px-2\.5 text-xs!"/);
+  assert.match(ongoingPanelSource, /variant="line"[\s\S]*className=\{`\$\{mobileOngoingTextTabsListClassName\} grid-cols-2 \[&_\.platform-tab-label-text\]:hidden`\}/);
+  assert.match(ongoingPanelSource, /aria-label=\{`\$\{platformName\}平台，\$\{countLabel\}`\}/);
+  assert.match(ongoingPanelSource, /count == null \? "作品数量暂未加载" : `\$\{count\}部作品`/);
+  assert.match(ongoingPanelSource, /<span className="tabular-nums">\{count \?\? "—"\}<\/span>/);
+  assert.match(ongoingPanelSource, /aria-label="选择排序指标"[\s\S]*className="flex h-auto min-h-9 max-w-full flex-wrap justify-end gap-1 p-0\.5"/);
+  assert.match(ongoingPanelSource, /sortMetricOptions\.map\(\(\{ key, label \}\)/);
+  assert.match(ongoingPanelSource, /selectedPlatform === "manbo" \? "付费\/收听" : "追剧"/);
+  assert.doesNotMatch(ongoingPanelSource, /选择增量周期|"3d": "3日"|"30d": "30日"/);
   assert.match(ongoingPanelSource, /data-platform=\{platform\}/);
   assert.doesNotMatch(ongoingPanelSource, /text-shadow:0_1px_6px_color-mix/);
-  assert.match(ongoingPanelSource, /className="flex min-h-8 items-center justify-between gap-3 sm:hidden"/);
+  assert.match(ongoingPanelSource, /className="flex min-h-8 flex-wrap items-center justify-between gap-2 sm:hidden"/);
   assert.match(ongoingPanelSource, /data-touch="compact"[\s\S]*className=\{`\$\{mobileOngoingPlatformTabClassName\}/);
-  assert.match(ongoingPanelSource, /data-touch="compact"[\s\S]*className=\{`\$\{mobileOngoingWindowTabClassName\}/);
+  assert.match(ongoingPanelSource, /data-touch="compact"[\s\S]*className=\{mobileOngoingMetricTabClassName\}/);
 });
 
 test("web ongoing and ranks filters use shared lightweight capsules", () => {
   assert.match(ongoingPanelSource, /const desktopOngoingTextTabsListClassName =\s*\n\s*"inline-flex h-9 min-h-9 w-fit justify-start"/);
   assert.match(ongoingPanelSource, /const desktopOngoingTabClassName =\s*\n\s*"h-7 min-h-7 min-w-max px-3 text-sm!"/);
   assert.match(ongoingPanelSource, /platform === selectedPlatform \? desktopOngoingSelectedPlatformTabClassName : ""/);
-  assert.match(ongoingPanelSource, /key === activeWindow \? desktopOngoingSelectedTabClassName : ""/);
+  assert.match(ongoingPanelSource, /<Tabs value=\{selectedMetric\} onValueChange=\{updateMetric\}/);
+  assert.match(ongoingPanelSource, /aria-label="选择排序指标" className=\{`\$\{desktopOngoingTextTabsListClassName\} gap-2`\}/);
   assert.match(ongoingPanelSource, /sm:gap-10[\s\S]*lg:gap-12/);
   assert.match(ongoingPanelSource, /className=\{`\$\{desktopOngoingTextTabsListClassName\} gap-4`\}/);
   assert.doesNotMatch(ongoingPanelSource, /className=\{`\$\{desktopOngoingTextTabsListClassName\} gap-6`\}/);
@@ -3224,9 +3253,9 @@ test("ongoing refresh timestamp uses device timezone display", () => {
   const updatedAtFormatter = ongoingPanelSource.slice(updatedAtStart, updatedAtEnd);
 
   assert.match(ongoingPanelSource, /formatDeviceDateTime/, "ongoing panel should use shared device-time formatter");
-  assert.match(ongoingPanelSource, /更新：\{formatOngoingUpdatedAt\(currentOngoingData\?\.updatedAt\)\}/);
+  assert.match(ongoingPanelSource, /按7日增量排列，更新于：\{formatOngoingUpdatedAt\(currentOngoingData\?\.updatedAt\)\}/);
   assert.match(ongoingPanelSource, /flex min-w-0 flex-wrap items-baseline justify-between/);
-  assert.match(ongoingPanelSource, /className="shrink-0 text-xs leading-5 text-muted-foreground"/);
+  assert.match(ongoingPanelSource, /className="min-w-0 max-w-full text-xs leading-5 text-muted-foreground"/);
   assert.doesNotMatch(ongoingPanelSource, /ml-auto shrink-0 text-right text-xs leading-5 text-muted-foreground/);
   assert.doesNotMatch(ongoingPanelSource, /数据更新：\{formatOngoingUpdatedAt/);
   assert.doesNotMatch(updatedAtFormatter, /Asia\/Shanghai/, "ongoing refresh timestamp should not force Beijing time");
@@ -3266,16 +3295,36 @@ test("rank overview copy keeps refresh time in the same compact row", () => {
   assert.doesNotMatch(ranksPanelSource, /此次榜单刷新于：/);
 });
 
-test("ongoing paid ID metric displays full numbers while playback stays compact", () => {
+test("ongoing page and share use the same metric display and unavailable-state rules", () => {
   assert.match(
     ongoingPanelSource,
-    /metricKey === "danmaku_uid_count"[\s\S]*?formatPlainNumber/,
-    "paid ID metrics should use full plain-number formatting"
+    /const \{ currentText, deltaText, showEmptyPaidDanmaku \} = getOngoingMetricDisplay\(/,
+    "ongoing cards should use the shared metric display helper"
   );
   assert.match(
-    ongoingPanelSource,
+    sharedOngoingUtilsSource,
+    /metricKey === "danmaku_uid_count"[\s\S]*?formatOngoingPlainNumber/,
+    "paid ID metrics should use the page's full plain-number formatting"
+  );
+  assert.match(
+    sharedOngoingUtilsSource,
     /metricKey === "view_count" \? \{ forceWanDecimal: true \} : \{\}/,
-    "playback metrics should keep the compact wan formatter options"
+    "playback current values and deltas should use fixed one-decimal Wan formatting"
+  );
+  assert.match(
+    sharedOngoingUtilsSource,
+    /currentMetricUnavailable\)[\s\S]*?deltaText: "暂不可用"/,
+    "missing current metrics should show unavailable for both page lines"
+  );
+  assert.match(
+    sharedOngoingUtilsSource,
+    /showMissingDelta\s*\?\s*"暂无"/,
+    "missing deltas with an available current value should match the page's 暂无 state"
+  );
+  assert.match(
+    sharedOngoingUtilsSource,
+    /showEmptyPaidDanmaku\)[\s\S]*?currentText: "暂无付费集", deltaText: null/,
+    "empty paid ID state should have no delta line"
   );
 });
 
@@ -4516,7 +4565,10 @@ test("ongoing backend combines rank metrics with cached info and batched weekly 
   assert.match(primarySource, /ensureInfoStoreLoaded\(infoStore, forceRefresh\)/);
   assert.match(primarySource, /createTimesById/);
   assert.match(primarySource, /const currentMonth = getBeijingYearMonth\(now\)/);
-  assert.match(primarySource, /getOngoingCacheKey\(normalizedPlatform, currentMonth\)/);
+  assert.match(primarySource, /getOngoingCacheKey\(normalizedPlatform, currentMonth, windowEndDateHint\)/);
+  assert.match(primarySource, /getOngoingCacheKey\(normalizedPlatform, currentMonth, windowEndDate\)/);
+  assert.match(primarySource, /getNormalRankTrendWindowEndDate/);
+  assert.match(primarySource, /staticDramasById/);
   assert.match(primarySource, /currentMonth,/);
   assert.match(ongoingDataSource, /getOngoingClientCacheKey/);
   assert.match(ongoingDataSource, /getBeijingYearMonth\(now\)/);
@@ -4722,7 +4774,7 @@ test("stats task errors parse backend JSON messages before throwing", () => {
 test("rank cards and metric trends handle skipped paid ID capture explicitly", () => {
   assert.match(rankMetricUtilsSource, /String\(value \?\? ""\)\.trim\(\) === SKIPPED_DANMAKU_METRIC_VALUE/);
   assert.match(ranksPanelSource, /!isSkippedDanmakuMetricValue\(item\.danmaku_uid_count\)/);
-  assert.match(ranksTrendUtilsSource, /currentCaptureSkipped[\s\S]*?toValue = currentCaptureSkipped \? null : range\.toValue/);
+  assert.match(ranksTrendUtilsSource, /currentCaptureSkipped[\s\S]*?toValue = currentCaptureSkipped \? null : normalizeFiniteNumber\(latestMetricValue\)/);
   assert.match(
     rankTrendUiSource,
     /每日数据统计榜单前50名及7日内更新剧集（资源有限会跳过31-50名的付费ID抓取），每周数据统计全部剧集/
@@ -4737,7 +4789,7 @@ test("ongoing CV filtering keeps desktop and mobile controls responsive without 
   assert.match(ongoingPanelSource, /<SheetTrigger asChild>[\s\S]*<OngoingCvFilterTrigger/);
   assert.match(ongoingPanelSource, /<PopoverTrigger asChild>[\s\S]*<OngoingCvFilterTrigger/);
   assert.match(ongoingPanelSource, /side="bottom"/);
-  assert.match(ongoingPanelSource, /className="sm:hidden"[\s\S]*<Sheet/);
+  assert.match(ongoingPanelSource, /className="flex shrink-0 items-center gap-1 sm:hidden"[\s\S]*<Sheet/);
   assert.match(ongoingPanelSource, /<Popover[\s\S]*<OngoingCvFilterTrigger[\s\S]*<Tabs value=\{selectedPlatform\}/);
   assert.match(ongoingPanelSource, /rank=\{originalRanksById\.get\(String\(item\.id\)\) \|\| 1\}/);
   assert.match(ongoingPanelSource, /<SlidersHorizontalIcon aria-hidden="true" className="size-3\.5 shrink-0"/);
@@ -4750,6 +4802,94 @@ test("ongoing CV filtering keeps desktop and mobile controls responsive without 
   assert.match(ongoingPanelSource, /onOpenAutoFocus=\{\(event\) => \{[\s\S]*desktopCvFilterSearchRef\.current\?\.focus\(\)/);
   assert.match(sheetSource, /side = "right"/);
   assert.match(sheetSource, /side === "bottom"/);
+});
+
+test("ongoing share keeps the current filtered order in a local, accessible PNG preview", () => {
+  assert.match(ongoingPanelSource, /import \{ buildOngoingShareTable, createOngoingSharePng \} from "@\/app\/ongoingShare"/);
+  assert.match(ongoingPanelSource, /<Share2Icon aria-hidden="true" className="size-4" \/>/);
+  assert.match(ongoingPanelSource, /aria-label=\{`分享\$\{platformLabels\[selectedPlatform\]\}连载列表为 PNG`\}/);
+  assert.match(ongoingPanelSource, /disabled=\{!filteredItems\.length \|\| shareStatus === "loading"\}/);
+  assert.match(ongoingPanelSource, /items: snapshotShareItems\(filteredItems, selectedPlatform\)/);
+  assert.match(ongoingPanelSource, /selectedCvNames: Array\.from\(selectedCvNames\)/);
+  assert.match(ongoingPanelSource, /metric: selectedMetric/);
+  assert.match(ongoingPanelSource, /URL\.revokeObjectURL/);
+  assert.match(ongoingPanelSource, /download = shareFileName/);
+  assert.match(ongoingPanelSource, /window\.open\(sharePreviewUrl, "_blank"/);
+  assert.match(ongoingPanelSource, /<OngoingSharePreviewDialog/);
+  assert.match(shareImagePreviewSource, /overflow-auto overscroll-contain rounded-lg/);
+  assert.match(shareImagePreviewSource, /aria-label=\{fitWidth \? "按原图尺寸查看" : "适应屏幕宽度"\}/);
+  assert.match(shareImagePreviewSource, /sm:hidden/);
+  assert.match(shareImagePreviewSource, /fitWidth \? "w-full max-w-full" : "w-auto max-w-none"/);
+  assert.match(shareImagePreviewSource, /sm:w-auto sm:max-w-full/);
+  assert.match(shareImagePreviewSource, /naturalWidth/);
+  assert.match(shareImagePreviewSource, /w-auto max-w-none/);
+  assert.match(shareImagePreviewSource, /max-w-\[calc\(100vw-2rem\)\]/);
+  assert.match(shareImagePreviewSource, /min-w-0 max-w-\[calc\(100vw-2rem\)\]/);
+  assert.match(shareImagePreviewSource, /min-h-0 min-w-0 overflow-auto/);
+  assert.match(shareImagePreviewSource, /width: `\$\{naturalWidth \+ 68\}px`/);
+  assert.match(shareImagePreviewSource, /setFitWidth\(true\)[\s\S]*\[open, previewUrl\]/);
+  assert.match(shareImagePreviewSource, /style=\{dialogStyle\}/);
+  assert.match(shareImagePreviewSource, /onError=\{\(\) => setImageLoadFailed\(true\)\}/);
+  assert.match(ongoingPanelSource, /max-\[420px\]:sr-only min-\[421px\]:not-sr-only/);
+  assert.match(ongoingPanelSource, /aria-label=\{selectedCount \? `CV筛选，已选 \$\{selectedCount\} 位` : "CV筛选"\}/);
+  assert.match(ongoingShareSource, /const SHARE_WIDTH = 1280/);
+  assert.match(ongoingShareSource, /const SHARE_MARGIN = 0/);
+  assert.match(ongoingShareSource, /const FOOTER_RIGHT_INSET = 56/);
+  assert.match(ongoingShareSource, /const MAX_SHARE_HEIGHT = 16000/);
+  assert.match(ongoingShareSource, /item\?\.windows\?\.\["7d"\]\?\.metrics\?\.\[key\]/);
+  assert.match(ongoingShareSource, /formatMetricCell\(key, item\?\.metrics\?\.\[key\], item\?\.windows\?\.\["7d"\]\?\.metrics\?\.\[key\]\)/);
+  assert.match(ongoingShareSource, /\{ key: "title", label: "标题" \}/);
+  assert.match(ongoingShareSource, /title: `\$\{platformName\}一周内更新剧集（按\$\{metricName\}7日增量排序）`/);
+  assert.match(ongoingShareSource, /cvFilterText: normalizedCvNames\.length \? `筛选CV：\$\{normalizedCvNames\.join\("、"\)\}` : ""/);
+  assert.match(ongoingShareSource, /const subtitleLines = table\.cvFilterText/);
+  assert.match(ongoingShareSource, /const titleHeight = Math\.max\(76, titleBlockHeight \+ 24\)/);
+  assert.doesNotMatch(ongoingShareSource, /subLabel: "（7日增量）"/);
+  assert.match(ongoingShareSource, /export function wrapOngoingShareMetricCell/);
+  assert.match(ongoingShareSource, /export function getOngoingShareColumnWidths/);
+  assert.match(ongoingShareSource, /export function measureOngoingShareSingleLineRows/);
+  assert.match(ongoingShareSource, /column\.label, widths\[index\] - CELL_PADDING_X \* 2, HEADER_FONT/);
+  assert.match(ongoingShareSource, /const DELTA_TEXT_COLOR = "#007b65"/);
+  assert.match(ongoingShareSource, /export function drawOngoingShareMetricCell/);
+  assert.match(ongoingShareSource, /let isDrawingDelta = false;[\s\S]*?if \(line\.includes\("）"\)\)\s*\{\s*isDrawingDelta = false/);
+  assert.match(ongoingShareSource, /500 18px[\s\S]*400 17px[\s\S]*400 16px/);
+  assert.match(ongoingShareSource, /const SITE_ADDRESS = "https:\/\/mmtoolkit\.app"/);
+  assert.match(ongoingShareSource, /const siteText = SITE_ADDRESS/);
+  assert.match(ongoingShareSource, /当前列表过长，无法完整生成单张 PNG/);
+  assert.match(ongoingShareSource, /await loadLogo\(\)/);
+  assert.match(ongoingShareSource, /export function getAdaptiveShareColumnWidths/);
+  assert.match(ongoingShareSource, /canvas\.width = tableWidth/);
+  assert.match(ongoingShareSource, /drawShareBodyWatermark\(context, bodyTop, rowY - bodyTop, tableWidth\)/);
+  assert.match(ongoingShareSource, /drawShareFooter\(context, logo, \{ top: footerY, width: tableWidth \}\)/);
+});
+
+test("rank shares keep independent desktop and active mobile actions with reusable preview lifecycle", () => {
+  assert.match(ranksPanelSource, /import \{ buildRanksShareTable, createRanksSharePng \} from "@\/app\/ranksShare"/);
+  assert.match(ranksPanelSource, /<Share2Icon aria-hidden="true" className="size-4" \/>/);
+  assert.match(ranksPanelSource, /aria-label=\{`分享\$\{rank\?\.name \|\| "榜单"\}为 PNG`\}/);
+  assert.match(ranksPanelSource, /disabled=\{!rank\?\.items\?\.length \|\| !onShare\}/);
+  assert.match(ranksPanelSource, /onShare=\{handleShareRank\}/);
+  assert.match(ranksPanelSource, /categoryKey: category\?\.key \|\| selectedCategory/);
+  assert.match(ranksPanelSource, /items: \(Array\.isArray\(rank\?\.items\) \? rank\.items : \[\]\)\.map/);
+  assert.match(ranksPanelSource, /URL\.revokeObjectURL/);
+  assert.match(ranksPanelSource, /window\.open\(sharePreviewUrl, "_blank"/);
+  assert.match(ranksPanelSource, /onRetry=\{\(\) => generateShareImage\(shareRequestRef\.current, true\)\}/);
+  assert.match(ranksPanelSource, /<ShareImagePreviewDialog/);
+  assert.match(ranksShareSource, /metadata: getRankShareMetadata/);
+  assert.match(ranksShareSource, /inlineText: `更新日期：/);
+  assert.match(ranksShareSource, /inlineText: `统计区间：/);
+  assert.match(ranksShareSource, /statusText: "\*此榜单非官方"/);
+  assert.match(ranksShareSource, /function layoutRankTitle\(/);
+  assert.match(ranksShareSource, /const STATUS_FONT = .*12px/);
+  assert.doesNotMatch(ranksShareSource, /const statusWidth =/);
+  assert.match(ranksShareSource, /context\.textBaseline = "bottom";[\s\S]*context\.fillText\(segment\.text/);
+  assert.match(ranksShareSource, /context\.textAlign = "right";[\s\S]*context\.textBaseline = "bottom"/);
+  assert.match(ranksShareSource, /maxWidth: 560/);
+  assert.match(ranksShareSource, /isNumericRankDelta\(table\.rows\[rowIndex\]/);
+  assert.match(ongoingShareSource, /const DELTA_TEXT_COLOR = "#007b65"/);
+  assert.match(ongoingShareSource, /delta: "#007b65"/);
+  assert.match(ranksShareSource, /canvas\.width = tableWidth/);
+  assert.match(ranksShareSource, /drawShareBodyWatermark\(context, bodyTop, rowY - bodyTop, tableWidth\)/);
+  assert.match(ranksShareSource, /drawShareFooter\(context, logo, \{ top: tableHeight, width: tableWidth \}\)/);
 });
 
 test("statistics history replay keeps responsive actions and refreshes works before replay", () => {

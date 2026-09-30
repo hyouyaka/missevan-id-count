@@ -9,6 +9,7 @@ import {
   buildRankTrendAvailabilityResponse,
   buildRankTrendResponse,
   getPeakSeriesDailyViewDelta,
+  resolveRankTrendWindowEndDate,
 } from "./ranksTrendUtils.js";
 import { isSkippedDanmakuMetricValue } from "./rankMetricUtils.js";
 
@@ -17,6 +18,75 @@ const sampleIndex = {
   dates: ["2026-04-24", "2026-04-26"],
   updated_at: "2026-04-26T01:06:48.925778+00:00",
 };
+
+test("rank trend window end dates use Beijing calendar dates and fall back for invalid metadata", () => {
+  assert.equal(
+    resolveRankTrendWindowEndDate("2026-05-17T16:30:00.000Z", "2026-05-17"),
+    "2026-05-18"
+  );
+  assert.equal(
+    resolveRankTrendWindowEndDate("not-a-timestamp", "2026-05-17"),
+    "2026-05-17"
+  );
+  assert.equal(
+    resolveRankTrendWindowEndDate("2026-02-31", "2026-05-17"),
+    "2026-05-17"
+  );
+  assert.equal(
+    resolveRankTrendWindowEndDate("2026-02-31T16:30:00.000Z", "2026-05-17"),
+    "2026-05-17"
+  );
+});
+
+test("rank trend windows keep the shared endpoint when the latest drama samples are missing", () => {
+  const dates = [
+    "2026-06-05",
+    "2026-06-06",
+    "2026-06-07",
+    "2026-06-08",
+    "2026-06-09",
+    "2026-06-10",
+  ];
+  const response = buildRankTrendResponse({
+    platform: "missevan",
+    id: "90878",
+    indexSnapshot: { dates },
+    windowEndDate: "2026-06-10",
+    metricSnapshotsByDate: Object.fromEntries(
+      dates.slice(0, 4).map((date, index) => [date, {
+        dramas: {
+          "90878": {
+            name: "猫耳端缺失最新两天",
+            view_count: 100 + index,
+            danmaku_uid_count: 10 + index,
+            subscription_num: 20 + index,
+          },
+        },
+      }])
+    ),
+  });
+
+  assert.equal(response.latestDate, "2026-06-08");
+  assert.equal(response.windowEndDate, "2026-06-10");
+  for (const windowKey of ["3d", "7d", "30d"]) {
+    const window = response.windows[windowKey];
+    assert.equal(window.toDate, "2026-06-10");
+    assert.equal(window.metrics[0].history.at(-1).date, "2026-06-10");
+    assert.equal(window.metrics[0].toValue, null);
+    assert.equal(window.metrics[0].delta, null);
+    assert.equal(window.metrics[0].available, false);
+  }
+  assert.deepEqual(
+    response.windows["3d"].metrics[0].history.map((point) => [point.date, point.value]),
+    [
+      ["2026-06-06", 101],
+      ["2026-06-07", 102],
+      ["2026-06-08", 103],
+      ["2026-06-09", null],
+      ["2026-06-10", null],
+    ]
+  );
+});
 
 test("buildRankTrendResponse uses available snapshots for every window", () => {
   const response = buildRankTrendResponse({
@@ -67,7 +137,11 @@ test("buildRankTrendResponse uses available snapshots for every window", () => {
         "30d": "30日",
       }[windowKey]
     );
-    assert.equal(response.windows[windowKey].fromDate, "2026-04-24");
+    assert.equal(response.windows[windowKey].fromDate, {
+      "3d": "2026-04-23",
+      "7d": "2026-04-19",
+      "30d": "2026-03-27",
+    }[windowKey]);
     assert.equal(response.windows[windowKey].toDate, "2026-04-26");
     assert.equal(response.windows[windowKey].generatedAt, "2026-04-26T01:06:48.925Z");
     assert.equal(response.windows[windowKey].insufficientData, false);
@@ -262,15 +336,21 @@ test("buildRankTrendResponse preserves explicit null and zero metric values", ()
   assert.deepEqual(
     danmakuMetric.history.map((point) => [point.date, point.value]),
     [
+      ["2026-04-18", null],
+      ["2026-04-19", null],
+      ["2026-04-20", null],
+      ["2026-04-21", null],
       ["2026-04-22", 0],
+      ["2026-04-23", null],
       ["2026-04-24", 10],
+      ["2026-04-25", null],
       ["2026-04-26", null],
     ]
   );
   assert.equal(danmakuMetric.fromValue, 0);
-  assert.equal(danmakuMetric.toValue, 10);
-  assert.equal(danmakuMetric.available, true);
-  assert.equal(danmakuMetric.delta, 10);
+  assert.equal(danmakuMetric.toValue, null);
+  assert.equal(danmakuMetric.available, false);
+  assert.equal(danmakuMetric.delta, null);
   assert.equal(danmakuMetric.deltaPercent, null);
 });
 
@@ -320,7 +400,7 @@ test("skipped danmaku capture keeps history gaps and makes the latest metric una
   const recoveredMetric = buildResponse(26).windows["3d"].metrics.find(
     (metric) => metric.key === "danmaku_uid_count"
   );
-  assert.deepEqual(recoveredMetric.history.map((point) => point.value), [20, null, 26]);
+  assert.deepEqual(recoveredMetric.history.map((point) => point.value), [null, null, 20, null, 26]);
   assert.equal(recoveredMetric.available, true);
   assert.equal(recoveredMetric.toValue, 26);
   assert.equal(recoveredMetric.delta, 6);
@@ -328,7 +408,7 @@ test("skipped danmaku capture keeps history gaps and makes the latest metric una
   const skippedLatestMetric = buildResponse("  无需抓取  ").windows["3d"].metrics.find(
     (metric) => metric.key === "danmaku_uid_count"
   );
-  assert.deepEqual(skippedLatestMetric.history.map((point) => point.value), [20, null, null]);
+  assert.deepEqual(skippedLatestMetric.history.map((point) => point.value), [null, null, 20, null, null]);
   assert.equal(skippedLatestMetric.fromValue, 20);
   assert.equal(skippedLatestMetric.toValue, null);
   assert.equal(skippedLatestMetric.available, false);
@@ -636,7 +716,7 @@ test("buildRankTrendResponse keeps one pre-window history point for increment ch
   );
 });
 
-test("buildRankTrendResponse keeps missing drama dates as null points without filling calendar gaps", () => {
+test("buildRankTrendResponse keeps missing drama dates as null points across calendar gaps", () => {
   const response = buildRankTrendResponse({
     platform: "missevan",
     id: "93038",
@@ -689,18 +769,20 @@ test("buildRankTrendResponse keeps missing drama dates as null points without fi
   });
 
   assert.equal(response.success, true);
-  assert.equal(response.windows["30d"].fromDate, "2026-04-24");
+  assert.equal(response.windows["30d"].fromDate, "2026-04-09");
   assert.equal(response.windows["30d"].toDate, "2026-05-09");
 
   const viewMetric = response.windows["30d"].metrics.find((metric) => metric.key === "view_count");
+  const expectedDates = Array.from({ length: 32 }, (_, index) =>
+    new Date(Date.UTC(2026, 3, 8 + index)).toISOString().slice(0, 10)
+  );
   assert.deepEqual(
     viewMetric.history.map((point) => [point.date, point.value]),
-    [
-      ["2026-04-24", 100],
-      ["2026-04-25", null],
-      ["2026-05-01", 150],
-      ["2026-05-09", 260],
-    ]
+    expectedDates.map((date) => [date, {
+      "2026-04-24": 100,
+      "2026-05-01": 150,
+      "2026-05-09": 260,
+    }[date] ?? null])
   );
   assert.equal(viewMetric.delta, 160);
   assert.equal(viewMetric.deltaPercent, 1.6);
@@ -710,12 +792,10 @@ test("buildRankTrendResponse keeps missing drama dates as null points without fi
   );
   assert.deepEqual(
     paidIdMetric.history.map((point) => [point.date, point.value]),
-    [
-      ["2026-04-24", null],
-      ["2026-04-25", null],
-      ["2026-05-01", 10],
-      ["2026-05-09", 25],
-    ]
+    expectedDates.map((date) => [date, {
+      "2026-05-01": 10,
+      "2026-05-09": 25,
+    }[date] ?? null])
   );
   assert.equal(paidIdMetric.fromValue, 10);
   assert.equal(paidIdMetric.toValue, 25);
@@ -789,16 +869,16 @@ test("buildRankTrendResponse treats repeated Missevan display metrics as missing
   const viewMetric = thirtyDayWindow.metrics.find((metric) => metric.key === "view_count");
   const paidIdMetric = thirtyDayWindow.metrics.find((metric) => metric.key === "danmaku_uid_count");
   const subscriptionMetric = thirtyDayWindow.metrics.find((metric) => metric.key === "subscription_num");
+  const thirtyDayDates = Array.from({ length: 32 }, (_, index) =>
+    new Date(Date.UTC(2026, 3, 29 + index)).toISOString().slice(0, 10)
+  );
 
   assert.deepEqual(
     viewMetric.history.map((point) => [point.date, point.value]),
-    [
-      ["2026-05-06", 3826067],
-      ["2026-05-07", null],
-      ["2026-05-08", null],
-      ["2026-05-29", null],
-      ["2026-05-30", 4027349],
-    ]
+    thirtyDayDates.map((date) => [date, {
+      "2026-05-06": 3826067,
+      "2026-05-30": 4027349,
+    }[date] ?? null])
   );
   assert.equal(viewMetric.delta, 201282);
   assert.equal(paidIdMetric.delta, 254);
@@ -809,6 +889,9 @@ test("buildRankTrendResponse treats repeated Missevan display metrics as missing
   assert.deepEqual(
     response.windows["3d"].metrics[0].history.map((point) => [point.date, point.value]),
     [
+      ["2026-05-26", null],
+      ["2026-05-27", null],
+      ["2026-05-28", null],
       ["2026-05-29", null],
       ["2026-05-30", 4027349],
     ]
@@ -863,9 +946,9 @@ test("buildRankTrendResponse includes Manbo pay count when detecting repeated di
   assert.deepEqual(
     window.metrics.map((metric) => [metric.key, metric.delta, metric.history.map((point) => point.value)]),
     [
-      ["view_count", 0, [100, null, 100]],
-      ["danmaku_uid_count", 0, [10, null, 10]],
-      ["pay_count", 1, [5, null, 6]],
+      ["view_count", 0, [null, null, 100, null, 100]],
+      ["danmaku_uid_count", 0, [null, null, 10, null, 10]],
+      ["pay_count", 1, [null, null, 5, null, 6]],
     ]
   );
 });
@@ -944,7 +1027,7 @@ test("buildAggregatedRankTrendResponse builds ordinary trend response from platf
     },
   ]);
 
-  assert.equal(response.windows["3d"].fromDate, "2026-05-15");
+  assert.equal(response.windows["3d"].fromDate, "2026-05-14");
   assert.equal(response.windows["3d"].toDate, "2026-05-17");
   assert.equal(response.windows["3d"].generatedAt, "2026-05-17T01:00:00.000Z");
   assert.deepEqual(
@@ -1282,9 +1365,9 @@ test("buildAggregatedRankTrendResponse anchors all windows to the drama latest m
   assert.equal(response.success, true);
   assert.equal(response.latestDate, "2026-05-20");
   assert.equal(response.rankHistoryLatestDate, "2026-05-30");
-  assert.equal(response.windows["3d"].toDate, "2026-05-20");
-  assert.equal(response.windows["7d"].toDate, "2026-05-20");
-  assert.equal(response.windows["30d"].toDate, "2026-05-20");
+  assert.equal(response.windows["3d"].toDate, "2026-05-30");
+  assert.equal(response.windows["7d"].toDate, "2026-05-30");
+  assert.equal(response.windows["30d"].toDate, "2026-05-30");
 });
 
 test("buildAggregatedRankTrendResponse anchors windows to the latest non-repeated metric sample", () => {
@@ -1329,9 +1412,9 @@ test("buildAggregatedRankTrendResponse anchors windows to the latest non-repeate
 
   assert.equal(response.success, true);
   assert.equal(response.latestDate, "2026-05-01");
-  assert.equal(response.windows["3d"].toDate, "2026-05-01");
-  assert.equal(response.windows["7d"].toDate, "2026-05-01");
-  assert.equal(response.windows["30d"].toDate, "2026-05-01");
+  assert.equal(response.windows["3d"].toDate, "2026-05-30");
+  assert.equal(response.windows["7d"].toDate, "2026-05-30");
+  assert.equal(response.windows["30d"].toDate, "2026-05-30");
 });
 
 test("buildAggregatedRankTrendResponse returns not found without falling back semantics", () => {
@@ -1465,32 +1548,39 @@ test("buildPeakSeriesTrendResponse builds playback-only windows from series samp
 
   for (const windowKey of ["3d", "7d", "30d"]) {
     const window = response.windows[windowKey];
-    assert.equal(window.fromDate, "2026-05-02");
+    assert.equal(window.fromDate, {
+      "3d": "2026-05-01",
+      "7d": "2026-04-27",
+      "30d": "2026-04-04",
+    }[windowKey]);
     assert.equal(window.toDate, "2026-05-04");
     assert.equal(window.insufficientData, false);
+    const metric = window.metrics[0];
     assert.deepEqual(
-      window.metrics.map((metric) => ({
+      {
         key: metric.key,
         label: metric.label,
         fromValue: metric.fromValue,
         toValue: metric.toValue,
         delta: metric.delta,
         available: metric.available,
-        history: metric.history,
-      })),
+      },
+      {
+        key: "view_count",
+        label: "系列总播放量",
+        fromValue: 722137429,
+        toValue: 722208818,
+        delta: 71389,
+        available: true,
+      }
+    );
+    assert.deepEqual(
+      metric.history
+        .filter((sample) => sample.value != null)
+        .map((sample) => [sample.date, sample.value]),
       [
-        {
-          key: "view_count",
-          label: "系列总播放量",
-          fromValue: 722137429,
-          toValue: 722208818,
-          delta: 71389,
-          available: true,
-          history: [
-            { date: "2026-05-02", value: 722137429 },
-            { date: "2026-05-04", value: 722208818 },
-          ],
-        },
+        ["2026-05-02", 722137429],
+        ["2026-05-04", 722208818],
       ]
     );
   }
@@ -1562,14 +1652,16 @@ test("buildPeakSeriesTrendResponse keeps missing peak dates as null points", () 
   });
 
   assert.equal(response.success, true);
+  const peakThirtyDayDates = Array.from({ length: 32 }, (_, index) =>
+    new Date(Date.UTC(2026, 3, 8 + index)).toISOString().slice(0, 10)
+  );
   assert.deepEqual(
     response.windows["30d"].metrics[0].history.map((point) => [point.date, point.value]),
-    [
-      ["2026-04-24", 1000],
-      ["2026-05-01", 1200],
-      ["2026-05-05", null],
-      ["2026-05-09", 1600],
-    ]
+    peakThirtyDayDates.map((date) => [date, {
+      "2026-04-24": 1000,
+      "2026-05-01": 1200,
+      "2026-05-09": 1600,
+    }[date] ?? null])
   );
   assert.equal(response.windows["30d"].metrics[0].delta, 600);
   assert.equal(response.windows["30d"].metrics[0].deltaPercent, 0.6);
@@ -1605,6 +1697,8 @@ test("buildPeakSeriesTrendResponse treats repeated playback samples as missing d
   assert.deepEqual(
     response.windows["3d"].metrics[0].history.map((point) => [point.date, point.value]),
     [
+      ["2026-04-29", null],
+      ["2026-04-30", null],
       ["2026-05-01", 1000],
       ["2026-05-02", null],
       ["2026-05-03", 1100],
@@ -1642,9 +1736,9 @@ test("buildPeakSeriesTrendResponse anchors windows to the latest non-repeated sa
   });
 
   assert.equal(response.latestDate, "2026-05-01");
-  assert.equal(response.windows["3d"].toDate, "2026-05-01");
-  assert.equal(response.windows["7d"].toDate, "2026-05-01");
-  assert.equal(response.windows["30d"].toDate, "2026-05-01");
+  assert.equal(response.windows["3d"].toDate, "2026-05-30");
+  assert.equal(response.windows["7d"].toDate, "2026-05-30");
+  assert.equal(response.windows["30d"].toDate, "2026-05-30");
 });
 
 test("getPeakSeriesDailyViewDelta uses latest minus previous available sample", () => {

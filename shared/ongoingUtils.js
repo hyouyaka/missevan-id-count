@@ -1,4 +1,9 @@
-import { getRankTrendMetricConfigs, normalizeRankTrendDates } from "./ranksTrendUtils.js";
+import {
+  getRepeatedTrendSampleDateSet,
+  getRankTrendMetricConfigs,
+  normalizeRankTrendDates,
+  resolveRankTrendWindowEndDate,
+} from "./ranksTrendUtils.js";
 import { isSkippedDanmakuMetricValue } from "./rankMetricUtils.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -47,6 +52,17 @@ function getSnapshotDramas(snapshot) {
 
 function getDramaMetrics(snapshot, id) {
   return getSnapshotDramas(snapshot)[String(id)] || null;
+}
+
+function getStaticDrama(staticDramasById, id, dates, metricSnapshotsByDate) {
+  const explicit = staticDramasById?.[String(id)];
+  if (explicit && typeof explicit === "object" && Object.keys(explicit).length) {
+    return explicit;
+  }
+  return [...(Array.isArray(dates) ? dates : [])]
+    .reverse()
+    .map((date) => getDramaMetrics(metricSnapshotsByDate?.[date], id))
+    .find(Boolean) || null;
 }
 
 export function normalizeOngoingIdList(value) {
@@ -298,7 +314,7 @@ function hasAnyNonZeroWindowMetric(item, metricKey) {
     .some((value) => value != null && value !== 0);
 }
 
-function applyMetricVisibility(item) {
+function applyMetricVisibility(item, { hasAnyNonZeroMetricValues = {} } = {}) {
   if (item?.platform !== "manbo" || !item?.metrics?.pay_count) {
     return item;
   }
@@ -310,8 +326,8 @@ function applyMetricVisibility(item) {
       pay_count: {
         ...item.metrics.pay_count,
         visible:
-          item.metrics.pay_count.value != null &&
-          hasAnyNonZeroWindowMetric(item, "pay_count"),
+          hasAnyNonZeroWindowMetric(item, "pay_count") ||
+          hasAnyNonZeroMetricValues.pay_count === true,
       },
     },
   };
@@ -322,7 +338,18 @@ function normalizeMainCvText(drama) {
   if (explicit) {
     return explicit;
   }
-  return normalizeStringArray(drama?.main_cvs ?? drama?.maincvs ?? drama?.cvs).join("，");
+  return getDramaMainCvs(drama).join("，");
+}
+
+function getDramaMainCvs(drama) {
+  return [
+    drama?.main_cvs,
+    drama?.maincvs,
+    drama?.cvs,
+    drama?.mainCvNames,
+    drama?.mainCvNicknames,
+    drama?.main_cv_names,
+  ].reduce((result, value) => result.length ? result : normalizeStringArray(value), []);
 }
 
 function getContentTypeLabel(drama) {
@@ -344,6 +371,8 @@ function buildOngoingItem({
   platform,
   id,
   currentDrama,
+  staticDrama,
+  hasAnyNonZeroMetricValues,
   latestDate,
   metricSnapshotsByDate,
   createTime,
@@ -351,16 +380,23 @@ function buildOngoingItem({
   weeklyPlaybackSnapshot,
 }) {
   const isNewDrama = isOngoingNewDrama(createTime, currentMonth);
+  const currentName = normalizeText(currentDrama?.name ?? currentDrama?.title);
+  const staticName = normalizeText(staticDrama?.name ?? staticDrama?.title);
+  const currentCover = normalizeText(currentDrama?.cover);
+  const staticCover = normalizeText(staticDrama?.cover);
+  const currentMainCvs = getDramaMainCvs(currentDrama);
+  const staticMainCvs = getDramaMainCvs(staticDrama);
   return applyMetricVisibility({
     id,
     platform,
-    name: normalizeText(currentDrama?.name ?? currentDrama?.title),
-    cover: normalizeText(currentDrama?.cover),
-    updated_at: normalizeText(currentDrama?.updated_at),
-    payment_label: getPaymentLabel(currentDrama),
-    content_type_label: getContentTypeLabel(currentDrama),
-    main_cvs: normalizeStringArray(currentDrama?.main_cvs ?? currentDrama?.maincvs ?? currentDrama?.cvs),
-    main_cv_text: normalizeMainCvText(currentDrama),
+    name: currentName || staticName || normalizeText(id),
+    cover: currentCover || staticCover,
+    updated_at: normalizeText(currentDrama?.updated_at ?? currentDrama?.updatedAt) ||
+      normalizeText(staticDrama?.updated_at ?? staticDrama?.updatedAt),
+    payment_label: getPaymentLabel(currentDrama) || getPaymentLabel(staticDrama),
+    content_type_label: getContentTypeLabel(currentDrama) || getContentTypeLabel(staticDrama),
+    main_cvs: currentMainCvs.length ? currentMainCvs : staticMainCvs,
+    main_cv_text: normalizeMainCvText(currentDrama) || normalizeMainCvText(staticDrama),
     metrics: buildCurrentMetrics(platform, currentDrama),
     windows: buildItemWindows({
       platform,
@@ -371,13 +407,37 @@ function buildOngoingItem({
       isNewDrama,
       weeklyPlaybackSnapshot,
     }),
-  });
+  }, { hasAnyNonZeroMetricValues });
+}
+
+function getAnyNonZeroMetricValues(platform, id, metricSnapshotsByDate) {
+  const metricConfigs = getRankTrendMetricConfigs(platform);
+  return Object.fromEntries(metricConfigs.map((config) => [
+    config.key,
+    Object.values(metricSnapshotsByDate || {}).some((snapshot) => {
+      const value = normalizeFiniteNumber(getDramaMetrics(snapshot, id)?.[config.key]);
+      return value != null && value !== 0;
+    }),
+  ]));
 }
 
 export function sortOngoingItemsByWindowDelta(items, windowKey = "7d") {
+  return sortOngoingItemsByMetric(items, windowKey, "view_count");
+}
+
+export function sortOngoingItemsByMetricDelta(items, platform, metric = "playback") {
+  const metricKey = metric === "secondary"
+    ? platform === "manbo" ? "pay_count" : "subscription_num"
+    : metric === "paid-id"
+      ? "danmaku_uid_count"
+      : "view_count";
+  return sortOngoingItemsByMetric(items, "7d", metricKey);
+}
+
+function sortOngoingItemsByMetric(items, windowKey, metricKey) {
   return [...(Array.isArray(items) ? items : [])].sort((left, right) => {
-    const leftMetric = left?.windows?.[windowKey]?.metrics?.view_count;
-    const rightMetric = right?.windows?.[windowKey]?.metrics?.view_count;
+    const leftMetric = left?.windows?.[windowKey]?.metrics?.[metricKey];
+    const rightMetric = right?.windows?.[windowKey]?.metrics?.[metricKey];
     const leftDelta = leftMetric?.available === false ? null : normalizeFiniteNumber(leftMetric?.delta);
     const rightDelta = rightMetric?.available === false ? null : normalizeFiniteNumber(rightMetric?.delta);
     const normalizedLeft = leftDelta == null ? Number.NEGATIVE_INFINITY : leftDelta;
@@ -397,6 +457,74 @@ export function isOngoingEmptyPaidDanmakuMetric(metric) {
   const fromValue = normalizeFiniteNumber(metric?.fromValue);
   const toValue = normalizeFiniteNumber(metric?.toValue);
   return fromValue === 0 && toValue === 0;
+}
+
+function formatOngoingPlainNumber(value) {
+  const count = Number(value ?? 0);
+  return Number.isFinite(count) ? `${Math.trunc(count)}` : "0";
+}
+
+function formatOngoingWanNumber(value, options = {}) {
+  const { forceWanDecimal = false } = options;
+  const count = Number(value);
+  if (!Number.isFinite(count)) {
+    return "暂无";
+  }
+  if (Math.abs(count) >= 10000) {
+    const wan = count / 10000;
+    const digits = forceWanDecimal ? 1 : Math.abs(wan) >= 1000 ? 0 : 1;
+    return `${wan.toFixed(digits)}万`;
+  }
+  return formatOngoingPlainNumber(count);
+}
+
+export function formatOngoingMetricValue(value, metricKey, options = {}) {
+  if (value == null || String(value).trim() === "") {
+    return "暂不可用";
+  }
+  const count = Number(value);
+  if (!Number.isFinite(count)) {
+    return "暂无";
+  }
+  if (metricKey === "danmaku_uid_count") {
+    return formatOngoingPlainNumber(count);
+  }
+  return formatOngoingWanNumber(count, options);
+}
+
+export function formatOngoingMetricDelta(value, metricKey, options = {}) {
+  if (value == null || String(value).trim() === "") {
+    return "暂不可用";
+  }
+  const delta = Number(value);
+  if (!Number.isFinite(delta)) {
+    return "暂无";
+  }
+  const prefix = delta > 0 ? "+" : "";
+  return `${prefix}${formatOngoingMetricValue(delta, metricKey, options)}`;
+}
+
+export function getOngoingMetricDisplay({ currentValue, metricKey, windowMetric } = {}) {
+  const showEmptyPaidDanmaku = isOngoingEmptyPaidDanmakuMetric(windowMetric);
+  const currentMetricUnavailable = currentValue == null || String(currentValue).trim() === "";
+  const delta = windowMetric?.delta ?? null;
+  const showMissingDelta = !showEmptyPaidDanmaku && (windowMetric?.available === false || delta == null);
+  const numberOptions = metricKey === "view_count" ? { forceWanDecimal: true } : {};
+
+  if (showEmptyPaidDanmaku) {
+    return { currentText: "暂无付费集", deltaText: null, showEmptyPaidDanmaku: true };
+  }
+  if (currentMetricUnavailable) {
+    return { currentText: "暂不可用", deltaText: "暂不可用", showEmptyPaidDanmaku: false };
+  }
+
+  return {
+    currentText: formatOngoingMetricValue(currentValue, metricKey, numberOptions),
+    deltaText: showMissingDelta
+      ? "暂无"
+      : formatOngoingMetricDelta(delta, metricKey, numberOptions),
+    showEmptyPaidDanmaku: false,
+  };
 }
 
 export function buildOngoingCvOptions(items) {
@@ -434,9 +562,11 @@ export function buildOngoingResponse({
   ongoingIds,
   indexSnapshot,
   metricSnapshotsByDate,
+  staticDramasById,
   createTimesById,
   currentMonth,
   weeklyPlaybackSnapshot,
+  windowEndDate,
 } = {}) {
   const normalizedPlatform = normalizeText(platform);
   const metricConfigs = getRankTrendMetricConfigs(normalizedPlatform);
@@ -449,21 +579,39 @@ export function buildOngoingResponse({
   }
 
   const ids = normalizeOngoingIdList(ongoingIds);
-  const dates = normalizeRankTrendDates(indexSnapshot).filter((date) =>
+  const indexDates = normalizeRankTrendDates(indexSnapshot);
+  const dates = indexDates.filter((date) =>
     metricSnapshotsByDate?.[date]
   );
-  const latestDate = getLatestMetricDate(dates, metricSnapshotsByDate);
+  const latestAvailableDate = getLatestMetricDate(dates, metricSnapshotsByDate);
+  const latestDate = resolveRankTrendWindowEndDate(
+    windowEndDate,
+    indexDates.at(-1) || latestAvailableDate
+  );
   const currentSnapshot = latestDate ? metricSnapshotsByDate[latestDate] : null;
   const items = ids
     .map((id) => {
-      const currentDrama = getDramaMetrics(currentSnapshot, id);
-      if (!currentDrama) {
-        return null;
-      }
+      const staleDateSet = getRepeatedTrendSampleDateSet({
+        dates,
+        snapshotsByDate: metricSnapshotsByDate,
+        platform: normalizedPlatform,
+        id,
+      });
+      const currentDrama = staleDateSet.has(latestDate)
+        ? null
+        : getDramaMetrics(currentSnapshot, id);
+      const staticDrama = getStaticDrama(staticDramasById, id, dates, metricSnapshotsByDate);
+      const hasAnyNonZeroMetricValues = getAnyNonZeroMetricValues(
+        normalizedPlatform,
+        id,
+        metricSnapshotsByDate
+      );
       return buildOngoingItem({
         platform: normalizedPlatform,
         id,
         currentDrama,
+        staticDrama,
+        hasAnyNonZeroMetricValues,
         latestDate,
         metricSnapshotsByDate,
         createTime: createTimesById?.[id],
@@ -478,6 +626,7 @@ export function buildOngoingResponse({
     platform: normalizedPlatform,
     updatedAt: normalizeText(indexSnapshot?.updated_at ?? currentSnapshot?.updated_at ?? ""),
     latestDate,
+    windowEndDate: latestDate,
     windows: Object.fromEntries(ONGOING_WINDOWS.map((windowConfig) => [windowConfig.key, windowConfig])),
     items,
   };

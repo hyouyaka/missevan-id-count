@@ -536,7 +536,7 @@ function OngoingPlatformList({
         onClick={() => onNavigateRoute({
           view: "ongoing",
           platform,
-          window: "7d",
+          metric: "playback",
         })}
       >
         查看更多

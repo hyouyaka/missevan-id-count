@@ -9,6 +9,7 @@ import {
   PlayCircleIcon,
   RefreshCwIcon,
   SearchIcon,
+  Share2Icon,
   ShoppingCartIcon,
   StarIcon,
   TrendingUpIcon,
@@ -19,7 +20,6 @@ import {
 import {
   buildVersionedUrl,
   formatDeviceDateTime,
-  formatPlainNumber,
   getBackendVersionFromResponse,
 } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
@@ -49,12 +49,14 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ShareImagePreviewDialog } from "@/app/ShareImagePreviewDialog";
 import {
   buildOngoingCvOptions,
   filterOngoingItemsByCvNames,
-  isOngoingEmptyPaidDanmakuMetric,
-  sortOngoingItemsByWindowDelta,
+  getOngoingMetricDisplay,
+  sortOngoingItemsByMetricDelta,
 } from "../../shared/ongoingUtils.js";
+import { buildOngoingShareTable, createOngoingSharePng } from "@/app/ongoingShare";
 
 const platformLabels = {
   missevan: "猫耳",
@@ -71,17 +73,15 @@ const mobileOngoingTextTabsListClassName =
   "grid h-9 min-h-9 w-fit justify-start";
 const mobileOngoingPlatformTabClassName =
   "h-7 min-h-7 min-w-0 px-3 text-sm!";
-const mobileOngoingWindowTabClassName =
-  "h-7 min-h-7 min-w-11 justify-center px-2 text-xs!";
-const mobileOngoingSelectedTabClassName = "";
+const mobileOngoingMetricTabClassName =
+  "h-auto min-h-8 min-w-max flex-none justify-center px-2.5 text-xs!";
 const mobileOngoingSelectedPlatformTabClassName = "";
 const desktopOngoingTextTabsListClassName =
   "inline-flex h-9 min-h-9 w-fit justify-start";
 const desktopOngoingTabClassName =
   "h-7 min-h-7 min-w-max px-3 text-sm!";
-const desktopOngoingSelectedTabClassName = mobileOngoingSelectedTabClassName;
 const desktopOngoingSelectedPlatformTabClassName =
-  `${desktopOngoingSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
+  "[&_.platform-tab-label-text]:font-bold!";
 
 const tagVariants = {
   猫耳: "missevanPlatform",
@@ -119,11 +119,30 @@ function OngoingCvFilterTrigger({ className, selectedCount, ...props }) {
       size="sm"
       data-touch="compact"
       className={`${ongoingCvFilterTriggerClassName} ${className || ""}`}
+      aria-label={selectedCount ? `CV筛选，已选 ${selectedCount} 位` : "CV筛选"}
       {...props}
     >
       <SlidersHorizontalIcon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="whitespace-nowrap">CV筛选{selectedCount ? ` · ${selectedCount}` : ""}</span>
+      <span className="max-[420px]:sr-only min-[421px]:not-sr-only">CV筛选</span>
+      {selectedCount ? (
+        <span className="whitespace-nowrap">
+          <span className="max-[420px]:hidden"> · </span>{selectedCount}
+        </span>
+      ) : null}
     </Button>
+  );
+}
+
+function OngoingSharePreviewDialog({
+  ...props
+}) {
+  return (
+    <ShareImagePreviewDialog
+      {...props}
+      description="预览按当前排序和筛选生成的 PNG 图片，可保存到设备。"
+      fallbackTitle="分享连载中列表"
+      imageAlt={props.title || "连载中列表分享图片"}
+    />
   );
 }
 
@@ -412,46 +431,8 @@ function formatOngoingUpdatedAt(value) {
   return formatDeviceDateTime(value);
 }
 
-function formatWanNumber(value, options = {}) {
-  const { forceWanDecimal = false } = options;
-  const count = Number(value);
-  if (!Number.isFinite(count)) {
-    return "暂无";
-  }
-  if (Math.abs(count) >= 10000) {
-    const wan = count / 10000;
-    const digits = forceWanDecimal ? 1 : Math.abs(wan) >= 1000 ? 0 : 1;
-    return `${wan.toFixed(digits)}万`;
-  }
-  return formatPlainNumber(count);
-}
-
-function formatOngoingMetricValue(value, metricKey, options = {}) {
-  const count = Number(value);
-  if (!Number.isFinite(count)) {
-    return "暂无";
-  }
-  if (metricKey === "danmaku_uid_count") {
-    return formatPlainNumber(count);
-  }
-  return formatWanNumber(count, options);
-}
-
-function formatDelta(value, metricKey, options = {}) {
-  const delta = Number(value);
-  if (!Number.isFinite(delta)) {
-    return "暂无";
-  }
-  const prefix = delta > 0 ? "+" : "";
-  return `${prefix}${formatOngoingMetricValue(delta, metricKey, options)}`;
-}
-
 function getMetricValue(item, metricKey) {
   return item?.metrics?.[metricKey]?.value ?? null;
-}
-
-function getMetricDelta(item, windowKey, metricKey) {
-  return item?.windows?.[windowKey]?.metrics?.[metricKey]?.delta ?? null;
 }
 
 function MetricIcon({ label }) {
@@ -462,10 +443,12 @@ function MetricIcon({ label }) {
 function OngoingMetric({ item, windowKey, metricKey }) {
   const metric = item?.metrics?.[metricKey] || item?.windows?.[windowKey]?.metrics?.[metricKey];
   const windowMetric = item?.windows?.[windowKey]?.metrics?.[metricKey];
-  const delta = getMetricDelta(item, windowKey, metricKey);
-  const showEmptyPaidDanmaku = isOngoingEmptyPaidDanmakuMetric(windowMetric);
-  const showMissingDelta = !showEmptyPaidDanmaku && (windowMetric?.available === false || windowMetric?.delta == null);
-  const numberOptions = metricKey === "view_count" ? { forceWanDecimal: true } : {};
+  const metricValue = getMetricValue(item, metricKey);
+  const { currentText, deltaText, showEmptyPaidDanmaku } = getOngoingMetricDisplay({
+    currentValue: metricValue,
+    metricKey,
+    windowMetric,
+  });
   return (
     <div className="min-w-0 border-l border-border/70 px-2 text-center first:border-l-0 sm:px-3">
       <div className="flex min-w-0 items-center justify-center gap-1 text-[0.68rem] text-muted-foreground">
@@ -473,10 +456,10 @@ function OngoingMetric({ item, windowKey, metricKey }) {
         <span className="truncate">{metric?.label || "指标"}</span>
       </div>
       <div className={`mt-1 text-[0.92rem] leading-5 tabular-nums text-foreground ${showEmptyPaidDanmaku ? "font-normal" : "font-semibold"}`}>
-        {showEmptyPaidDanmaku ? "暂无付费集" : formatOngoingMetricValue(getMetricValue(item, metricKey), metricKey, numberOptions)}
+        {currentText}
       </div>
       <div className="text-[0.74rem] font-medium leading-5 tabular-nums text-[var(--accent-success)]">
-        {showEmptyPaidDanmaku ? "\u00a0" : showMissingDelta ? "暂无" : formatDelta(delta, metricKey, numberOptions)}
+        {showEmptyPaidDanmaku ? "\u00a0" : deltaText}
       </div>
     </div>
   );
@@ -858,8 +841,8 @@ export function OngoingPanel({
   const [selectedPlatform, setSelectedPlatform] = useState(() =>
     routeState?.platform === "manbo" ? "manbo" : "missevan"
   );
-  const [selectedWindow, setSelectedWindow] = useState(() =>
-    ["3d", "7d", "30d"].includes(routeState?.window) ? routeState.window : "3d"
+  const [selectedMetric, setSelectedMetric] = useState(() =>
+    ["playback", "secondary", "paid-id"].includes(routeState?.metric) ? routeState.metric : "playback"
   );
   const [selectedCvNames, setSelectedCvNames] = useState(() =>
     new Set(ongoingCvSelectionStore[routeState?.platform === "manbo" ? "manbo" : "missevan"])
@@ -874,12 +857,21 @@ export function OngoingPanel({
   });
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [shareStatus, setShareStatus] = useState("idle");
+  const [shareError, setShareError] = useState("");
+  const [sharePreviewUrl, setSharePreviewUrl] = useState("");
+  const [shareTitle, setShareTitle] = useState("");
+  const [shareFileName, setShareFileName] = useState("");
   const [trendEligibility, setTrendEligibility] = useState({
     platform: "",
     lookupKey: "",
     ids: new Set(),
   });
   const loggedOngoingRef = useRef(new Set());
+  const shareObjectUrlRef = useRef("");
+  const shareRequestRef = useRef(null);
+  const shareGenerationRef = useRef(0);
   const handleVersionResponseRef = useRef(handleVersionResponse);
   const desktopCvFilterSearchRef = useRef(null);
   const mobileCvFilterTitleRef = useRef(null);
@@ -895,11 +887,11 @@ export function OngoingPanel({
     const nextPlatform = routeState.platform === "manbo" ? "manbo" : "missevan";
     setSelectedPlatform(nextPlatform);
     setSelectedCvNames(new Set(ongoingCvSelectionStore[nextPlatform]));
-    setSelectedWindow(["3d", "7d", "30d"].includes(routeState.window) ? routeState.window : "3d");
+    setSelectedMetric(["playback", "secondary", "paid-id"].includes(routeState.metric) ? routeState.metric : "playback");
     setCvFilterQuery("");
     setDesktopCvFilterOpen(false);
     setMobileCvFilterOpen(false);
-  }, [routeState?.view, routeState?.platform, routeState?.window]);
+  }, [routeState?.view, routeState?.platform, routeState?.metric]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1047,28 +1039,15 @@ export function OngoingPanel({
 
   const currentOngoingData = ongoingData?.platform === selectedPlatform ? ongoingData : null;
   const currentOngoingItems = currentOngoingData?.items || emptyOngoingItems;
-  const windows = currentOngoingData?.windows || {};
-  const availableWindows = ["3d", "7d", "30d"].filter((key) => windows[key]);
-  const activeWindow = availableWindows.includes(selectedWindow)
-    ? selectedWindow
-    : availableWindows[0] || "7d";
-  useEffect(() => {
-    if (routeState?.view !== "ongoing" || !availableWindows.length || selectedWindow === activeWindow) {
-      return;
-    }
-    setSelectedWindow(activeWindow);
-    onRouteStateChange?.(
-      {
-        view: "ongoing",
-        platform: selectedPlatform,
-        window: activeWindow,
-      },
-      { replace: true }
-    );
-  }, [activeWindow, availableWindows.length, onRouteStateChange, routeState?.view, selectedPlatform, selectedWindow]);
+  const activeWindow = "7d";
+  const sortMetricOptions = [
+    { key: "playback", label: "播放" },
+    { key: "secondary", label: selectedPlatform === "manbo" ? "付费/收听" : "追剧" },
+    { key: "paid-id", label: "付费ID" },
+  ];
   const sortedItems = useMemo(
-    () => sortOngoingItemsByWindowDelta(currentOngoingItems, activeWindow),
-    [activeWindow, currentOngoingItems]
+    () => sortOngoingItemsByMetricDelta(currentOngoingItems, selectedPlatform, selectedMetric),
+    [currentOngoingItems, selectedMetric, selectedPlatform]
   );
   const cvOptions = useMemo(
     () => buildOngoingCvOptions(currentOngoingItems),
@@ -1165,6 +1144,22 @@ export function OngoingPanel({
     trendEligibility.lookupKey === trendLookupKey
     ? trendEligibility.ids
     : new Set(trendLookupIds);
+  function logUserAction(payload) {
+    try {
+      void fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      })
+      .catch((error) => {
+        console.error("Failed to log ongoing user action", error);
+      });
+    } catch (error) {
+      console.error("Failed to log ongoing user action", error);
+    }
+  }
+
   function updatePlatform(platform) {
     const nextPlatform = platform === "manbo" ? "manbo" : "missevan";
     setSelectedPlatform(nextPlatform);
@@ -1175,17 +1170,26 @@ export function OngoingPanel({
     onRouteStateChange?.({
       view: "ongoing",
       platform: nextPlatform,
-      window: activeWindow,
+      metric: selectedMetric,
     });
   }
 
-  function updateWindow(windowKey) {
-    const nextWindow = ["3d", "7d", "30d"].includes(windowKey) ? windowKey : "3d";
-    setSelectedWindow(nextWindow);
+  function updateMetric(metric) {
+    const nextMetric = ["playback", "secondary", "paid-id"].includes(metric) ? metric : "playback";
+    if (nextMetric === selectedMetric) return;
+    logUserAction({
+      platform: selectedPlatform,
+      action: "ongoing_metric_change",
+      source: "ongoing",
+      previousMetric: selectedMetric,
+      metric: nextMetric,
+      success: true,
+    });
+    setSelectedMetric(nextMetric);
     onRouteStateChange?.({
       view: "ongoing",
       platform: selectedPlatform,
-      window: nextWindow,
+      metric: nextMetric,
     });
   }
 
@@ -1221,15 +1225,129 @@ export function OngoingPanel({
     visibleCvOptions,
   };
 
+  function releaseShareObjectUrl() {
+    const currentUrl = shareObjectUrlRef.current;
+    if (currentUrl) {
+      URL.revokeObjectURL?.(currentUrl);
+      shareObjectUrlRef.current = "";
+    }
+  }
+
+  function snapshotShareItems(items, platform) {
+    const metricKeys = platform === "manbo"
+      ? ["view_count", "pay_count", "danmaku_uid_count"]
+      : ["view_count", "subscription_num", "danmaku_uid_count"];
+    return items.map((item) => ({
+      name: item?.name,
+      main_cv_text: item?.main_cv_text,
+      main_cvs: Array.isArray(item?.main_cvs) ? [...item.main_cvs] : [],
+      metrics: Object.fromEntries(metricKeys.map((key) => [key, { ...item?.metrics?.[key] }])),
+      windows: {
+        "7d": {
+          metrics: Object.fromEntries(metricKeys.map((key) => [
+            key,
+            { ...item?.windows?.["7d"]?.metrics?.[key] },
+          ])),
+        },
+      },
+    }));
+  }
+
+  async function generateShareImage(request = null, isRetry = request != null) {
+    const currentRequest = request || {
+      platform: selectedPlatform,
+      metric: selectedMetric,
+      items: snapshotShareItems(filteredItems, selectedPlatform),
+      selectedCvNames: Array.from(selectedCvNames),
+    };
+    if (!currentRequest.items.length) return;
+    logUserAction({
+      platform: currentRequest.platform,
+      action: "share_image_generate",
+      source: "ongoing",
+      itemCount: currentRequest.items.length,
+      isRetry,
+      metric: currentRequest.metric,
+      success: true,
+    });
+    shareRequestRef.current = currentRequest;
+    const generationId = shareGenerationRef.current + 1;
+    shareGenerationRef.current = generationId;
+    releaseShareObjectUrl();
+    setSharePreviewUrl("");
+    setShareError("");
+    setShareStatus("loading");
+    setIsShareDialogOpen(true);
+    const shareTable = buildOngoingShareTable(currentRequest);
+    const platformName = currentRequest.platform === "manbo" ? "漫播" : "猫耳";
+    const nextFileName = `${platformName}-一周内更新剧集-${shareTable.metricName}7日增量.png`;
+    setShareTitle(shareTable.title);
+    setShareFileName(nextFileName);
+    try {
+      const blob = await createOngoingSharePng(currentRequest);
+      if (generationId !== shareGenerationRef.current) return;
+      if (!blob) throw new Error("PNG 图片生成失败，请重试。");
+      const objectUrl = URL.createObjectURL(blob);
+      shareObjectUrlRef.current = objectUrl;
+      setSharePreviewUrl(objectUrl);
+      setShareStatus("ready");
+    } catch (error) {
+      if (generationId !== shareGenerationRef.current) return;
+      setShareError(error instanceof Error ? error.message : "图片生成失败，请重试。" );
+      setShareStatus("error");
+    }
+  }
+
+  function handleShareOpenChange(open) {
+    if (open) {
+      setIsShareDialogOpen(true);
+      return;
+    }
+    shareGenerationRef.current += 1;
+    shareRequestRef.current = null;
+    releaseShareObjectUrl();
+    setSharePreviewUrl("");
+    setShareError("");
+    setShareStatus("idle");
+    setIsShareDialogOpen(false);
+  }
+
+  function saveShareImage() {
+    if (!sharePreviewUrl) return;
+    const anchor = document.createElement("a");
+    if (typeof anchor.download === "string") {
+      anchor.href = sharePreviewUrl;
+      anchor.download = shareFileName || "ongoing-share.png";
+      anchor.rel = "noopener noreferrer";
+      try {
+        anchor.click();
+        return;
+      } catch {
+        // Fall through to opening the generated image in the browser.
+      }
+    }
+    if (typeof window.open === "function") {
+      window.open(sharePreviewUrl, "_blank", "noopener,noreferrer");
+    } else {
+      window.location.assign(sharePreviewUrl);
+    }
+  }
+
+  useEffect(() => () => {
+    shareGenerationRef.current += 1;
+    const currentUrl = shareObjectUrlRef.current;
+    if (currentUrl) URL.revokeObjectURL?.(currentUrl);
+  }, []);
+
   return (
     <div className="grid gap-4 sm:gap-5">
       <div className="px-1 py-1">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <div className="shrink-0 text-xs leading-5 text-muted-foreground">
-              更新：{formatOngoingUpdatedAt(currentOngoingData?.updatedAt)}
+            <div className="min-w-0 max-w-full text-xs leading-5 text-muted-foreground">
+              按7日增量排列，更新于：{formatOngoingUpdatedAt(currentOngoingData?.updatedAt)}
             </div>
-            <div className="sm:hidden">
+            <div className="flex shrink-0 items-center gap-1 sm:hidden">
               <Sheet open={mobileCvFilterOpen} onOpenChange={(open) => updateCvFilterOpen(setMobileCvFilterOpen, open)}>
                 <SheetTrigger asChild>
                   <OngoingCvFilterTrigger selectedCount={selectedCvNames.size} />
@@ -1268,47 +1386,62 @@ export function OngoingPanel({
                   />
                 </SheetContent>
               </Sheet>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                data-touch="compact"
+                aria-label={`分享${platformLabels[selectedPlatform]}连载列表为 PNG`}
+                title={filteredItems.length ? "生成并预览 PNG 分享图" : "没有可分享的作品"}
+                disabled={!filteredItems.length || shareStatus === "loading"}
+                onClick={() => generateShareImage()}
+              >
+                <Share2Icon aria-hidden="true" className="size-4" />
+              </Button>
             </div>
           </div>
-          <div className="flex min-h-8 items-center justify-between gap-3 sm:hidden">
+          <div className="flex min-h-8 flex-wrap items-center justify-between gap-2 sm:hidden">
             <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="min-w-0 gap-0">
               <TabsList
                 aria-label="选择平台"
                 variant="line"
-                className={`${mobileOngoingTextTabsListClassName} grid-cols-2`}
+                className={`${mobileOngoingTextTabsListClassName} grid-cols-2 [&_.platform-tab-label-text]:hidden`}
               >
-                {["missevan", "manbo"].map((platform) => (
-                  <TabsTrigger
-                    key={platform}
-                    data-touch="compact"
-                    data-platform={platform}
-                    className={`${mobileOngoingPlatformTabClassName} ${
-                      platform === selectedPlatform ? mobileOngoingSelectedPlatformTabClassName : ""
-                    }`}
-                    value={platform}
-                  >
-                    <PlatformTabLabel platform={platform} />
-                    <span className="tabular-nums">{platformCounts[platform] ?? "—"}</span>
-                  </TabsTrigger>
-                ))}
+                {["missevan", "manbo"].map((platform) => {
+                  const count = platformCounts[platform];
+                  const platformName = platformLabels[platform] || "平台";
+                  const countLabel = count == null ? "作品数量暂未加载" : `${count}部作品`;
+                  return (
+                    <TabsTrigger
+                      key={platform}
+                      data-touch="compact"
+                      data-platform={platform}
+                      aria-label={`${platformName}平台，${countLabel}`}
+                      className={`${mobileOngoingPlatformTabClassName} ${
+                        platform === selectedPlatform ? mobileOngoingSelectedPlatformTabClassName : ""
+                      }`}
+                      value={platform}
+                    >
+                      <PlatformTabLabel platform={platform} />
+                      <span className="tabular-nums">{count ?? "—"}</span>
+                    </TabsTrigger>
+                  );
+                })}
               </TabsList>
             </Tabs>
-            <Tabs value={activeWindow} onValueChange={updateWindow} className="shrink-0 gap-0">
+            <Tabs value={selectedMetric} onValueChange={updateMetric} className="min-w-0 max-w-full gap-0">
               <TabsList
-                aria-label="选择增量周期"
-                variant="line"
-                className={`${mobileOngoingTextTabsListClassName} grid-cols-3 justify-end`}
+                aria-label="选择排序指标"
+                className="flex h-auto min-h-9 max-w-full flex-wrap justify-end gap-1 p-0.5"
               >
-                {["3d", "7d", "30d"].map((key) => (
+                {sortMetricOptions.map(({ key, label }) => (
                   <TabsTrigger
                     key={key}
                     data-touch="compact"
-                    className={`${mobileOngoingWindowTabClassName} ${
-                      key === activeWindow ? mobileOngoingSelectedTabClassName : ""
-                    }`}
+                    className={mobileOngoingMetricTabClassName}
                     value={key}
                   >
-                    {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
+                    {label}
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -1337,6 +1470,18 @@ export function OngoingPanel({
                   />
                 </PopoverContent>
               </Popover>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                data-touch="compact"
+                aria-label={`分享${platformLabels[selectedPlatform]}连载列表为 PNG`}
+                title={filteredItems.length ? "生成并预览 PNG 分享图" : "没有可分享的作品"}
+                disabled={!filteredItems.length || shareStatus === "loading"}
+                onClick={() => generateShareImage()}
+              >
+                <Share2Icon aria-hidden="true" className="size-4" />
+              </Button>
               <Tabs value={selectedPlatform} onValueChange={updatePlatform}>
                 <TabsList aria-label="选择平台" className={`${desktopOngoingTextTabsListClassName} gap-4`}>
                   {["missevan", "manbo"].map((platform) => (
@@ -1355,15 +1500,15 @@ export function OngoingPanel({
                 </TabsList>
               </Tabs>
             </div>
-            <Tabs value={activeWindow} onValueChange={updateWindow}>
-              <TabsList aria-label="选择增量周期" className={`${desktopOngoingTextTabsListClassName} gap-4`}>
-                {["3d", "7d", "30d"].map((key) => (
+            <Tabs value={selectedMetric} onValueChange={updateMetric}>
+              <TabsList aria-label="选择排序指标" className={`${desktopOngoingTextTabsListClassName} gap-2`}>
+                {sortMetricOptions.map(({ key, label }) => (
                   <TabsTrigger
                     key={key}
-                    className={`${desktopOngoingTabClassName} ${key === activeWindow ? desktopOngoingSelectedTabClassName : ""}`}
+                    className={`${desktopOngoingTabClassName} flex-none`}
                     value={key}
                   >
-                    {{ "3d": "3日", "7d": "7日", "30d": "30日" }[key]}
+                    {label}
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -1441,6 +1586,18 @@ export function OngoingPanel({
           ))}
         </div>
       ) : null}
+
+      <OngoingSharePreviewDialog
+        error={shareError}
+        fileName={shareFileName}
+        onOpenChange={handleShareOpenChange}
+        onRetry={() => generateShareImage(shareRequestRef.current, true)}
+        onSave={saveShareImage}
+        open={isShareDialogOpen}
+        previewUrl={sharePreviewUrl}
+        status={shareStatus}
+        title={shareTitle}
+      />
     </div>
   );
 }

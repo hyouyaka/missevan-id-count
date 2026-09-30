@@ -1491,6 +1491,8 @@ test("operation log levels distinguish normal cancellation from timeouts", async
 test("terminal stats task usage logs preserve the full result and optional source", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const {
+    buildOngoingMetricChangeUsageLog,
+    buildShareImageGenerateUsageLog,
     buildStatsTaskCompletedUsageLog,
     buildStatsTaskKeyResultText,
     buildStatsTaskKeywordText,
@@ -1632,6 +1634,129 @@ test("terminal stats task usage logs preserve the full result and optional sourc
   assert.equal(buildUserActionKeywordText("favorite_remove", { dramaName: "触礁" }), "触礁");
   assert.equal(buildUserActionKeywordText("external_open", { title: "赤霞珠" }), "赤霞珠");
   assert.equal(buildUserActionKeywordText("feedback_explanation_open", { keyword: "不应出现" }), "");
+  const metricChangeLog = buildOngoingMetricChangeUsageLog({
+    platform: "missevan",
+    action: "ongoing_metric_change",
+    source: "ongoing",
+    previousMetric: "playback",
+    metric: "secondary",
+    success: true,
+    keywordText: "客户端伪造内容",
+    unexpected: "discarded",
+  });
+  assert.deepEqual(metricChangeLog, {
+    platform: "missevan",
+    action: "ongoing_metric_change",
+    source: "ongoing",
+    previousMetric: "playback",
+    metric: "secondary",
+    success: true,
+  });
+  assert.equal(buildUserActionKeywordText("ongoing_metric_change", metricChangeLog), "连载中指标：播放量→追剧");
+  assert.deepEqual(normalizeUsageLogFields(metricChangeLog, "ongoing_metric_change"), {
+    platform: "missevan",
+    source: "ongoing",
+    previousMetric: "playback",
+    metric: "secondary",
+    success: true,
+    keywordText: "连载中指标：播放量→追剧",
+  });
+  assert.equal(buildOngoingMetricChangeUsageLog({
+    platform: "missevan",
+    source: "ranks",
+    previousMetric: "playback",
+    metric: "secondary",
+    success: true,
+  }), null);
+  assert.equal(buildOngoingMetricChangeUsageLog({
+    platform: "manbo",
+    source: "ongoing",
+    previousMetric: "playback",
+    metric: "other",
+    success: true,
+  }), null);
+  assert.equal(buildOngoingMetricChangeUsageLog({
+    platform: "manbo",
+    source: "ongoing",
+    previousMetric: "secondary",
+    metric: "secondary",
+    success: true,
+  }), null);
+
+  const ongoingShareLog = buildShareImageGenerateUsageLog({
+    platform: "manbo",
+    source: "ongoing",
+    metric: "paid-id",
+    itemCount: 4,
+    isRetry: true,
+    success: true,
+    unexpected: "discarded",
+  });
+  assert.deepEqual(ongoingShareLog, {
+    platform: "manbo",
+    action: "share_image_generate",
+    source: "ongoing",
+    itemCount: 4,
+    isRetry: true,
+    success: true,
+    metric: "paid-id",
+  });
+  assert.equal(buildUserActionKeywordText("share_image_generate", ongoingShareLog), "连载中图片分享（4项，重试）");
+  const ranksShareLog = buildShareImageGenerateUsageLog({
+    platform: "missevan",
+    source: "ranks",
+    categoryKey: "new",
+    rankKey: "new_daily",
+    itemCount: 2,
+    isRetry: false,
+    success: true,
+  });
+  assert.deepEqual(ranksShareLog, {
+    platform: "missevan",
+    action: "share_image_generate",
+    source: "ranks",
+    itemCount: 2,
+    isRetry: false,
+    success: true,
+    categoryKey: "new",
+    rankKey: "new_daily",
+  });
+  assert.equal(buildUserActionKeywordText("share_image_generate", ranksShareLog), "榜单图片分享（2项）");
+  assert.equal(buildShareImageGenerateUsageLog({
+    platform: "other",
+    source: "ranks",
+    categoryKey: "new",
+    rankKey: "new_daily",
+    itemCount: 2,
+    isRetry: false,
+    success: true,
+  }), null);
+  assert.equal(buildShareImageGenerateUsageLog({
+    platform: "manbo",
+    source: "ongoing",
+    metric: "invalid",
+    itemCount: 2,
+    isRetry: false,
+    success: true,
+  }), null);
+  assert.equal(buildShareImageGenerateUsageLog({
+    platform: "missevan",
+    source: "ranks",
+    categoryKey: "new",
+    rankKey: "new_daily",
+    itemCount: 0,
+    isRetry: false,
+    success: true,
+  }), null);
+  assert.equal(buildShareImageGenerateUsageLog({
+    platform: "missevan",
+    source: "ranks",
+    categoryKey: "new",
+    rankKey: "new_daily",
+    itemCount: 2,
+    isRetry: "false",
+    success: true,
+  }), null);
   assert.deepEqual(normalizeUsageLogFields({
     action: "search",
     keyword: "剑名不奈何",

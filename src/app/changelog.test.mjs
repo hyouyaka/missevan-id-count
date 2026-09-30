@@ -60,8 +60,21 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.8.3", () => {
-  assert.equal(packageJson.version, "1.8.3");
+test("package version is 1.8.4", () => {
+  assert.equal(packageJson.version, "1.8.4");
+});
+
+test("changelog contains the 1.8.4 ongoing, share image, and trend updates", () => {
+  const entry = CHANGELOG_ENTRIES.find((item) => item.version === "1.8.4");
+
+  assert.deepEqual(entry, {
+    version: "1.8.4",
+    changes: [
+      "更新中页面统一显示 7 日增量，支持按播放量、追剧或付费/收听、付费 ID 切换排序",
+      "更新中及各类榜单新增 PNG 分享图片，支持预览和保存；普通榜单截取前 30 名，巅峰榜保留前 50 名",
+      "优化和修正趋势和对比页面的数据显示",
+    ],
+  });
 });
 
 test("changelog contains the 1.8.3 Manbo, CV profile, and history updates", () => {

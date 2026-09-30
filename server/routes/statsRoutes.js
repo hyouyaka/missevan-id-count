@@ -161,7 +161,7 @@ export function registerStatsRoutes(router, {
           res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
           res.setHeader(
             "ETag",
-            `"ranks-trend-cv-${Buffer.from(`${dramaId}:${response.latestDate}`).toString("base64url")}"`
+            `"ranks-trend-cv-${Buffer.from(`${dramaId}:${response.latestDate}:${response.windowEndDate || ""}`).toString("base64url")}"`
           );
         }
         return res.json(response);
@@ -194,7 +194,7 @@ export function registerStatsRoutes(router, {
         res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
         res.setHeader(
           "ETag",
-          `"ranks-trend-${platform}-${Buffer.from(`${dramaId}:${response.latestDate}`).toString("base64url")}"`
+          `"ranks-trend-${platform}-${Buffer.from(`${dramaId}:${response.latestDate}:${response.windowEndDate || ""}`).toString("base64url")}"`
         );
       }
       return res.json(response);
@@ -228,6 +228,7 @@ export function registerStatsRoutes(router, {
           ongoingResponseSchemaVersion,
           platform,
           response.latestDate,
+          response.windowEndDate || "",
           response.updatedAt || "",
           Array.isArray(response.items) ? response.items.length : 0,
         ].join(":");

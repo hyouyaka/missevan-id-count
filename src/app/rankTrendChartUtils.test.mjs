@@ -93,6 +93,24 @@ test("trend chart exposes valid isolated samples as markers without connecting g
   );
 });
 
+test("trend chart keeps a single valid sample visible while preserving the empty tail date", () => {
+  const chart = buildTrendChartLines([
+    {
+      key: "view_count",
+      label: "播放量",
+      history: [
+        { date: "2026-06-07", value: 120 },
+        { date: "2026-06-08", value: null },
+        { date: "2026-06-09", value: null },
+      ],
+    },
+  ]);
+
+  assert.equal(chart.lines.length, 1);
+  assert.deepEqual(chart.lines[0].markers.map(({ point }) => point.date), ["2026-06-07"]);
+  assert.deepEqual(chart.dateMarkers.map(({ point }) => point.date), ["2026-06-07", "2026-06-08", "2026-06-09"]);
+});
+
 test("daily increment points require adjacent continuous samples", () => {
   const points = buildTrendDeltaPoints(baseMetrics[0]);
 

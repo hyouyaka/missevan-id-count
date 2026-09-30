@@ -1,6 +1,6 @@
 import { buildVersionedUrl } from "@/app/app-utils";
 
-export const RANK_TREND_CLIENT_SCHEMA_VERSION = 7;
+export const RANK_TREND_CLIENT_SCHEMA_VERSION = 8;
 
 const rankTrendClientCache = new Map();
 const rankTrendAvailabilityCache = new Map();

@@ -2,7 +2,7 @@ import { buildVersionedUrl } from "@/app/app-utils";
 import { getBeijingYearMonth } from "../../shared/ongoingUtils.js";
 
 const ongoingClientCache = new Map();
-const ONGOING_CLIENT_SCHEMA_VERSION = 4;
+const ONGOING_CLIENT_SCHEMA_VERSION = 6;
 const ONGOING_CLIENT_CACHE_TTL_MS = 30 * 60 * 1000;
 
 function getOngoingClientCacheKey({ platform, frontendVersion }, now = Date.now()) {

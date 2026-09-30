@@ -38,6 +38,7 @@ import {
   buildProxyImageUrl,
   clampCompareTooltipPercent,
   comparePalette,
+  alignCompareTrendItems,
   formatComparePercent,
   formatCompareWindowLabel,
   formatOptionalPlainNumber,
@@ -339,7 +340,7 @@ export function DramaCompareDialog({ open, onOpenChange, items, frontendVersion,
         }
         if (!cancelled) {
           setTrendChartUtils(chartUtils);
-          setTrendItems(loaded);
+          setTrendItems(alignCompareTrendItems(loaded));
           setErrorMessage(loaded.length ? "" : "对比趋势数据暂不可用。");
         }
       } catch (error) {
@@ -699,4 +700,3 @@ export function DramaCompareBasket({ items, open, onOpenChange, onOpenCompare, o
     </div>
   );
 }
-

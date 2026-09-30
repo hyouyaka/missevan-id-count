@@ -205,7 +205,7 @@ function buildLine(metric, axis, chartMode, dateDomain) {
   const pointBuilder = chartMode === "increment" ? buildTrendDeltaPoints : buildTrendValuePoints;
   const points = pointBuilder(metric);
   const validPointCount = points.filter((point) => getTrendNumber(point.axisValue) != null).length;
-  if (validPointCount < 2) {
+  if (validPointCount < 1) {
     return null;
   }
 
@@ -301,6 +301,30 @@ export function buildTrendChartLines(metrics, { chartMode = "absolute" } = {}) {
       if (date && !dateMarkerMap.has(date)) {
         dateMarkerMap.set(date, marker);
       }
+    });
+  });
+  const chartDatePoints = new Map();
+  availableMetrics.forEach((metric) => {
+    (Array.isArray(metric?.history) ? metric.history : []).forEach((point) => {
+      const date = String(point?.date ?? "").trim();
+      if (date && !point?.isPreWindow && !chartDatePoints.has(date)) {
+        chartDatePoints.set(date, point);
+      }
+    });
+  });
+  chartDatePoints.forEach((point, date) => {
+    if (dateMarkerMap.has(date) || !dateDomain) {
+      return;
+    }
+    dateMarkerMap.set(date, {
+      point,
+      position: getPointPosition(
+        { ...point, axisValue: axis.domain.min },
+        0,
+        [],
+        axis.domain,
+        dateDomain
+      ),
     });
   });
   const dateMarkers = Array.from(dateMarkerMap.values()).sort((left, right) =>

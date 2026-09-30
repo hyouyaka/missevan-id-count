@@ -460,7 +460,7 @@ export function MainNavigationDrawer({
     return {
       key: `${platform.key}-ongoing`,
       label: "更新",
-      routePatch: platformOngoingItem?.routePatch || { view: "ongoing", platform: platform.key, window: "7d" },
+      routePatch: platformOngoingItem?.routePatch || { view: "ongoing", platform: platform.key, metric: "playback" },
       activeRoutePatch: platformOngoingItem?.activeRoutePatch || { view: "ongoing", platform: platform.key },
     };
   }
@@ -481,7 +481,7 @@ export function MainNavigationDrawer({
       key: platform.key,
       label: platform.label,
       platform,
-      leafPatch: getFirstNavigationItem(children)?.routePatch || { view: "ongoing", platform: platform.key, window: "7d" },
+      leafPatch: getFirstNavigationItem(children)?.routePatch || { view: "ongoing", platform: platform.key, metric: "playback" },
       hasSubmenu: true,
       children,
     };

@@ -207,6 +207,7 @@ export const TOOL_ROUTE_QUERY_PARAMS = {
   q: "q",
   platform: "platform",
   window: "window",
+  metric: "metric",
   category: "category",
   rank: "rank",
   cv: "cv",
@@ -308,6 +309,10 @@ export function normalizeOngoingWindow(value) {
   return ["3d", "7d", "30d"].includes(value) ? value : "7d";
 }
 
+export function normalizeOngoingMetric(value) {
+  return ["playback", "secondary", "paid-id"].includes(value) ? value : "playback";
+}
+
 export function normalizeToolRouteState(routeState = {}, options = {}) {
   const view = normalizeToolView(routeState.view, options);
   return {
@@ -318,7 +323,8 @@ export function normalizeToolRouteState(routeState = {}, options = {}) {
       : view === "search"
         ? normalizeSearchRoutePlatform(routeState.platform)
       : normalizeToolPlatform(routeState.platform),
-    window: normalizeOngoingWindow(routeState.window),
+    window: "7d",
+    metric: normalizeOngoingMetric(routeState.metric),
     category: String(routeState.category || "").trim(),
     rank: String(routeState.rank || "").trim(),
     cv: String(routeState.cv || "").replace(/\s+/g, " ").trim(),
@@ -335,6 +341,7 @@ const TOOL_ROUTE_STATE_COMPARISON_KEYS = [
   "q",
   "platform",
   "window",
+  "metric",
   "category",
   "rank",
   "cv",
@@ -366,6 +373,7 @@ export function readToolRouteStateFromLocation(locationLike, options = {}) {
       q: params.get(TOOL_ROUTE_QUERY_PARAMS.q),
       platform: params.get(TOOL_ROUTE_QUERY_PARAMS.platform),
       window: params.get(TOOL_ROUTE_QUERY_PARAMS.window),
+      metric: params.get(TOOL_ROUTE_QUERY_PARAMS.metric),
       category: params.get(TOOL_ROUTE_QUERY_PARAMS.category),
       rank: params.get(TOOL_ROUTE_QUERY_PARAMS.rank),
       cv: params.get(TOOL_ROUTE_QUERY_PARAMS.cv),
@@ -383,6 +391,7 @@ function deleteToolRouteDetailParams(params) {
   params.delete(TOOL_ROUTE_QUERY_PARAMS.q);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.platform);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.window);
+  params.delete(TOOL_ROUTE_QUERY_PARAMS.metric);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.category);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.rank);
   params.delete(TOOL_ROUTE_QUERY_PARAMS.cv);
@@ -417,11 +426,11 @@ export function buildToolRouteUrl(locationLike, routeState = {}, options = {}) {
     params.set(TOOL_ROUTE_QUERY_PARAMS.q, nextState.q);
     params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
   } else if (nextState.view === "ongoing") {
-    if (nextState.platform === "missevan" && nextState.window === "7d") {
-      deleteToolRouteDetailParams(params);
-    } else {
+    if (nextState.platform !== "missevan") {
       params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
-      params.set(TOOL_ROUTE_QUERY_PARAMS.window, nextState.window);
+    }
+    if (nextState.metric !== "playback") {
+      params.set(TOOL_ROUTE_QUERY_PARAMS.metric, nextState.metric);
     }
   } else if (nextState.view === "ranks") {
     params.set(TOOL_ROUTE_QUERY_PARAMS.platform, nextState.platform);
@@ -480,7 +489,7 @@ export function buildOngoingNavigationMenu() {
     routePatch: {
       view: "ongoing",
       platform: platform.key,
-      window: "7d",
+      metric: "playback",
     },
     activeRoutePatch: {
       view: "ongoing",

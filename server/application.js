@@ -61,6 +61,7 @@ import {
   isCvRankTrendAggregateSnapshot,
   isRankTrendAggregateSnapshot,
   normalizeRankTrendDates,
+  resolveRankTrendWindowEndDate,
 } from "../shared/ranksTrendUtils.js";
 import {
   buildWeeklyPlaybackTrendResponse,
@@ -380,8 +381,8 @@ const rankTrendAggregateCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES 
 const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const RANKS_RESPONSE_SCHEMA_VERSION = 6;
-const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 7;
-const ONGOING_RESPONSE_SCHEMA_VERSION = 4;
+const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 8;
+const ONGOING_RESPONSE_SCHEMA_VERSION = 6;
 
 function getFiniteNumberEnv(name, fallbackValue) {
   const rawValue = process.env[name];
@@ -1891,7 +1892,6 @@ function normalizeRanksMetaResource(section, key, fallbackToSection = false) {
     updatedAt: normalizeRanksMetaUpdatedAt(resource) || fallbackUpdatedAt,
     publishedAt:
       normalizeTextValue(resource?.publishedAt ?? resource?.published_at) ||
-      normalizeRanksMetaUpdatedAt(resource) ||
       fallbackPublishedAt,
   };
 }
@@ -2295,6 +2295,25 @@ export function buildStatsTaskKeyResultText(taskType, result = null) {
 
 export function buildUserActionKeywordText(action, fields = {}) {
   const normalizedAction = normalizeTextValue(action);
+  if (normalizedAction === "ongoing_metric_change") {
+    const metricLabels = {
+      playback: "播放量",
+      secondary: fields.platform === "manbo" ? "付费/收听" : "追剧",
+      "paid-id": "付费ID",
+    };
+    const previousLabel = metricLabels[normalizeTextValue(fields.previousMetric)];
+    const nextLabel = metricLabels[normalizeTextValue(fields.metric)];
+    return previousLabel && nextLabel
+      ? `连载中指标：${previousLabel}→${nextLabel}`
+      : "";
+  }
+  if (normalizedAction === "share_image_generate") {
+    const sourceLabels = { ongoing: "连载中", ranks: "榜单" };
+    const sourceLabel = sourceLabels[normalizeTextValue(fields.source)];
+    if (!sourceLabel) return "";
+    const itemCount = Math.max(0, Math.floor(Number(fields.itemCount) || 0));
+    return `${sourceLabel}图片分享（${itemCount}项${fields.isRetry === true ? "，重试" : ""}）`;
+  }
   if (["search", "ranks", "ongoing"].includes(normalizedAction)) {
     return normalizeTextValue(fields.keyword);
   }
@@ -2403,6 +2422,72 @@ export function buildFavoriteUsageLog(payload = {}) {
     ...(source ? { source } : {}),
     success: true,
   };
+}
+
+const USAGE_LOG_PLATFORMS = new Set(["missevan", "manbo"]);
+const ONGOING_USAGE_METRICS = new Set(["playback", "secondary", "paid-id"]);
+
+export function buildOngoingMetricChangeUsageLog(payload = {}) {
+  const platform = normalizeTextValue(payload.platform);
+  const source = normalizeTextValue(payload.source);
+  const previousMetric = normalizeTextValue(payload.previousMetric);
+  const metric = normalizeTextValue(payload.metric);
+  if (
+    !USAGE_LOG_PLATFORMS.has(platform) ||
+    source !== "ongoing" ||
+    !ONGOING_USAGE_METRICS.has(previousMetric) ||
+    !ONGOING_USAGE_METRICS.has(metric) ||
+    previousMetric === metric ||
+    payload.success !== true
+  ) {
+    return null;
+  }
+  return {
+    platform,
+    action: "ongoing_metric_change",
+    source,
+    previousMetric,
+    metric,
+    success: true,
+  };
+}
+
+export function buildShareImageGenerateUsageLog(payload = {}) {
+  const platform = normalizeTextValue(payload.platform);
+  const source = normalizeTextValue(payload.source);
+  const itemCount = Number(payload.itemCount);
+  if (
+    !USAGE_LOG_PLATFORMS.has(platform) ||
+    !["ongoing", "ranks"].includes(source) ||
+    !Number.isSafeInteger(itemCount) ||
+    itemCount < 1 ||
+    itemCount > 100_000 ||
+    typeof payload.isRetry !== "boolean" ||
+    payload.success !== true
+  ) {
+    return null;
+  }
+
+  const entry = {
+    platform,
+    action: "share_image_generate",
+    source,
+    itemCount,
+    isRetry: payload.isRetry,
+    success: true,
+  };
+  if (source === "ongoing") {
+    const metric = normalizeTextValue(payload.metric);
+    if (!ONGOING_USAGE_METRICS.has(metric)) return null;
+    entry.metric = metric;
+  } else {
+    const categoryKey = normalizeTextValue(payload.categoryKey).slice(0, 80);
+    const rankKey = normalizeTextValue(payload.rankKey).slice(0, 80);
+    if (!categoryKey || !rankKey) return null;
+    entry.categoryKey = categoryKey;
+    entry.rankKey = rankKey;
+  }
+  return entry;
 }
 
 export function buildCvProfileOpenUsageLog(payload = {}) {
@@ -4460,8 +4545,27 @@ export async function executeAdminCacheRefresh(request = {}, dependencies = {}) 
   };
 }
 
-function getRankTrendCacheKey(platform, dramaId, latestIndexDate = "", sourceVersion = "") {
-  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}:${latestIndexDate}:${sourceVersion}`;
+async function getNormalRankTrendWindowEndDate(fallbackDate = "") {
+  const cachedPublishedAt = normalizeTextValue(ranksCache.meta?.normal?.publishedAt);
+  try {
+    const { meta } = await readCachedRanksMeta(null, Date.now(), undefined, {
+      ttlMsOverride: RANKS_META_PROBE_FALLBACK_TTL_MS,
+    });
+    return resolveRankTrendWindowEndDate(meta.normal.publishedAt, fallbackDate);
+  } catch (error) {
+    void logger.operation("rank_trend_meta_read_failed", {}, "warn", error);
+    return resolveRankTrendWindowEndDate(cachedPublishedAt, fallbackDate);
+  }
+}
+
+function getRankTrendCacheKey(
+  platform,
+  dramaId,
+  latestIndexDate = "",
+  sourceVersion = "",
+  windowEndDate = ""
+) {
+  return `${RANK_TRENDS_RESPONSE_SCHEMA_VERSION}:${platform}:${dramaId}:${latestIndexDate}:${windowEndDate}:${sourceVersion}`;
 }
 
 function pruneRankTrendCacheEntries(platform, dramaId, activeCacheKey) {
@@ -4688,8 +4792,8 @@ async function getCachedWeeklyRankTrendResponse(platform, dramaId) {
   }
 }
 
-function getOngoingCacheKey(platform, currentMonth) {
-  return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${currentMonth}:${platform}`;
+function getOngoingCacheKey(platform, currentMonth, windowEndDate = "") {
+  return `${ONGOING_RESPONSE_SCHEMA_VERSION}:${currentMonth}:${platform}:${windowEndDate}`;
 }
 
 async function getCachedOngoingResponse(platform, options = {}) {
@@ -4697,9 +4801,11 @@ async function getCachedOngoingResponse(platform, options = {}) {
   const forceRefresh = options?.force === true;
   const now = Date.now();
   const currentMonth = getBeijingYearMonth(now);
-  const cacheKey = getOngoingCacheKey(normalizedPlatform, currentMonth);
+  const windowEndDateHint = await getNormalRankTrendWindowEndDate("");
+  const cacheKey = getOngoingCacheKey(normalizedPlatform, currentMonth, windowEndDateHint);
   const cached = ongoingCache.get(cacheKey);
   if (
+    windowEndDateHint &&
     !forceRefresh &&
     cached?.response &&
     isRankDerivedCacheEntryFresh(cached.loadedAt, now)
@@ -4710,6 +4816,7 @@ async function getCachedOngoingResponse(platform, options = {}) {
     return cached.loadPromise;
   }
 
+  let recoveryCached = cached;
   const loadPromise = (async () => {
     const ongoingIds = await readOngoingIds(normalizedPlatform);
     const infoStore = getInfoStore(normalizedPlatform);
@@ -4721,6 +4828,7 @@ async function getCachedOngoingResponse(platform, options = {}) {
         metricSnapshotsByDate: {},
         createTimesById: {},
         currentMonth,
+        windowEndDate: windowEndDateHint,
         weeklyPlaybackSnapshot: null,
       });
       response.schemaVersion = ONGOING_RESPONSE_SCHEMA_VERSION;
@@ -4747,6 +4855,31 @@ async function getCachedOngoingResponse(platform, options = {}) {
       error.status = 503;
       throw error;
     }
+    const latestIndexDate = normalizeRankTrendDates(aggregateSnapshot).at(-1) || "";
+    const windowEndDate = await getNormalRankTrendWindowEndDate(latestIndexDate);
+    const resolvedCacheKey = getOngoingCacheKey(normalizedPlatform, currentMonth, windowEndDate);
+    const resolvedCached = ongoingCache.get(resolvedCacheKey);
+    if (resolvedCached?.response) {
+      recoveryCached = resolvedCached;
+    }
+    if (resolvedCacheKey !== cacheKey) {
+      if (
+        !forceRefresh &&
+        resolvedCached?.response &&
+        isRankDerivedCacheEntryFresh(resolvedCached.loadedAt, Date.now())
+      ) {
+        if (resolvedCacheKey !== cacheKey && ongoingCache.get(cacheKey)?.loadPromise === loadPromise) {
+          ongoingCache.delete(cacheKey);
+        }
+        return resolvedCached.response;
+      }
+      if (resolvedCached?.loadPromise && resolvedCached.loadPromise !== loadPromise) {
+        if (resolvedCacheKey !== cacheKey && ongoingCache.get(cacheKey)?.loadPromise === loadPromise) {
+          ongoingCache.delete(cacheKey);
+        }
+        return resolvedCached.loadPromise;
+      }
+    }
     const { indexSnapshot, metricSnapshotsByDate } =
       buildMetricSnapshotsFromRankTrendAggregate(aggregateSnapshot, normalizedPlatform);
     const createTimesById = Object.fromEntries(
@@ -4755,6 +4888,22 @@ async function getCachedOngoingResponse(platform, options = {}) {
         normalizeTextValue(infoStore.byDramaId.get(String(id))?.createTime),
       ])
     );
+    const staticDramasById = Object.fromEntries(
+      ongoingIds.map((id) => {
+        const aggregateDrama = aggregateSnapshot?.dramas?.[String(id)];
+        const infoDrama = infoStore.byDramaId.get(String(id));
+        const aggregateName = normalizeTextValue(aggregateDrama?.name ?? aggregateDrama?.title);
+        const infoName = normalizeTextValue(infoDrama?.name ?? infoDrama?.title);
+        const aggregateCover = normalizeTextValue(aggregateDrama?.cover);
+        const infoCover = normalizeTextValue(infoDrama?.cover);
+        return [id, {
+          ...(infoDrama && typeof infoDrama === "object" ? infoDrama : {}),
+          ...(aggregateDrama && typeof aggregateDrama === "object" ? aggregateDrama : {}),
+          ...(aggregateName || infoName ? { name: aggregateName || infoName } : {}),
+          ...(aggregateCover || infoCover ? { cover: aggregateCover || infoCover } : {}),
+        }];
+      })
+    );
     const response = buildOngoingResponse({
       platform: normalizedPlatform,
       ongoingIds,
@@ -4762,16 +4911,21 @@ async function getCachedOngoingResponse(platform, options = {}) {
       metricSnapshotsByDate,
       createTimesById,
       currentMonth,
+      staticDramasById,
+      windowEndDate,
       weeklyPlaybackSnapshot,
     });
     if (response && typeof response === "object") {
       response.schemaVersion = ONGOING_RESPONSE_SCHEMA_VERSION;
     }
-    ongoingCache.set(cacheKey, {
+    ongoingCache.set(resolvedCacheKey, {
       response,
       loadedAt: Date.now(),
       loadPromise: null,
     });
+    if (resolvedCacheKey !== cacheKey && ongoingCache.get(cacheKey)?.loadPromise === loadPromise) {
+      ongoingCache.delete(cacheKey);
+    }
     return response;
   })();
 
@@ -4784,10 +4938,13 @@ async function getCachedOngoingResponse(platform, options = {}) {
   try {
     return await loadPromise;
   } catch (error) {
-    if (cached?.response) {
+    if (ongoingCache.get(cacheKey)?.loadPromise === loadPromise) {
+      ongoingCache.delete(cacheKey);
+    }
+    if (recoveryCached?.response) {
       ongoingCache.set(cacheKey, {
-        response: cached.response,
-        loadedAt: cached.loadedAt,
+        response: recoveryCached.response,
+        loadedAt: recoveryCached.loadedAt,
         loadPromise: null,
       });
     } else {
@@ -5036,16 +5193,20 @@ async function getCachedCvRankTrendResponse(cvName) {
   }
 }
 
-async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "") {
+export async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "") {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedDramaId = String(dramaId ?? "").trim();
 
   if (normalizedPlatform === "missevan" && !isNumericId(normalizedDramaId)) {
+    const windowEndDateHint = await getNormalRankTrendWindowEndDate("");
+    // The publication metadata invalidates the response without reading its entity.
+    // With no publication date, the normal derived-cache expiry still refreshes it.
     const cacheKey = getRankTrendCacheKey(
       normalizedPlatform,
       normalizedDramaId,
       "",
-      MISSEVAN_PEAK_SERIES_TREND_V2_KEY
+      `${MISSEVAN_PEAK_SERIES_TREND_V2_KEY}:${normalizeTextValue(ranksCache.meta?.normal?.updatedAt)}`,
+      windowEndDateHint
     );
     const now = Date.now();
     const cached = rankTrendsCache.get(cacheKey);
@@ -5058,9 +5219,11 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
 
     const loadPromise = (async () => {
       let peakSnapshot = null;
+      let readFailed = false;
       try {
         peakSnapshot = await readPeakRankTrendV2Snapshot(normalizedDramaId);
       } catch (error) {
+        readFailed = true;
         void logger.operation(
           "peak_trend_v2_read_failed",
           { dramaId: normalizedDramaId },
@@ -5068,9 +5231,18 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
           error
         );
       }
-      const response = buildPeakSeriesTrendResponse({
+      const peakIndexDate = normalizeRankTrendDates(peakSnapshot).at(-1) || "";
+      const windowEndDate = windowEndDateHint || peakIndexDate;
+      const response = readFailed ? {
+        success: false,
+        status: 503,
+        platform: normalizedPlatform,
+        id: normalizedDramaId,
+        message: "Rank trends are unavailable",
+      } : buildPeakSeriesTrendResponse({
         id: normalizedDramaId,
         peakSnapshot,
+        windowEndDate,
       });
       if (response && typeof response === "object") {
         response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
@@ -5082,6 +5254,10 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
           loadPromise: null,
         });
         return cached.response;
+      }
+      if (response?.status === 503) {
+        rankTrendsCache.delete(cacheKey);
+        return response;
       }
       if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
         rankTrendsCache.set(cacheKey, {
@@ -5165,6 +5341,7 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
   const hasUsableAggregate = isRankTrendAggregateSnapshot(aggregateSnapshot, normalizedPlatform);
   const aggregateDates = hasUsableAggregate ? normalizeRankTrendDates(aggregateSnapshot) : [];
   const latestIndexDate = aggregateDates.at(-1) || "";
+  const windowEndDate = await getNormalRankTrendWindowEndDate(latestIndexDate);
   const aggregateSourceVersion = hasUsableAggregate
     ? String(aggregateSnapshot?.updated_at ?? aggregateSnapshot?.updatedAt ?? "").trim()
     : "unavailable";
@@ -5172,7 +5349,8 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
     normalizedPlatform,
     normalizedDramaId,
     latestIndexDate,
-    aggregateSourceVersion
+    aggregateSourceVersion,
+    windowEndDate
   );
   const now = Date.now();
   const cached = rankTrendsCache.get(cacheKey);
@@ -5188,6 +5366,7 @@ async function getCachedRankTrendResponse(platform, dramaId, requestedKind = "")
       platform: normalizedPlatform,
       id: normalizedDramaId,
       aggregateSnapshot,
+      windowEndDate,
     });
     const lastRank = aggregateSnapshot?.dramas?.[normalizedDramaId]?.lastRank;
     if (response?.success && lastRank?.date && Array.isArray(lastRank?.ranks)) {
@@ -11863,6 +12042,30 @@ app.post("/usage-log", async (req, res) => {
         return res.status(400).json({
           success: false,
           message: "Invalid trend usage log payload",
+        });
+      }
+      await writeUsageLog(entry);
+      return res.json({ success: true });
+    }
+
+    if (action === "ongoing_metric_change") {
+      const entry = buildOngoingMetricChangeUsageLog(payload);
+      if (!entry) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid ongoing metric usage log payload",
+        });
+      }
+      await writeUsageLog(entry);
+      return res.json({ success: true });
+    }
+
+    if (action === "share_image_generate") {
+      const entry = buildShareImageGenerateUsageLog(payload);
+      if (!entry) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid share image usage log payload",
         });
       }
       await writeUsageLog(entry);

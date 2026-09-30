@@ -72,6 +72,68 @@ function normalizeDateKey(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : "";
 }
 
+function isValidDateKey(value) {
+  const normalized = normalizeDateKey(value);
+  if (!normalized) {
+    return false;
+  }
+  const [year, month, day] = normalized.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function formatDateKeyFromTimestamp(value, timeZone = "Asia/Shanghai") {
+  const numericValue = typeof value === "number"
+    ? value
+    : /^\d+(?:\.\d+)?$/.test(String(value ?? "").trim())
+      ? Number(value)
+      : NaN;
+  const timestamp = Number.isFinite(numericValue)
+    ? numericValue < 1e12
+      ? numericValue * 1000
+      : numericValue
+    : Date.parse(String(value ?? "").trim());
+  if (!Number.isFinite(timestamp)) {
+    return "";
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(timestamp));
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    return normalizeDateKey(`${year}-${month}-${day}`);
+  } catch (_) {
+    return "";
+  }
+}
+
+export function resolveRankTrendWindowEndDate(publishedAt, fallbackDate = "") {
+  const normalizedPublishedAt = normalizeDateKey(publishedAt);
+  const fallback = normalizeDateKey(fallbackDate);
+  if (normalizedPublishedAt) {
+    return isValidDateKey(normalizedPublishedAt)
+      ? normalizedPublishedAt
+      : isValidDateKey(fallback)
+        ? fallback
+        : "";
+  }
+  const publishedAtText = String(publishedAt ?? "").trim();
+  const publishedDatePrefix = publishedAtText.match(/^(\d{4}-\d{2}-\d{2})(?:$|[T\s])/i)?.[1];
+  if (publishedDatePrefix && !isValidDateKey(publishedDatePrefix)) {
+    return isValidDateKey(fallback) ? fallback : "";
+  }
+  return formatDateKeyFromTimestamp(publishedAt) || (isValidDateKey(fallback) ? fallback : "");
+}
+
 function parseDateKey(value) {
   const normalized = normalizeDateKey(value);
   if (!normalized) {
@@ -123,6 +185,28 @@ export function getRankTrendMetricConfigs(platform) {
 function getDramaMetrics(snapshot, id) {
   const dramas = snapshot?.dramas && typeof snapshot.dramas === "object" ? snapshot.dramas : {};
   return dramas[String(id)] || null;
+}
+
+function formatDateKey(timestamp) {
+  const date = new Date(timestamp);
+  return [
+    String(date.getUTCFullYear()).padStart(4, "0"),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function buildCalendarDateKeys(fromDate, toDate) {
+  const fromTime = parseDateKey(fromDate);
+  const toTime = parseDateKey(toDate);
+  if (!Number.isFinite(fromTime) || !Number.isFinite(toTime) || fromTime > toTime) {
+    return [];
+  }
+  const dates = [];
+  for (let timestamp = fromTime; timestamp <= toTime; timestamp += DAY_MS) {
+    dates.push(formatDateKey(timestamp));
+  }
+  return dates;
 }
 
 function normalizeCvName(value) {
@@ -236,7 +320,7 @@ function areTrendMetricValuesEqual(leftValues, rightValues) {
   );
 }
 
-function getRepeatedTrendSampleDateSet({ dates, snapshotsByDate, platform, id }) {
+export function getRepeatedTrendSampleDateSet({ dates, snapshotsByDate, platform, id }) {
   const metricConfigs = getRankTrendMetricConfigs(platform);
   const staleDateSet = new Set();
   let previousValues = null;
@@ -287,12 +371,19 @@ function getRepeatedPeakSeriesSampleDateSet({ dates, samplesByDate }) {
 }
 
 function buildPeakSeriesMetric(config, history, rangeHistory = history) {
-  const range = getMetricHistoryRange(rangeHistory, (sample) =>
-    normalizeFiniteNumber(sample?.[config.key])
+  const firstPoint = rangeHistory.find((sample) =>
+    normalizeFiniteNumber(sample?.[config.key]) != null
   );
-  const fromValue = range.fromValue;
-  const toValue = range.toValue;
-  const available = range.hasComparableRange;
+  const lastPoint = rangeHistory.at(-1);
+  const fromValue = normalizeFiniteNumber(firstPoint?.[config.key]);
+  const toValue = normalizeFiniteNumber(lastPoint?.[config.key]);
+  const available = Boolean(
+    firstPoint &&
+      lastPoint &&
+      firstPoint !== lastPoint &&
+      fromValue != null &&
+      toValue != null
+  );
   const delta = available ? toValue - fromValue : null;
   const deltaPercent = available && fromValue !== 0 ? delta / fromValue : null;
 
@@ -317,16 +408,14 @@ function buildPeakSeriesMetric(config, history, rangeHistory = history) {
   };
 }
 
-function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesByDate, staleDateSet }) {
-  const latestTime = parseDateKey(latestDate);
+function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, windowEndDate, samplesByDate, staleDateSet }) {
+  const resolvedWindowEndDate = resolveRankTrendWindowEndDate(windowEndDate, latestDate);
+  const latestTime = parseDateKey(resolvedWindowEndDate);
   const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
-  const preWindowTime = earliestAllowedTime - DAY_MS;
-  const preWindowDate = dates.find((date) => parseDateKey(date) === preWindowTime) || "";
-  const windowDates = dates.filter((date) => {
-    const time = parseDateKey(date);
-    return Number.isFinite(time) && time >= earliestAllowedTime && time <= latestTime;
-  });
-  const historyDates = preWindowDate ? [preWindowDate, ...windowDates] : windowDates;
+  const windowStartDate = formatDateKey(earliestAllowedTime);
+  const preWindowDate = formatDateKey(earliestAllowedTime - DAY_MS);
+  const windowDates = buildCalendarDateKeys(windowStartDate, resolvedWindowEndDate);
+  const historyDates = [preWindowDate, ...windowDates];
   const history = historyDates.map((date) => {
     const sample = staleDateSet.has(date) ? { date } : samplesByDate[date] || { date };
     return {
@@ -336,37 +425,32 @@ function buildPeakSeriesWindowTrend({ windowConfig, dates, latestDate, samplesBy
     };
   });
   const windowHistory = history.filter((sample) => !sample.isPreWindow);
-  const availableHistory = windowHistory.filter((sample) =>
-    normalizeFiniteNumber(sample?.view_count) != null
+  const availableHistory = windowHistory.filter((sample) => normalizeFiniteNumber(sample?.view_count) != null);
+  const metrics = PEAK_SERIES_TREND_METRICS.map((config) =>
+    buildPeakSeriesMetric(config, history, windowHistory)
   );
 
-  if (availableHistory.length < 2) {
+  if (availableHistory.length < 2 || metrics.every((metric) => !metric.available)) {
     return withGeneratedAt({
       key: windowConfig.key,
       label: windowConfig.label,
       days: windowConfig.days,
-      fromDate: availableHistory[0]?.date || "",
-      toDate: availableHistory.at(-1)?.date || "",
+      fromDate: windowStartDate,
+      toDate: resolvedWindowEndDate,
       insufficientData: true,
-      metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
-        buildPeakSeriesMetric(config, history, windowHistory)
-      ),
+      metrics,
     }, availableHistory.at(-1));
   }
 
-  const fromSample = availableHistory[0];
-  const toSample = availableHistory.at(-1);
   return withGeneratedAt({
     key: windowConfig.key,
     label: windowConfig.label,
     days: windowConfig.days,
-    fromDate: fromSample.date,
-    toDate: toSample.date,
+    fromDate: windowStartDate,
+    toDate: resolvedWindowEndDate,
     insufficientData: false,
-    metrics: PEAK_SERIES_TREND_METRICS.map((config) =>
-      buildPeakSeriesMetric(config, history, windowHistory)
-    ),
-  }, toSample);
+    metrics,
+  }, availableHistory.at(-1));
 }
 
 function buildPeakSeriesRankHistory(samples) {
@@ -895,15 +979,23 @@ function buildAggregateListSnapshotsByDate(aggregateSnapshot, platform, id) {
 }
 
 function buildMetric(config, history, rangeHistory = history) {
-  const range = getMetricHistoryRange(rangeHistory, (point) =>
-    normalizeFiniteNumber(point.drama?.[config.key])
+  const firstPoint = rangeHistory.find((point) =>
+    normalizeFiniteNumber(point.drama?.[config.key]) != null
   );
-  const latestMetricValue = rangeHistory.at(-1)?.drama?.[config.key];
+  const latestPoint = rangeHistory.at(-1);
+  const fromValue = normalizeFiniteNumber(firstPoint?.drama?.[config.key]);
+  const latestMetricValue = latestPoint?.drama?.[config.key];
   const currentCaptureSkipped =
     config.key === "danmaku_uid_count" && isSkippedDanmakuMetricValue(latestMetricValue);
-  const fromValue = range.fromValue;
-  const toValue = currentCaptureSkipped ? null : range.toValue;
-  const available = !currentCaptureSkipped && range.hasComparableRange;
+  const toValue = currentCaptureSkipped ? null : normalizeFiniteNumber(latestMetricValue);
+  const available = Boolean(
+    !currentCaptureSkipped &&
+      firstPoint &&
+      latestPoint &&
+      firstPoint !== latestPoint &&
+      fromValue != null &&
+      toValue != null
+  );
   const delta = available ? toValue - fromValue : null;
   const deltaPercent = available && fromValue !== 0 ? delta / fromValue : null;
 
@@ -928,16 +1020,14 @@ function buildMetric(config, history, rangeHistory = history) {
   };
 }
 
-function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, platform, id, staleDateSet }) {
-  const latestTime = parseDateKey(latestDate);
+function buildWindowTrend({ windowConfig, dates, latestDate, windowEndDate, snapshotsByDate, platform, id, staleDateSet }) {
+  const resolvedWindowEndDate = resolveRankTrendWindowEndDate(windowEndDate, latestDate);
+  const latestTime = parseDateKey(resolvedWindowEndDate);
   const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
-  const preWindowTime = earliestAllowedTime - DAY_MS;
-  const preWindowDate = dates.find((date) => parseDateKey(date) === preWindowTime) || "";
-  const windowDates = dates.filter((date) => {
-    const time = parseDateKey(date);
-    return Number.isFinite(time) && time >= earliestAllowedTime && time <= latestTime;
-  });
-  const historyDates = preWindowDate ? [preWindowDate, ...windowDates] : windowDates;
+  const windowStartDate = formatDateKey(earliestAllowedTime);
+  const preWindowDate = formatDateKey(earliestAllowedTime - DAY_MS);
+  const windowDates = buildCalendarDateKeys(windowStartDate, resolvedWindowEndDate);
+  const historyDates = [preWindowDate, ...windowDates];
   const history = historyDates
     .map((date) => ({
       date,
@@ -947,33 +1037,30 @@ function buildWindowTrend({ windowConfig, dates, latestDate, snapshotsByDate, pl
   const windowHistory = history.filter((point) => !point.isPreWindow);
   const availableHistory = windowHistory.filter((point) => point.drama);
 
-  if (availableHistory.length < 2) {
+  const metrics = getRankTrendMetricConfigs(platform).map((config) =>
+    buildMetric(config, history, windowHistory)
+  );
+  if (availableHistory.length < 2 || metrics.every((metric) => !metric.available)) {
     return withGeneratedAt({
       key: windowConfig.key,
       label: windowConfig.label,
       days: windowConfig.days,
-      fromDate: availableHistory[0]?.date || "",
-      toDate: availableHistory.at(-1)?.date || "",
+      fromDate: windowStartDate,
+      toDate: resolvedWindowEndDate,
       insufficientData: true,
-      metrics: getRankTrendMetricConfigs(platform).map((config) =>
-        buildMetric(config, history, windowHistory)
-      ),
+      metrics,
     }, availableHistory.at(-1)?.drama);
   }
 
-  const fromPoint = availableHistory[0];
-  const toPoint = availableHistory.at(-1);
   return withGeneratedAt({
     key: windowConfig.key,
     label: windowConfig.label,
     days: windowConfig.days,
-    fromDate: fromPoint.date,
-    toDate: toPoint.date,
+    fromDate: windowStartDate,
+    toDate: resolvedWindowEndDate,
     insufficientData: false,
-    metrics: getRankTrendMetricConfigs(platform).map((config) =>
-      buildMetric(config, history, windowHistory)
-    ),
-  }, toPoint.drama);
+    metrics,
+  }, availableHistory.at(-1)?.drama);
 }
 
 export function buildRankTrendResponse({
@@ -982,6 +1069,7 @@ export function buildRankTrendResponse({
   indexSnapshot,
   metricSnapshotsByDate,
   listSnapshotsByDate,
+  windowEndDate,
 } = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedId = String(id ?? "").trim();
@@ -994,7 +1082,8 @@ export function buildRankTrendResponse({
     };
   }
 
-  const dates = normalizeRankTrendDates(indexSnapshot).filter((date) =>
+  const indexDates = normalizeRankTrendDates(indexSnapshot);
+  const dates = indexDates.filter((date) =>
     metricSnapshotsByDate?.[date]
   );
   const metricDates = dates.filter((date) =>
@@ -1020,6 +1109,10 @@ export function buildRankTrendResponse({
   const latestDate =
     [...metricDates].reverse().find((date) => !staleDateSet.has(date)) ||
     metricDates.at(-1);
+  const resolvedWindowEndDate = resolveRankTrendWindowEndDate(
+    windowEndDate,
+    indexDates.at(-1) || metricDates.at(-1)
+  );
   const latestDrama = getDramaMetrics(metricSnapshotsByDate[latestDate], normalizedId);
   return {
     success: true,
@@ -1028,7 +1121,8 @@ export function buildRankTrendResponse({
     id: normalizedId,
     name: String(latestDrama?.name ?? "").trim(),
     latestDate,
-    rankHistoryLatestDate: dates.at(-1) || "",
+    windowEndDate: resolvedWindowEndDate,
+    rankHistoryLatestDate: indexDates.at(-1) || "",
     rankHistory: buildRankHistory(dates, listSnapshotsByDate, normalizedId),
     windows: Object.fromEntries(
       TREND_WINDOWS.map((windowConfig) => [
@@ -1037,6 +1131,7 @@ export function buildRankTrendResponse({
           windowConfig,
           dates,
           latestDate,
+          windowEndDate: resolvedWindowEndDate,
           snapshotsByDate: metricSnapshotsByDate,
           platform: normalizedPlatform,
           id: normalizedId,
@@ -1051,6 +1146,7 @@ export function buildAggregatedRankTrendResponse({
   platform,
   id,
   aggregateSnapshot,
+  windowEndDate,
 } = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedId = String(id ?? "").trim();
@@ -1078,12 +1174,14 @@ export function buildAggregatedRankTrendResponse({
       normalizedPlatform,
       normalizedId
     ),
+    windowEndDate,
   });
 }
 
 export function buildPeakSeriesTrendResponse({
   id,
   peakSnapshot,
+  windowEndDate,
 } = {}) {
   const normalizedId = String(id ?? "").trim();
   if (!normalizedId) {
@@ -1123,6 +1221,10 @@ export function buildPeakSeriesTrendResponse({
   const latestSample =
     [...samples].reverse().find((sample) => !staleDateSet.has(sample.date)) ||
     samples.at(-1);
+  const resolvedWindowEndDate = resolveRankTrendWindowEndDate(
+    windowEndDate,
+    dates.at(-1) || latestSample.date
+  );
   const rankHistory = buildPeakSeriesRankHistory(samples);
   const lastRank = matchedSeries.record?.lastRank;
   if (
@@ -1141,6 +1243,7 @@ export function buildPeakSeriesTrendResponse({
     name: `系列：${seriesName}`,
     dramaIds: normalizeStringIdList(matchedSeries.record?.dramaIds),
     latestDate: latestSample.date,
+    windowEndDate: resolvedWindowEndDate,
     rankHistoryLatestDate: dates.at(-1) || "",
     dailyViewDelta: getPeakSeriesDailyViewDelta(matchedSeries.record),
     rankHistory,
@@ -1151,6 +1254,7 @@ export function buildPeakSeriesTrendResponse({
           windowConfig,
           dates,
           latestDate: latestSample.date,
+          windowEndDate: resolvedWindowEndDate,
           samplesByDate,
           staleDateSet,
         }),

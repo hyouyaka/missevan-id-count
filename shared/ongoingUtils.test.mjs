@@ -8,9 +8,13 @@ import {
   isOngoingNewDrama,
   isOngoingEmptyPaidDanmakuMetric,
   normalizeOngoingIdList,
+  sortOngoingItemsByMetricDelta,
   sortOngoingItemsByWindowDelta,
 } from "./ongoingUtils.js";
-import { buildMetricSnapshotsFromRankTrendAggregate } from "./ranksTrendUtils.js";
+import {
+  buildMetricSnapshotsFromRankTrendAggregate,
+  buildRankTrendResponse,
+} from "./ranksTrendUtils.js";
 
 const sampleIndex = {
   dates: ["2026-04-01", "2026-04-26", "2026-04-29"],
@@ -72,7 +76,7 @@ test("ongoing CV filtering uses immediate OR matching without reordering source 
   assert.deepEqual(filterOngoingItemsByCvNames(items, new Set(["不存在"])), []);
 });
 
-test("buildOngoingResponse filters listed dramas and computes window deltas", () => {
+test("buildOngoingResponse keeps listed dramas when the current snapshot is missing", () => {
   const response = buildOngoingResponse({
     platform: "missevan",
     ongoingIds: ["101", "404", "202"],
@@ -119,15 +123,19 @@ test("buildOngoingResponse filters listed dramas and computes window deltas", ()
   assert.equal(response.success, true);
   assert.equal(response.platform, "missevan");
   assert.equal(response.latestDate, "2026-04-29");
-  assert.equal(response.items.length, 2);
-  assert.deepEqual(response.items.map((item) => item.id), ["101", "202"]);
+  assert.equal(response.items.length, 3);
+  assert.deepEqual(response.items.map((item) => item.id), ["101", "404", "202"]);
   assert.equal(response.items[0].name, "四面佛");
   assert.equal(response.items[0].payment_label, "付费");
-  assert.equal(response.items[1].payment_label, "会员");
+  assert.equal(response.items[2].payment_label, "会员");
   assert.equal(response.items[0].main_cv_text, "袁铭喆，赵成晨");
   assert.equal(response.items[0].windows["3d"].metrics.view_count.delta, 400);
   assert.equal(response.items[0].windows["30d"].metrics.view_count.delta, 900);
   assert.equal(response.items[0].windows["3d"].metrics.subscription_num.label, "追剧人数");
+  assert.equal(response.items[1].name, "404");
+  assert.equal(response.items[1].metrics.view_count.value, null);
+  assert.equal(response.items[1].windows["7d"].metrics.view_count.delta, null);
+  assert.equal(response.items[1].windows["7d"].metrics.view_count.available, false);
 });
 
 test("buildOngoingResponse accepts metric snapshots converted from rank trend aggregate", () => {
@@ -179,6 +187,158 @@ test("buildOngoingResponse accepts metric snapshots converted from rank trend ag
   assert.equal(response.items[0].payment_label, "付费");
   assert.equal(response.items[0].windows["3d"].metrics.view_count.delta, 400);
   assert.equal(response.items[0].metrics.subscription_num.value, 50);
+});
+
+test("buildOngoingResponse anchors the current day and preserves static metadata without a current sample", () => {
+  const id = "90878";
+  const response = buildOngoingResponse({
+    platform: "missevan",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-06-08", "2026-06-10"] },
+    windowEndDate: "2026-06-10",
+    staticDramasById: {
+      [id]: {
+        name: "静态剧名",
+        cover: "https://example.com/static.jpg",
+        main_cvs: ["甲"],
+        payment_label: "付费",
+      },
+    },
+    createTimesById: { [id]: "2026.01" },
+    currentMonth: "2026.06",
+    metricSnapshotsByDate: {
+      "2026-06-08": {
+        dramas: {
+          [id]: {
+            name: "旧剧名",
+            view_count: 100,
+            danmaku_uid_count: 10,
+            subscription_num: 20,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.latestDate, "2026-06-10");
+  assert.equal(response.windowEndDate, "2026-06-10");
+  assert.equal(response.items.length, 1);
+  assert.equal(response.items[0].name, "静态剧名");
+  assert.equal(response.items[0].cover, "https://example.com/static.jpg");
+  assert.deepEqual(response.items[0].main_cvs, ["甲"]);
+  assert.equal(response.items[0].metrics.view_count.value, null);
+  for (const windowKey of ["3d", "7d", "30d"]) {
+    const window = response.items[0].windows[windowKey];
+    assert.equal(window.toDate, "2026-06-10");
+    assert.equal(window.metrics.view_count.toValue, null);
+    assert.equal(window.metrics.view_count.delta, null);
+    assert.equal(window.metrics.view_count.available, false);
+  }
+});
+
+test("buildOngoingResponse keeps other current metrics when one field is missing", () => {
+  const id = "90878";
+  const response = buildOngoingResponse({
+    platform: "missevan",
+    ongoingIds: [id],
+    indexSnapshot: { dates: ["2026-06-07", "2026-06-10"] },
+    windowEndDate: "2026-06-10",
+    metricSnapshotsByDate: {
+      "2026-06-07": {
+        dramas: {
+          [id]: { view_count: 100, danmaku_uid_count: 10, subscription_num: 20 },
+        },
+      },
+      "2026-06-10": {
+        dramas: {
+          [id]: { name: "当前剧", view_count: 140, danmaku_uid_count: 15, subscription_num: null },
+        },
+      },
+    },
+  });
+
+  const item = response.items[0];
+  assert.equal(item.metrics.view_count.value, 140);
+  assert.equal(item.metrics.subscription_num.value, null);
+  assert.equal(item.windows["3d"].metrics.view_count.delta, 40);
+  assert.equal(item.windows["3d"].metrics.view_count.available, true);
+  assert.equal(item.windows["3d"].metrics.subscription_num.delta, null);
+  assert.equal(item.windows["3d"].metrics.subscription_num.available, false);
+});
+
+test("buildOngoingResponse matches rank trend stale-sample handling for repeated current snapshots", () => {
+  const id = "90878";
+  const repeatedDrama = {
+    name: "重复剧",
+    view_count: 100,
+    danmaku_uid_count: 10,
+    subscription_num: 20,
+  };
+  const indexSnapshot = {
+    dates: ["2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10"],
+  };
+  const metricSnapshotsByDate = {
+    "2026-06-07": { dramas: { [id]: repeatedDrama } },
+    "2026-06-08": { dramas: { [id]: { ...repeatedDrama } } },
+    "2026-06-09": { dramas: { [id]: { ...repeatedDrama } } },
+    "2026-06-10": { dramas: { [id]: { ...repeatedDrama } } },
+  };
+  const trend = buildRankTrendResponse({
+    platform: "missevan",
+    id,
+    indexSnapshot,
+    metricSnapshotsByDate,
+    windowEndDate: "2026-06-10",
+  });
+  const ongoing = buildOngoingResponse({
+    platform: "missevan",
+    ongoingIds: [id],
+    indexSnapshot,
+    metricSnapshotsByDate,
+    windowEndDate: "2026-06-10",
+  });
+
+  assert.equal(trend.latestDate, "2026-06-07");
+  assert.equal(trend.windows["3d"].metrics.find((metric) => metric.key === "view_count").toValue, null);
+  assert.equal(ongoing.items[0].metrics.view_count.value, null);
+  assert.equal(ongoing.items[0].metrics.subscription_num.value, null);
+  assert.equal(ongoing.items[0].metrics.danmaku_uid_count.value, null);
+  assert.equal(ongoing.items[0].windows["3d"].metrics.view_count.delta, null);
+  assert.equal(ongoing.items[0].windows["7d"].metrics.view_count.delta, null);
+  assert.equal(ongoing.items[0].windows["30d"].metrics.view_count.delta, null);
+});
+
+test("buildOngoingResponse treats a repeated sample after a missing date as stale", () => {
+  const id = "90878";
+  const sample = { name: "间断剧", view_count: 200, danmaku_uid_count: 12, subscription_num: 30 };
+  const indexSnapshot = {
+    dates: ["2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10"],
+  };
+  const metricSnapshotsByDate = {
+    "2026-06-07": { dramas: { [id]: sample } },
+    "2026-06-08": { dramas: { [id]: { ...sample } } },
+    "2026-06-09": { dramas: {} },
+    "2026-06-10": { dramas: { [id]: { ...sample } } },
+  };
+  const trend = buildRankTrendResponse({
+    platform: "missevan",
+    id,
+    indexSnapshot,
+    metricSnapshotsByDate,
+    windowEndDate: "2026-06-10",
+  });
+  const ongoing = buildOngoingResponse({
+    platform: "missevan",
+    ongoingIds: [id],
+    indexSnapshot,
+    metricSnapshotsByDate,
+    windowEndDate: "2026-06-10",
+  });
+
+  assert.equal(trend.latestDate, "2026-06-07");
+  assert.equal(trend.windows["3d"].metrics.find((metric) => metric.key === "view_count").toValue, null);
+  assert.equal(ongoing.items[0].metrics.view_count.value, null);
+  assert.equal(ongoing.items[0].windows["3d"].metrics.view_count.available, false);
 });
 
 test("buildOngoingResponse normalizes paystatus payment labels", () => {
@@ -474,7 +634,7 @@ test("buildOngoingResponse hides Manbo pay count when missing or always zero", (
     },
   });
 
-  assert.equal(currentlyMissingPayCountResponse.items[0].metrics.pay_count.visible, false);
+  assert.equal(currentlyMissingPayCountResponse.items[0].metrics.pay_count.visible, true);
 
   const zeroPayCountResponse = buildOngoingResponse({
     platform: "manbo",
@@ -571,4 +731,40 @@ test("sortOngoingItemsByWindowDelta orders playback growth descending", () => {
   ];
 
   assert.deepEqual(sortOngoingItemsByWindowDelta(items, "7d").map((item) => item.id), ["2", "1", "4", "3", "5"]);
+});
+
+test("ongoing sort capsules use the platform metric, put unavailable values last, and tie-break by name", () => {
+  const createItem = (id, name, metrics) => ({
+    id,
+    name,
+    windows: {
+      "7d": {
+        metrics: Object.fromEntries(Object.entries(metrics).map(([key, delta]) => [key, {
+          delta,
+          available: delta != null,
+        }])),
+      },
+    },
+  });
+  const missevanItems = [
+    createItem("1", "猫乙", { view_count: 100, subscription_num: 40, danmaku_uid_count: 90 }),
+    createItem("2", "猫甲", { view_count: 100, subscription_num: 40, danmaku_uid_count: 10 }),
+    createItem("3", "猫丙", { view_count: 10, subscription_num: 5, danmaku_uid_count: 5 }),
+    createItem("4", "猫缺乙", { view_count: null, subscription_num: null, danmaku_uid_count: null }),
+    createItem("5", "猫缺甲", { view_count: null, subscription_num: null, danmaku_uid_count: null }),
+  ];
+
+  assert.deepEqual(sortOngoingItemsByMetricDelta(missevanItems, "missevan", "playback").map((item) => item.id), ["2", "1", "3", "5", "4"]);
+  assert.deepEqual(sortOngoingItemsByMetricDelta(missevanItems, "missevan", "secondary").map((item) => item.id), ["2", "1", "3", "5", "4"]);
+  assert.deepEqual(sortOngoingItemsByMetricDelta(missevanItems, "missevan", "paid-id").map((item) => item.id), ["1", "2", "3", "5", "4"]);
+
+  const manboItems = [
+    createItem("11", "漫乙", { view_count: 10, subscription_num: 999, pay_count: 20, danmaku_uid_count: 4 }),
+    createItem("12", "漫甲", { view_count: 30, subscription_num: 1, pay_count: 80, danmaku_uid_count: 9 }),
+    createItem("13", "漫缺", { view_count: null, subscription_num: null, pay_count: null, danmaku_uid_count: null }),
+  ];
+
+  assert.deepEqual(sortOngoingItemsByMetricDelta(manboItems, "manbo", "playback").map((item) => item.id), ["12", "11", "13"]);
+  assert.deepEqual(sortOngoingItemsByMetricDelta(manboItems, "manbo", "secondary").map((item) => item.id), ["12", "11", "13"]);
+  assert.deepEqual(sortOngoingItemsByMetricDelta(manboItems, "manbo", "paid-id").map((item) => item.id), ["12", "11", "13"]);
 });

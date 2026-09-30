@@ -14,6 +14,7 @@ import {
   PlayCircleIcon,
   RefreshCwIcon,
   ScrollTextIcon,
+  Share2Icon,
   ShoppingCartIcon,
   StarIcon,
   TrendingUpIcon,
@@ -37,6 +38,8 @@ import {
 import { PlatformDramaLink, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { RankWatermark } from "@/app/RankBadge";
+import { ShareImagePreviewDialog } from "@/app/ShareImagePreviewDialog";
+import { buildRanksShareTable, createRanksSharePng } from "@/app/ranksShare";
 import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
 import {
   fetchRankTrendAvailabilityData,
@@ -237,6 +240,23 @@ function RankInfoPopover({ infoText }) {
         <p className="text-muted-foreground">{infoText}</p>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function RankShareButton({ rank, onShare }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      className="size-8 shrink-0"
+      aria-label={`分享${rank?.name || "榜单"}为 PNG`}
+      title="分享榜单为 PNG"
+      disabled={!rank?.items?.length || !onShare}
+      onClick={() => onShare?.(rank)}
+    >
+      <Share2Icon aria-hidden="true" className="size-4" />
+    </Button>
   );
 }
 
@@ -915,6 +935,7 @@ function CvRankItemCard({
 function CvRankColumn({
   rank,
   platform,
+  onShare,
   infoText = "",
   refreshAt = "",
   frontendVersion = "0.0.0",
@@ -925,18 +946,18 @@ function CvRankColumn({
   const rankUpdatedAtText = refreshAt ? formatRankUpdatedAt(refreshAt) : "";
   return (
     <section className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)]">
-      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h2 className="inline-flex items-center text-base font-semibold leading-6">
-            <span>{rank.name}</span>
+      <div className="mb-3 flex flex-col gap-1">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <h2 className="flex min-w-0 items-center text-base font-semibold leading-6">
+            <span className="min-w-0 break-words">{rank.name}</span>
             <RankInfoPopover infoText={infoText} />
           </h2>
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
-            <span>{rank.items.length} 位 CV</span>
-            {rankUpdatedAtText ? <span className="text-right sm:hidden">更新：{rankUpdatedAtText}</span> : null}
-          </div>
+          <RankShareButton rank={rank} onShare={onShare} />
         </div>
-        {rankUpdatedAtText ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{rankUpdatedAtText}</div> : null}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>{rank.items.length} 位 CV</span>
+          {rankUpdatedAtText ? <span className="text-right">更新：{rankUpdatedAtText}</span> : null}
+        </div>
       </div>
       {rank.items.length ? (
         <div className="grid gap-3">
@@ -965,6 +986,7 @@ function CvRankColumn({
 function RankColumn({
   rank,
   platform,
+  onShare,
   infoText = "",
   refreshAt = "",
   frontendVersion = "0.0.0",
@@ -983,18 +1005,18 @@ function RankColumn({
   const statisticsPeriodText = formatRankStatisticsPeriod(rank?.statisticsPeriod);
   return (
     <section className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-[var(--shadow-card)]">
-      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h2 className="inline-flex items-center text-base font-semibold leading-6">
-            <span>{rank.name}</span>
+      <div className="mb-3 flex flex-col gap-1">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <h2 className="flex min-w-0 items-center text-base font-semibold leading-6">
+            <span className="min-w-0 break-words">{rank.name}</span>
             <RankInfoPopover infoText={infoText} />
           </h2>
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:block">
-            <span>{rank.items.length} 项</span>
-            {statisticsPeriodText ? <span className="text-right sm:hidden">统计区间：{statisticsPeriodText}</span> : rankUpdatedAtText ? <span className="text-right sm:hidden">更新：{rankUpdatedAtText}</span> : null}
-          </div>
+          <RankShareButton rank={rank} onShare={onShare} />
         </div>
-        {statisticsPeriodText ? <div className="hidden text-right text-xs text-muted-foreground sm:block">统计区间：{statisticsPeriodText}</div> : rankUpdatedAtText ? <div className="hidden text-xs text-muted-foreground sm:block">更新：{rankUpdatedAtText}</div> : null}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>{rank.items.length} 项</span>
+          {statisticsPeriodText ? <span className="text-right">统计区间：{statisticsPeriodText}</span> : rankUpdatedAtText ? <span className="text-right">更新：{rankUpdatedAtText}</span> : null}
+        </div>
       </div>
       {rank.items.length ? (
         <div className="grid gap-3">
@@ -1062,6 +1084,12 @@ export function RanksPanel({
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [showMetricLegend, setShowMetricLegend] = useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [shareStatus, setShareStatus] = useState("idle");
+  const [shareError, setShareError] = useState("");
+  const [sharePreviewUrl, setSharePreviewUrl] = useState("");
+  const [shareTitle, setShareTitle] = useState("");
+  const [shareFileName, setShareFileName] = useState("");
   const [trendEligibility, setTrendEligibility] = useState({
     platform: "",
     lookupKey: "",
@@ -1074,10 +1102,136 @@ export function RanksPanel({
   const [selectedRank, setSelectedRank] = useState(() => String(routeState?.rank || "").trim());
   const loggedRanksRef = useRef(new Set());
   const handleVersionResponseRef = useRef(handleVersionResponse);
+  const shareObjectUrlRef = useRef("");
+  const shareRequestRef = useRef(null);
+  const shareGenerationRef = useRef(0);
 
   useEffect(() => {
     handleVersionResponseRef.current = handleVersionResponse;
   }, [handleVersionResponse]);
+
+  function logUserAction(payload) {
+    try {
+      void fetch(buildVersionedUrl("/usage-log", frontendVersion), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      })
+      .catch((error) => {
+        console.error("Failed to log rank user action", error);
+      });
+    } catch (error) {
+      console.error("Failed to log rank user action", error);
+    }
+  }
+
+  function releaseShareObjectUrl() {
+    const currentUrl = shareObjectUrlRef.current;
+    if (currentUrl) {
+      URL.revokeObjectURL?.(currentUrl);
+      shareObjectUrlRef.current = "";
+    }
+  }
+
+  async function generateShareImage(request = null, isRetry = false) {
+    const currentRequest = request || shareRequestRef.current;
+    if (!currentRequest?.rank?.items?.length) return;
+    logUserAction({
+      platform: currentRequest.platform,
+      action: "share_image_generate",
+      source: "ranks",
+      itemCount: currentRequest.rank.items.length,
+      isRetry,
+      categoryKey: currentRequest.categoryKey,
+      rankKey: currentRequest.rank.key,
+      success: true,
+    });
+    shareRequestRef.current = currentRequest;
+    const generationId = shareGenerationRef.current + 1;
+    shareGenerationRef.current = generationId;
+    releaseShareObjectUrl();
+    setSharePreviewUrl("");
+    setShareError("");
+    setShareStatus("loading");
+    setIsShareDialogOpen(true);
+    const table = buildRanksShareTable(currentRequest);
+    setShareTitle(table.title);
+    setShareFileName(`${table.title.replace(/[\\/:*?"<>|]/g, "-")}.png`);
+    try {
+      const blob = await createRanksSharePng(currentRequest);
+      if (generationId !== shareGenerationRef.current) return;
+      if (!blob) throw new Error("PNG 图片生成失败，请重试。");
+      const objectUrl = URL.createObjectURL(blob);
+      shareObjectUrlRef.current = objectUrl;
+      setSharePreviewUrl(objectUrl);
+      setShareStatus("ready");
+    } catch (error) {
+      if (generationId !== shareGenerationRef.current) return;
+      setShareError(error instanceof Error ? error.message : "图片生成失败，请重试。");
+      setShareStatus("error");
+    }
+  }
+
+  function handleShareRank(rank) {
+    const rankSnapshot = {
+      ...rank,
+      items: (Array.isArray(rank?.items) ? rank.items : []).map((item) => ({
+        ...item,
+        daily_view_delta: item?.daily_view_delta ? { ...item.daily_view_delta } : item?.daily_view_delta,
+        topWorks: Array.isArray(item?.topWorks) ? item.topWorks.map((work) => ({ ...work })) : item?.topWorks,
+        works: Array.isArray(item?.works) ? item.works.slice(0, 3).map((work) => ({ ...work })) : item?.works,
+      })),
+      statisticsPeriod: rank?.statisticsPeriod ? { ...rank.statisticsPeriod } : rank?.statisticsPeriod,
+    };
+    generateShareImage({
+      platform: selectedPlatform,
+      categoryKey: category?.key || selectedCategory,
+      rank: rankSnapshot,
+      updatedAt: rankRefreshAt,
+    });
+  }
+
+  function handleShareOpenChange(open) {
+    if (open) {
+      setIsShareDialogOpen(true);
+      return;
+    }
+    shareGenerationRef.current += 1;
+    shareRequestRef.current = null;
+    releaseShareObjectUrl();
+    setSharePreviewUrl("");
+    setShareError("");
+    setShareStatus("idle");
+    setIsShareDialogOpen(false);
+  }
+
+  function saveShareImage() {
+    if (!sharePreviewUrl) return;
+    const anchor = document.createElement("a");
+    if (typeof anchor.download === "string") {
+      anchor.href = sharePreviewUrl;
+      anchor.download = shareFileName || "ranks-share.png";
+      anchor.rel = "noopener noreferrer";
+      try {
+        anchor.click();
+        return;
+      } catch {
+        // Fall through to opening the generated image in the browser.
+      }
+    }
+    if (typeof window.open === "function") {
+      window.open(sharePreviewUrl, "_blank", "noopener,noreferrer");
+    } else {
+      window.location.assign(sharePreviewUrl);
+    }
+  }
+
+  useEffect(() => () => {
+    shareGenerationRef.current += 1;
+    const currentUrl = shareObjectUrlRef.current;
+    if (currentUrl) URL.revokeObjectURL?.(currentUrl);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1523,6 +1677,7 @@ export function RanksPanel({
                   key={rank.key}
                   platform={selectedPlatform}
                   rank={rank}
+                  onShare={handleShareRank}
                   infoText={rankInfoText}
                   refreshAt={rankRefreshAt}
                   frontendVersion={frontendVersion}
@@ -1537,6 +1692,7 @@ export function RanksPanel({
                   key={rank.key}
                   platform={selectedPlatform}
                   rank={rank}
+                  onShare={handleShareRank}
                   infoText={rankInfoText}
                   refreshAt={rankRefreshAt}
                   frontendVersion={frontendVersion}
@@ -1560,6 +1716,7 @@ export function RanksPanel({
               <CvRankColumn
                 platform={selectedPlatform}
                 rank={activeRank}
+                onShare={handleShareRank}
                 infoText={rankInfoText}
                 refreshAt={rankRefreshAt}
                 frontendVersion={frontendVersion}
@@ -1571,6 +1728,7 @@ export function RanksPanel({
               <RankColumn
                 platform={selectedPlatform}
                 rank={activeRank}
+                onShare={handleShareRank}
                 infoText={rankInfoText}
                 refreshAt={rankRefreshAt}
                 frontendVersion={frontendVersion}
@@ -1589,6 +1747,21 @@ export function RanksPanel({
           </div>
         </>
       ) : null}
+
+      <ShareImagePreviewDialog
+        description="预览当前榜单生成的 PNG 图片，可保存到设备。"
+        error={shareError}
+        fileName={shareFileName}
+        fallbackTitle="分享榜单"
+        imageAlt={shareTitle || "榜单分享图片"}
+        onOpenChange={handleShareOpenChange}
+        onRetry={() => generateShareImage(shareRequestRef.current, true)}
+        onSave={saveShareImage}
+        open={isShareDialogOpen}
+        previewUrl={sharePreviewUrl}
+        status={shareStatus}
+        title={shareTitle}
+      />
     </div>
   );
 }

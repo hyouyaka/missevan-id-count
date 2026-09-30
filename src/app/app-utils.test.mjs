@@ -32,6 +32,7 @@ import {
   getRevenuePaidCountLabel,
   loadPersistedHistoryEntries,
   mergeMissingSearchCardFields,
+  normalizeOngoingMetric,
   normalizeOngoingWindow,
   normalizeStatsHistoryReplay,
   normalizeSearchRouteQuery,
@@ -390,6 +391,7 @@ test("tool route state reader includes detail params with normalized fallbacks",
       q: "",
       platform: "manbo",
       window: "7d",
+      metric: "playback",
       category: "ignored",
       rank: "ignored",
       cv: "",
@@ -405,6 +407,7 @@ test("tool route state reader includes detail params with normalized fallbacks",
     q: "",
     platform: "missevan",
     window: "7d",
+    metric: "playback",
     category: "",
     rank: "",
     cv: "",
@@ -419,6 +422,7 @@ test("tool route state reader includes detail params with normalized fallbacks",
     q: "",
     platform: "missevan",
     window: "7d",
+    metric: "playback",
     category: "",
     rank: "",
     cv: "",
@@ -429,22 +433,37 @@ test("tool route state reader includes detail params with normalized fallbacks",
     sort: "plays_desc",
   });
   assert.equal(normalizeOngoingWindow(undefined), "7d");
+  assert.equal(normalizeOngoingMetric("secondary"), "secondary");
+  assert.equal(normalizeOngoingMetric("bad"), "playback");
+  const legacyWindowRoute = readToolRouteStateFromLocation({
+    search: "?view=ongoing&platform=manbo&window=3d",
+  });
+  assert.equal(legacyWindowRoute.platform, "manbo");
+  assert.equal(legacyWindowRoute.window, "7d");
+  assert.equal(legacyWindowRoute.metric, "playback");
 });
 
 test("tool route URL builder keeps only ongoing route params", () => {
   assert.equal(
     buildToolRouteUrl(
       { pathname: "/", search: "?view=ranks&platform=missevan&category=cv&rank=weekly&foo=bar", hash: "#top" },
-      { view: "ongoing", platform: "manbo", window: "7d" }
+      { view: "ongoing", platform: "manbo", metric: "playback", window: "7d" }
     ),
-    "/?foo=bar&view=ongoing&platform=manbo&window=7d#top"
+    "/?foo=bar&view=ongoing&platform=manbo#top"
   );
   assert.equal(
     buildToolRouteUrl(
       { pathname: "/", search: "?view=search&platform=manbo&window=30d", hash: "" },
-      { view: "ongoing", platform: "missevan", window: "7d" }
+      { view: "ongoing", platform: "missevan", metric: "playback", window: "7d" }
     ),
     "/?view=ongoing"
+  );
+  assert.equal(
+    buildToolRouteUrl(
+      { pathname: "/", search: "?view=ongoing&platform=manbo&window=3d", hash: "" },
+      { view: "ongoing", platform: "manbo", metric: "paid-id" }
+    ),
+    "/?view=ongoing&platform=manbo&metric=paid-id"
   );
 });
 
@@ -463,6 +482,7 @@ test("search route preserves encoded keyword semantics and selected category", (
     q: keyword.trim(),
     platform: "cv",
     window: "7d",
+    metric: "playback",
     category: "",
     rank: "",
     cv: "",
@@ -506,6 +526,7 @@ test("tool route URL builder keeps the encoded CV deep link only on the CV view"
       q: "",
       platform: "none",
       window: "7d",
+      metric: "playback",
       category: "",
       rank: "",
       cv: "路知行",
@@ -541,6 +562,7 @@ test("CV route round-trips release years and JSON-encoded partner names", () => 
     q: "",
     platform: "all",
     window: "7d",
+    metric: "playback",
     category: "",
     rank: "",
     cv: "路知行",
@@ -691,20 +713,20 @@ test("play count context skips dramas without selected episodes", () => {
   assert.equal(context[0].drama_id, "101");
 });
 
-test("ongoing navigation menu exposes platform route patches that default to 7 days", () => {
+test("ongoing navigation menu exposes platform route patches that default to playback sorting", () => {
   assert.deepEqual(buildOngoingNavigationMenu(), [
     {
       key: "missevan",
       label: "猫耳",
       platform: { key: "missevan", label: "猫耳" },
-      routePatch: { view: "ongoing", platform: "missevan", window: "7d" },
+      routePatch: { view: "ongoing", platform: "missevan", metric: "playback" },
       activeRoutePatch: { view: "ongoing", platform: "missevan" },
     },
     {
       key: "manbo",
       label: "漫播",
       platform: { key: "manbo", label: "漫播" },
-      routePatch: { view: "ongoing", platform: "manbo", window: "7d" },
+      routePatch: { view: "ongoing", platform: "manbo", metric: "playback" },
       activeRoutePatch: { view: "ongoing", platform: "manbo" },
     },
   ]);
