@@ -25,6 +25,7 @@ import {
   getBackendVersionFromResponse,
   getDefaultAppConfig,
   isAbortError,
+  MISSEVAN_DESKTOP_ACCESS_HINT,
   selectDramaEpisodesByMode,
 } from "@/app/app-utils";
 import {
@@ -374,10 +375,22 @@ export function DesktopStatisticsView({ initialAppConfig }) {
           ...(platform === "missevan" ? { sound_id_map: soundIdMap } : {}),
         }, "导入作品失败");
         const byId = new Map(extractResponseItems(data).map((item) => [String(item?.id ?? ""), item]));
+        const failedIds = [];
+        let hasAccessDenied = false;
         missingIds.forEach((id) => {
           const result = byId.get(id);
-          if (result?.success && result?.info) mergedDramas.push(normalizeFetchedDrama(result, options.expandImported === true));
+          if (result?.success && result?.info) {
+            mergedDramas.push(normalizeFetchedDrama(result, options.expandImported === true));
+          } else {
+            failedIds.push(id);
+            hasAccessDenied ||= platform === "missevan" && result?.accessDenied === true;
+          }
         });
+        if (hasAccessDenied) {
+          toast.error(MISSEVAN_DESKTOP_ACCESS_HINT);
+        } else if (failedIds.length) {
+          toast.error(`导入作品失败（ID：${failedIds.join("、")}），请稍后重试。`);
+        }
       }
       if (options.selectMode === "all" || options.selectMode === "paid") {
         selectDramaEpisodesByMode(mergedDramas, requestedIds, {
@@ -512,6 +525,7 @@ export function DesktopStatisticsView({ initialAppConfig }) {
       selectMode: "paid",
     });
     const target = String(dramaId);
+    if (!imported.importedIds.includes(target)) return;
     const drama = (imported.dramas || []).find((item) => String(item?.drama?.id) === target);
     const paidEpisodes = (drama?.episodes?.episode || [])
       .filter((episode) => isPaidEpisode(activePlatform, episode) || isMemberEpisode(activePlatform, episode));
@@ -549,7 +563,6 @@ export function DesktopStatisticsView({ initialAppConfig }) {
     setActivePlatform(platform);
     navigation.navigateToolRoute({
       view: "search",
-      q: navigation.toolRouteState.q,
       platform,
     }, { replace: true });
   }

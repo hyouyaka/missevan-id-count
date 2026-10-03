@@ -4,6 +4,14 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.8.5",
+    changes: [
+      "新增作品与 CV 搜索联想，支持作品名和拼音匹配，点击可直接打开对应内容",
+      "优化弹幕统计缓存，提升热门剧集的统计速度",
+      "精简桌面版（Windows），仅保留猫耳／漫播搜索、导入和统计功能，移除收藏、历史、CV、榜单等功能",
+    ],
+  },
+  {
     version: "1.8.4",
     changes: [
       "更新中页面统一显示 7 日增量，支持按播放量、追剧或付费/收听、付费 ID 切换排序",

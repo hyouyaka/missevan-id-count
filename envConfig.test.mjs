@@ -5,6 +5,39 @@ import os from "node:os";
 import path from "node:path";
 
 import { loadLocalEnv } from "./envConfig.js";
+import { createWebsiteLogPolicy } from "./server/websiteLogPolicy.js";
+
+test("local log settings control the website policy and preserve system overrides", async () => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "missevan-log-env-"));
+  const keys = ["HTTP_SUCCESS_LOG_SAMPLE_RATE", "OPERATION_LOG_SLOW_MS"];
+  const previous = keys.map((key) => process.env[key]);
+  try {
+    keys.forEach((key) => { delete process.env[key]; });
+    await fs.writeFile(path.join(projectRoot, ".env"),
+      "HTTP_SUCCESS_LOG_SAMPLE_RATE=0\nOPERATION_LOG_SLOW_MS=1000");
+    await loadLocalEnv({ projectRoot });
+    assert.equal(process.env.HTTP_SUCCESS_LOG_SAMPLE_RATE, "0");
+    assert.equal(process.env.OPERATION_LOG_SLOW_MS, "1000");
+    const policy = createWebsiteLogPolicy();
+    const fast = { category: "operation", level: "info", event: "http_request_completed", httpStatus: 200, durationMs: 999 };
+    const slow = { ...fast, durationMs: 1000 };
+    assert.equal(policy(fast), null);
+    assert.strictEqual(policy(slow), slow);
+
+    process.env.HTTP_SUCCESS_LOG_SAMPLE_RATE = "1";
+    process.env.OPERATION_LOG_SLOW_MS = "2000";
+    await loadLocalEnv({ projectRoot });
+    assert.equal(process.env.HTTP_SUCCESS_LOG_SAMPLE_RATE, "1");
+    assert.equal(process.env.OPERATION_LOG_SLOW_MS, "2000");
+    assert.strictEqual(createWebsiteLogPolicy()(fast), fast);
+  } finally {
+    keys.forEach((key, index) => {
+      if (previous[index] == null) delete process.env[key];
+      else process.env[key] = previous[index];
+    });
+    await fs.rm(projectRoot, { recursive: true, force: true });
+  }
+});
 
 test("loadLocalEnv reads local server env keys from project .env", async () => {
   const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "missevan-env-"));

@@ -4,6 +4,12 @@ function normalizeWhitespace(value) {
     .replace(/\s+/g, " ");
 }
 
+export function getDramaSearchAliases(record) {
+  return [...new Set([record?.aliases, record?.alias].flatMap((value) =>
+    Array.isArray(value) ? value : typeof value === "string" ? [value] : []
+  ).filter((value) => typeof value === "string").map((value) => value.trim()).filter(Boolean))].slice(0, 30);
+}
+
 export function normalizeSearchText(value) {
   return normalizeWhitespace(value)
     .toLowerCase()

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   extractSearchSeasonNumber,
   extractSearchSortKey,
+  getDramaSearchAliases,
   isCompleteSearchTermPrefix,
   isSearchKeywordLongEnough,
   parseMissevanInputToken,
@@ -14,6 +15,13 @@ import {
 test("normalizeSearchText removes common symbols", () => {
   assert.equal(normalizeSearchText("彼得·潘"), normalizeSearchText("彼得潘"));
   assert.equal(normalizeSearchText("A•B・C…D—E"), "abcde");
+});
+
+test("drama aliases support both singular and plural fields without splitting strings", () => {
+  assert.deepEqual(getDramaSearchAliases({ alias: " 天使之城 ", aliases: ["天使之城", "City of Angels", null, ""] }), ["天使之城", "City of Angels"]);
+  assert.deepEqual(getDramaSearchAliases({ alias: ["别名甲"], aliases: "别名乙" }), ["别名乙", "别名甲"]);
+  assert.deepEqual(getDramaSearchAliases({ alias: 3 }), []);
+  assert.equal(getDramaSearchAliases({ aliases: Array.from({ length: 40 }, (_, i) => `别名${i}`) }).length, 30);
 });
 
 test("isSearchKeywordLongEnough requires two Han chars or three normalized non-Han chars", () => {

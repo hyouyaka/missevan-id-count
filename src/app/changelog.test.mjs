@@ -60,8 +60,19 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.8.4", () => {
-  assert.equal(packageJson.version, "1.8.4");
+test("package version is 1.8.5", () => {
+  assert.equal(packageJson.version, "1.8.5");
+});
+
+test("latest changelog contains the approved 1.8.5 updates", () => {
+  assert.deepEqual(CHANGELOG_ENTRIES[0], {
+    version: "1.8.5",
+    changes: [
+      "新增作品与 CV 搜索联想，支持作品名和拼音匹配，点击可直接打开对应内容",
+      "优化弹幕统计缓存，提升热门剧集的统计速度",
+      "精简桌面版（Windows），仅保留猫耳／漫播搜索、导入和统计功能，移除收藏、历史、CV、榜单等功能",
+    ],
+  });
 });
 
 test("changelog contains the 1.8.4 ongoing, share image, and trend updates", () => {

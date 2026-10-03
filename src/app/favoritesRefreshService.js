@@ -221,10 +221,12 @@ async function runStatsTask({ platform, taskType, payload, frontendVersion, hand
         ? "统计连接持续失败，服务器已确认取消该任务。"
         : "统计连接持续失败，已停止本地等待；服务器未确认任务已取消。";
     } else if (signal?.aborted) {
-      error.serverCancelAttempted = true;
-      error.cancelConfirmed = false;
-      error.message = "收藏刷新已停止；服务器任务取消状态未知。";
+      const cancellationError = new Error("收藏刷新已停止；服务器任务取消状态未知。", { cause: error });
+      cancellationError.name = "AbortError";
+      cancellationError.serverCancelAttempted = true;
+      cancellationError.cancelConfirmed = false;
       void cancelStatsTask(taskId, { frontendVersion });
+      throw cancellationError;
     }
     throw error;
   }

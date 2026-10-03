@@ -10,7 +10,7 @@ export function createRuntimePolicy(desktopApp) {
 }
 
 export function isRemovedDesktopEndpoint(pathname) {
-  return /^\/(?:desktop\/favorites-data|favorites|cv-profile|ranks|ongoing|admin|feedback|usage-log|register-new-drama-ids)(?:\/|$)/.test(pathname);
+  return /^\/(?:desktop\/favorites-data|favorites|cv-profile|search-suggestions|ranks|ongoing|admin|feedback|usage-log|register-new-drama-ids)(?:\/|$)/.test(pathname);
 }
 
 const DESKTOP_LOG_FIELDS = new Set([

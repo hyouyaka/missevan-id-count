@@ -1097,10 +1097,9 @@ export function ToolView({ initialAppConfig }) {
       )
     );
     const manualInput = dramaIds.join("\n");
-    const visibleImportInput = dramaIds.length === 1 ? dramaIds[0] : dramaIds.join(", ");
     const dramaName = String(name ?? "").trim();
     const dramaTitles = normalizeDramaSearchTitles(titles, dramaIds, dramaName);
-    const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result", "cv_profile_open_search_result"].includes(String(usageAction ?? "").trim())
+    const normalizedUsageAction = ["ranks_open_search_result", "ongoing_open_search_result", "cv_profile_open_search_result", "search_suggestion_open_search_result"].includes(String(usageAction ?? "").trim())
       ? String(usageAction).trim()
       : "";
     const normalizedUsageSource = String(usageSource ?? "").trim().slice(0, 40);
@@ -1167,11 +1166,11 @@ export function ToolView({ initialAppConfig }) {
       resetSearchFlow("manbo");
       clearCvSearchResults();
       updateSharedSearchForm({
-        keyword: visibleImportInput,
+        keyword: "",
         manualInput,
       });
       updateSearchFormForPlatform(targetPlatform, {
-        keyword: visibleImportInput,
+        keyword: "",
         manualInput,
       });
       setManualSearchResults(targetPlatform, results, { limit: dramaIds.length, scroll: false });
@@ -2395,6 +2394,9 @@ export function ToolView({ initialAppConfig }) {
             frontendVersion={appConfig.frontendVersion}
             handleVersionResponse={updateVersionStatusFromResponse}
             isDesktopApp={appConfig.desktopApp}
+            onOpenSearchResult={openDramaInSearch}
+            onOpenCv={openCvProfile}
+            suggestionsDisabled={Boolean(searchJumpStatus)}
             onCrossPlatformImport={({ targetPlatform, rawItems, sourcePlatform, emptyResultNotice }) =>
               importRawItemsIntoPlatform(targetPlatform, rawItems, {
                 sourcePlatform,

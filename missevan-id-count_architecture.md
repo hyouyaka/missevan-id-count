@@ -4,7 +4,7 @@ Last updated: 2026-10-03
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.8.4
+- **Version**: 1.8.5
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
   - `server.js` as the stable backend facade, with `server/application.js` providing composition and `server/routes/` holding extracted route groups
@@ -92,6 +92,7 @@ The backend currently exposes these route families.
 
 ### Unified Search and CV APIs
 - `GET /unified-search`: query both platform libraries and return an optional, capped CV category without external CV lookup
+- `GET /search-suggestions`: web-only, library-backed name/CV suggestions (up to five), with no platform search or detail calls; desktop returns JSON 404
 - `GET /cv-profile`: aggregate one canonical CV's library works and latest valid `watchcount:history` point per work
 
 ### Missevan Search and Content APIs
@@ -164,6 +165,13 @@ The library/CV/new-drama flows below describe the web service. Desktop keyword s
 - Exact canonical, alias, full-pinyin, and initial matches can open the CV result category. Profile links use `/tool?view=cv&cv=<name>` and add `cvKey=<profileId>` when a search result has an authoritative identity discriminator; name-only legacy links remain supported.
 - Profile playback never calls platform search, detail, or playback APIs. Each platform performs one cached history batch read, then each work selects its own latest valid point.
 - The profile response exposes per-platform statistics and card-ready works with covers and normalized categories while retaining totals, freshness, and per-work dates for compatibility.
+
+### Search Suggestions
+- Web `SearchPanel` uses an independent hook for 250ms debounce, IME composition, cancellation, a three-second timeout, and stale-response isolation. Single Han characters or two Latin letters can trigger suggestions; IDs, links and compound expressions do not.
+- `server/routes/searchSuggestionRoutes.js` serves names, identifiers, stored drama covers/main-cast names and CV avatars from the two info stores and CV catalog, with a separate 240-request-per-minute limiter. Suggestions do not produce search usage events or call platform search/detail APIs; the UI loads thumbnails through the existing image proxy and preserves their space on failure.
+- `server/services/searchSuggestionService.js` precomputes drama name, `seriesTitle`, optional `alias`/`aliases`, CV name/alias and pinyin tokens when source snapshots change and keeps a 200-entry, 60-second query cache. Exact text, prefix text, contained text, then Latin pinyin matches determine the five candidates; candidates retain the actual title and platform ID, including separate seasons.
+- Clicking a drama suggestion reuses the existing ID-based single-card opening flow; clicking a CV opens its profile with its authoritative identity. Keyboard Enter on a highlighted suggestion only fills the name; the next Enter performs full search.
+- `node scripts/benchmark-search-suggestions.mjs` measures index construction and warm queries against read-only Upstash snapshots without printing credentials or snapshot bodies.
 
 ### New Drama Tracking
 - `POST /register-new-drama-ids` records titles that should become part of future lookups.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { SearchIcon, XIcon } from "lucide-react";
 
 import {
@@ -11,6 +11,8 @@ import {
   normalizeVersion,
 } from "@/app/app-utils";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useSearchSuggestions } from "@/app/useSearchSuggestions";
+import { SearchSuggestionList } from "@/app/SearchSuggestionList";
 
 const searchHelpText = [
   "空格表示 AND ，逗号表示 OR；非单独出现的“广播剧”“有声剧”可被识别为剧集类型。例如：",
@@ -50,6 +52,9 @@ export function SearchPanel({
   onNotice,
   onSearchCommit,
   onSearchPendingChange,
+  onOpenSearchResult,
+  onOpenCv,
+  suggestionsDisabled = false,
   restoreSearchRequest,
   placeholder = "请输入关键词、ID、分享链接。",
 }) {
@@ -61,6 +66,49 @@ export function SearchPanel({
   const restoreSearchHandlerRef = useRef(null);
   const keywordValue = formState?.keyword ?? "";
   const hasKeyword = String(keywordValue).trim().length > 0;
+  const formRef = useRef(null);
+  const composingRef = useRef(false);
+  const lastCompositionEndRef = useRef(-Infinity);
+  const suggestionOpenPendingRef = useRef(false);
+  const [suggestionOpenPending, setSuggestionOpenPending] = useState(false);
+  const suggestionListId = useId();
+  const suggestions = useSearchSuggestions({
+    keyword: keywordValue,
+    enabled: !isDesktopApp && !isSearchPending && !suggestionOpenPending && !suggestionsDisabled && !searchHelpOpen,
+    frontendVersion,
+    handleVersionResponse,
+  });
+  const closeSuggestions = suggestions.close;
+  useEffect(() => {
+    function handleOutsidePointer(event) {
+      if (!formRef.current?.contains(event.target)) closeSuggestions();
+    }
+    document.addEventListener("pointerdown", handleOutsidePointer);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointer);
+  }, [closeSuggestions]);
+
+  async function openSuggestion(item) {
+    closeSuggestions();
+    if (suggestionOpenPendingRef.current || searchPendingRef.current || suggestionsDisabled) return;
+    blurSearchControl(formRef.current);
+    setKeyword("");
+    suggestionOpenPendingRef.current = true;
+    setSuggestionOpenPending(true);
+    try {
+      if (item.type === "cv") {
+        await onOpenCv?.(item.name, { source: "search_suggestion", profileId: item.profileId });
+      } else {
+        await onOpenSearchResult?.({
+          platform: item.platform, id: item.id, name: item.name, contentTypeLabel: item.contentTypeLabel,
+          usageAction: "search_suggestion_open_search_result",
+          usageSource: "search_suggestion",
+        });
+      }
+    } finally {
+      suggestionOpenPendingRef.current = false;
+      setSuggestionOpenPending(false);
+    }
+  }
 
   function setSearchPending(value) {
     searchPendingRef.current = Boolean(value);
@@ -409,22 +457,31 @@ export function SearchPanel({
 
   return (
     <form
+      ref={formRef}
       className={`flex w-full flex-col gap-1.5 ${className}`.trim()}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) closeSuggestions();
+      }}
       onSubmit={(event) => {
         event.preventDefault();
+        if (composingRef.current || suggestionOpenPendingRef.current || suggestionsDisabled) return;
+        closeSuggestions();
         setSearchHelpOpen(false);
         blurSearchControl(event.currentTarget);
         runMergedSearch();
       }}
     >
-      <Popover open={searchHelpOpen} onOpenChange={setSearchHelpOpen}>
+      <Popover open={searchHelpOpen} onOpenChange={(open) => {
+        closeSuggestions();
+        setSearchHelpOpen(open);
+      }}>
         <PopoverAnchor asChild>
           <div className="relative">
             <button
               type="submit"
               aria-label="搜索"
               className="absolute left-2 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-primary disabled:pointer-events-none disabled:opacity-45"
-              disabled={isSearchPending}
+              disabled={isSearchPending || suggestionOpenPending || suggestionsDisabled}
             >
               <SearchIcon className="size-5" />
             </button>
@@ -432,17 +489,60 @@ export function SearchPanel({
               className={`h-12 w-full rounded-lg border border-border/80 bg-white pl-11 ${hasKeyword ? "pr-[5.25rem]" : "pr-11"} text-sm! text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40`}
               placeholder={placeholder}
               value={keywordValue}
-              onChange={(event) => setKeyword(event.target.value)}
+              role={isDesktopApp ? undefined : "combobox"}
+              aria-label="搜索关键词、ID或分享链接"
+              aria-autocomplete={isDesktopApp ? undefined : "list"}
+              aria-expanded={isDesktopApp ? undefined : suggestions.items.length > 0}
+              aria-controls={!isDesktopApp && suggestions.items.length ? suggestionListId : undefined}
+              aria-activedescendant={suggestions.items.length && suggestions.selectedIndex >= 0 ? `${suggestionListId}-${suggestions.selectedIndex}` : undefined}
+              autoComplete="off"
+              onFocus={() => { if (!isDesktopApp) suggestions.activate(); }}
+              onChange={(event) => {
+                setSearchHelpOpen(false);
+                suggestions.activate();
+                setKeyword(event.target.value);
+              }}
+              onCompositionStart={() => {
+                composingRef.current = true;
+                suggestions.startComposition();
+              }}
+              onCompositionEnd={(event) => {
+                composingRef.current = false;
+                lastCompositionEndRef.current = Date.now();
+                setKeyword(event.currentTarget.value);
+                suggestions.endComposition();
+              }}
+              onKeyDown={(event) => {
+                if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229 ||
+                    (event.key === "Enter" && Date.now() - lastCompositionEndRef.current < 50)) {
+                  if (event.key === "Enter") event.preventDefault();
+                  return;
+                }
+                if (event.key === "Escape") {
+                  closeSuggestions();
+                } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && suggestions.items.length) {
+                  event.preventDefault();
+                  suggestions.moveSelection(event.key === "ArrowDown" ? 1 : -1);
+                } else if (event.key === "Enter" && suggestions.items[suggestions.selectedIndex]) {
+                  event.preventDefault();
+                  const item = suggestions.items[suggestions.selectedIndex];
+                  closeSuggestions();
+                  setKeyword(item.name);
+                }
+              }}
             />
             {hasKeyword ? (
               <button
                 type="button"
                 aria-label="清空输入"
                 className="absolute right-11 top-1/2 inline-flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-primary"
-                onClick={clearManualInput}
+                onClick={() => { closeSuggestions(); clearManualInput(); }}
               >
                 <XIcon className="size-5" />
               </button>
+            ) : null}
+            {!isDesktopApp ? (
+              <SearchSuggestionList id={suggestionListId} items={suggestions.items} selectedIndex={suggestions.selectedIndex} onOpen={openSuggestion} />
             ) : null}
             {!isDesktopApp ? (
               <PopoverTrigger asChild>

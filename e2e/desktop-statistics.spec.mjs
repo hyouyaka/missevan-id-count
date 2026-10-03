@@ -109,6 +109,31 @@ test("desktop searches both platforms and completes all three statistics without
   expect(new URL(page.url()).searchParams.get("cv")).toBeNull();
 });
 
+for (const accessDenied of [true, false]) {
+  test(`desktop episode import reports ${accessDenied ? "access denial" : "item failure"} without a misleading paid warning`, async ({ page }) => {
+    const state = await mockDesktop(page);
+    await page.route("**/getdramas?**", (route) => route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify([{ id: ids.missevan, success: false, accessDenied }]),
+    }));
+    await page.goto("/tool");
+    const input = page.getByPlaceholder("请输入关键词、ID、分享链接。");
+    await input.fill("桌面测试");
+    await input.press("Enter");
+    const message = accessDenied
+      ? "如果遇到接口受限，请使用任意浏览器打开猫耳首页按提示解锁即可。"
+      : `导入作品失败（ID：${ids.missevan}），请稍后重试。`;
+    await page.getByRole("button", { name: "导入分集", exact: true }).first().click();
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "统计付费ID", exact: true }).first().click();
+    await expect(page.getByText(message, { exact: true })).toHaveCount(2);
+    await expect(page.getByText(message, { exact: true }).last()).toBeVisible();
+    await expect(page.getByText("没有可统计的付费分集。", { exact: true })).toHaveCount(0);
+    expect(state.tasks.size).toBe(0);
+    expect(state.errors).toEqual([]);
+  });
+}
+
 test("desktop bootstrap errors cannot fall back to the web workspace", async ({ page }) => {
   await mockDesktop(page);
   await page.route("**/app-config?**", (route) => route.fulfill({ status: 503, body: "unavailable" }));
@@ -159,6 +184,34 @@ test("desktop preserves successful platform results when the other platform fail
   await expect(page.getByRole("alertdialog")).toContainText("猫耳");
   await expect(page.getByText(titles.manbo, { exact: true }).first()).toBeVisible();
   await expect(page.getByText("未找到结果，可尝试导入作品ID或链接。", { exact: true })).toHaveCount(0);
+  expect(state.errors).toEqual([]);
+});
+
+test("desktop keeps the latest keyword after search responses and platform switches", async ({ page }) => {
+  const state = await mockDesktop(page);
+  await page.route("**/unified-search?**", (route) => {
+    const keyword = new URL(route.request().url()).searchParams.get("keyword");
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ results: Object.fromEntries(["missevan", "manbo"].map((platform) => [platform, {
+        success: true,
+        results: [{ id: ids[platform], name: `${keyword}作品`, platform }],
+        meta: { matchedCount: 1, nextOffset: 1, hasMore: false },
+      }])) }),
+    });
+  });
+  await page.goto("/tool");
+  const input = page.getByPlaceholder("请输入关键词、ID、分享链接。");
+  for (const keyword of ["首次关键词", "最新关键词"]) {
+    await input.fill(keyword);
+    await input.press("Enter");
+    await expect(page.getByText(`${keyword}作品`, { exact: true }).first()).toBeVisible();
+    await expect(input).toHaveValue(keyword);
+    expect(new URL(page.url()).searchParams.get("q")).toBe(keyword);
+  }
+  await page.locator('[role="tab"][data-platform="manbo"]').click();
+  await expect(input).toHaveValue("最新关键词");
+  expect(new URL(page.url()).searchParams.get("q")).toBe("最新关键词");
   expect(state.errors).toEqual([]);
 });
 

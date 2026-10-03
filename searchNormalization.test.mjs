@@ -23,9 +23,12 @@ test("Manbo library normalization preserves positional long CV ids as strings", 
     dramaId: "2235647356781461610",
     name: "测试作品",
     mainCvIds: [cvIds[0], cvIds[1], cvIds[0]],
+    alias: "旧别名",
+    aliases: ["已有别名"],
   });
 
   assert.deepEqual(normalized.mainCvIds, [cvIds[0], cvIds[1], cvIds[0]]);
+  assert.deepEqual(normalized.aliases, ["已有别名", "旧别名"]);
   assert.ok(normalized.mainCvIds.every((id) => typeof id === "string"));
 
   const positional = normalizeManboLibraryRecord({
@@ -129,6 +132,17 @@ test("compatibility search usage logs preserve platform and original keyword", a
 test("CV profile open usage logs normalize search, rank and legacy events", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildCvProfileOpenUsageLog } = await import("./server.js");
+
+  assert.deepEqual(buildCvProfileOpenUsageLog({
+    action: "cv_profile_open",
+    cvName: "路知行",
+    source: "search_suggestion",
+  }), {
+    action: "cv_profile_open",
+    cvName: "路知行",
+    source: "search_suggestion",
+    success: true,
+  });
 
   assert.deepEqual(buildCvProfileOpenUsageLog({
     action: "cv_profile_open",

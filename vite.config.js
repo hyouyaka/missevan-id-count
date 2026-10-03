@@ -93,6 +93,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/unified-search": backendTarget,
+      "/search-suggestions": backendTarget,
       "/cv-profile": backendTarget,
       "/search-card-metrics": backendTarget,
       "/search": backendTarget,

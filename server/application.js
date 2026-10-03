@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import { Agent as UndiciAgent } from "undici";
 import {
   extractSearchSortKey,
+  getDramaSearchAliases,
   isCompleteSearchTermPrefix,
   isSearchKeywordLongEnough,
   parseMissevanInputToken,
@@ -109,6 +110,8 @@ import { fetchRequiredManboDanmakuPages } from "./clients/manboDanmakuPages.js";
 import { createDramaService } from "./services/dramaService.js";
 import { createWeeklyPlaybackStore } from "./services/weeklyPlaybackService.js";
 import { searchLibraryWithFallback } from "./services/searchService.js";
+import { createSearchSuggestionService } from "./services/searchSuggestionService.js";
+import { registerSearchSuggestionRoutes } from "./routes/searchSuggestionRoutes.js";
 import {
   createRequestSecurityMiddleware,
   createSensitiveProbePathMiddleware,
@@ -2357,8 +2360,8 @@ export function buildCvProfileOpenUsageLog(payload = {}) {
 
   const cvName = normalizeTextValue(payload.cvName).slice(0, 200);
   const requestedSource = normalizeTextValue(payload.source).slice(0, 40);
-  const source = requestedSource === "search"
-    ? "search"
+  const source = ["search", "search_suggestion"].includes(requestedSource)
+    ? requestedSource
     : ["home", "ranks"].includes(requestedSource)
       ? "ranks"
       : "";
@@ -2645,23 +2648,27 @@ let cvCatalogCache = {
   catalog: [],
 };
 
-function getCvCatalog() {
+function getCvCatalog({
+  missevanRecords = missevanInfoStore.records,
+  manboRecords = manboInfoStore.records,
+  cvInfoRecords = cvInfoStore.records,
+} = {}) {
   if (
-    cvCatalogCache.missevanRecords === missevanInfoStore.records &&
-    cvCatalogCache.manboRecords === manboInfoStore.records &&
-    cvCatalogCache.cvInfoRecords === cvInfoStore.records
+    cvCatalogCache.missevanRecords === missevanRecords &&
+    cvCatalogCache.manboRecords === manboRecords &&
+    cvCatalogCache.cvInfoRecords === cvInfoRecords
   ) {
     return cvCatalogCache.catalog;
   }
   const catalog = buildCvCatalog({
-    missevanRecords: missevanInfoStore.records,
-    manboRecords: manboInfoStore.records,
-    cvInfoRecords: cvInfoStore.records,
+    missevanRecords,
+    manboRecords,
+    cvInfoRecords,
   });
   cvCatalogCache = {
-    missevanRecords: missevanInfoStore.records,
-    manboRecords: manboInfoStore.records,
-    cvInfoRecords: cvInfoStore.records,
+    missevanRecords,
+    manboRecords,
+    cvInfoRecords,
     catalog,
   };
   return catalog;
@@ -2736,7 +2743,7 @@ export function normalizeManboLibraryRecord(record) {
   }
 
   const name = normalizeTextValue(record?.name);
-  const aliases = normalizeStringArray(record?.aliases, 30);
+  const aliases = getDramaSearchAliases(record);
   const normalizePositionalStrings = (values) =>
     (Array.isArray(values) ? values : [])
       .map((item) => normalizeTextValue(item))
@@ -2913,6 +2920,7 @@ function normalizeDramaCardUsageAction(value) {
     "ranks_open_search_result",
     "ongoing_open_search_result",
     "cv_profile_open_search_result",
+    "search_suggestion_open_search_result",
   ].includes(action)
     ? action
     : "manual_import";
@@ -5273,12 +5281,14 @@ function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey
   }
 
   const title = normalizeTextValue(node?.title);
+  const aliases = getDramaSearchAliases(node);
   const seriesTitle = normalizeTextValue(node?.seriesTitle || fallbackSeriesTitle || title);
   const cvroles = normalizeStringMap(node?.cvroles);
   const cvnames = normalizeStringMap(node?.cvnames);
   const author = normalizeTextValue(node?.author);
   return {
     title,
+    aliases,
     dramaId,
     soundIds: normalizeStringIdArray(node?.soundIds, 500),
     maincvs: normalizeNumericArray(node?.maincvs, 20),
@@ -11386,6 +11396,36 @@ export async function fetchSearchCardMetrics(
     cardPatch: buildManboSearchCardPatch(info),
   };
 }
+
+const emptySuggestionRecords = Object.freeze([]);
+if (!DESKTOP_APP) registerSearchSuggestionRoutes(app, {
+  limiter: rateLimit({
+    windowMs: 60 * 1000,
+    limit: 240,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    handler: createJsonRateLimitHandler("SUGGESTIONS_RATE_LIMITED", "联想请求过于频繁。", 60),
+  }),
+  service: createSearchSuggestionService(),
+  async loadSources() {
+    // Isolate source failures and reuse the stores' cached/background refresh policy.
+    const loaded = await Promise.allSettled([
+      ensureInfoStoreReadyForSearch(missevanInfoStore),
+      ensureInfoStoreReadyForSearch(manboInfoStore),
+      ensureInfoStoreReadyForSearch(cvInfoStore),
+    ]);
+    const missevanRecords = loaded[0].status === "fulfilled" ? missevanInfoStore.records : emptySuggestionRecords;
+    const manboRecords = loaded[1].status === "fulfilled" ? manboInfoStore.records : emptySuggestionRecords;
+    const cvInfoRecords = loaded[2].status === "fulfilled" ? cvInfoStore.records : emptySuggestionRecords;
+    return {
+      missevanRecords,
+      manboRecords,
+      cvCatalog: getCvCatalog({ missevanRecords, manboRecords, cvInfoRecords }),
+      getMissevanContentTypeLabel,
+      getManboContentTypeLabel,
+    };
+  },
+});
 
 app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
   if (["keyword", "offset", "limit", "platform"].some((key) => (

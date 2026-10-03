@@ -148,8 +148,8 @@ export function buildDramaExternalUsagePayload(platform, dramaId, source, title)
 export function buildCvProfileOpenUsagePayload(name, context = {}) {
   const cvName = String(name ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   const requestedSource = String(context?.source ?? "").trim();
-  const source = requestedSource === "search"
-    ? "search"
+  const source = ["search", "search_suggestion"].includes(requestedSource)
+    ? requestedSource
     : ["home", "ranks"].includes(requestedSource)
       ? "ranks"
       : "";

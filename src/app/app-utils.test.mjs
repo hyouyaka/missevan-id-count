@@ -103,6 +103,11 @@ test("buildDramaExternalUsagePayload creates a bounded external-open event", () 
 });
 
 test("buildCvProfileOpenUsagePayload separates search and rank navigation sources", () => {
+  assert.deepEqual(buildCvProfileOpenUsagePayload("路知行", { source: "search_suggestion" }), {
+    action: "cv_profile_open",
+    cvName: "路知行",
+    source: "search_suggestion",
+  });
   assert.deepEqual(buildCvProfileOpenUsagePayload("  倔强的  小红  ", { source: "search" }), {
     action: "cv_profile_open",
     cvName: "倔强的 小红",

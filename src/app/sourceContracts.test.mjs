@@ -1752,7 +1752,7 @@ test("global search input area supports header layout and compact controls", () 
   assert.match(searchPanelSource, /function blurSearchControl\(formElement\)/);
   assert.doesNotMatch(searchPanelSource, /function openSearchHelp\(\)/);
   assert.doesNotMatch(searchPanelSource, /onFocus=\{[^}]*SearchHelp/);
-  assert.match(searchPanelSource, /<Popover open=\{searchHelpOpen\} onOpenChange=\{setSearchHelpOpen\}>/);
+  assert.match(searchPanelSource, /<Popover open=\{searchHelpOpen\} onOpenChange=\{\(open\) => \{[\s\S]*closeSuggestions\(\);[\s\S]*setSearchHelpOpen\(open\)/);
   assert.match(searchPanelSource, /<PopoverTrigger asChild>[\s\S]*aria-label="搜索语法说明"[\s\S]*aria-expanded=\{searchHelpOpen\}[\s\S]*aria-controls="search-syntax-help"[\s\S]*>\s*\?/);
   assert.match(searchPanelSource, /<PopoverContent[\s\S]*id="search-syntax-help"/);
   assert.match(searchPanelSource, /className = ""/);
@@ -1764,7 +1764,7 @@ test("global search input area supports header layout and compact controls", () 
   assert.match(toolNavigationSource, /setSearchRouteRestoreKeyword\(nextRouteState\.view === "search" \? nextRouteState\.q : ""\)/);
   assert.match(toolViewSource, /toolRouteState\.q === searchRouteRestoreKeyword/);
   assert.match(searchPanelSource, /type="submit"[\s\S]*aria-label="搜索"/);
-  assert.match(searchPanelSource, /disabled=\{isSearchPending\}/);
+  assert.match(searchPanelSource, /disabled=\{isSearchPending \|\| suggestionOpenPending \|\| suggestionsDisabled\}/);
   assert.doesNotMatch(searchPanelSource, /disabled=\{isSearchPending \|\| !hasKeyword\}/);
   assert.match(searchPanelSource, /<SearchIcon className="size-5" \/>/);
   assert.match(searchPanelSource, /hasKeyword \? \(/);
@@ -1776,7 +1776,15 @@ test("global search input area supports header layout and compact controls", () 
   assert.match(toolViewSource, /onSearchCommit=\{commitGlobalSearchNavigation\}/);
   assert.match(toolViewSource, /onSearchPendingChange=\{setGlobalSearchPending\}/);
   assert.match(searchPanelSource, /onSubmit=\{\(event\) => \{[\s\S]*event\.preventDefault\(\);[\s\S]*setSearchHelpOpen\(false\);[\s\S]*blurSearchControl\(event\.currentTarget\);[\s\S]*runMergedSearch\(\);/);
-  assert.doesNotMatch(searchPanelSource, /event\.key === "Enter"/);
+  assert.match(searchPanelSource, /event\.key === "Enter" && suggestions\.items\[suggestions\.selectedIndex\]/);
+});
+
+test("search suggestion drama opens preserve their usage action through frontend and backend", () => {
+  assert.match(searchPanelSource, /usageAction: "search_suggestion_open_search_result"/);
+  assert.match(searchPanelSource, /usageSource: "search_suggestion"/);
+  assert.match(toolViewSource, /const normalizedUsageAction = \[[^\]]*"search_suggestion_open_search_result"/);
+  assert.match(serverSource, /function normalizeDramaCardUsageAction\(value\)[\s\S]*?"search_suggestion_open_search_result"/);
+  assert.match(serverSource, /if \(action\.endsWith\("_open_search_result"\)\) \{\s*return "search_result_open";/);
 });
 
 test("mobile batch action menu separates 44px hit areas from compact visuals", () => {
@@ -1953,9 +1961,9 @@ test("external drama title jump clears both search result panes before injecting
     openSource.indexOf('resetSearchFlow("missevan");') < openSource.indexOf("setManualSearchResults(targetPlatform"),
     "both search panes should clear before target manual results are set"
   );
-  assert.match(openSource, /const visibleImportInput = dramaIds\.length === 1 \? dramaIds\[0\] : dramaIds\.join\(", "\);/);
-  assert.match(openSource, /updateSharedSearchForm\(\{[\s\S]*keyword: visibleImportInput,[\s\S]*manualInput,/);
-  assert.match(openSource, /updateSearchFormForPlatform\(targetPlatform, \{[\s\S]*keyword: visibleImportInput,[\s\S]*manualInput,/);
+  assert.doesNotMatch(openSource, /visibleImportInput/);
+  assert.match(openSource, /updateSharedSearchForm\(\{[\s\S]*keyword: "",[\s\S]*manualInput,/);
+  assert.match(openSource, /updateSearchFormForPlatform\(targetPlatform, \{[\s\S]*keyword: "",[\s\S]*manualInput,/);
   assert.doesNotMatch(openSource, /keyword: String\(name \?\? ""\)\.trim\(\)/);
   assert.match(openSource, /setManualSearchResults\(targetPlatform, results, \{ limit: dramaIds\.length, scroll: false \}\)/);
   assert.match(openSource, /openSearchPlatform\(targetPlatform\)/);
@@ -3241,7 +3249,7 @@ test("merged search input submits through the single-line form", () => {
   assert.match(searchPanelSource, /event\.preventDefault\(\);[\s\S]*runMergedSearch\(\);/);
   assert.match(toolViewSource, /toolRouteState\.view !== "search" \|\| !toolRouteState\.q[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\);[\s\S]*\[toolRouteState\.q, toolRouteState\.view\]/);
   assert.match(searchPanelSource, /await queryUnifiedKeywordSearch\(nextClassified\.keyword\);[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\);/);
-  assert.doesNotMatch(searchPanelSource, /event\.key === "Enter"/);
+  assert.match(searchPanelSource, /event\.key === "Enter" && suggestions\.items\[suggestions\.selectedIndex\][\s\S]*event\.preventDefault\(\);[\s\S]*setKeyword\(item\.name\)/);
   assert.doesNotMatch(searchPanelSource, /shiftKey/);
 });
 
@@ -4954,7 +4962,7 @@ test("desktop paid-ID action excludes selected free episodes and other dramas on
         addDramas: async (ids, options) => {
           selectDramaEpisodesByMode(dramas, ids, { mode: options.selectMode, checked: true,
             isSelectableEpisode: (episode) => isPaidEpisode(platform, episode) || isMemberEpisode(platform, episode) });
-          return { dramas };
+          return { dramas, importedIds: ["42"] };
         },
         runStats: (...args) => calls.push(args),
         toast: { warning: () => assert.fail("eligible episodes should create a task") },
@@ -4973,7 +4981,7 @@ test("desktop paid-ID action excludes selected free episodes and other dramas on
     let started = false;
     const action = runInNewContext("(" + actionSource + ")", {
       activePlatform: platform, isPaidEpisode, isMemberEpisode,
-      addDramas: async () => ({ dramas: [{ drama: { id: "42" }, episodes: { episode: [{ sound_id: "free", selected: true }] } }] }),
+      addDramas: async () => ({ importedIds: ["42"], dramas: [{ drama: { id: "42" }, episodes: { episode: [{ sound_id: "free", selected: true }] } }] }),
       runStats: () => { started = true; }, toast: { warning: (message) => { warning = message; } },
     });
     await action("42");

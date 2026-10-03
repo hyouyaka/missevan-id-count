@@ -39,7 +39,7 @@ try {
   assert.equal(config.desktopApp, true);
   assert.equal(config.missevanEnabled, true);
   assert.equal(config.feedbackEnabled, false);
-  for (const route of ["/desktop/favorites-data", "/favorites/meta", "/cv-profile", "/ranks", "/ranks/trends/availability", "/ongoing", "/admin/task-metrics", "/feedback", "/usage-log", "/register-new-drama-ids"]) {
+  for (const route of ["/desktop/favorites-data", "/favorites/meta", "/cv-profile", "/search-suggestions?keyword=测试", "/ranks", "/ranks/trends/availability", "/ongoing", "/admin/task-metrics", "/feedback", "/usage-log", "/register-new-drama-ids"]) {
     const response = await request(route);
     assert.equal(response.status, 404, route);
     assert.equal((await response.json()).code, "NOT_FOUND");
