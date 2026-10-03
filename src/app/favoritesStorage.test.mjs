@@ -5,7 +5,6 @@ import {
   FAVORITE_DELTA_METRICS,
   FAVORITES_HISTORY_CSV_COLUMNS,
   FAVORITES_BACKUP_VERSION,
-  DESKTOP_FAVORITES_FILE_NAME,
   buildFavoritesBackup,
   buildFavoritesHistoryCsvRows,
   createFavoriteKey,
@@ -24,7 +23,6 @@ import {
   loadFavoriteSettings,
   saveFavorite,
   serializeFavoritesHistoryCsv,
-  shouldMigrateFavoritesBackupToDesktopJson,
   sortFavoritesWithSnapshots,
 } from "./favoritesStorage.js";
 
@@ -669,90 +667,6 @@ test("favorite delta metric merges Missevan reward total and Manbo gift total", 
   ];
 
   assert.equal(getFavoriteDelta(missevanFavorite.key, missevanSnapshots, "giftTotal"), 500);
-});
-
-test("desktop favorites JSON migration only runs for missing or empty desktop data", () => {
-  const favorite = normalizeFavoriteRecord({
-    platform: "missevan",
-    dramaId: "93038",
-    title: "猫耳作品",
-  });
-  const populatedBackup = buildFavoritesBackup({
-    favorites: [favorite],
-    snapshots: [],
-    exportedAt: "2026-05-22T00:00:00.000Z",
-  });
-  const emptyBackup = buildFavoritesBackup({
-    favorites: [],
-    snapshots: [],
-    exportedAt: "2026-05-22T00:00:00.000Z",
-  });
-
-  assert.equal(DESKTOP_FAVORITES_FILE_NAME, "mm-toolkit-favorites.json");
-  assert.equal(shouldMigrateFavoritesBackupToDesktopJson({ exists: false, data: null }), true);
-  assert.equal(shouldMigrateFavoritesBackupToDesktopJson({ exists: true, data: emptyBackup }), true);
-  assert.equal(shouldMigrateFavoritesBackupToDesktopJson({ exists: true, data: populatedBackup }), false);
-});
-
-test("desktop favorites writes recover after a failed JSON write", async () => {
-  const originalWindow = globalThis.window;
-  const originalFetch = globalThis.fetch;
-  const initialBackup = buildFavoritesBackup({
-    favorites: [
-      normalizeFavoriteRecord({
-        platform: "missevan",
-        dramaId: "93038",
-        title: "已有收藏",
-      }),
-    ],
-    snapshots: [],
-    exportedAt: "2026-05-22T00:00:00.000Z",
-  });
-  let putCount = 0;
-  globalThis.window = { desktopFavorites: {} };
-  globalThis.fetch = async (url, options = {}) => {
-    if (url === "/desktop/favorites-data" && options.method === "PUT") {
-      putCount += 1;
-      if (putCount === 1) {
-        return {
-          ok: false,
-          json: async () => ({ success: false, message: "写入失败" }),
-        };
-      }
-      return {
-        ok: true,
-        json: async () => ({
-          success: true,
-          data: JSON.parse(options.body),
-        }),
-      };
-    }
-    return {
-      ok: true,
-      json: async () => ({
-        success: true,
-        exists: true,
-        data: initialBackup,
-      }),
-    };
-  };
-
-  try {
-    await assert.rejects(
-      () => saveFavorite({ platform: "missevan", dramaId: "100", title: "第一次写入" }),
-      /写入失败/
-    );
-    const saved = await saveFavorite({ platform: "missevan", dramaId: "101", title: "第二次写入" });
-    assert.equal(saved.key, "missevan:101");
-    assert.equal(putCount, 2);
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (originalWindow === undefined) {
-      delete globalThis.window;
-    } else {
-      globalThis.window = originalWindow;
-    }
-  }
 });
 
 test("favorite filters search title, id, and CV while combining groups with OR and AND", () => {

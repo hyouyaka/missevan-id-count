@@ -34,6 +34,8 @@ function getManboFailureLogFields(error) {
 }
 
 export function registerManboRoutes(router, {
+  desktopApp = false,
+  runManboApiUnifiedSearch,
   buildCompatibilitySearchUsageLog,
   buildKeywordTooShortSearchResponse,
   buildMainCvText,
@@ -82,7 +84,7 @@ export function registerManboRoutes(router, {
 
     for (const item of items) {
       try {
-        const localRecord = /^\d+$/.test(String(item.raw ?? ""))
+        const localRecord = !desktopApp && /^\d+$/.test(String(item.raw ?? ""))
           ? manboInfoStore.byDramaId.get(String(item.raw))
           : null;
         if (localRecord) {
@@ -116,6 +118,16 @@ export function registerManboRoutes(router, {
   });
 
   router.get("/manbo/search", expensiveDataLimiter, async (req, res) => {
+    if (["keyword", "offset", "limit", "apiFallback"].some((key) => (
+      req.query[key] !== undefined && typeof req.query[key] !== "string"
+    ))) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_REQUEST_QUERY",
+        message: "Search query parameters must be strings",
+        requestId: req.requestId,
+      });
+    }
     const keyword = normalizeKeyword(req.query.keyword);
     const offset = normalizeSearchOffset(req.query.offset);
     const limit = normalizeSearchLimit(req.query.limit, 5, 5);
@@ -138,6 +150,8 @@ export function registerManboRoutes(router, {
         })
       );
     }
+
+    if (desktopApp) return res.json(await runManboApiUnifiedSearch(keyword, offset, limit));
 
     void writeUsageLog({
       platform: "manbo",
@@ -245,10 +259,10 @@ export function registerManboRoutes(router, {
     const failedItems = [];
     let accessDenied = false;
 
-    await ensureInfoStoreLoaded(manboInfoStore);
+    if (!desktopApp) await ensureInfoStoreLoaded(manboInfoStore);
     const newDramaIds = [];
     for (const item of items) {
-      const localRecord = /^\d+$/.test(String(item.raw ?? ""))
+      const localRecord = !desktopApp && /^\d+$/.test(String(item.raw ?? ""))
         ? manboInfoStore.byDramaId.get(String(item.raw))
         : null;
       if (localRecord) {
@@ -321,7 +335,7 @@ export function registerManboRoutes(router, {
       });
     }
 
-    if (newDramaIds.length > 0) {
+    if (!desktopApp && newDramaIds.length > 0) {
       fireAndForget("Failed to append new Manbo drama ids", async () => {
         const missingDramaIds = await filterUntrackedNewDramaIds("manbo", newDramaIds);
         if (missingDramaIds.length > 0) {

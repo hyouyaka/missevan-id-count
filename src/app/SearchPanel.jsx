@@ -158,14 +158,17 @@ export function SearchPanel({
   }
 
   function normalizeUnifiedPlatformResult(platformResult, keyword) {
+    const error = platformResult?.error || "";
     return {
       success: Boolean(platformResult?.success),
       accessDenied: Boolean(platformResult?.accessDenied),
       unavailable: Boolean(platformResult?.unavailable),
+      error,
       results: Array.isArray(platformResult?.results) ? platformResult.results : [],
       meta: {
         ...(platformResult?.meta || {}),
         keyword,
+        error,
       },
     };
   }
@@ -295,19 +298,41 @@ export function SearchPanel({
         } else {
           showMissevanCooldownNotice(config || { cooldownHours, cooldownUntil });
         }
-      } else if (
-        [finalResults.missevan, finalResults.manbo, finalResults.cv].every(
-          (result) => !result?.success && !result?.accessDenied
-        )
-      ) {
-        showBlockingNotice("搜索失败", "暂时无法获取搜索结果，请稍后重试。");
-      } else if (
-        !finalResults.missevan?.accessDenied &&
-        !hasPlatformMatches(finalResults.missevan) &&
-        !hasPlatformMatches(finalResults.manbo) &&
-        !hasPlatformMatches(finalResults.cv)
-      ) {
-        showBlockingNotice("", "未找到结果，可尝试导入作品ID或链接。");
+      } else {
+        const searchedPlatforms = isDesktopApp
+          ? [
+              { key: "missevan", label: "猫耳", result: finalResults.missevan },
+              { key: "manbo", label: "漫播", result: finalResults.manbo },
+            ]
+          : [
+              { key: "missevan", label: "猫耳", result: finalResults.missevan },
+              { key: "manbo", label: "漫播", result: finalResults.manbo },
+              { key: "cv", label: "CV", result: finalResults.cv },
+            ];
+        const failures = searchedPlatforms.filter(({ result }) => (
+          !result?.success && !result?.accessDenied && (result?.error || result?.unavailable)
+        ));
+        const hasSuccessfulPlatform = searchedPlatforms.some(({ result }) => (
+          result?.success || (isDesktopApp && !result?.accessDenied && !result?.error && !result?.unavailable)
+        ));
+        const failureDetails = failures.map(({ label, result }) => {
+          const detail = String(result?.error || (result?.unavailable ? "当前不可用" : "请求失败"))
+            .replace(/\s+/g, " ")
+            .slice(0, 180);
+          return `${label}：${detail}`;
+        });
+
+        if (failures.length && hasSuccessfulPlatform) {
+          showBlockingNotice("部分平台搜索失败", `${failureDetails.join("；")}。其余平台结果仍会显示。`);
+        } else if (failures.length || (!isDesktopApp && searchedPlatforms.every(({ result }) => !result?.success && !result?.accessDenied))) {
+          showBlockingNotice("搜索失败", failureDetails.join("；") || "暂时无法获取搜索结果，请稍后重试。");
+        } else if (
+          !hasPlatformMatches(finalResults.missevan) &&
+          !hasPlatformMatches(finalResults.manbo) &&
+          (isDesktopApp || !hasPlatformMatches(finalResults.cv))
+        ) {
+          showBlockingNotice("", "未找到结果，可尝试导入作品ID或链接。");
+        }
       }
     } finally {
       setSearchPending(false);

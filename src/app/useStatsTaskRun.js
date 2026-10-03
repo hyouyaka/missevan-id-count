@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { TaskPollingExhaustedError } from "./taskPolling.js";
 
 function createAbortError() {
   return new DOMException("Aborted", "AbortError");
@@ -303,11 +304,27 @@ export function createStatsTaskRunController(initialOptions = {}) {
     const readSnapshot = async () => {
       let snapshot;
       try {
-        snapshot = await getOptions().getTaskSnapshot?.({ taskId, signal });
+        snapshot = await getOptions().getTaskSnapshot?.({ platform, taskId, signal });
       } catch (error) {
         if (!isCurrent(context)) {
           retireContext(context);
           throw createAbortError();
+        }
+        if (error instanceof TaskPollingExhaustedError) {
+          let cancelOutcome = null;
+          try {
+            cancelOutcome = await getOptions().cancelTask?.({ platform, taskId, signal });
+          } catch (_) {
+            cancelOutcome = null;
+          }
+          if (!isCurrent(context)) {
+            retireContext(context);
+            throw createAbortError();
+          }
+          error.cancelConfirmed = cancelOutcome?.confirmed === true;
+          error.message = error.cancelConfirmed
+            ? "统计连接持续失败，服务器已确认取消该任务。"
+            : "统计连接持续失败，已停止本地等待；服务器未确认任务已取消。";
         }
         throw error;
       }

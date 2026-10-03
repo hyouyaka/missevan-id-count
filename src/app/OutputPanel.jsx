@@ -315,6 +315,7 @@ export function OutputPanel({
   replayPreparingEntryIds = [],
   historyActionsDisabled = false,
   onCancelReplayPreparation,
+  showHistory = true,
 }) {
   const resolvedRevenueSummary = resolveRevenueSummaryForDisplay(
     revenueResults,
@@ -354,8 +355,9 @@ export function OutputPanel({
   const hasAnyResults = Boolean(
     playCountResults?.length || idResults?.length || revenueResults?.length
   );
-  const visibleHistoryEntries =
-    hasAnyResults && currentHistoryEntryId
+  const visibleHistoryEntries = !showHistory
+    ? []
+    : hasAnyResults && currentHistoryEntryId
       ? historyEntries.filter((entry) => entry.id !== currentHistoryEntryId)
       : historyEntries;
   const hasHistoryEntries = Boolean(visibleHistoryEntries?.length);
@@ -545,15 +547,17 @@ export function OutputPanel({
           </div>
         ) : null}
 
-      <StatsHistoryList
-        entries={visibleHistoryEntries}
-        onDeleteHistoryEntry={onDeleteHistoryEntry}
-        onClearHistory={onClearHistory}
-        onReplayHistoryEntry={onReplayHistoryEntry}
-        isReplayPreparing={isReplayPreparing}
-        replayPreparingEntryIds={replayPreparingEntryIds}
-        actionsDisabled={historyActionsDisabled || isRunning}
-      />
+      {showHistory ? (
+        <StatsHistoryList
+          entries={visibleHistoryEntries}
+          onDeleteHistoryEntry={onDeleteHistoryEntry}
+          onClearHistory={onClearHistory}
+          onReplayHistoryEntry={onReplayHistoryEntry}
+          isReplayPreparing={isReplayPreparing}
+          replayPreparingEntryIds={replayPreparingEntryIds}
+          actionsDisabled={historyActionsDisabled || isRunning}
+        />
+      ) : null}
     </div>
   );
 }

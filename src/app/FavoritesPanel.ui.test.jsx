@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
@@ -200,20 +201,68 @@ test("mobile search remains visible at a fluid width and clears from its trailin
   expect(screen.getByText(favorite.title, { exact: true })).toBeInTheDocument();
 });
 
-test("mobile refresh control replaces its selected count with running progress", () => {
-  render(
-    <FavoritesPanel
-      favorites={[favorite]}
-      isDesktopApp
-      refreshState={{ isRunning: true, progress: 42, currentTitle: favorite.title, currentAction: "分集 2/5" }}
-    />
-  );
+test("mobile refresh control cancels a running refresh and releases its task state", async () => {
+  const user = userEvent.setup();
+  let requestSignal;
+  let requestAborted = false;
+  const fetchMock = vi.fn((_url, options = {}) => new Promise((_resolve, reject) => {
+    requestSignal = options.signal;
+    const rejectOnAbort = () => {
+      requestAborted = true;
+      reject(new DOMException("The operation was aborted", "AbortError"));
+    };
+    if (requestSignal?.aborted) {
+      rejectOnAbort();
+      return;
+    }
+    requestSignal?.addEventListener("abort", rejectOnAbort, { once: true });
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  const onBackgroundTaskChange = vi.fn();
+  const onRefreshStateChange = vi.fn();
+  function ControlledFavoritesPanel() {
+    const [refreshState, setRefreshState] = useState({
+      isRunning: false,
+      progress: 0,
+      currentTitle: "",
+      currentAction: "",
+    });
+    return (
+      <FavoritesPanel
+        favorites={[favorite]}
+        isDesktopApp
+        onBackgroundTaskChange={onBackgroundTaskChange}
+        onRefreshStateChange={(nextState) => {
+          onRefreshStateChange(nextState);
+          setRefreshState(nextState);
+        }}
+        refreshState={refreshState}
+      />
+    );
+  }
+  render(<ControlledFavoritesPanel />);
+
+  await user.click(screen.getByRole("checkbox", { name: `选择${favorite.title}` }));
+  await user.click(screen.getByRole("button", { name: "刷新所选 1 部" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
 
   const mobileToolbar = screen.getByTestId("favorite-mobile-toolbar");
-  const refreshButton = within(mobileToolbar).getByRole("button", { name: "刷新中 42%：分集 2/5" });
-  expect(refreshButton).toBeDisabled();
-  expect(refreshButton).toHaveAttribute("title", "刷新中 42%：分集 2/5");
-  expect(refreshButton).toHaveTextContent("刷新42%");
+  const cancelButton = within(mobileToolbar).getByRole("button", { name: "取消收藏刷新" });
+  expect(cancelButton).toBeEnabled();
+  await user.click(cancelButton);
+
+  await waitFor(() => expect(requestAborted).toBe(true));
+  await waitFor(() => expect(onBackgroundTaskChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    isRunning: false,
+    status: "failed",
+    type: "favorites_refresh",
+  })));
+  expect(onRefreshStateChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    isRunning: false,
+    currentTitle: "",
+  }));
+  expect(screen.getByRole("checkbox", { name: `选择${favorite.title}` })).toBeChecked();
 });
 
 test("favorite filters reuse semantic badge tones and platform glyphs", async () => {

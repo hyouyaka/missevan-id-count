@@ -25,7 +25,7 @@ function getStatsHistoryLimit(value) {
 export function createPlatformStatesWithHistory(options = {}) {
   const loadHistoryEntries = options.loadHistoryEntries || loadPersistedHistoryEntries;
   const createPlatformStateFn = options.createPlatformState || createPlatformState;
-  const persistedHistory = loadHistoryEntries() || {};
+  const persistedHistory = options.loadPersisted === false ? {} : loadHistoryEntries() || {};
 
   return Object.fromEntries(
     STATS_HISTORY_PLATFORMS.map((platform) => [
@@ -135,6 +135,9 @@ export function createStatsHistoryController(initialOptions = {}) {
 
   function recordCompletedStatsHistory(platform, taskType, taskId, snapshot, replay = null) {
     const options = getOptions();
+    if (options.enabled === false) {
+      return "";
+    }
     const normalizedTaskId = String(taskId || snapshot?.taskId || "").trim();
     const result = snapshot?.result || {};
     const baseStats = getLatestPlatformStates()[platform]?.stats || createStatsState();
@@ -230,6 +233,9 @@ export function useStatsHistory(options = {}) {
   const manboHistoryEntries = historyByPlatform.manbo;
   const saveHistoryEntries = options.saveHistoryEntries || savePersistedHistoryEntries;
   useEffect(() => {
+    if (optionsRef.current.enabled === false) {
+      return;
+    }
     const result = persistStatsHistoryEntries(
       { missevan: missevanHistoryEntries, manbo: manboHistoryEntries },
       saveHistoryEntries
@@ -248,7 +254,7 @@ export function useStatsHistory(options = {}) {
         }));
       });
     }
-  }, [manboHistoryEntries, missevanHistoryEntries, saveHistoryEntries]);
+  }, [options.enabled, manboHistoryEntries, missevanHistoryEntries, saveHistoryEntries]);
 
   return controllerRef.current;
 }

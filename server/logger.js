@@ -234,9 +234,9 @@ async function archiveLegacyUsageLog(logsDir, usageLogPath) {
 }
 
 /**
- * @param {{ logsDir: string }} options
+ * @param {{ logsDir: string, archiveUsage?: boolean }} options
  */
-export function createCategoryFileSink({ logsDir }) {
+export function createCategoryFileSink({ logsDir, archiveUsage = true }) {
   const usageLogPath = path.join(logsDir, "usage.log");
   const operationsLogPath = path.join(logsDir, "operations.log");
   /** @type {Promise<void> | null} */
@@ -248,7 +248,7 @@ export function createCategoryFileSink({ logsDir }) {
       preparation = (async () => {
         try {
           await fs.mkdir(logsDir, { recursive: true });
-          await archiveLegacyUsageLog(logsDir, usageLogPath);
+          if (archiveUsage) await archiveLegacyUsageLog(logsDir, usageLogPath);
         } catch (error) {
           preparation = null;
           throw error;
@@ -286,7 +286,7 @@ export function runWithLogContext(fields, callback) {
 
 /**
  * @param {Record<string, any>} [baseFields]
- * @param {{ sink?: { write: (payload: Record<string, any>) => Promise<void> | void } | null }} [options]
+ * @param {{ sink?: { write: (payload: Record<string, any>) => Promise<void> | void } | null, filterPayload?: (payload: Record<string, any>) => Record<string, any> | null }} [options]
  */
 export function createLogger(baseFields = {}, options = {}) {
   const sink = options.sink || null;
@@ -301,7 +301,9 @@ export function createLogger(baseFields = {}, options = {}) {
    * }} entry
    */
   const write = ({ level, category = LOG_CATEGORIES.OPERATION, event, fields = {}, error = null }) => {
-    const payload = createLogPayload({ level, category, event, fields, error, baseFields });
+    const originalPayload = createLogPayload({ level, category, event, fields, error, baseFields });
+    const payload = options.filterPayload ? options.filterPayload(originalPayload) : originalPayload;
+    if (!payload) return Promise.resolve();
     const line = JSON.stringify(payload);
     if (level === "error") {
       console.error(line);

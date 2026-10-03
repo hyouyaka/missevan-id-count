@@ -220,7 +220,7 @@ export const TOOL_ROUTE_QUERY_PARAMS = {
 
 export function getAllowedToolViews({ desktopApp = false } = {}) {
   return desktopApp
-    ? ["search", "cv", "favorites"]
+    ? ["search"]
     : ["home", "search", "cv", "ongoing", "ranks", "favorites", "feedback"];
 }
 
@@ -315,24 +315,29 @@ export function normalizeOngoingMetric(value) {
 
 export function normalizeToolRouteState(routeState = {}, options = {}) {
   const view = normalizeToolView(routeState.view, options);
+  const desktopApp = options?.desktopApp === true;
+  const desktopRouteWasDisallowed = desktopApp && String(routeState.view || "").trim() !== "search";
+  const searchPlatform = normalizeSearchRoutePlatform(routeState.platform);
   return {
     view,
-    q: view === "search" ? normalizeSearchRouteQuery(routeState.q) : "",
-    platform: view === "cv"
+    q: view === "search" && !desktopRouteWasDisallowed ? normalizeSearchRouteQuery(routeState.q) : "",
+    platform: desktopApp
+      ? ["missevan", "manbo"].includes(searchPlatform) ? searchPlatform : "missevan"
+      : view === "cv"
       ? normalizeCvPlatform(routeState.platform)
       : view === "search"
-        ? normalizeSearchRoutePlatform(routeState.platform)
+        ? searchPlatform
       : normalizeToolPlatform(routeState.platform),
     window: "7d",
-    metric: normalizeOngoingMetric(routeState.metric),
-    category: String(routeState.category || "").trim(),
-    rank: String(routeState.rank || "").trim(),
-    cv: String(routeState.cv || "").replace(/\s+/g, " ").trim(),
-    cvKey: String(routeState.cvKey || "").trim().slice(0, 240),
-    payment: normalizeCvPayment(routeState.payment),
-    release: normalizeCvRelease(routeState.release),
-    partners: normalizeCvPartners(routeState.partners),
-    sort: normalizeCvSort(routeState.sort),
+    metric: desktopApp ? "playback" : normalizeOngoingMetric(routeState.metric),
+    category: desktopApp ? "" : String(routeState.category || "").trim(),
+    rank: desktopApp ? "" : String(routeState.rank || "").trim(),
+    cv: desktopApp ? "" : String(routeState.cv || "").replace(/\s+/g, " ").trim(),
+    cvKey: desktopApp ? "" : String(routeState.cvKey || "").trim().slice(0, 240),
+    payment: desktopApp ? "all" : normalizeCvPayment(routeState.payment),
+    release: desktopApp ? "all" : normalizeCvRelease(routeState.release),
+    partners: desktopApp ? "all" : normalizeCvPartners(routeState.partners),
+    sort: desktopApp ? "plays_desc" : normalizeCvSort(routeState.sort),
   };
 }
 

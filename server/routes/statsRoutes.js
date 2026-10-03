@@ -1,4 +1,5 @@
 export function registerStatsRoutes(router, {
+  desktopApp = false,
   adminCacheRefreshToken,
   buildRanksResponseMeta,
   buildRankTrendAvailabilityResponse,
@@ -70,89 +71,123 @@ export function registerStatsRoutes(router, {
     return res.json(buildStatsTaskSnapshot(task));
   }
 
-  router.get("/ranks/trends/availability", async (req, res) => {
-    const platform = String(req.query.platform ?? "").trim();
-    const rawIds = Array.isArray(req.query.id) ? req.query.id : [req.query.id];
-    const ids = rawIds.map((id) => String(id ?? "").trim()).filter(Boolean);
-    const hasValidIds = platform === "manbo"
-      ? ids.length > 0 && ids.every((id) => isNumericId(id))
-      : ids.length > 0;
-    if (!["missevan", "manbo"].includes(platform) || !hasValidIds) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid rank trend availability request",
-      });
-    }
-
-    try {
-      let aggregateSnapshot = null;
-      try {
-        aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform, { ids });
-      } catch (_) {
-        aggregateSnapshot = null;
+  if (!desktopApp) {
+    router.get("/ranks/trends/availability", async (req, res) => {
+      const platform = String(req.query.platform ?? "").trim();
+      const rawIds = Array.isArray(req.query.id) ? req.query.id : [req.query.id];
+      const ids = rawIds.map((id) => String(id ?? "").trim()).filter(Boolean);
+      const hasValidIds = platform === "manbo"
+        ? ids.length > 0 && ids.every((id) => isNumericId(id))
+        : ids.length > 0;
+      if (!["missevan", "manbo"].includes(platform) || !hasValidIds) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid rank trend availability request",
+        });
       }
-      let response = buildRankTrendAvailabilityResponse({
-        platform,
-        ids,
-        aggregateSnapshot,
-      });
-      if (!response.success || response.ids.length < ids.length) {
-        let weeklyPlaybackSnapshot = null;
+
+      try {
+        let aggregateSnapshot = null;
         try {
-          weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(platform, { ids });
+          aggregateSnapshot = await getCachedRankTrendAggregateSnapshot(platform, { ids });
         } catch (_) {
-          weeklyPlaybackSnapshot = null;
+          aggregateSnapshot = null;
         }
-        if (!isRankTrendAggregateSnapshot(aggregateSnapshot, platform) && !weeklyPlaybackSnapshot) {
-          return res.status(503).json({
-            success: false,
-            platform,
-            latestDate: "",
-            availability: {},
-            message: "Rank trend aggregate is unavailable",
-          });
-        }
-        response = buildRankTrendAvailabilityResponse({
+        let response = buildRankTrendAvailabilityResponse({
           platform,
           ids,
           aggregateSnapshot,
-          weeklyPlaybackSnapshot,
+        });
+        if (!response.success || response.ids.length < ids.length) {
+          let weeklyPlaybackSnapshot = null;
+          try {
+            weeklyPlaybackSnapshot = await getCachedWeeklyPlaybackSnapshot(platform, { ids });
+          } catch (_) {
+            weeklyPlaybackSnapshot = null;
+          }
+          if (!isRankTrendAggregateSnapshot(aggregateSnapshot, platform) && !weeklyPlaybackSnapshot) {
+            return res.status(503).json({
+              success: false,
+              platform,
+              latestDate: "",
+              availability: {},
+              message: "Rank trend aggregate is unavailable",
+            });
+          }
+          response = buildRankTrendAvailabilityResponse({
+            platform,
+            ids,
+            aggregateSnapshot,
+            weeklyPlaybackSnapshot,
+          });
+        }
+        if (response && typeof response === "object") {
+          response.schemaVersion = rankTrendsResponseSchemaVersion;
+        }
+        if (!response.success) {
+          return res.status(response.status || 503).json(response);
+        }
+
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        if (response.latestDate) {
+          res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
+        }
+        return res.json(response);
+      } catch (error) {
+        void logger.error("rank_trend_availability_read_failed", error, { platform });
+        return res.status(503).json({
+          success: false,
+          message: "Rank trend availability is unavailable",
         });
       }
-      if (response && typeof response === "object") {
-        response.schemaVersion = rankTrendsResponseSchemaVersion;
-      }
-      if (!response.success) {
-        return res.status(response.status || 503).json(response);
+    });
+
+    router.get("/ranks/trends", async (req, res) => {
+      const platform = String(req.query.platform ?? "").trim();
+      const dramaId = String(req.query.id ?? "").trim();
+      const kind = String(req.query.kind ?? "").trim();
+      if (kind === "cv") {
+        if (!dramaId) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid rank trend request",
+          });
+        }
+        try {
+          const response = await getCachedCvRankTrendResponse(dramaId);
+          if (!response.success) {
+            return res.status(response.status || 404).json(response);
+          }
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+          if (response.latestDate) {
+            res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
+            res.setHeader(
+              "ETag",
+              `"ranks-trend-cv-${Buffer.from(`${dramaId}:${response.latestDate}:${response.windowEndDate || ""}`).toString("base64url")}"`
+            );
+          }
+          return res.json(response);
+        } catch (error) {
+          void logger.error("cv_ranks_trend_read_failed", error, { platform });
+          return res.status(503).json({
+            success: false,
+            message: "Rank trends are unavailable",
+          });
+        }
       }
 
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-      if (response.latestDate) {
-        res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
-      }
-      return res.json(response);
-    } catch (error) {
-      void logger.error("rank_trend_availability_read_failed", error, { platform });
-      return res.status(503).json({
-        success: false,
-        message: "Rank trend availability is unavailable",
-      });
-    }
-  });
-
-  router.get("/ranks/trends", async (req, res) => {
-    const platform = String(req.query.platform ?? "").trim();
-    const dramaId = String(req.query.id ?? "").trim();
-    const kind = String(req.query.kind ?? "").trim();
-    if (kind === "cv") {
-      if (!dramaId) {
+      const isValidDramaId =
+        (platform === "missevan" && dramaId) ||
+        (platform === "manbo" && isNumericId(dramaId));
+      if (!["missevan", "manbo"].includes(platform) || !isValidDramaId) {
         return res.status(400).json({
           success: false,
           message: "Invalid rank trend request",
         });
       }
+
       try {
-        const response = await getCachedCvRankTrendResponse(dramaId);
+        const response = await getCachedRankTrendResponse(platform, dramaId, kind);
         if (!response.success) {
           return res.status(response.status || 404).json(response);
         }
@@ -161,160 +196,129 @@ export function registerStatsRoutes(router, {
           res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
           res.setHeader(
             "ETag",
-            `"ranks-trend-cv-${Buffer.from(`${dramaId}:${response.latestDate}:${response.windowEndDate || ""}`).toString("base64url")}"`
+            `"ranks-trend-${platform}-${Buffer.from(`${dramaId}:${response.latestDate}:${response.windowEndDate || ""}`).toString("base64url")}"`
           );
         }
         return res.json(response);
       } catch (error) {
-        void logger.error("cv_ranks_trend_read_failed", error, { platform });
+        void logger.error("ranks_trend_read_failed", error, { platform });
         return res.status(503).json({
           success: false,
           message: "Rank trends are unavailable",
         });
       }
-    }
+    });
 
-    const isValidDramaId =
-      (platform === "missevan" && dramaId) ||
-      (platform === "manbo" && isNumericId(dramaId));
-    if (!["missevan", "manbo"].includes(platform) || !isValidDramaId) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid rank trend request",
-      });
-    }
-
-    try {
-      const response = await getCachedRankTrendResponse(platform, dramaId, kind);
-      if (!response.success) {
-        return res.status(response.status || 404).json(response);
+    router.get("/ongoing", async (req, res) => {
+      const platform = String(req.query.platform ?? "").trim();
+      if (!["missevan", "manbo"].includes(platform)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid ongoing platform",
+        });
       }
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-      if (response.latestDate) {
-        res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
-        res.setHeader(
-          "ETag",
-          `"ranks-trend-${platform}-${Buffer.from(`${dramaId}:${response.latestDate}:${response.windowEndDate || ""}`).toString("base64url")}"`
-        );
-      }
-      return res.json(response);
-    } catch (error) {
-      void logger.error("ranks_trend_read_failed", error, { platform });
-      return res.status(503).json({
-        success: false,
-        message: "Rank trends are unavailable",
-      });
-    }
-  });
 
-  router.get("/ongoing", async (req, res) => {
-    const platform = String(req.query.platform ?? "").trim();
-    if (!["missevan", "manbo"].includes(platform)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid ongoing platform",
-      });
-    }
-
-    try {
-      const response = await getCachedOngoingResponse(platform);
-      if (!response.success) {
-        return res.status(response.status || 404).json(response);
-      }
-      res.setHeader("Cache-Control", "no-store");
-      if (response.latestDate) {
-        res.setHeader("X-Ongoing-Latest-Date", response.latestDate);
-        const etagSource = [
-          ongoingResponseSchemaVersion,
+      try {
+        const response = await getCachedOngoingResponse(platform);
+        if (!response.success) {
+          return res.status(response.status || 404).json(response);
+        }
+        res.setHeader("Cache-Control", "no-store");
+        if (response.latestDate) {
+          res.setHeader("X-Ongoing-Latest-Date", response.latestDate);
+          const etagSource = [
+            ongoingResponseSchemaVersion,
+            platform,
+            response.latestDate,
+            response.windowEndDate || "",
+            response.updatedAt || "",
+            Array.isArray(response.items) ? response.items.length : 0,
+          ].join(":");
+          res.setHeader(
+            "ETag",
+            `"ongoing-${Buffer.from(etagSource).toString("base64url")}"`
+          );
+        }
+        return res.json(response);
+      } catch (error) {
+        void logger.error("ongoing_dramas_read_failed", error, { platform });
+        return res.status(503).json({
+          success: false,
           platform,
-          response.latestDate,
-          response.windowEndDate || "",
-          response.updatedAt || "",
-          Array.isArray(response.items) ? response.items.length : 0,
-        ].join(":");
-        res.setHeader(
-          "ETag",
-          `"ongoing-${Buffer.from(etagSource).toString("base64url")}"`
-        );
+          updatedAt: "",
+          latestDate: "",
+          windows: {},
+          items: [],
+          message: "Ongoing dramas are unavailable",
+        });
       }
-      return res.json(response);
-    } catch (error) {
-      void logger.error("ongoing_dramas_read_failed", error, { platform });
-      return res.status(503).json({
-        success: false,
-        platform,
-        updatedAt: "",
-        latestDate: "",
-        windows: {},
-        items: [],
-        message: "Ongoing dramas are unavailable",
-      });
-    }
-  });
-
-  router.get("/ranks", async (req, res) => {
-    try {
-      const { response, cacheStatus, probePhase } = await getCachedRanksResponse();
-      res.setHeader("Cache-Control", "no-cache, must-revalidate");
-      res.setHeader("X-Ranks-Cache-Status", cacheStatus || "hit");
-      res.setHeader("X-Ranks-Normal-Updated-At", response.updatedAt || "");
-      res.setHeader("X-Ranks-CV-Updated-At", response.cvSummary?.updatedAt || "");
-      res.setHeader("X-Ranks-Growth-Updated-At", response.growthSummary?.updatedAt || "");
-      if (probePhase) {
-        res.setHeader("X-Ranks-Probe-Phase", probePhase);
-      }
-      const ranksResponseValidator = getRanksResponseCacheValidator(response);
-      if (response.updatedAt) {
-        res.setHeader("X-Ranks-Updated-At", response.updatedAt);
-        res.setHeader("ETag", `"ranks-${Buffer.from(ranksResponseValidator).toString("base64url")}"`);
-      }
-      return res.json(response);
-    } catch (error) {
-      void logger.error("ranks_snapshot_read_failed", error);
-      return res.status(503).json({
-        success: false,
-        updatedAt: "",
-        cvSummary: { updatedAt: "", missevanDramaCount: 0, manboDramaCount: 0 },
-        growthSummary: { updatedAt: "", date: "" },
-        meta: buildRanksResponseMeta(null),
-        platforms: {
-          missevan: { key: "missevan", label: "猫耳", categories: [] },
-          manbo: { key: "manbo", label: "漫播", categories: [] },
-        },
-        message: "Ranks are unavailable",
-      });
-    }
-  });
-
-  router.post("/admin/cache/refresh", async (req, res) => {
-    const result = await executeAdminCacheRefresh({
-      authorization: req.get("Authorization"),
-      body: req.body,
     });
-    return res.status(result.status).json(result.payload);
-  });
 
-  router.get("/admin/task-metrics", (req, res) => {
-    if (!adminCacheRefreshToken) {
-      return res.status(503).json({
-        success: false,
-        code: "ADMIN_TOKEN_NOT_CONFIGURED",
-        message: "管理员令牌未配置。",
-      });
-    }
-    if (req.get("Authorization") !== `Bearer ${adminCacheRefreshToken}`) {
-      return res.status(401).json({
-        success: false,
-        code: "ADMIN_UNAUTHORIZED",
-        message: "管理员鉴权失败。",
-      });
-    }
-    return res.json({
-      success: true,
-      generatedAt: new Date().toISOString(),
-      ...statsTaskEngine.getMetrics(),
+    router.get("/ranks", async (req, res) => {
+      try {
+        const { response, cacheStatus, probePhase } = await getCachedRanksResponse();
+        res.setHeader("Cache-Control", "no-cache, must-revalidate");
+        res.setHeader("X-Ranks-Cache-Status", cacheStatus || "hit");
+        res.setHeader("X-Ranks-Normal-Updated-At", response.updatedAt || "");
+        res.setHeader("X-Ranks-CV-Updated-At", response.cvSummary?.updatedAt || "");
+        res.setHeader("X-Ranks-Growth-Updated-At", response.growthSummary?.updatedAt || "");
+        if (probePhase) {
+          res.setHeader("X-Ranks-Probe-Phase", probePhase);
+        }
+        const ranksResponseValidator = getRanksResponseCacheValidator(response);
+        if (response.updatedAt) {
+          res.setHeader("X-Ranks-Updated-At", response.updatedAt);
+          res.setHeader("ETag", `"ranks-${Buffer.from(ranksResponseValidator).toString("base64url")}"`);
+        }
+        return res.json(response);
+      } catch (error) {
+        void logger.error("ranks_snapshot_read_failed", error);
+        return res.status(503).json({
+          success: false,
+          updatedAt: "",
+          cvSummary: { updatedAt: "", missevanDramaCount: 0, manboDramaCount: 0 },
+          growthSummary: { updatedAt: "", date: "" },
+          meta: buildRanksResponseMeta(null),
+          platforms: {
+            missevan: { key: "missevan", label: "猫耳", categories: [] },
+            manbo: { key: "manbo", label: "漫播", categories: [] },
+          },
+          message: "Ranks are unavailable",
+        });
+      }
     });
-  });
+
+    router.post("/admin/cache/refresh", async (req, res) => {
+      const result = await executeAdminCacheRefresh({
+        authorization: req.get("Authorization"),
+        body: req.body,
+      });
+      return res.status(result.status).json(result.payload);
+    });
+
+    router.get("/admin/task-metrics", (req, res) => {
+      if (!adminCacheRefreshToken) {
+        return res.status(503).json({
+          success: false,
+          code: "ADMIN_TOKEN_NOT_CONFIGURED",
+          message: "管理员令牌未配置。",
+        });
+      }
+      if (req.get("Authorization") !== `Bearer ${adminCacheRefreshToken}`) {
+        return res.status(401).json({
+          success: false,
+          code: "ADMIN_UNAUTHORIZED",
+          message: "管理员鉴权失败。",
+        });
+      }
+      return res.json({
+        success: true,
+        generatedAt: new Date().toISOString(),
+        ...statsTaskEngine.getMetrics(),
+      });
+    });
+
+  }
 
   router.get("/health", (req, res) => {
     res.json({ ok: true });

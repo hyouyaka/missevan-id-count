@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   buildStatsTaskSnapshotUrl,
+  cancelStatsTask,
   createStatsTask,
   getStatsTaskSnapshot,
+  getStatsTaskSnapshotWithRetry,
   notifyStatsTaskCancel,
 } from "./statsTaskClient.js";
 
@@ -50,6 +52,95 @@ test("stats task client creates versioned task requests and reports the backend 
     episodes: [{ sound_id: "42" }],
   });
   assert.deepEqual(versionUpdates, [{ frontendVersion: "1.2.3", backendVersion: "1.2.4" }]);
+});
+
+test("snapshot transport retries transient status and body failures without recreating a task", async () => {
+  for (const failure of [408, 429, 503, "body-network"]) {
+    let clock = 0;
+    const requests = [];
+    const snapshot = await getStatsTaskSnapshotWithRetry("same-task", {
+      now: () => clock,
+      sleepImpl: async (delay) => { clock += delay; },
+      fetchImpl: async (url, init) => {
+        requests.push({ url, init });
+        if (requests.length === 1) {
+          if (failure === "body-network") {
+            return { ...createJsonResponse({}), json: async () => { throw new TypeError("body stream disconnected"); } };
+          }
+          return createJsonResponse({}, { ok: false, status: failure });
+        }
+        return createJsonResponse({ taskId: "same-task", status: "running", progress: 61 });
+      },
+    });
+    assert.equal(snapshot.progress, 61, String(failure));
+    assert.equal(requests.length, 2);
+    assert.equal(clock, 2000);
+    assert.ok(requests.every(({ url, init }) => url.startsWith("/stat-tasks/same-task?") && init.method !== "POST"));
+  }
+});
+
+test("successful malformed JSON, invalid snapshots and permanent statuses are not retried", async () => {
+  for (const response of [
+    { ...createJsonResponse({}), json: async () => { throw new SyntaxError("invalid JSON"); } },
+    createJsonResponse({ taskId: "other-task", status: "running" }),
+    createJsonResponse({ status: "unknown" }),
+    createJsonResponse({}, { ok: false, status: 404 }),
+  ]) {
+    let calls = 0;
+    await assert.rejects(getStatsTaskSnapshotWithRetry("task", {
+      fetchImpl: async () => { calls += 1; return response; },
+      sleepImpl: async () => assert.fail("non-retryable response must not back off"),
+    }));
+    assert.equal(calls, 1);
+  }
+});
+
+test("a successful poll resets the outage budget for the next poll", async () => {
+  let clock = 0;
+  let attempts = 0;
+  const options = {
+    now: () => clock,
+    retryDelays: [40000],
+    sleepImpl: async (delay) => { clock += delay; },
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts % 2) throw new TypeError("offline");
+      return createJsonResponse({ taskId: "task", status: "running" });
+    },
+  };
+  await getStatsTaskSnapshotWithRetry("task", options);
+  await getStatsTaskSnapshotWithRetry("task", options);
+  assert.equal(attempts, 4);
+  assert.equal(clock, 80000);
+});
+
+test("task creation never retries a failed POST", async () => {
+  let calls = 0;
+  await assert.rejects(createStatsTask({
+    platform: "missevan",
+    taskType: "id",
+    fetchImpl: async () => { calls += 1; throw new TypeError("connection lost after POST"); },
+  }), /connection lost/);
+  assert.equal(calls, 1);
+});
+
+test("cancellation confirms only the requested task and does not send a pre-aborted request", async () => {
+  for (const [response, confirmed] of [
+    [createJsonResponse({ taskId: "task", status: "cancelled" }), true],
+    [createJsonResponse({ taskId: "other-task", status: "cancelled" }), false],
+    [createJsonResponse({ taskId: "task", status: "running" }), false],
+    [createJsonResponse({}, { ok: false, status: 404 }), false],
+  ]) {
+    const outcome = await cancelStatsTask("task", { fetchImpl: async () => response });
+    assert.equal(outcome.confirmed, confirmed);
+  }
+  const abort = new AbortController();
+  abort.abort();
+  const outcome = await cancelStatsTask("task", {
+    signal: abort.signal,
+    fetchImpl: async () => assert.fail("pre-aborted cancellation must not send a request"),
+  });
+  assert.equal(outcome.confirmed, false);
 });
 
 test("stats task client polls an uncached versioned snapshot and preserves request errors", async () => {

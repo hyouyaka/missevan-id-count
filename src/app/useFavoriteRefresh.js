@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import {
@@ -26,6 +26,15 @@ export function useFavoriteRefresh({
   statisticsActionsDisabled,
 }) {
   const refreshLockRef = useRef(false);
+  const refreshAbortControllerRef = useRef(null);
+
+  useEffect(() => () => {
+    refreshAbortControllerRef.current?.abort();
+  }, []);
+
+  function cancelRefresh() {
+    refreshAbortControllerRef.current?.abort();
+  }
 
   async function refreshMany(targetFavorites) {
     if (refreshLockRef.current) {
@@ -41,6 +50,9 @@ export function useFavoriteRefresh({
       return;
     }
     refreshLockRef.current = true;
+    const abortController = new AbortController();
+    refreshAbortControllerRef.current = abortController;
+    const { signal } = abortController;
     let failedCount = 0;
     let partialCount = 0;
     let stoppedByAccessDenied = false;
@@ -48,6 +60,7 @@ export function useFavoriteRefresh({
     let latestProgress = 0;
     let finalAction = "收藏刷新完成";
     function reportFavoriteProgress(index, favorite, itemProgress, currentAction) {
+      if (signal.aborted) return;
       latestProgress = Math.max(latestProgress, getFavoriteBatchProgress(index, queue.length, itemProgress));
       const favoriteTitle = favorite.title || "收藏作品";
       const action = currentAction || "正在刷新";
@@ -92,6 +105,7 @@ export function useFavoriteRefresh({
             frontendVersion,
             handleVersionResponse,
             isDesktopApp,
+            signal,
             onProgress: ({ progress, currentAction }) => reportFavoriteProgress(index, favorite, progress, currentAction),
           });
           if (!refreshed) {
@@ -100,6 +114,7 @@ export function useFavoriteRefresh({
             partialCount += 1;
           }
         } catch (error) {
+          if (signal.aborted) throw error;
           if (isFavoriteAccessDeniedError(error)) {
             stoppedByAccessDenied = true;
             finalAction = getAccessDeniedText?.() || "猫耳访问受限";
@@ -136,6 +151,7 @@ export function useFavoriteRefresh({
           );
         }
       }
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await onReloadSnapshots?.();
       await onFavoritesChange?.();
       if (stoppedByAccessDenied) {
@@ -174,6 +190,31 @@ export function useFavoriteRefresh({
       });
       await onRefreshSettled?.();
     } catch (error) {
+      if (signal.aborted) {
+        unexpectedFailure = true;
+        finalAction = error instanceof Error && error.message
+          ? error.message
+          : "本地刷新已停止；服务器任务取消状态未知。";
+        onBackgroundTaskChange({
+          isRunning: false,
+          status: error?.cancelConfirmed ? "cancelled" : "failed",
+          type: "favorites_refresh",
+          title: "收藏刷新已停止",
+          description: finalAction,
+          progress: latestProgress,
+          action: finalAction,
+          resultTarget: "favorites",
+          highlighted: true,
+        });
+        for (const synchronize of [onReloadSnapshots, onFavoritesChange, onRefreshSettled]) {
+          try {
+            await synchronize?.();
+          } catch (syncError) {
+            console.error("Failed to synchronize cancelled favorite refresh", syncError);
+          }
+        }
+        return;
+      }
       unexpectedFailure = true;
       finalAction = error instanceof Error ? error.message : "收藏刷新未能完成";
       console.error("Favorite refresh queue stopped unexpectedly", error);
@@ -191,15 +232,18 @@ export function useFavoriteRefresh({
       });
     } finally {
       refreshLockRef.current = false;
+      if (refreshAbortControllerRef.current === abortController) {
+        refreshAbortControllerRef.current = null;
+      }
       onRefreshStateChange({
         isRunning: false,
-        progress: stoppedByAccessDenied || unexpectedFailure ? latestProgress : 100,
+        progress: stoppedByAccessDenied || unexpectedFailure || signal.aborted ? latestProgress : 100,
         currentTitle: "",
         currentAction: finalAction,
       });
     }
   }
 
-  return { refreshMany };
+  return { cancelRefresh, refreshMany };
 }
 

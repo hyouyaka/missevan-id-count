@@ -3,19 +3,13 @@ export function registerSystemRoutes(router, {
   desktopApp,
   desktopAppUrl,
   feedbackEnabled,
-  getDesktopFavoritesFilePath,
   getFrontendVersionFromRequest,
   getMissevanAccessDeniedCooldownUntil,
   logger,
   missevanCooldownHours,
   missevanEnabled,
-  normalizeDesktopFavoritesBackup,
   normalizeTextValue,
-  readDesktopFavoritesFile,
-  writeDesktopFavoritesFile,
-  buildDesktopFavoritesReadErrorPayload,
   buildFavoriteMetaFromInfoStore,
-  ensureDesktopFavoritesRequest,
 }) {
   router.get("/app-config", (req, res) => {
     const frontendVersion = getFrontendVersionFromRequest(req);
@@ -36,46 +30,7 @@ export function registerSystemRoutes(router, {
     });
   });
 
-  router.get("/desktop/favorites-data", async (req, res) => {
-    if (!ensureDesktopFavoritesRequest(res)) {
-      return;
-    }
-    const filePath = getDesktopFavoritesFilePath();
-    try {
-      const { exists, data } = await readDesktopFavoritesFile();
-      return res.json({
-        success: true,
-        exists,
-        data: normalizeDesktopFavoritesBackup(data || {}),
-        filePath,
-      });
-    } catch (error) {
-      logger.error("desktop_favorites_read_failed", error, { route: "/desktop/favorites-data" });
-      return res.status(500).json(buildDesktopFavoritesReadErrorPayload(filePath));
-    }
-  });
-
-  router.put("/desktop/favorites-data", async (req, res) => {
-    if (!ensureDesktopFavoritesRequest(res)) {
-      return;
-    }
-    try {
-      const data = normalizeDesktopFavoritesBackup(req.body || {});
-      const filePath = await writeDesktopFavoritesFile(data);
-      return res.json({
-        success: true,
-        exists: true,
-        data,
-        filePath,
-      });
-    } catch (error) {
-      logger.error("desktop_favorites_write_failed", error, { route: "/desktop/favorites-data" });
-      return res.status(500).json({
-        success: false,
-        message: "桌面收藏 JSON 写入失败",
-      });
-    }
-  });
+  if (desktopApp) return;
 
   router.get("/favorites/meta", async (req, res) => {
     const platform = normalizeTextValue(req.query.platform);

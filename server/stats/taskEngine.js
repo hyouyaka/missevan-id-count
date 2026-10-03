@@ -118,16 +118,29 @@ export function createStatsTaskEngine({
     }
     const taskId = String(task.taskId);
     const existingTimer = persistenceTimers.get(taskId);
+    const terminal = TERMINAL_TASK_STATUSES.has(task.status);
+    if (existingTimer && !immediate && !terminal) {
+      return null;
+    }
     if (existingTimer) {
       clearTimer(existingTimer);
       persistenceTimers.delete(taskId);
     }
-    if (immediate || TERMINAL_TASK_STATUSES.has(task.status)) {
+    if (immediate || terminal) {
       return Promise.resolve(store.save(task));
     }
     const timer = setTimer(() => {
+      if (persistenceTimers.get(taskId) !== timer) {
+        return;
+      }
       persistenceTimers.delete(taskId);
-      void store.save(task);
+      try {
+        void Promise.resolve(store.save(task)).catch((error) => {
+          reportEngineError("stats_task_progress_persistence_failed", error);
+        });
+      } catch (error) {
+        reportEngineError("stats_task_progress_persistence_failed", error);
+      }
     }, normalizedPersistenceDebounceMs);
     timer?.unref?.();
     persistenceTimers.set(taskId, timer);

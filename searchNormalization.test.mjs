@@ -1833,23 +1833,6 @@ test("terminal stats task usage logs preserve the full result and optional sourc
   assert.equal(getStatsTaskSummaryLogLevel({ outcome: "failed" }), "error");
 });
 
-test("desktop favorites read errors keep a JSON response payload with file path", async () => {
-  process.env.START_SERVER_ON_IMPORT = "false";
-  const { buildDesktopFavoritesReadErrorPayload } = await import("./server.js");
-  const payload = buildDesktopFavoritesReadErrorPayload("C:\\portable\\mm-toolkit-favorites.json");
-
-  assert.equal(payload.success, false);
-  assert.equal(payload.message, "桌面收藏 JSON 读取失败");
-  assert.equal(payload.exists, false);
-  assert.equal(payload.filePath, "C:\\portable\\mm-toolkit-favorites.json");
-  assert.deepEqual(payload.data.favorites, []);
-  assert.deepEqual(payload.data.snapshots, []);
-  assert.deepEqual(payload.data.settings, {
-    deltaMetric: "viewCount",
-    sortBy: "lastSnapshotAt",
-  });
-});
-
 test("Manbo API search candidates normalize to search result cards", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { normalizeManboSearchApiCandidate, buildManboApiSearchFallbackCard } = await import("./server.js");

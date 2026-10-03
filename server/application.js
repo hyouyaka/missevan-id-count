@@ -128,6 +128,9 @@ import { registerFeedbackRoutes } from "./routes/feedbackRoutes.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
+import { installAsyncRouteSupport } from "./asyncRoute.js";
+import { createRuntimePolicy, filterDesktopLogPayload, isRemovedDesktopEndpoint } from "./runtimePolicy.js";
+
 const __filename = fileURLToPath(import.meta.url);
 const __moduleDirname = path.dirname(__filename);
 const __dirname = path.resolve(__moduleDirname, "..");
@@ -139,7 +142,10 @@ await loadLocalEnv({
   exeDir: process.env.DESKTOP_EXE_DIR || "",
 });
 
+const DESKTOP_APP = process.env.DESKTOP_APP === "true";
+const runtimePolicy = createRuntimePolicy(DESKTOP_APP);
 const app = express();
+installAsyncRouteSupport(app);
 if (isHostedDeployment()) {
   app.set("trust proxy", 1);
 }
@@ -152,18 +158,15 @@ const runtimeDir = path.join(appDataDir, "runtime");
 const APP_VERSION = String(packageJson.version || "0.0.0").trim() || "0.0.0";
 const logFileSink = process.env.NODE_TEST_CONTEXT
   ? null
-  : createCategoryFileSink({ logsDir });
+  : createCategoryFileSink({ logsDir, archiveUsage: !DESKTOP_APP });
 const logger = createLogger(
   { service: "missevan-counter" },
-  { sink: logFileSink }
+  { sink: logFileSink, filterPayload: DESKTOP_APP ? filterDesktopLogPayload : undefined }
 );
 const operationTraceStorage = new AsyncLocalStorage();
 const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || "1mb").trim() || "1mb";
 const ADMIN_CACHE_REFRESH_TOKEN = String(process.env.ADMIN_CACHE_REFRESH_TOKEN || "").trim();
-const MISSEVAN_ENABLED = process.env.ENABLE_MISSEVAN !== "false";
-const DESKTOP_APP = process.env.DESKTOP_APP === "true";
-const DESKTOP_EXE_DIR = String(process.env.DESKTOP_EXE_DIR || "").trim();
-const DESKTOP_FAVORITES_FILE_NAME = "mm-toolkit-favorites.json";
+const MISSEVAN_ENABLED = DESKTOP_APP || process.env.ENABLE_MISSEVAN !== "false";
 const MISSEVAN_COOLDOWN_HOURS = Math.max(
   1,
   Number(process.env.MISSEVAN_COOLDOWN_HOURS ?? 4) || 4
@@ -176,7 +179,7 @@ const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const FEEDBACK_FROM_EMAIL = String(process.env.FEEDBACK_FROM_EMAIL || "").trim();
 const FEEDBACK_RECIPIENT_EMAIL = String(process.env.FEEDBACK_RECIPIENT_EMAIL || "").trim();
 const FEEDBACK_ENABLED = Boolean(
-  RESEND_API_KEY && FEEDBACK_FROM_EMAIL && FEEDBACK_RECIPIENT_EMAIL
+  !DESKTOP_APP && RESEND_API_KEY && FEEDBACK_FROM_EMAIL && FEEDBACK_RECIPIENT_EMAIL
 );
 const resendClient = FEEDBACK_ENABLED ? new Resend(RESEND_API_KEY) : null;
 const MISSEVAN_COOLDOWN_KEY = String(
@@ -269,7 +272,10 @@ const manboDanmakuCache = new TtlLruCache({
 const manboDanmakuRequests = createSharedRequestRegistry();
 const searchCardMetricRequests = createSharedRequestRegistry();
 let activeSearchCardMetricRequests = 0;
-const upstashClient = createUpstashRestClient();
+const upstashClient = createUpstashRestClient(runtimePolicy.cloudData ? {} : {
+  upstashRestUrl: "",
+  upstashRestToken: "",
+});
 
 function getStructuredReadBytes(value) {
   try {
@@ -671,7 +677,7 @@ const statsTaskInstanceId = String(
   process.env.HOSTNAME ||
   "local"
 ).trim() || "local";
-const statsTaskStore = createStatsTaskStore({
+const statsTaskStore = runtimePolicy.taskPersistence ? createStatsTaskStore({
   adapter: upstashClient.enabled
     ? createUpstashTaskStoreAdapter({
         client: upstashClient,
@@ -684,7 +690,7 @@ const statsTaskStore = createStatsTaskStore({
       errorMessage: formatImageProxyError(error),
     });
   },
-});
+}) : null;
 const statsTaskReporters = new WeakMap();
 let statsTaskExecutor = null;
 const statsTaskEngine = createStatsTaskEngine({
@@ -714,6 +720,7 @@ const statsTaskEngine = createStatsTaskEngine({
   persistenceDebounceMs: STATS_TASK_PERSISTENCE_DEBOUNCE_MS,
   retentionMs: MANBO_STATS_TASK_TTL_MS,
   onTerminal: async (snapshot) => {
+    if (DESKTOP_APP) return;
     const entry = buildStatsTaskCompletedUsageLog(snapshot);
     if (entry) {
       await writeUsageLog(entry);
@@ -829,7 +836,9 @@ app.use((error, req, res, next) => {
 
   return res.status(413).json({
     success: false,
-    message: "Request payload too large",
+    code: "REQUEST_BODY_TOO_LARGE",
+    message: "请求内容过大，请缩减输入后重试。",
+    requestId: req.requestId || null,
   });
 });
 
@@ -846,192 +855,28 @@ app.use((req, res, next) => {
   next();
 });
 
-function getDesktopFavoritesFilePath() {
-  return path.join(DESKTOP_EXE_DIR || appDataDir, DESKTOP_FAVORITES_FILE_NAME);
-}
-
-function normalizeDesktopFavoriteString(value) {
-  return String(value ?? "").trim();
-}
-
-function normalizeDesktopFavoriteTimestamp(value, fallback = 0) {
-  const timestamp = Number(value ?? fallback);
-  return Number.isFinite(timestamp) && timestamp > 0 ? Math.trunc(timestamp) : fallback;
-}
-
-function normalizeDesktopFavoriteRecord(record = {}) {
-  const platform = normalizeDesktopFavoriteString(record.platform);
-  const dramaId = normalizeDesktopFavoriteString(record.dramaId ?? record.id);
-  if (!["missevan", "manbo"].includes(platform) || !dramaId) {
-    return null;
+app.use((req, res, next) => {
+  if (req.path === "/desktop/favorites-data" || (DESKTOP_APP && isRemovedDesktopEndpoint(req.path))) {
+    return res.status(404).json({ success: false, code: "NOT_FOUND", message: "接口不存在" });
   }
-  const key = `${platform}:${dramaId}`;
-  const now = Date.now();
-  const createdAt = normalizeDesktopFavoriteTimestamp(record.createdAt, now);
-  const updatedAt = normalizeDesktopFavoriteTimestamp(record.updatedAt, createdAt);
-  return {
-    key,
-    platform,
-    dramaId,
-    title: normalizeDesktopFavoriteString(record.title ?? record.name) || key,
-    cover: normalizeDesktopFavoriteString(record.cover),
-    paymentLabel: normalizeDesktopFavoriteString(record.paymentLabel ?? record.payment_label),
-    contentTypeLabel: normalizeDesktopFavoriteString(record.contentTypeLabel ?? record.content_type_label),
-    dramaUpdatedAt: normalizeDesktopFavoriteString(record.dramaUpdatedAt ?? record.drama_updated_at ?? record.updated_at),
-    mainCvText: normalizeDesktopFavoriteString(record.mainCvText ?? record.main_cv_text),
-    createdAt,
-    updatedAt,
-    lastSnapshotAt: normalizeDesktopFavoriteTimestamp(record.lastSnapshotAt, 0),
-  };
-}
-
-function normalizeDesktopFavoriteMetricNumber(value, fallback = 0) {
-  if (value == null || value === "") {
-    return fallback;
-  }
-  const number = Number(value);
-  return Number.isFinite(number) ? Math.trunc(number) : fallback;
-}
-
-function normalizeDesktopFavoriteSnapshot(record = {}) {
-  const platform = normalizeDesktopFavoriteString(record.platform);
-  const dramaId = normalizeDesktopFavoriteString(record.dramaId ?? record.id);
-  const favoriteKey = normalizeDesktopFavoriteString(record.favoriteKey) || `${platform}:${dramaId}`;
-  if (!["missevan", "manbo"].includes(platform) || !dramaId || !favoriteKey) {
-    return null;
-  }
-  const capturedAt = normalizeDesktopFavoriteTimestamp(record.capturedAt, Date.now());
-  const sourceMetrics = record.metrics && typeof record.metrics === "object" ? record.metrics : {};
-  const errors = Array.isArray(record.errors)
-    ? record.errors.map((item) => normalizeDesktopFavoriteString(item)).filter(Boolean)
-    : [];
-  return {
-    id: normalizeDesktopFavoriteString(record.id) || `${favoriteKey}:${capturedAt}`,
-    favoriteKey,
-    platform,
-    dramaId,
-    capturedAt,
-    status: normalizeDesktopFavoriteString(record.status) || (errors.length ? "partial" : "success"),
-    metrics: {
-      viewCount: normalizeDesktopFavoriteMetricNumber(sourceMetrics.viewCount, 0),
-      subscriptionCount: normalizeDesktopFavoriteMetricNumber(sourceMetrics.subscriptionCount, 0),
-      rewardCount: sourceMetrics.rewardCount == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.rewardCount, 0),
-      rewardTotal: sourceMetrics.rewardTotal == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.rewardTotal, 0),
-      giftTotal: sourceMetrics.giftTotal == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.giftTotal, 0),
-      paidOrListenCount: sourceMetrics.paidOrListenCount == null ? null : normalizeDesktopFavoriteMetricNumber(sourceMetrics.paidOrListenCount, 0),
-      paidIdCount: normalizeDesktopFavoriteMetricNumber(sourceMetrics.paidIdCount, 0),
-    },
-    errors,
-  };
-}
-
-function normalizeDesktopFavoriteSettings(settings = {}) {
-  const deltaMetric = ["viewCount", "subscriptionCount", "rewardCount", "rewardTotal", "paidOrListenCount", "paidIdCount"].includes(settings?.deltaMetric)
-    ? settings.deltaMetric
-    : "viewCount";
-  const sortBy = ["lastSnapshotAt", "viewCount", "subscriptionCount", "rewardTotal", "paidIdCount"].includes(settings?.sortBy)
-    ? settings.sortBy
-    : "lastSnapshotAt";
-  return { deltaMetric, sortBy };
-}
-
-function normalizeDesktopFavoritesBackup(payload = {}) {
-  const favoritesByKey = new Map();
-  (Array.isArray(payload?.favorites) ? payload.favorites : []).forEach((item) => {
-    const favorite = normalizeDesktopFavoriteRecord(item);
-    if (!favorite) {
-      return;
-    }
-    const previous = favoritesByKey.get(favorite.key);
-    if (!previous || Number(favorite.updatedAt) >= Number(previous.updatedAt)) {
-      favoritesByKey.set(favorite.key, favorite);
-    }
-  });
-  const snapshotsById = new Map();
-  (Array.isArray(payload?.snapshots) ? payload.snapshots : []).forEach((item) => {
-    const snapshot = normalizeDesktopFavoriteSnapshot(item);
-    if (snapshot) {
-      snapshotsById.set(snapshot.id, snapshot);
-    }
-  });
-  return {
-    app: "mm-toolkit",
-    type: "favorites-backup",
-    version: 1,
-    exportedAt: normalizeDesktopFavoriteString(payload?.exportedAt) || new Date().toISOString(),
-    favorites: Array.from(favoritesByKey.values()),
-    snapshots: Array.from(snapshotsById.values()),
-    settings: normalizeDesktopFavoriteSettings(payload?.settings),
-  };
-}
-
-function ensureDesktopFavoritesRequest(res) {
-  if (!DESKTOP_APP) {
-    res.status(404).json({ success: false, message: "Desktop favorites are unavailable" });
-    return false;
-  }
-  return true;
-}
-
-export function buildDesktopFavoritesReadErrorPayload(filePath = getDesktopFavoritesFilePath()) {
-  return {
-    success: false,
-    message: "桌面收藏 JSON 读取失败",
-    exists: false,
-    data: normalizeDesktopFavoritesBackup({}),
-    filePath,
-  };
-}
-
-async function writeDesktopFavoritesFile(data) {
-  const filePath = getDesktopFavoritesFilePath();
-  const payload = `${JSON.stringify(normalizeDesktopFavoritesBackup(data), null, 2)}\n`;
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(tempPath, payload, "utf8");
-  await fs.rename(tempPath, filePath);
-  return filePath;
-}
-
-async function readDesktopFavoritesFile() {
-  const filePath = getDesktopFavoritesFilePath();
-  try {
-    const content = await fs.readFile(filePath, "utf8");
-    const trimmed = String(content || "").trim();
-    return {
-      exists: true,
-      data: trimmed ? JSON.parse(trimmed) : null,
-      filePath,
-    };
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      return { exists: false, data: null, filePath };
-    }
-    throw error;
-  }
-}
+  next();
+});
 
 registerSystemRoutes(app, {
   appVersion: APP_VERSION,
   desktopApp: DESKTOP_APP,
   desktopAppUrl: MISSEVAN_DESKTOP_APP_URL,
   feedbackEnabled: FEEDBACK_ENABLED,
-  getDesktopFavoritesFilePath,
   getFrontendVersionFromRequest,
   getMissevanAccessDeniedCooldownUntil,
   logger,
   missevanCooldownHours: MISSEVAN_COOLDOWN_HOURS,
   missevanEnabled: MISSEVAN_ENABLED,
-  normalizeDesktopFavoritesBackup,
   normalizeTextValue,
-  readDesktopFavoritesFile,
-  writeDesktopFavoritesFile,
-  buildDesktopFavoritesReadErrorPayload,
   buildFavoriteMetaFromInfoStore,
-  ensureDesktopFavoritesRequest,
 });
 
-registerFeedbackRoutes(app, {
+if (!DESKTOP_APP) registerFeedbackRoutes(app, {
   feedbackEnabled: FEEDBACK_ENABLED,
   feedbackFromEmail: FEEDBACK_FROM_EMAIL,
   feedbackRecipientEmail: FEEDBACK_RECIPIENT_EMAIL,
@@ -5702,6 +5547,7 @@ async function loadInfoStoresV2() {
 }
 
 async function ensureInfoStoreLoaded(store, forceRefresh = false) {
+  if (!runtimePolicy.cloudData) return store;
   const refreshIntervalMs = INFO_STORE_META_POLL_INTERVAL_MS;
   if (
     store.loaded &&
@@ -5744,6 +5590,7 @@ async function ensureInfoStoreLoaded(store, forceRefresh = false) {
 }
 
 async function ensureInfoStoreReadyForSearch(store) {
+  if (!runtimePolicy.cloudData) return store;
   if (!store.loaded) {
     return ensureInfoStoreLoaded(store);
   }
@@ -5760,6 +5607,7 @@ async function ensureInfoStoreReadyForSearch(store) {
 }
 
 async function readNewDramaIdsSnapshot() {
+  if (!runtimePolicy.cloudData) return createEmptyNewDramaIdsSnapshot();
   if (upstashClient.enabled) {
     try {
       const raw = await upstashClient.command(["GET", newDramaIdsStore.key]);
@@ -5812,6 +5660,7 @@ async function ensureNewDramaIdsLoaded(forceRefresh = false) {
 }
 
 async function persistNewDramaIdsSnapshot(snapshot) {
+  if (!runtimePolicy.cloudData) return;
   const normalizedSnapshot = normalizeNewDramaIdsSnapshot(snapshot);
   const payload = JSON.stringify(normalizedSnapshot);
   if (upstashClient.enabled) {
@@ -5824,6 +5673,7 @@ async function persistNewDramaIdsSnapshot(snapshot) {
 }
 
 function queueNewDramaIdsAppend(platform, ids) {
+  if (!runtimePolicy.cloudData) return Promise.resolve();
   const normalizedIds = normalizeStringIdArray(ids, 5000);
   if (!normalizedIds.length || !["manbo", "missevan"].includes(platform)) {
     return Promise.resolve();
@@ -5850,6 +5700,7 @@ function queueNewDramaIdsAppend(platform, ids) {
 }
 
 async function filterUntrackedNewDramaIds(platform, ids) {
+  if (!runtimePolicy.cloudData) return [];
   const normalizedIds = normalizeStringIdArray(ids, 5000);
   if (!normalizedIds.length || !["manbo", "missevan"].includes(platform)) {
     return [];
@@ -7314,6 +7165,7 @@ async function searchMissevanApiRecords(keyword, limit = 70, options = {}) {
         }
         return [];
       }
+      if (DESKTOP_APP) throw new Error("Missevan search API rejected the request");
     }
 
     const normalized = Array.from(
@@ -7761,7 +7613,7 @@ async function buildMissevanDramaCardFromInput(item) {
 
   const requestedDramaId = item.type === "drama" ? Number(item.id) : null;
   const requestedSoundId = item.type === "sound" ? Number(item.id) : null;
-  const libraryRecord = requestedDramaId
+  const libraryRecord = !DESKTOP_APP && requestedDramaId
     ? missevanInfoStore.byDramaId.get(String(requestedDramaId))
     : null;
   const preferredSoundId =
@@ -7774,7 +7626,7 @@ async function buildMissevanDramaCardFromInput(item) {
 
   const resolvedDramaId = Number(info.drama.id ?? requestedDramaId ?? 0);
   const resolvedLibraryRecord =
-    libraryRecord || missevanInfoStore.byDramaId.get(String(resolvedDramaId));
+    libraryRecord || (!DESKTOP_APP ? missevanInfoStore.byDramaId.get(String(resolvedDramaId)) : null);
   const primarySoundId =
     preferredSoundId ||
     Number(info?.episodes?.episode?.[0]?.sound_id ?? 0) ||
@@ -7828,7 +7680,7 @@ async function buildMissevanDramaCardFromInput(item) {
       ...card,
       payment_label: getMissevanPaymentLabel(card),
     },
-    isNewDrama: !resolvedLibraryRecord,
+    isNewDrama: !DESKTOP_APP && !resolvedLibraryRecord,
     dramaId: String(resolvedDramaId),
   };
 }
@@ -8120,6 +7972,7 @@ export function getOperationUsageLogLevel(action, fields = {}) {
 }
 
 async function writeUsageLog(entry) {
+  if (DESKTOP_APP) return;
   const action = normalizeTextValue(entry?.action);
   if (action === "danmaku_summary" && await finalizeActiveOperation(entry)) {
     return;
@@ -8377,7 +8230,7 @@ export function isMissevanFallbackEnabled({
   baseUrl = MISSEVAN_FALLBACK_BASE_URL,
   proxyToken = MISSEVAN_FALLBACK_PROXY_TOKEN,
 } = {}) {
-  return Boolean(String(baseUrl || "").trim() && String(proxyToken || "").trim());
+  return runtimePolicy.cloudProxy && Boolean(String(baseUrl || "").trim() && String(proxyToken || "").trim());
 }
 
 function shouldForceMissevanFallback() {
@@ -11349,6 +11202,7 @@ export function resolveMissevanPlayCountDramaTotal(drama = {}, requestedPlayCoun
 
 
 registerStatsRoutes(app, {
+  desktopApp: DESKTOP_APP,
   adminCacheRefreshToken: ADMIN_CACHE_REFRESH_TOKEN,
   buildRanksResponseMeta,
   buildRankTrendAvailabilityResponse,
@@ -11541,6 +11395,16 @@ export async function fetchSearchCardMetrics(
 }
 
 app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
+  if (["keyword", "offset", "limit", "platform"].some((key) => (
+    req.query[key] !== undefined && typeof req.query[key] !== "string"
+  ))) {
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_REQUEST_QUERY",
+      message: "Search query parameters must be strings",
+      requestId: req.requestId,
+    });
+  }
   const normalizedKeyword = normalizeKeyword(req.query.keyword);
   const offset = normalizeSearchOffset(req.query.offset);
   const limit = normalizeSearchLimit(req.query.limit, 5, 5);
@@ -11596,6 +11460,14 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
         usedApiFallback: false,
       },
     });
+  }
+
+  if (DESKTOP_APP) {
+    const [missevan, manbo] = await Promise.all([
+      runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit),
+      runManboApiUnifiedSearch(normalizedKeyword, offset, limit),
+    ]);
+    return res.json(buildUnifiedResponse(missevan, manbo));
   }
 
   void writeUsageLog({
@@ -11681,7 +11553,7 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
   }
 });
 
-app.get("/cv-profile", expensiveDataLimiter, async (req, res) => {
+if (!DESKTOP_APP) app.get("/cv-profile", expensiveDataLimiter, async (req, res) => {
   const requestedName = normalizeTextValue(req.query.name);
   const requestedProfileId = normalizeTextValue(req.query.profileId).slice(0, 240);
   if (!requestedName) {
@@ -11858,6 +11730,16 @@ app.get("/search", expensiveDataLimiter, async (req, res) => {
   if (!ensureMissevanEnabled(res)) {
     return;
   }
+  if (["keyword", "offset", "limit", "apiFallback"].some((key) => (
+    req.query[key] !== undefined && typeof req.query[key] !== "string"
+  ))) {
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_REQUEST_QUERY",
+      message: "Search query parameters must be strings",
+      requestId: req.requestId,
+    });
+  }
   const { keyword } = req.query;
   const normalizedKeyword = normalizeKeyword(keyword);
   const offset = normalizeSearchOffset(req.query.offset);
@@ -11870,6 +11752,19 @@ app.get("/search", expensiveDataLimiter, async (req, res) => {
 
   if (!isSearchKeywordLongEnough(normalizedKeyword)) {
     return res.json(buildKeywordTooShortSearchResponse(normalizedKeyword, offset, limit));
+  }
+
+  if (DESKTOP_APP) {
+    const directInput = normalizeMissevanDirectSearchInput(normalizedKeyword);
+    if (directInput) {
+      const resolved = await buildMissevanDramaCardFromInput(directInput);
+      const results = resolved?.card ? [resolved.card] : [];
+      return res.json({ success: results.length > 0, results, meta: {
+        ...buildSearchPageMeta(normalizedKeyword, results.length, offset, limit),
+        source: "direct_link",
+      } });
+    }
+    return res.json(await runMissevanApiUnifiedSearch(normalizedKeyword, offset, limit));
   }
 
   void writeUsageLog({
@@ -11981,14 +11876,14 @@ app.get("/search", expensiveDataLimiter, async (req, res) => {
   }
 });
 
-registerNewDramaRoutes(app, {
+if (!DESKTOP_APP) registerNewDramaRoutes(app, {
   filterUntrackedNewDramaIds,
   logger,
   normalizeNewDramaIdsForPlatform,
   queueNewDramaIdsAppend,
 });
 
-app.post("/usage-log", async (req, res) => {
+if (!DESKTOP_APP) app.post("/usage-log", async (req, res) => {
   try {
     if (!isSameHostUsageLogRequest(req)) {
       return res.status(403).json({
@@ -12280,6 +12175,7 @@ app.post("/usage-log", async (req, res) => {
 });
 
 registerMissevanRoutes(app, {
+  desktopApp: DESKTOP_APP,
   buildMissevanDramaCardFromInput,
   buildMissevanSearchFallbackCard,
   dedupeMissevanDramaCardResults,
@@ -12312,6 +12208,8 @@ registerMissevanRoutes(app, {
 
 
 registerManboRoutes(app, {
+  desktopApp: DESKTOP_APP,
+  runManboApiUnifiedSearch,
   buildCompatibilitySearchUsageLog,
   buildKeywordTooShortSearchResponse,
   buildMainCvText,
@@ -12394,6 +12292,33 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(distDirectory, "index.html"));
 });
 
+app.use((error, req, res, _next) => {
+  if (res.headersSent) {
+    return _next(error);
+  }
+  if (error?.type === "entity.parse.failed") {
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_JSON_BODY",
+      message: req.path === "/feedback"
+        ? "请检查反馈内容后重试。"
+        : "Invalid JSON request body",
+      requestId: req.requestId || null,
+    });
+  }
+  void logger.error("unhandled_request_error", error, {
+    requestId: req.requestId || null,
+    method: req.method || null,
+    route: req.path || null,
+  });
+  return res.status(500).json({
+    success: false,
+    code: "INTERNAL_SERVER_ERROR",
+    message: "Internal server error",
+    requestId: req.requestId || null,
+  });
+});
+
 let serverInstance = null;
 
 export async function startServer(port = defaultPort, options = {}) {
@@ -12419,7 +12344,7 @@ export async function startServer(port = defaultPort, options = {}) {
 
   const actualPort = serverInstance.address()?.port ?? port;
   logger.info("server_started", { port: actualPort, host: options?.host || null });
-  void Promise.all([
+  if (runtimePolicy.cloudData) void Promise.all([
     ensureInfoStoreLoaded(missevanInfoStore),
     ensureInfoStoreLoaded(manboInfoStore),
     ensureInfoStoreLoaded(cvInfoStore),

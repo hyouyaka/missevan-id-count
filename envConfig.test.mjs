@@ -20,6 +20,8 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
   const previousPort = process.env.PORT;
   const previousStatsTaskPersistenceDebounceMs =
     process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS;
+  const previousManboDanmakuCacheMaxEntries = process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES;
+  const previousManboStatsTaskTtlMs = process.env.MANBO_STATS_TASK_TTL_MS;
 
   delete process.env.ADMIN_CACHE_REFRESH_TOKEN;
   delete process.env.ENABLE_MISSEVAN;
@@ -32,6 +34,8 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
   delete process.env.MISSEVAN_FORCE_FALLBACK;
   delete process.env.PORT;
   delete process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS;
+  delete process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES;
+  delete process.env.MANBO_STATS_TASK_TTL_MS;
 
   try {
     await fs.writeFile(
@@ -48,6 +52,8 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
         "MISSEVAN_FORCE_FALLBACK=2",
         "PORT=3901",
         "STATS_TASK_PERSISTENCE_DEBOUNCE_MS=12500",
+        "MANBO_DANMAKU_CACHE_MAX_ENTRIES=321",
+        "MANBO_STATS_TASK_TTL_MS=7200000",
         "UNSUPPORTED_KEY=ignored",
       ].join("\n")
     );
@@ -65,6 +71,8 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
     assert.equal(process.env.MISSEVAN_FORCE_FALLBACK, "2");
     assert.equal(process.env.PORT, "3901");
     assert.equal(process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS, "12500");
+    assert.equal(process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES, "321");
+    assert.equal(process.env.MANBO_STATS_TASK_TTL_MS, "7200000");
     assert.equal(process.env.UNSUPPORTED_KEY, undefined);
   } finally {
     if (previousAdminCacheRefreshToken == null) {
@@ -122,6 +130,44 @@ test("loadLocalEnv reads local server env keys from project .env", async () => {
     } else {
       process.env.STATS_TASK_PERSISTENCE_DEBOUNCE_MS =
         previousStatsTaskPersistenceDebounceMs;
+    }
+    if (previousManboDanmakuCacheMaxEntries == null) {
+      delete process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES;
+    } else {
+      process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES = previousManboDanmakuCacheMaxEntries;
+    }
+    if (previousManboStatsTaskTtlMs == null) {
+      delete process.env.MANBO_STATS_TASK_TTL_MS;
+    } else {
+      process.env.MANBO_STATS_TASK_TTL_MS = previousManboStatsTaskTtlMs;
+    }
+  }
+});
+
+test("loadLocalEnv preserves system environment precedence for the added Manbo settings", async () => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "missevan-env-priority-"));
+  const previousCacheEntries = process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES;
+  const previousTaskTtl = process.env.MANBO_STATS_TASK_TTL_MS;
+  process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES = "41";
+  process.env.MANBO_STATS_TASK_TTL_MS = "900000";
+  try {
+    await fs.writeFile(
+      path.join(projectRoot, ".env"),
+      "MANBO_DANMAKU_CACHE_MAX_ENTRIES=321\nMANBO_STATS_TASK_TTL_MS=7200000"
+    );
+    await loadLocalEnv({ projectRoot });
+    assert.equal(process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES, "41");
+    assert.equal(process.env.MANBO_STATS_TASK_TTL_MS, "900000");
+  } finally {
+    if (previousCacheEntries == null) {
+      delete process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES;
+    } else {
+      process.env.MANBO_DANMAKU_CACHE_MAX_ENTRIES = previousCacheEntries;
+    }
+    if (previousTaskTtl == null) {
+      delete process.env.MANBO_STATS_TASK_TTL_MS;
+    } else {
+      process.env.MANBO_STATS_TASK_TTL_MS = previousTaskTtl;
     }
   }
 });

@@ -691,7 +691,7 @@ export function FavoritesPanel({
     });
   }
 
-  const { refreshMany } = useFavoriteRefresh({
+  const { cancelRefresh, refreshMany } = useFavoriteRefresh({
     frontendVersion,
     getAccessDeniedText: getFavoriteAccessDeniedText,
     handleVersionResponse,
@@ -885,16 +885,18 @@ export function FavoritesPanel({
               <MobileToolbarButton
                 variant="secondary"
                 aria-label={refreshState.isRunning
-                  ? `刷新中 ${refreshState.progress}%${refreshState.currentAction ? `：${refreshState.currentAction}` : ""}`
+                  ? "取消收藏刷新"
                   : `刷新所选 ${selectedFavorites.length} 部`}
                 title={refreshState.isRunning
-                  ? `刷新中 ${refreshState.progress}%${refreshState.currentAction ? `：${refreshState.currentAction}` : ""}`
+                  ? "取消收藏刷新"
                   : `刷新所选 ${selectedFavorites.length} 部`}
-                disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || selectedFavorites.length === 0}
-                onClick={() => refreshMany(selectedFavorites)}
+                disabled={!refreshState.isRunning && (favoriteActionsDisabled || statisticsActionsDisabled || selectedFavorites.length === 0)}
+                onClick={() => refreshState.isRunning ? cancelRefresh() : refreshMany(selectedFavorites)}
               >
-                <RefreshCwIcon aria-hidden="true" className={refreshState.isRunning ? "size-3.5 shrink-0 animate-spin" : "size-3.5 shrink-0"} />
-                <span className="favorite-mobile-refresh-label">刷新</span>
+                {refreshState.isRunning
+                  ? <XIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                  : <RefreshCwIcon aria-hidden="true" className="size-3.5 shrink-0" />}
+                <span className="favorite-mobile-refresh-label">{refreshState.isRunning ? "取消" : "刷新"}</span>
                 <span className="tabular-nums">{refreshState.isRunning ? `${refreshState.progress}%` : selectedFavorites.length}</span>
               </MobileToolbarButton>
             </div>
@@ -1011,12 +1013,14 @@ export function FavoritesPanel({
             variant="ghost"
             data-touch="compact"
             className="relative h-11 bg-transparent! p-1 shadow-none! hover:bg-transparent!"
-            disabled={refreshState.isRunning || favoriteActionsDisabled || statisticsActionsDisabled || selectedFavorites.length === 0}
-            onClick={() => refreshMany(selectedFavorites)}
+            disabled={!refreshState.isRunning && (favoriteActionsDisabled || statisticsActionsDisabled || selectedFavorites.length === 0)}
+            onClick={() => refreshState.isRunning ? cancelRefresh() : refreshMany(selectedFavorites)}
           >
             <span className="pointer-events-none flex h-9 items-center gap-1.5 rounded-md border border-secondary/35 bg-[color-mix(in_oklch,var(--secondary)_18%,var(--background))] px-3 text-sm font-medium text-foreground">
-              <RefreshCwIcon aria-hidden="true" className={refreshState.isRunning ? "size-4 animate-spin" : "size-4"} />
-              {refreshState.isRunning ? `刷新中 ${refreshState.progress}%` : `刷新所选${selectedFavorites.length ? `（${selectedFavorites.length}）` : ""}`}
+              {refreshState.isRunning
+                ? <XIcon aria-hidden="true" className="size-4" />
+                : <RefreshCwIcon aria-hidden="true" className="size-4" />}
+              {refreshState.isRunning ? "取消刷新" : `刷新所选${selectedFavorites.length ? `（${selectedFavorites.length}）` : ""}`}
             </span>
           </Button>
           <FavoriteMoreMenu

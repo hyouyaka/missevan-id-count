@@ -3,6 +3,15 @@ import {
   extractResponseItems,
   getBackendVersionFromResponse,
 } from "@/app/app-utils";
+import { cancelStatsTask, getStatsTaskSnapshot } from "@/app/statsTaskClient";
+import {
+  pollStatsTaskSnapshot,
+  retryTransientGet,
+  TaskPollingExhaustedError,
+  TaskSnapshotInvalidResponseError,
+  TaskSnapshotRequestError,
+  parseRetryAfter,
+} from "@/app/taskPolling";
 import {
   saveSnapshot,
   updateFavoriteIfExists,
@@ -39,7 +48,15 @@ function countFavoriteMainCvNames(value) {
 }
 
 async function parseVersionedJson(response, frontendVersion, handleVersionResponse) {
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    if (error?.name === "SyntaxError") {
+      throw new TaskSnapshotInvalidResponseError("服务器返回了无效 JSON");
+    }
+    throw error;
+  }
   handleVersionResponse?.({
     ...data,
     frontendVersion,
@@ -48,39 +65,67 @@ async function parseVersionedJson(response, frontendVersion, handleVersionRespon
   return data;
 }
 
-async function postJson(path, payload, frontendVersion, handleVersionResponse) {
+async function postJson(path, payload, frontendVersion, handleVersionResponse, signal) {
   const response = await fetch(buildVersionedUrl(path, frontendVersion), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   const data = await parseVersionedJson(response, frontendVersion, handleVersionResponse);
   if (data?.accessDenied) {
     throw createFavoriteAccessDeniedError(data?.message || data?.error || "猫耳访问受限");
   }
   if (!response.ok) {
-    throw new Error(data?.message || `请求失败：${response.status}`);
+    throw new TaskSnapshotRequestError(data?.message || `请求失败：${response.status}`, {
+      status: response.status,
+      retryAfterMs: parseRetryAfter(response.headers?.get?.("Retry-After")),
+    });
   }
   return data;
 }
 
-async function getJson(path, frontendVersion, handleVersionResponse) {
-  const response = await fetch(buildVersionedUrl(path, frontendVersion), {
-    cache: "no-store",
+async function getJson(path, frontendVersion, handleVersionResponse, signal) {
+  return retryTransientGet({
+    signal,
+    getResponse: async ({ signal: requestSignal }) => {
+      const response = await fetch(buildVersionedUrl(path, frontendVersion), {
+        cache: "no-store",
+        signal: requestSignal,
+      });
+      if (!response.ok) {
+        throw new TaskSnapshotRequestError(`请求失败：${response.status}`, {
+          status: response.status,
+          retryAfterMs: parseRetryAfter(response.headers?.get?.("Retry-After")),
+        });
+      }
+      const data = await parseVersionedJson(response, frontendVersion, handleVersionResponse);
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new TaskSnapshotInvalidResponseError("服务器返回了无效响应");
+      }
+      if (data?.accessDenied) {
+        throw createFavoriteAccessDeniedError(data?.message || data?.error || "猫耳访问受限");
+      }
+      return data;
+    },
   });
-  const data = await parseVersionedJson(response, frontendVersion, handleVersionResponse);
-  if (data?.accessDenied) {
-    throw createFavoriteAccessDeniedError(data?.message || data?.error || "猫耳访问受限");
-  }
-  if (!response.ok) {
-    throw new Error(data?.message || `请求失败：${response.status}`);
-  }
-  return data;
 }
 
-async function wait(delayMs) {
+async function wait(delayMs, signal) {
   return new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener?.("abort", handleAbort);
+      resolve();
+    }, delayMs);
+    const handleAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener?.("abort", handleAbort, { once: true });
   });
 }
 
@@ -89,6 +134,7 @@ class FavoriteAccessDeniedError extends Error {
     super(message);
     this.name = "FavoriteAccessDeniedError";
     this.accessDenied = true;
+    this.retryable = false;
   }
 }
 
@@ -123,33 +169,65 @@ export function getFavoriteBatchProgress(favoriteIndex, favoriteCount, favoriteP
   return Math.min(99, Math.floor(((index + itemProgress / 100) / count) * 100));
 }
 
-async function runStatsTask({ platform, taskType, payload, frontendVersion, handleVersionResponse, onProgress }) {
-  const created = await postJson("/stat-tasks", { platform, taskType, ...payload }, frontendVersion, handleVersionResponse);
+async function runStatsTask({ platform, taskType, payload, frontendVersion, handleVersionResponse, onProgress, signal }) {
+  const created = await postJson("/stat-tasks", { platform, taskType, ...payload }, frontendVersion, handleVersionResponse, signal);
   const taskId = String(created?.taskId ?? "").trim();
   if (!taskId) {
     throw new Error("统计任务创建失败");
   }
 
   let snapshot = created;
-  for (let index = 0; index < 240; index += 1) {
-    const progressSnapshot = getStatsTaskProgressSnapshot(snapshot);
-    onProgress?.(progressSnapshot);
-    if (platform === "missevan" && snapshot?.accessDenied) {
-      throw createFavoriteAccessDeniedError(progressSnapshot.currentAction || snapshot.error || "猫耳访问受限");
+  let latestProgressSnapshot = getStatsTaskProgressSnapshot(snapshot);
+  try {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    while (true) {
+      const progressSnapshot = getStatsTaskProgressSnapshot(snapshot);
+      latestProgressSnapshot = progressSnapshot;
+      onProgress?.(progressSnapshot);
+      if (platform === "missevan" && snapshot?.accessDenied) {
+        throw createFavoriteAccessDeniedError(progressSnapshot.currentAction || snapshot.error || "猫耳访问受限");
+      }
+      if (snapshot.status === "completed") {
+        return snapshot;
+      }
+      if (snapshot.status === "failed") {
+        throw new Error(snapshot.error || "统计任务失败");
+      }
+      if (snapshot.status === "cancelled") {
+        throw new Error("统计任务已取消");
+      }
+      await wait(1200, signal);
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      snapshot = await pollStatsTaskSnapshot({
+        taskId,
+        signal,
+        getSnapshot: ({ taskId: activeTaskId, signal: requestSignal }) => getStatsTaskSnapshot(activeTaskId, {
+          signal: requestSignal,
+          frontendVersion,
+          onVersionStatus: handleVersionResponse,
+        }),
+        onConnectionState: (state) => {
+          if (state.retrying) {
+            onProgress?.({ ...latestProgressSnapshot, currentAction: "连接异常，正在重试" });
+          }
+        },
+      });
     }
-    if (snapshot.status === "completed") {
-      return snapshot;
+  } catch (error) {
+    if (error instanceof TaskPollingExhaustedError) {
+      const outcome = await cancelStatsTask(taskId, { frontendVersion });
+      error.cancelConfirmed = outcome.confirmed;
+      error.message = outcome.confirmed
+        ? "统计连接持续失败，服务器已确认取消该任务。"
+        : "统计连接持续失败，已停止本地等待；服务器未确认任务已取消。";
+    } else if (signal?.aborted) {
+      error.serverCancelAttempted = true;
+      error.cancelConfirmed = false;
+      error.message = "收藏刷新已停止；服务器任务取消状态未知。";
+      void cancelStatsTask(taskId, { frontendVersion });
     }
-    if (snapshot.status === "failed") {
-      throw new Error(snapshot.error || "统计任务失败");
-    }
-    if (snapshot.status === "cancelled") {
-      throw new Error("统计任务已取消");
-    }
-    await wait(1200);
-    snapshot = await getJson(`/stat-tasks/${taskId}?_ts=${Date.now()}`, frontendVersion, handleVersionResponse);
+    throw error;
   }
-  throw new Error("统计任务超时");
 }
 
 function buildPaidEpisodePayload(platform, dramaInfo) {
@@ -173,13 +251,14 @@ function getDramaCover(dramaInfo, fallback = "") {
   return String(drama.cover ?? drama.cover_url ?? drama.coverUrl ?? fallback ?? "").trim();
 }
 
-async function fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionResponse) {
+async function fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionResponse, signal) {
   const path = favorite.platform === "manbo" ? "/manbo/getdramas" : "/getdramas";
   const data = await postJson(
     path,
     { drama_ids: [favorite.platform === "manbo" ? String(favorite.dramaId) : Number(favorite.dramaId)] },
     frontendVersion,
-    handleVersionResponse
+    handleVersionResponse,
+    signal
   );
   const result = extractResponseItems(data)[0];
   if (favorite.platform === "missevan" && (data?.accessDenied || result?.accessDenied)) {
@@ -191,32 +270,33 @@ async function fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionRe
   return result.info;
 }
 
-export async function fetchFavoriteMainCvText(favorite, frontendVersion, handleVersionResponse) {
+export async function fetchFavoriteMainCvText(favorite, frontendVersion, handleVersionResponse, signal) {
   const params = new URLSearchParams({
     platform: favorite.platform,
     dramaId: String(favorite.dramaId ?? ""),
   });
-  const data = await getJson(`/favorites/meta?${params.toString()}`, frontendVersion, handleVersionResponse);
+  const data = await getJson(`/favorites/meta?${params.toString()}`, frontendVersion, handleVersionResponse, signal);
   return String(data?.mainCvText ?? data?.main_cv_text ?? "").trim();
 }
 
-export async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp = false, onProgress }) {
+export async function refreshFavoriteSnapshot({ favorite, frontendVersion, handleVersionResponse, isDesktopApp = false, onProgress, signal }) {
   const capturedAt = Date.now();
   const errors = [];
   const metricErrors = {};
   onProgress?.({ progress: 0, currentAction: "读取作品详情" });
-  const dramaInfo = await fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionResponse);
+  const dramaInfo = await fetchFavoriteDramaInfo(favorite, frontendVersion, handleVersionResponse, signal);
   onProgress?.({ progress: 10, currentAction: "整理作品信息" });
   const drama = dramaInfo?.drama || {};
   const paidEpisodes = buildPaidEpisodePayload(favorite.platform, dramaInfo);
   let refreshedMainCvText = "";
   if (!isDesktopApp && countFavoriteMainCvNames(favorite.mainCvText) <= 2) {
     try {
-      const fetchedMainCvText = await fetchFavoriteMainCvText(favorite, frontendVersion, handleVersionResponse);
+      const fetchedMainCvText = await fetchFavoriteMainCvText(favorite, frontendVersion, handleVersionResponse, signal);
       if (countFavoriteMainCvNames(fetchedMainCvText) >= countFavoriteMainCvNames(favorite.mainCvText)) {
         refreshedMainCvText = fetchedMainCvText;
       }
     } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
       if (isFavoriteAccessDeniedError(error)) {
         throw error;
       }
@@ -234,6 +314,7 @@ export async function refreshFavoriteSnapshot({ favorite, frontendVersion, handl
         payload: { episodes: paidEpisodes, source: "favorite" },
         frontendVersion,
         handleVersionResponse,
+        signal,
         onProgress: (snapshot) => onProgress?.({
           progress: 15 + Math.floor(clampFavoriteProgress(snapshot.progress) * 0.8),
           currentAction: snapshot.currentAction,
@@ -251,6 +332,7 @@ export async function refreshFavoriteSnapshot({ favorite, frontendVersion, handl
       }
       paidIdCount = userCounts.reduce((sum, value) => sum + value, 0);
     } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
       const message = error instanceof Error ? error.message : String(error);
       addFavoriteMetricError(errors, metricErrors, "paidIdCount", message);
     }
@@ -269,6 +351,7 @@ export async function refreshFavoriteSnapshot({ favorite, frontendVersion, handl
         payload: { dramaIds: [Number(favorite.dramaId)], source: "favorite" },
         frontendVersion,
         handleVersionResponse,
+        signal,
         onProgress: (snapshot) => onProgress?.({
           progress: 15 + Math.floor(clampFavoriteProgress(snapshot.progress) * 0.8),
           currentAction: snapshot.currentAction,
@@ -300,6 +383,7 @@ export async function refreshFavoriteSnapshot({ favorite, frontendVersion, handl
         addFavoriteMetricError(errors, metricErrors, "paidIdCount", "付费 ID 未获取");
       }
     } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
       if (isFavoriteAccessDeniedError(error)) {
         throw error;
       }
@@ -343,6 +427,7 @@ export async function refreshFavoriteSnapshot({ favorite, frontendVersion, handl
     paidIdCount,
   };
 
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   onProgress?.({ progress: 95, currentAction: "保存收藏历史" });
   const nextFavorite = await updateFavoriteIfExists(favorite.key, (activeFavorite) => ({
     ...activeFavorite,

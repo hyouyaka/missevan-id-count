@@ -79,6 +79,10 @@ npm run desktop
 
 桌面版会在本机内嵌启动 Express 服务，`Missevan` 请求从用户自己的电脑发出，通常比云环境更稳定。
 
+桌面版只保留计算与统计界面：关键词搜索同时请求猫耳、漫播的剧集 API，支持作品/分集 ID、链接和分享导入，以及分集选择、ID、播放量和收益统计。收藏、查询历史、CV、榜单和趋势功能仅保留在网页版。桌面版不会连接 Upstash、Render 或 Deno，即使旧 `.env` 或系统环境仍有相应凭据；漫播自身的备用 API 域名仍可使用。
+
+桌面统计任务只保存在当前进程内存中，退出后不会恢复。旧收藏 JSON、任务快照、资料库文件和浏览器历史不会读取、迁移或删除；桌面日志仅保留运行诊断，不记录查询词、导入内容和完整统计结果。
+
 
 ## 猫耳访问受限说明
 
@@ -174,7 +178,7 @@ MISSEVAN_FORCE_FALLBACK=0
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis Token |
 | `INFO_STORE_META_POLL_INTERVAL_MS` | v2 资料库版本探针轮询间隔。默认 `300000`（5 分钟） |
 
-未配置 Upstash 或不可用时，猫耳搜索会直接调用猫耳搜索 API，Manbo 搜索会提示不可用并仅支持通过 ID / 链接导入。
+以上 Upstash 配置仅适用于网页服务。桌面搜索始终使用猫耳和漫播 API，不依赖资料库；网页服务保留原有资料库优先及 API 回退策略。
 
 ### Manbo 性能调优
 
@@ -198,14 +202,16 @@ MISSEVAN_FORCE_FALLBACK=0
 | `MANBO_STATS_MAX_CONCURRENCY` | 同时运行的漫播统计任务数 | `3` |
 | `STATS_TASK_QUEUE_MAX` | 每个平台等待队列最大任务数 | `20` |
 | `STATS_TASK_CLIENT_QUEUE_MAX` | 每个 IP 在单个平台最多排队任务数 | `3` |
-| `STATS_TASK_PERSISTENCE_DEBOUNCE_MS` | 运行中任务进度快照的持久化防抖时间，限制为 1000～60000 毫秒 | `10000`（10 秒） |
+| `STATS_TASK_PERSISTENCE_DEBOUNCE_MS` | 运行中任务进度快照的最大合并间隔，限制为 1000～60000 毫秒；持续更新不会延后已安排的保存 | `10000`（10 秒） |
 | `IMAGE_PROXY_MAX_BYTES` | 图片代理最大响应字节数 | `10485760`（10 MiB） |
 
 统计任务创建接口按 IP 每 2 分钟最多接受 10 次请求。猫耳每个 IP 同时运行 1 个任务，漫播每个 IP 同时运行 2 个任务；超出的任务进入平台队列，不会降低已经运行任务的抓取并发。
 
 队列已满、单个 IP 排队已满或创建过于频繁时，接口返回 `429`，同时提供 `Retry-After`、稳定错误码和中文提示。单任务超过 `STATS_TASK_MAX_ITEMS` 时返回 `400 TASK_ITEM_LIMIT_EXCEEDED`。
 
-统计任务会异步保存恢复快照：Upstash 可用时写入实例级 Hash `stats:tasks:v2:{instanceId}`，否则写入 `runtime/stats-tasks.json`。服务启动时会将旧 v1 快照单向迁移到 v2；未完成任务使用原任务 ID 从头重新排队。运行中进度默认合并为最多每 10 秒写入一次，入队和终态仍立即保存，不阻塞分集抓取。使用 `ADMIN_CACHE_REFRESH_TOKEN` 访问 `GET /admin/task-metrics` 可读取不含 IP 和任务输入的队列指标。
+网页服务的统计任务会异步保存恢复快照：Upstash 可用时写入实例级 Hash `stats:tasks:v2:{instanceId}`，否则写入 `runtime/stats-tasks.json`。服务启动时会将旧 v1 快照单向迁移到 v2；未完成任务使用原任务 ID 从头重新排队。运行中第一次进度更新安排保存，后续更新不推迟期限，默认 10 秒内保存最新状态；入队、开始运行和终态立即保存。桌面版不创建或恢复这些快照。网页服务可使用 `ADMIN_CACHE_REFRESH_TOKEN` 访问 `GET /admin/task-metrics` 读取不含 IP 和任务输入的队列指标。
+
+普通统计与网页收藏刷新共用任务查询重试：每次 GET 最长 15 秒；网络错误、408、429 和 5xx 按 2、4、8、10 秒退避，之后保持 10 秒，并在剩余预算内遵守 `Retry-After`。成功响应重置连续故障计时。连续故障达 60 秒后停止等待，并尝试取消原任务；只有服务端确认后才显示取消成功。创建任务的 POST 不会自动重试，正常排队/执行时间不受此故障预算限制。
 
 任务取消后状态不会再被迟到的完成或失败回写覆盖；若取消前已经产生部分结果，快照会保留结果并返回 `resultIncomplete=true`。服务恢复期间，统计任务的创建、查询和取消接口会等待快照加载完成，首页与健康检查不受影响。
 
@@ -231,10 +237,10 @@ FEEDBACK_FROM_EMAIL=MMToolkit Feedback <feedback@notify.mmtoolkit.app>
 FEEDBACK_RECIPIENT_EMAIL=admin@example.com
 ```
 
-桌面版 `.env` 读取优先顺序：
+桌面版环境值优先顺序（已有非空值不会被后续文件覆盖）：
 
-1. `exe` 同目录下的 `.env`
-2. `APP_DATA_DIR/.env`
-3. 系统已有环境变量
+1. 系统已有环境变量
+2. `exe` 同目录下的 `.env`
+3. `APP_DATA_DIR/.env`
 
-如果都没有配置 Upstash，桌面版不会内置 Manbo 起始库；Manbo 仍可通过 ID / 链接导入。
+开发启动时还可读取项目 `.env`；打包版不会读取项目目录。桌面运行策略始终禁用云端资料库、云端代理和任务持久化，不受这些文件中的旧凭据影响。

@@ -104,6 +104,8 @@ export default defineConfig({
       "/getsounddanmaku": backendTarget,
       "/image-proxy": backendTarget,
       "/app-config": backendTarget,
+      "/feedback": backendTarget,
+      "/favorites/meta": backendTarget,
       "/usage-log": backendTarget,
       "/register-new-drama-ids": backendTarget,
       "/stat-tasks": backendTarget,

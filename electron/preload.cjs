@@ -1,5 +1,5 @@
 const { contextBridge } = require("electron");
 
-contextBridge.exposeInMainWorld("desktopFavorites", {
-  enabled: true,
+contextBridge.exposeInMainWorld("mmToolkit", {
+  desktopApp: true,
 });

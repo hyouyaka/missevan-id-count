@@ -326,6 +326,7 @@ export function SearchResults({
   frontendVersion = "0.0.0",
   handleVersionResponse,
   resultSource = "search",
+  searchError = "",
   results = [],
   dramas = [],
   selectedEpisodes = [],
@@ -355,6 +356,7 @@ export function SearchResults({
   favoriteKeys = new Set(),
   favoriteActionsDisabled = false,
   statisticsActionsDisabled = false,
+  isDesktopApp = false,
   onToggleFavorite,
   onAddCompareItem,
   canAddCompareItem,
@@ -410,6 +412,9 @@ export function SearchResults({
 
   useEffect(() => {
     let cancelled = false;
+    if (isDesktopApp) {
+      return undefined;
+    }
     if (showingCvResults) {
       return undefined;
     }
@@ -478,7 +483,7 @@ export function SearchResults({
     return () => {
       cancelled = true;
     };
-  }, [frontendVersion, platform, showingCvResults, trendLookupIds, trendLookupKey]);
+  }, [frontendVersion, isDesktopApp, platform, showingCvResults, trendLookupIds, trendLookupKey]);
 
   function getTitleClassName(title) {
     const length = String(title ?? "").trim().length;
@@ -620,6 +625,7 @@ export function SearchResults({
   }
 
   function canShowSearchTrend(item) {
+    if (isDesktopApp) return false;
     if (!trendEligibility.isLoaded || trendEligibility.platform !== platform) {
       return false;
     }
@@ -1312,18 +1318,20 @@ export function SearchResults({
                         >
                           <span className="min-w-0 truncate whitespace-nowrap">付费</span>
                         </Button> : null}
-                        <Button
-                          type="button"
-                          data-touch="compact"
-                          className={trendResultActionButtonClass}
-                          aria-label="查看趋势"
-                          title="趋势"
-                          disabled={!canShowTrend}
-                          onClick={() => openTrendDialog(item)}
-                        >
-                          <TrendingUpIcon data-icon="inline-start" />
-                          <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>趋势</span>
-                        </Button>
+                        {!isDesktopApp ? (
+                          <Button
+                            type="button"
+                            data-touch="compact"
+                            className={trendResultActionButtonClass}
+                            aria-label="查看趋势"
+                            title="趋势"
+                            disabled={!canShowTrend}
+                            onClick={() => openTrendDialog(item)}
+                          >
+                            <TrendingUpIcon data-icon="inline-start" />
+                            <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>趋势</span>
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           data-touch="compact"
@@ -1355,17 +1363,21 @@ export function SearchResults({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" side="bottom">
-                            <DropdownMenuItem
-                              disabled={favoriteActionsDisabled}
-                              onSelect={() => onToggleFavorite?.(buildFavoritePayload(item))}
-                            >
-                              <StarIcon aria-hidden="true" className={isFavorite(item) ? "fill-primary text-primary" : ""} />
-                              {isFavorite(item) ? "取消收藏" : "收藏"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem disabled={!canShowTrend || (canAddCompareItem ? !canAddCompareItem(item) : false)} onSelect={() => addCompareItem(item)}>
-                              <ArrowLeftRightIcon aria-hidden="true" />
-                              对比
-                            </DropdownMenuItem>
+                            {!isDesktopApp ? (
+                              <>
+                                <DropdownMenuItem
+                                  disabled={favoriteActionsDisabled}
+                                  onSelect={() => onToggleFavorite?.(buildFavoritePayload(item))}
+                                >
+                                  <StarIcon aria-hidden="true" className={isFavorite(item) ? "fill-primary text-primary" : ""} />
+                                  {isFavorite(item) ? "取消收藏" : "收藏"}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem disabled={!canShowTrend || (canAddCompareItem ? !canAddCompareItem(item) : false)} onSelect={() => addCompareItem(item)}>
+                                  <ArrowLeftRightIcon aria-hidden="true" />
+                                  对比
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
                             <DropdownMenuItem
                               disabled={statisticsActionsDisabled}
                               onSelect={() => onStartRevenueEstimate?.([getResultDramaId(item)], { source: `${getResultDramaId(item)}earn` })}
@@ -1389,7 +1401,7 @@ export function SearchResults({
                       </SearchResultActionLayout>
                     </div>
 
-                    {canShowTrend && trendDialog.open && String(trendDialog.item?.id) === String(item.id) ? (
+                    {!isDesktopApp && canShowTrend && trendDialog.open && String(trendDialog.item?.id) === String(item.id) ? (
                       <LazyRankTrendDialog
                         open
                         onOpenChange={closeTrendDialog}
@@ -1469,7 +1481,10 @@ export function SearchResults({
                 <span>正在搜索/导入……</span>
               </div>
             ) : (
-              <div className="text-base font-semibold">还没有结果</div>
+              <div className="grid justify-items-center gap-1">
+                <div className="text-base font-semibold">{searchError ? "该平台搜索失败" : "还没有结果"}</div>
+                {searchError ? <p className="max-w-xl break-words text-sm text-muted-foreground">{searchError}</p> : null}
+              </div>
             )}
           </div>
         )}

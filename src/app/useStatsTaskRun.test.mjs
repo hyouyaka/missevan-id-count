@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createRuntimeMeta } from "./app-utils.js";
 import { createStatsTaskRunController } from "./useStatsTaskRun.js";
+import { TaskPollingExhaustedError } from "./taskPolling.js";
 
 function createDeferred() {
   let resolve;
@@ -224,4 +225,63 @@ test("cancelled snapshots and repeated replacement retire every inactive run con
   assert.deepEqual(repeated.controller.getContextCounts(), { active: 2, total: 2 });
   repeated.controller.dispose();
   assert.deepEqual(repeated.controller.getContextCounts(), { active: 0, total: 0 });
+});
+
+test("an exhausted poll cancels the original task once and distinguishes confirmed cancellation", async () => {
+  for (const confirmed of [true, false]) {
+    let creations = 0;
+    const cancellations = [];
+    const harness = createControllerHarness({
+      createTask: async () => {
+        creations += 1;
+        return { taskId: "original-task", taskType: "id", status: "queued", progress: 30 };
+      },
+      getTaskSnapshot: async ({ platform, taskId }) => {
+        assert.equal(platform, "manbo");
+        throw new TaskPollingExhaustedError(taskId);
+      },
+      cancelTask: async (request) => {
+        cancellations.push(request);
+        return { confirmed };
+      },
+    });
+    const run = harness.controller.beginRun("manbo");
+    await assert.rejects(
+      harness.controller.startStatsTask("manbo", "id", {}, run.runId, run.signal),
+      (error) => error instanceof TaskPollingExhaustedError
+        && error.taskId === "original-task"
+        && error.cancelConfirmed === confirmed
+        && error.message.includes(confirmed ? "服务器已确认取消" : "服务器未确认"),
+    );
+    assert.equal(creations, 1);
+    assert.equal(cancellations.length, 1);
+    assert.equal(cancellations[0].taskId, "original-task");
+    assert.equal(harness.events.snapshots.at(-1).snapshot.progress, 30);
+    assert.equal(harness.events.completed.length, 0);
+    harness.controller.finishRun("manbo", run.runId, "failed");
+    assert.equal(harness.metas.manbo.activeTaskId, "");
+    assert.equal(harness.timers.intervals.size, 0);
+    assert.deepEqual(harness.controller.getContextCounts(), { active: 0, total: 0 });
+  }
+});
+
+test("late cancellation acknowledgement cannot overwrite a newer run", async () => {
+  const cancellation = createDeferred();
+  const startedCancellation = createDeferred();
+  const harness = createControllerHarness({
+    getTaskSnapshot: async ({ taskId }) => { throw new TaskPollingExhaustedError(taskId); },
+    cancelTask: () => {
+      startedCancellation.resolve();
+      return cancellation.promise;
+    },
+  });
+  const first = harness.controller.beginRun("missevan");
+  const pending = harness.controller.startStatsTask("missevan", "id", {}, first.runId, first.signal);
+  await startedCancellation.promise;
+  const next = harness.controller.beginRun("missevan");
+  cancellation.resolve({ confirmed: true });
+  await assert.rejects(pending, (error) => error.name === "AbortError");
+  assert.equal(harness.controller.isRunActive("missevan", next.runId), true);
+  assert.equal(harness.events.completed.length, 0);
+  harness.controller.dispose();
 });

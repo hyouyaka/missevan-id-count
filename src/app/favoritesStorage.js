@@ -3,7 +3,6 @@ export const FAVORITES_DB_VERSION = 1;
 export const FAVORITES_BACKUP_VERSION = 1;
 export const FAVORITES_BACKUP_TYPE = "favorites-backup";
 export const FAVORITES_APP_ID = "mm-toolkit";
-export const DESKTOP_FAVORITES_FILE_NAME = "mm-toolkit-favorites.json";
 
 const FAVORITES_STORE = "favorites";
 const SNAPSHOTS_STORE = "snapshots";
@@ -23,9 +22,6 @@ const DEFAULT_SETTINGS = {
   deltaMetric: "viewCount",
   sortBy: "lastSnapshotAt",
 };
-let desktopFavoritesCache = null;
-let desktopFavoritesLoadPromise = null;
-let desktopFavoritesWritePromise = Promise.resolve();
 
 export const FAVORITE_DELTA_METRICS = [
   { key: "viewCount", label: "播放量", platforms: ["missevan", "manbo"] },
@@ -391,61 +387,6 @@ export function normalizeFavoritesBackup(payload = {}) {
   };
 }
 
-export function shouldMigrateFavoritesBackupToDesktopJson(state = {}) {
-  if (!state?.exists) {
-    return true;
-  }
-  try {
-    const normalized = normalizeFavoritesBackup(state.data);
-    return normalized.favorites.length === 0 && normalized.snapshots.length === 0;
-  } catch (_) {
-    return true;
-  }
-}
-
-function isDesktopFavoritesStorageEnabled() {
-  return typeof window !== "undefined" && Boolean(window.desktopFavorites);
-}
-
-function buildEmptyFavoritesBackup() {
-  return buildFavoritesBackup({
-    favorites: [],
-    snapshots: [],
-    settings: DEFAULT_SETTINGS,
-  });
-}
-
-function hasFavoritesBackupContent(backup) {
-  const normalized = normalizeFavoritesBackup(backup);
-  return normalized.favorites.length > 0 || normalized.snapshots.length > 0;
-}
-
-async function fetchDesktopFavoritesState() {
-  const response = await fetch("/desktop/favorites-data", {
-    cache: "no-store",
-  });
-  const data = await response.json();
-  if (!response.ok || !data?.success) {
-    throw new Error(data?.message || "读取桌面收藏 JSON 失败");
-  }
-  return data;
-}
-
-async function writeDesktopFavoritesBackup(backup) {
-  const normalized = normalizeFavoritesBackup(buildFavoritesBackup(backup));
-  const response = await fetch("/desktop/favorites-data", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildFavoritesBackup(normalized)),
-  });
-  const data = await response.json();
-  if (!response.ok || !data?.success) {
-    throw new Error(data?.message || "写入桌面收藏 JSON 失败");
-  }
-  desktopFavoritesCache = normalizeFavoritesBackup(data.data || buildFavoritesBackup(normalized));
-  return desktopFavoritesCache;
-}
-
 export function getSnapshotsForFavorite(favoriteKey, snapshots = []) {
   const normalizedKey = normalizeString(favoriteKey);
   return (Array.isArray(snapshots) ? snapshots : [])
@@ -772,62 +713,6 @@ async function exportIndexedDbFavoritesData() {
   return buildFavoritesBackup({ favorites, snapshots, settings });
 }
 
-async function exportIndexedDbFavoritesDataIfAvailable() {
-  try {
-    return await exportIndexedDbFavoritesData();
-  } catch (_) {
-    return buildEmptyFavoritesBackup();
-  }
-}
-
-async function loadDesktopFavoritesBackup({ force = false } = {}) {
-  if (desktopFavoritesCache && !force) {
-    return desktopFavoritesCache;
-  }
-  if (desktopFavoritesLoadPromise && !force) {
-    return desktopFavoritesLoadPromise;
-  }
-
-  desktopFavoritesLoadPromise = (async () => {
-    const state = await fetchDesktopFavoritesState();
-    let backup;
-    try {
-      backup = normalizeFavoritesBackup(state.data);
-    } catch (_) {
-      backup = normalizeFavoritesBackup(buildEmptyFavoritesBackup());
-    }
-
-    if (shouldMigrateFavoritesBackupToDesktopJson(state)) {
-      const indexedDbBackup = await exportIndexedDbFavoritesDataIfAvailable();
-      backup = hasFavoritesBackupContent(indexedDbBackup)
-        ? normalizeFavoritesBackup(indexedDbBackup)
-        : backup;
-      await writeDesktopFavoritesBackup(backup);
-    }
-
-    desktopFavoritesCache = backup;
-    desktopFavoritesLoadPromise = null;
-    return backup;
-  })();
-
-  try {
-    return await desktopFavoritesLoadPromise;
-  } catch (error) {
-    desktopFavoritesLoadPromise = null;
-    throw error;
-  }
-}
-
-async function updateDesktopFavoritesBackup(updater) {
-  const queuedWrite = desktopFavoritesWritePromise.catch(() => null).then(async () => {
-    const current = await loadDesktopFavoritesBackup();
-    const next = typeof updater === "function" ? updater(current) : current;
-    return writeDesktopFavoritesBackup(next);
-  });
-  desktopFavoritesWritePromise = queuedWrite.catch(() => null);
-  return queuedWrite;
-}
-
 function mergeFavoriteLists(existingFavorites = [], incomingFavorites = []) {
   const favoritesByKey = new Map();
   [...existingFavorites, ...incomingFavorites].forEach((item) => {
@@ -882,10 +767,7 @@ async function importIndexedDbFavoritesData(payload) {
 }
 
 export async function listFavorites() {
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return listIndexedDbFavorites();
-  }
-  return (await loadDesktopFavoritesBackup()).favorites;
+  return listIndexedDbFavorites();
 }
 
 export async function getFavoriteByKey(key) {
@@ -893,11 +775,7 @@ export async function getFavoriteByKey(key) {
   if (!normalizedKey) {
     return null;
   }
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return getIndexedDbFavoriteByKey(normalizedKey);
-  }
-  const backup = await loadDesktopFavoritesBackup();
-  return backup.favorites.find((favorite) => favorite.key === normalizedKey) || null;
+  return getIndexedDbFavoriteByKey(normalizedKey);
 }
 
 export async function saveFavorite(record) {
@@ -905,17 +783,7 @@ export async function saveFavorite(record) {
   if (!favorite) {
     throw new Error("收藏作品数据不完整");
   }
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return saveIndexedDbFavorite(favorite);
-  }
-  await updateDesktopFavoritesBackup((current) => ({
-    ...current,
-    favorites: mergeFavoriteLists(
-      current.favorites.filter((item) => item.key !== favorite.key),
-      [favorite]
-    ),
-  }));
-  return favorite;
+  return saveIndexedDbFavorite(favorite);
 }
 
 export async function updateFavoriteIfExists(key, updater) {
@@ -923,61 +791,15 @@ export async function updateFavoriteIfExists(key, updater) {
   if (!normalizedKey) {
     return null;
   }
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return updateIndexedDbFavoriteIfExists(normalizedKey, updater);
-  }
-
-  let updatedFavorite = null;
-  await updateDesktopFavoritesBackup((current) => {
-    const activeFavorite = current.favorites.find((favorite) => favorite.key === normalizedKey);
-    if (!activeFavorite) {
-      return current;
-    }
-    const nextRecord = typeof updater === "function" ? updater(activeFavorite) : { ...activeFavorite, ...(updater || {}) };
-    const nextFavorite = normalizeFavoriteRecord(nextRecord);
-    if (!nextFavorite || nextFavorite.key !== activeFavorite.key) {
-      throw new Error("收藏作品更新数据不完整");
-    }
-    updatedFavorite = nextFavorite;
-    return {
-      ...current,
-      favorites: current.favorites.map((favorite) => (favorite.key === normalizedKey ? nextFavorite : favorite)),
-    };
-  });
-  return updatedFavorite;
+  return updateIndexedDbFavoriteIfExists(normalizedKey, updater);
 }
 
 export async function removeFavoriteWithSnapshots(platform, dramaId) {
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return removeIndexedDbFavoriteWithSnapshots(platform, dramaId);
-  }
-  const key = createFavoriteKey(platform, dramaId);
-  if (!key) {
-    return { key: "", deletedSnapshotCount: 0 };
-  }
-  let deletedSnapshotCount = 0;
-  await updateDesktopFavoritesBackup((current) => {
-    const nextSnapshots = current.snapshots.filter((snapshot) => {
-      const shouldDelete = snapshot.favoriteKey === key;
-      if (shouldDelete) {
-        deletedSnapshotCount += 1;
-      }
-      return !shouldDelete;
-    });
-    return {
-      ...current,
-      favorites: current.favorites.filter((favorite) => favorite.key !== key),
-      snapshots: nextSnapshots,
-    };
-  });
-  return { key, deletedSnapshotCount };
+  return removeIndexedDbFavoriteWithSnapshots(platform, dramaId);
 }
 
 export async function listSnapshots() {
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return listIndexedDbSnapshots();
-  }
-  return (await loadDesktopFavoritesBackup()).snapshots;
+  return listIndexedDbSnapshots();
 }
 
 export async function saveSnapshot(record) {
@@ -985,75 +807,23 @@ export async function saveSnapshot(record) {
   if (!snapshot) {
     throw new Error("收藏快照数据不完整");
   }
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return saveIndexedDbSnapshot(snapshot);
-  }
-
-  let savedSnapshot = null;
-  await updateDesktopFavoritesBackup((current) => {
-    const activeFavorite = current.favorites.find((favorite) => favorite.key === snapshot.favoriteKey);
-    if (!activeFavorite) {
-      return current;
-    }
-    savedSnapshot = snapshot;
-    return {
-      ...current,
-      favorites: current.favorites.map((favorite) =>
-        favorite.key === snapshot.favoriteKey
-          ? { ...favorite, lastSnapshotAt: snapshot.capturedAt }
-          : favorite
-      ),
-      snapshots: mergeSnapshotLists(
-        current.snapshots.filter((item) => item.id !== snapshot.id),
-        [snapshot]
-      ),
-    };
-  });
-  return savedSnapshot;
+  return saveIndexedDbSnapshot(snapshot);
 }
 
 export async function loadFavoriteSettings() {
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return loadIndexedDbFavoriteSettings();
-  }
-  return normalizeFavoriteSettings((await loadDesktopFavoritesBackup()).settings);
+  return loadIndexedDbFavoriteSettings();
 }
 
 export async function saveFavoriteSettings(settings) {
   const value = normalizeFavoriteSettings(settings);
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return saveIndexedDbFavoriteSettings(value);
-  }
-  await updateDesktopFavoritesBackup((current) => ({
-    ...current,
-    settings: value,
-  }));
-  return value;
+  return saveIndexedDbFavoriteSettings(value);
 }
 
 export async function exportFavoritesData() {
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return exportIndexedDbFavoritesData();
-  }
-  return buildFavoritesBackup(await loadDesktopFavoritesBackup());
+  return exportIndexedDbFavoritesData();
 }
 
 export async function importFavoritesData(payload) {
   const normalized = normalizeFavoritesBackup(payload);
-  if (!isDesktopFavoritesStorageEnabled()) {
-    return importIndexedDbFavoritesData(normalized);
-  }
-  await updateDesktopFavoritesBackup((current) => {
-    const snapshots = mergeSnapshotLists(current.snapshots, normalized.snapshots);
-    return {
-      ...current,
-      favorites: reconcileFavoriteSnapshotTimes(
-        mergeFavoriteLists(current.favorites, normalized.favorites),
-        snapshots
-      ),
-      snapshots,
-      settings: normalizeFavoriteSettings(normalized.settings),
-    };
-  });
-  return normalized;
+  return importIndexedDbFavoritesData(normalized);
 }

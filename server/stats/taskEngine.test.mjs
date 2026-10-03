@@ -39,6 +39,49 @@ function createFakeTimers() {
   };
 }
 
+function createFakeClock() {
+  let now = 0;
+  let nextTimerId = 0;
+  const timers = [];
+  const runDueTimers = async (until) => {
+    while (true) {
+      const next = timers
+        .filter((timer) => !timer.cancelled && timer.dueAt <= until)
+        .sort((left, right) => left.dueAt - right.dueAt)[0];
+      if (!next) {
+        break;
+      }
+      now = next.dueAt;
+      next.cancelled = true;
+      next.callback();
+      await Promise.resolve();
+    }
+    now = until;
+  };
+  return {
+    clearTimer(timer) {
+      timer.cancelled = true;
+    },
+    now: () => now,
+    setTimer(callback, delay) {
+      const timer = {
+        id: nextTimerId++,
+        callback,
+        delay,
+        dueAt: now + delay,
+        cancelled: false,
+        unref() {},
+      };
+      timers.push(timer);
+      return timer;
+    },
+    timers,
+    async advanceBy(duration) {
+      await runDueTimers(now + duration);
+    },
+  };
+}
+
 test("persistence debounce defaults to 10 seconds and clamps custom values", () => {
   assert.equal(normalizeStatsTaskPersistenceDebounceMs(), 10_000);
   assert.equal(normalizeStatsTaskPersistenceDebounceMs(20_000), 20_000);
@@ -98,7 +141,8 @@ test("task engine debounces running snapshots and clears them before terminal sa
   engine.report(task.taskId, { progress: 20, currentAction: "第二步" });
   const latestProgressTimer = fakeTimers.timers.at(-1);
 
-  assert.equal(firstProgressTimer.cancelled, true);
+  assert.equal(firstProgressTimer.cancelled, false);
+  assert.equal(latestProgressTimer, firstProgressTimer);
   assert.equal(latestProgressTimer.delay, 10_000);
   assert.equal(saved.length, 2);
 
@@ -115,6 +159,70 @@ test("task engine debounces running snapshots and clears them before terminal sa
   assert.equal(pendingTerminalTimer.cancelled, true);
   assert.equal(saved.at(-1).status, "completed");
   assert.equal(saved.at(-1).progress, 100);
+});
+
+test("ongoing progress is persisted within bounded windows during a 20 minute task", async () => {
+  const started = deferred();
+  const finish = deferred();
+  const saved = [];
+  const fakeClock = createFakeClock();
+  const engine = createStatsTaskEngine({
+    limits: {
+      missevan: { maxActive: 1, maxActivePerClient: 1, maxQueued: 1, maxQueuedPerClient: 1 },
+    },
+    store: {
+      async save(task) {
+        saved.push({ ...structuredClone(task), persistedAt: fakeClock.now() });
+      },
+    },
+    now: fakeClock.now,
+    setTimer: fakeClock.setTimer,
+    clearTimer: fakeClock.clearTimer,
+    async execute() {
+      started.resolve();
+      await finish.promise;
+      return { status: "completed", patch: { progress: 100 } };
+    },
+  });
+  const task = {
+    taskId: "long-running-progress",
+    platform: "missevan",
+    clientKey: "ip-long-running",
+    status: "queued",
+    progress: 0,
+  };
+
+  engine.enqueue(task);
+  await started.promise;
+  for (let index = 1; index <= 240; index += 1) {
+    await fakeClock.advanceBy(5_000);
+    engine.report(task.taskId, {
+      progress: (index / 240) * 100,
+      currentAction: `进度 ${index}`,
+    });
+  }
+
+  const progressSnapshots = saved.filter((snapshot) => snapshot.status === "running" && snapshot.progress > 0);
+  assert.ok(progressSnapshots.length >= 119);
+  assert.ok(progressSnapshots.at(-1).progress >= 99);
+  assert.equal(progressSnapshots.at(-1).currentAction, "进度 238");
+  for (let index = 1; index < progressSnapshots.length; index += 1) {
+    assert.ok(
+      progressSnapshots[index].updatedAt - progressSnapshots[index - 1].updatedAt <= 10_000,
+      "progress snapshots must not be more than the configured merge interval apart"
+    );
+  }
+
+  const pendingTimer = fakeClock.timers.find((timer) => !timer.cancelled);
+  assert.ok(pendingTimer);
+  engine.cancel(task.taskId);
+  assert.equal(pendingTimer.cancelled, true);
+  const savesAfterCancel = saved.length;
+  finish.resolve();
+  await fakeClock.advanceBy(10_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(saved.at(-1).status, "cancelled");
+  assert.equal(saved.slice(savesAfterCancel).some((snapshot) => snapshot.status === "running"), false);
 });
 
 test("failed and cancelled task states are persisted immediately", async () => {

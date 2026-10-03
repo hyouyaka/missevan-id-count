@@ -54,8 +54,9 @@ import {
 } from "@/app/app-utils";
 import { fetchRanksData, getCachedRanksData } from "@/app/ranksData";
 import {
+  cancelStatsTask,
   createStatsTask,
-  getStatsTaskSnapshot,
+  getStatsTaskSnapshotWithRetry,
   notifyStatsTaskCancel,
 } from "@/app/statsTaskClient";
 import { useStatsTaskRun } from "@/app/useStatsTaskRun";
@@ -172,7 +173,9 @@ export function ToolView({ initialAppConfig }) {
   const [sharedOutputPlatform, setSharedOutputPlatform] = useState(() =>
     initialAppConfig?.missevanEnabled === false ? "manbo" : "missevan"
   );
-  const [platformStates, setPlatformStates] = useState(createPlatformStatesWithHistory);
+  const [platformStates, setPlatformStates] = useState(() => createPlatformStatesWithHistory({
+    loadPersisted: initialAppConfig?.desktopApp !== true,
+  }));
   const [notice, setNotice] = useState(null);
   const [searchJumpStatus, setSearchJumpStatus] = useState(null);
   const [searchMetricLegendOpen, setSearchMetricLegendOpen] = useState(false);
@@ -231,6 +234,7 @@ export function ToolView({ initialAppConfig }) {
   const [replayPreparingEntryIds, setReplayPreparingEntryIds] = useState([]);
   const statsHistory = useStatsHistory({
     platformStates,
+    enabled: !appConfig.desktopApp,
     getPlatformStates: () => platformStatesRef.current,
     getRuntimeMeta: (platform) => runtimeMetaRef.current[platform],
     updatePlatformState,
@@ -256,10 +260,15 @@ export function ToolView({ initialAppConfig }) {
       frontendVersion: appConfigRef.current.frontendVersion,
       onVersionStatus: updateVersionStatusFromResponse,
     }),
-    getTaskSnapshot: ({ taskId, signal }) => getStatsTaskSnapshot(taskId, {
+    getTaskSnapshot: ({ platform, taskId, signal }) => getStatsTaskSnapshotWithRetry(taskId, {
       signal,
       frontendVersion: appConfigRef.current.frontendVersion,
       onVersionStatus: updateVersionStatusFromResponse,
+      onConnectionState: (state) => applyTaskConnectionState(platform, state),
+    }),
+    cancelTask: ({ taskId, signal }) => cancelStatsTask(taskId, {
+      signal,
+      frontendVersion: appConfigRef.current.frontendVersion,
     }),
     notifyTaskCancel: notifyStatsTaskCancel,
     onRunStarted: applyStatsRunStarted,
@@ -272,6 +281,7 @@ export function ToolView({ initialAppConfig }) {
   });
 
   function logCompareUsage(items = []) {
+    if (appConfigRef.current.desktopApp) return;
     if (!Array.isArray(items) || !items.length) {
       return;
     }
@@ -366,7 +376,6 @@ export function ToolView({ initialAppConfig }) {
   ];
   const desktopPlatforms = [
     { key: "search", label: "计算与统计" },
-    { key: "favorites", label: "收藏" },
   ];
   const visiblePlatforms = appConfig.desktopApp ? desktopPlatforms : webPlatforms;
   const drawerRootItemClassName = appConfig.desktopApp
@@ -686,14 +695,18 @@ export function ToolView({ initialAppConfig }) {
     }
   }, [appConfigRef]);
 
-  async function reloadFavoriteItems() {
+  const reloadFavoriteItems = useCallback(async () => {
+    if (appConfigRef.current.desktopApp) {
+      setFavoriteItems([]);
+      return;
+    }
     try {
       setFavoriteItems(await listFavorites());
     } catch (error) {
       console.error("Failed to load favorites", error);
       toast.error("读取收藏失败。");
     }
-  }
+  }, [appConfigRef]);
 
   const favoriteKeySet = useMemo(
     () => new Set((Array.isArray(favoriteItems) ? favoriteItems : []).map((item) => item.key)),
@@ -720,6 +733,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function logFavoriteUsage(item, action) {
+    if (appConfigRef.current.desktopApp) return;
     const payload = buildFavoriteLogPayload(item, action);
     if (!payload.platform || !payload.dramaId) {
       return;
@@ -761,6 +775,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function toggleFavorite(item) {
+    if (appConfigRef.current.desktopApp) return;
     if (favoriteRefreshStateRef.current.isRunning) {
       toast.warning("收藏刷新中，请稍后再操作。");
       return;
@@ -803,7 +818,7 @@ export function ToolView({ initialAppConfig }) {
 
   useEffect(() => {
     loadAppConfig();
-    reloadFavoriteItems();
+    if (!appConfigRef.current.desktopApp) reloadFavoriteItems();
     const pageExitHandler = () => {
       statsTaskRun.notifyAllActiveTaskCancels();
     };
@@ -816,7 +831,7 @@ export function ToolView({ initialAppConfig }) {
       window.removeEventListener("pagehide", pageExitHandler);
       window.removeEventListener("beforeunload", pageExitHandler);
     };
-  }, [loadAppConfig, statsTaskRun]);
+  }, [appConfigRef, loadAppConfig, reloadFavoriteItems, statsTaskRun]);
 
   function updatePlatformState(platform, updater) {
     setPlatformStates((current) => {
@@ -1314,6 +1329,22 @@ export function ToolView({ initialAppConfig }) {
     }));
   }
 
+  function applyTaskConnectionState(platform, connectionState) {
+    if (!connectionState?.retrying) {
+      return;
+    }
+    const currentAction = "连接异常，正在重试";
+    setBackgroundTask((current) =>
+      current.type === "statistics"
+        ? { ...current, action: currentAction, description: currentAction }
+        : current
+    );
+    updatePlatformState(platform, (state) => ({
+      ...state,
+      stats: { ...state.stats, currentAction },
+    }));
+  }
+
   async function postJson(url, payload, signal, errorMessage) {
     const response = await fetch(buildVersionedUrl(url, appConfigRef.current.frontendVersion), {
       method: "POST",
@@ -1543,6 +1574,7 @@ export function ToolView({ initialAppConfig }) {
   }
 
   async function registerApiSearchDramaIds(platform, ids, signal) {
+    if (appConfigRef.current.desktopApp) return;
     const normalizedPlatform = platform === "manbo" ? "manbo" : platform === "missevan" ? "missevan" : "";
     if (!normalizedPlatform) {
       return;
@@ -2300,7 +2332,7 @@ export function ToolView({ initialAppConfig }) {
     ...searchPlatforms.filter((platform) =>
       platform.key !== "missevan" || appConfig.missevanEnabled
     ),
-    { key: "cv", label: "CV" },
+    ...(!appConfig.desktopApp ? [{ key: "cv", label: "CV" }] : []),
   ];
   const searchResultCounts = {
     missevan: missevanResultCount,
@@ -2580,6 +2612,7 @@ export function ToolView({ initialAppConfig }) {
               isLoadingMoreResults: Boolean(currentBrowseState?.isLoadingMoreResults),
               loadedResultCount: Number(currentBrowseState?.searchResults?.length ?? 0) || 0,
               platformTabs: visibleSearchCategories,
+              isDesktopApp: appConfig.desktopApp,
               activePlatform: activeSearchCategory,
               onPlatformChange: changeSearchCategory,
               cvResults: cvSearchState.results,
@@ -2587,6 +2620,7 @@ export function ToolView({ initialAppConfig }) {
               platformResultCounts: searchResultCounts,
               platform: activeBrowsePlatform,
               resultSource: currentBrowseState?.searchResultSource || "search",
+              searchError: currentBrowseState?.searchError || "",
               results: currentBrowseState?.searchResults || [],
               selectedEpisodes: currentBrowseState?.selectedEpisodesSnapshot || [],
               totalResults: Number(currentBrowseState?.searchTotalMatched ?? 0) || 0,
@@ -2606,6 +2640,7 @@ export function ToolView({ initialAppConfig }) {
               isReplayPreparing: replayPreparingEntryIds.length > 0,
               replayPreparingEntryIds,
               historyActionsDisabled,
+              showHistory: !appConfig.desktopApp,
               onCancelReplayPreparation: cancelCurrentStatistics,
               platform: sharedOutputPlatform,
               playCountFailed: sharedStatsState?.playCountFailed,
@@ -2629,21 +2664,25 @@ export function ToolView({ initialAppConfig }) {
         onOpenResults={openBackgroundTaskResult}
         onDismiss={() => setBackgroundTask(createIdleBackgroundTask())}
       />
-      <DramaCompareBasket
-        items={compareItems}
-        open={compareBasketOpen}
-        onOpenChange={setCompareBasketOpen}
-        onOpenCompare={openCompareDialogFromBasket}
-        onRemoveItem={removeDramaFromCompareBasket}
-        onClear={clearCompareBasket}
-      />
-      <DramaCompareDialog
-        open={compareDialogOpen}
-        onOpenChange={setCompareDialogOpen}
-        items={compareItems}
-        frontendVersion={appConfig.frontendVersion}
-        handleVersionResponse={updateVersionStatusFromResponse}
-      />
+      {!appConfig.desktopApp ? (
+        <>
+          <DramaCompareBasket
+            items={compareItems}
+            open={compareBasketOpen}
+            onOpenChange={setCompareBasketOpen}
+            onOpenCompare={openCompareDialogFromBasket}
+            onRemoveItem={removeDramaFromCompareBasket}
+            onClear={clearCompareBasket}
+          />
+          <DramaCompareDialog
+            open={compareDialogOpen}
+            onOpenChange={setCompareDialogOpen}
+            items={compareItems}
+            frontendVersion={appConfig.frontendVersion}
+            handleVersionResponse={updateVersionStatusFromResponse}
+          />
+        </>
+      ) : null}
       <MessageDialog notice={notice} onClose={() => setNotice(null)} />
       <ChangelogDialog
         open={changelogOpen}

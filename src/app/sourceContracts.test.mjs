@@ -58,6 +58,8 @@ const dramaCompareUtilsSource = readFileSync(new URL("./dramaCompareUtils.js", i
 const useDramaCompareSource = readFileSync(new URL("./useDramaCompare.js", import.meta.url), "utf8");
 const navigationSource = readFileSync(new URL("./navigation.jsx", import.meta.url), "utf8");
 const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
+const desktopStatisticsSource = readFileSync(new URL("./DesktopStatisticsView.jsx", import.meta.url), "utf8");
+const desktopRuntimePolicySource = readFileSync(new URL("../../server/runtimePolicy.js", import.meta.url), "utf8");
 const applicationSource = readFileSync(new URL("../../server/application.js", import.meta.url), "utf8");
 const imageProxyRoutesSource = readFileSync(new URL("../../server/routes/imageProxyRoutes.js", import.meta.url), "utf8");
 const newDramaRoutesSource = readFileSync(new URL("../../server/routes/newDramaRoutes.js", import.meta.url), "utf8");
@@ -280,7 +282,7 @@ test("ongoing platform pills include both cached platform counts", () => {
   assert.match(ongoingPanelSource, /const activeWindow = "7d"/);
   assert.match(ongoingPanelSource, /platform: nextPlatform,[\s\S]*metric: selectedMetric/);
   assert.match(appUtilsSource, /export function normalizeOngoingMetric\(value\)/);
-  assert.match(appUtilsSource, /metric: normalizeOngoingMetric\(routeState\.metric\)/);
+  assert.match(appUtilsSource, /metric: desktopApp \? "playback" : normalizeOngoingMetric\(routeState\.metric\)/);
   assert.match(appUtilsSource, /metric: params\.get\(TOOL_ROUTE_QUERY_PARAMS\.metric\)/);
   assert.match(appUtilsSource, /if \(nextState\.metric !== "playback"\)[\s\S]*params\.set\(TOOL_ROUTE_QUERY_PARAMS\.metric, nextState\.metric\)/);
   assert.doesNotMatch(appUtilsSource, /params\.set\(TOOL_ROUTE_QUERY_PARAMS\.window, nextState\.window\)/);
@@ -580,7 +582,7 @@ test("web navigation keeps platform drawer roots and favorites with statistics l
 });
 
 test("tool routes default to the new home view", () => {
-  assert.match(appUtilsSource, /return desktopApp\s*\?\s*\["search", "cv", "favorites"\]\s*:\s*\["home", "search", "cv", "ongoing", "ranks", "favorites", "feedback"\]/);
+  assert.match(appUtilsSource, /return desktopApp\s*\?\s*\["search"\]\s*:\s*\["home", "search", "cv", "ongoing", "ranks", "favorites", "feedback"\]/);
   assert.match(appUtilsSource, /const defaultView = options\?\.desktopApp \? "search" : "home"/);
   assert.match(appUtilsSource, /if \(nextState\.view === "home"\) \{\s*params\.delete\(TOOL_ROUTE_QUERY_PARAMS\.view\);/);
   assert.match(appUtilsSource, /else if \(nextState\.view === "ongoing"\) \{\s*params\.set\(TOOL_ROUTE_QUERY_PARAMS\.view, "ongoing"\);/);
@@ -968,7 +970,7 @@ test("ongoing page keeps usage logging route helper after data extraction", () =
   assert.match(serverSource, /if \(action === "share_image_generate"\) \{[\s\S]*buildShareImageGenerateUsageLog\(payload\)[\s\S]*await writeUsageLog\(entry\)/);
 });
 
-test("desktop navigation keeps statistics and favorites", () => {
+test("desktop uses an independent statistics container without legacy feature owners", () => {
   const platformStart = toolViewSource.indexOf("const desktopPlatforms = [");
   assert.notEqual(platformStart, -1, "desktop platform list should exist");
   const platformEnd = toolViewSource.indexOf("];", platformStart);
@@ -981,9 +983,16 @@ test("desktop navigation keeps statistics and favorites", () => {
   assert.doesNotMatch(platformSource, /\{ key: "search", label: "搜索" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "missevan", label: "猫耳" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "manbo", label: "漫播" \}/);
-  assert.match(platformSource, /\{ key: "favorites", label: "收藏" \}/);
+  assert.doesNotMatch(platformSource, /\{ key: "favorites", label: "收藏" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "ongoing", label: "更新" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "ranks", label: "榜单" \}/);
+  assert.match(rootAppSource, /versionedConfig\.desktopApp \? DesktopStatisticsView : WebToolView/);
+  assert.match(desktopStatisticsSource, /<SearchPanel[\s\S]*<SearchWorkspace/);
+  assert.match(desktopStatisticsSource, /showHistory: false/);
+  assert.match(desktopStatisticsSource, /window\.addEventListener\("pagehide", notifyPageExit\)/);
+  assert.match(desktopStatisticsSource, /window\.addEventListener\("beforeunload", notifyPageExit\)/);
+  assert.match(desktopStatisticsSource, /notifyPageExit\(\);\s*statsTaskRun\.dispose\(\)/);
+  assert.doesNotMatch(desktopStatisticsSource, /favoritesStorage|useStatsHistory|FavoritesPanel|ToolView|CvProfileView|RanksPanel|OngoingPanel|DramaCompare/);
 });
 
 test("header navigation uses one right-side semantic surface drawer", () => {
@@ -1498,7 +1507,7 @@ test("Missevan access-denied search notice takes priority over empty-result copy
   assert.notEqual(accessDeniedIndex, -1, "Missevan access-denied branch should exist");
   assert.notEqual(emptyResultIndex, -1, "empty-result copy should exist");
   assert.ok(accessDeniedIndex < emptyResultIndex, "access-denied branch should run before empty-result copy");
-  assert.match(unifiedSource, /else if \(\s*!finalResults\.missevan\?\.accessDenied[\s\S]*!hasPlatformMatches\(finalResults\.missevan\)[\s\S]*!hasPlatformMatches\(finalResults\.manbo\)/);
+  assert.match(unifiedSource, /if \(finalResults\.missevan\?\.accessDenied\)[\s\S]*\} else \{[\s\S]*else if \([\s\S]*!hasPlatformMatches\(finalResults\.missevan\)[\s\S]*!hasPlatformMatches\(finalResults\.manbo\)/);
 });
 
 test("merged search import branch is protected by pending state", () => {
@@ -1527,7 +1536,10 @@ test("unified search distinguishes backend failures from valid empty results", (
   assert.notEqual(failedIndex, -1, "backend failure notice should exist");
   assert.notEqual(emptyIndex, -1, "valid empty-result notice should remain");
   assert.ok(failedIndex < emptyIndex, "backend failures should be handled before valid empty results");
-  assert.match(unifiedSource, /\.every\(\s*\(result\) => !result\?\.success && !result\?\.accessDenied\s*\)/);
+  assert.match(unifiedSource, /\.every\(\(\{ result \}\) => !result\?\.success && !result\?\.accessDenied\)/);
+  assert.match(unifiedSource, /部分平台搜索失败/);
+  assert.match(unifiedSource, /result\?\.error \|\| result\?\.unavailable/);
+  assert.doesNotMatch(unifiedSource, /isDesktopApp \|\| result\?\.error/);
 });
 
 test("route-restored searches wait for the active request instead of being discarded", () => {
@@ -1665,7 +1677,7 @@ test("search cards refresh active-platform metrics without blocking actions", ()
   assert.match(indexCssSource, /metric-motion-play/);
   assert.match(indexCssSource, /metric-motion-heart/);
   assert.match(indexCssSource, /metric-motion-reward/);
-  assert.match(serverSource, /const localRecord = item\.type === "drama"[\s\S]*buildMissevanSearchFallbackCard\(localRecord\)/);
+  assert.match(serverSource, /const localRecord = !desktopApp && item\.type === "drama"[\s\S]*buildMissevanSearchFallbackCard\(localRecord\)/);
   assert.match(serverSource, /manboInfoStore\.byDramaId\.get\(String\(item\.raw\)\)[\s\S]*buildManboSearchFallbackCard\(localRecord\)/);
 });
 
@@ -2176,7 +2188,7 @@ test("shared dropdown menu items keep mobile-safe touch targets", () => {
 });
 
 test("search empty state uses concise shared copy", () => {
-  assert.match(searchResultsSource, /<div className="text-base font-semibold">还没有结果<\/div>/);
+  assert.match(searchResultsSource, /<div className="text-base font-semibold">\{searchError \? "该平台搜索失败" : "还没有结果"\}<\/div>/);
   assert.match(searchResultsSource, /isSearchPending = false/);
   assert.match(searchResultsSource, /LoaderCircleIcon/);
   assert.match(searchResultsSource, /正在搜索\/导入……/);
@@ -2396,13 +2408,12 @@ test("desktop favorites skip info-store CV backfill", () => {
   assert.match(favoritesPanelSource, /if \(isDesktopApp\) \{[\s\S]*?return undefined;[\s\S]*?\}/);
 });
 
-test("desktop favorites JSON endpoints are desktop-only and use exe directory", () => {
-  assert.match(serverSource, /DESKTOP_FAVORITES_FILE_NAME = "mm-toolkit-favorites\.json"/);
-  assert.match(serverSource, /function getDesktopFavoritesFilePath/);
-  assert.match(serverSource, /DESKTOP_EXE_DIR/);
-  assert.match(serverSource, /router\.get\("\/desktop\/favorites-data"/);
-  assert.match(serverSource, /router\.put\("\/desktop\/favorites-data"/);
-  assert.match(serverSource, /if \(!DESKTOP_APP\)/);
+test("desktop favorites persistence and endpoints have been removed", () => {
+  assert.doesNotMatch(serverSource, /DESKTOP_FAVORITES_FILE_NAME|function getDesktopFavoritesFilePath/);
+  assert.doesNotMatch(serverSource, /router\.(get|put)\("\/desktop\/favorites-data"/);
+  assert.doesNotMatch(favoritesStorageSource, /desktopFavorites|\/desktop\/favorites-data/);
+  assert.match(desktopRuntimePolicySource, /desktop\\\/favorites-data/);
+  assert.match(applicationSource, /isRemovedDesktopEndpoint\(req\.path\)/);
 });
 
 test("favorites panel documents local storage risk and uses responsive filtered toolbars", () => {
@@ -2487,7 +2498,7 @@ test("favorite refresh backfills sparse main CV lists from info store once", () 
 
   assert.match(favoritesRefreshServiceSource, /function countFavoriteMainCvNames/, "favorite refresh service should count saved main CV names");
   assert.match(refreshSource, /countFavoriteMainCvNames\(favorite\.mainCvText\) <= 2/);
-  assert.match(refreshSource, /fetchFavoriteMainCvText\(favorite, frontendVersion, handleVersionResponse\)/);
+  assert.match(refreshSource, /fetchFavoriteMainCvText\(favorite, frontendVersion, handleVersionResponse, signal\)/);
   assert.match(refreshSource, /refreshedMainCvText/);
   assert.match(refreshSource, /mainCvText: refreshedMainCvText \|\| activeFavorite\.mainCvText \|\| ""/);
 });
@@ -2510,7 +2521,7 @@ test("favorites panel uses a static mobile two-row toolbar and a desktop two-row
   assert.match(favoritesPanelSource, /className="h-11 w-11 shrink-0"/);
   assert.match(favoritesPanelSource, /fluidWidth = false/);
   assert.equal(favoritesPanelSource.match(/^[ \t]+fluidWidth\r?$/gm)?.length ?? 0, 2, "both mobile selects should use fluid width");
-  assert.match(favoritesPanelSource, /favorite-mobile-refresh-label">刷新/);
+  assert.match(favoritesPanelSource, /favorite-mobile-refresh-label">\{refreshState\.isRunning \? "取消" : "刷新"\}/);
   assert.match(favoritesPanelSource, /refreshState\.isRunning \? `\$\{refreshState\.progress\}%` : selectedFavorites\.length/);
   assert.match(indexCssSource, /\.favorite-mobile-toolbar\s*\{[\s\S]*container-name: favorite-toolbar/);
   assert.match(indexCssSource, /grid-template-columns: 6rem minmax\(5\.5rem, 1fr\) minmax\(5\.5rem, 1fr\) 2\.75rem/);
@@ -2753,9 +2764,9 @@ test("favorite actions are disabled globally during favorite refresh", () => {
   assert.match(toolViewSource, /<OngoingPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
   assert.match(toolViewSource, /<FavoritesPanel[\s\S]*?favoriteActionsDisabled=\{favoriteActionsDisabled\}/);
   assert.match(toolViewSource, /results=\{\{[\s\S]*?favoriteActionsDisabled,/);
-  assert.match(favoritesPanelSource, /disabled=\{refreshState\.isRunning \|\| favoriteActionsDisabled \|\| statisticsActionsDisabled \|\| selectedFavorites\.length === 0\}/);
+  assert.match(favoritesPanelSource, /disabled=\{!refreshState\.isRunning && \(favoriteActionsDisabled \|\| statisticsActionsDisabled \|\| selectedFavorites\.length === 0\)\}/);
   assert.match(favoritesPanelSource, /disabled=\{favoriteActionsDisabled\}/);
-  assert.match(favoritesPanelSource, /onClick=\{\(\) => refreshMany\(selectedFavorites\)\}/);
+  assert.match(favoritesPanelSource, /onClick=\{\(\) => refreshState\.isRunning \? cancelRefresh\(\) : refreshMany\(selectedFavorites\)\}/);
   assert.match(useFavoriteRefreshSource, /const refreshLockRef = useRef\(false\)/);
   assert.match(useFavoriteRefreshSource, /if \(refreshLockRef\.current\) \{[\s\S]*?return;/);
   assert.match(useFavoriteRefreshSource, /finally \{[\s\S]*?refreshLockRef\.current = false;/);

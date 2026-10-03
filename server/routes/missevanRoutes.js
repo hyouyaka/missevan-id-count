@@ -1,4 +1,5 @@
 export function registerMissevanRoutes(router, {
+  desktopApp = false,
   buildMissevanDramaCardFromInput,
   buildMissevanSearchFallbackCard,
   dedupeMissevanDramaCardResults,
@@ -44,7 +45,7 @@ export function registerMissevanRoutes(router, {
     const failedItems = [];
     let accessDenied = false;
 
-    await ensureInfoStoreLoaded(missevanInfoStore);
+    if (!desktopApp) await ensureInfoStoreLoaded(missevanInfoStore);
     await refreshMissevanCooldownState();
     const newDramaIds = [];
     for (const item of inputItems) {
@@ -53,7 +54,7 @@ export function registerMissevanRoutes(router, {
         continue;
       }
 
-      const localRecord = item.type === "drama"
+      const localRecord = !desktopApp && item.type === "drama"
         ? missevanInfoStore.byDramaId.get(String(item.id))
         : null;
       if (localRecord) {
@@ -96,7 +97,7 @@ export function registerMissevanRoutes(router, {
       }
     }
 
-    if (newDramaIds.length > 0) {
+    if (!desktopApp && newDramaIds.length > 0) {
       fireAndForget("Failed to append new Missevan drama ids", async () => {
         const missingDramaIds = await filterUntrackedNewDramaIds("missevan", newDramaIds);
         if (missingDramaIds.length > 0) {

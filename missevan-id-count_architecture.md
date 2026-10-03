@@ -1,10 +1,10 @@
 # M&M Toolkit Architecture
 
-Last updated: 2026-09-03
+Last updated: 2026-10-02
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
-- **Version**: 1.8.2
+- **Version**: 1.8.4
 - **Runtime model**: Express backend + React SPA + optional Electron desktop shell
 - **Primary source roots**:
   - `server.js` as the stable backend facade, with `server/application.js` providing composition and `server/routes/` holding extracted route groups
@@ -19,7 +19,7 @@ This document describes the current implementation, not the historical evolution
 
 ### Browser and SPA Boot Flow
 1. `src/main.jsx` mounts the React application and the global toast layer.
-2. `src/app/RootApp.jsx` fetches `/app-config`, compares frontend/backend versions, and opens `ToolView`.
+2. `src/app/RootApp.jsx` fetches `/app-config`, compares frontend/backend versions, and lazily selects web `ToolView` or `DesktopStatisticsView`. The isolated preload marker keeps desktop configuration failures on a retry screen instead of falling back to the web shell.
 3. `src/app/ToolView.jsx` is the main workspace shell. It hosts the active tabs for:
    - Missevan search and analysis
    - Manbo search and analysis
@@ -42,10 +42,13 @@ This document describes the current implementation, not the historical evolution
 1. `electron/main.mjs` creates the desktop window with sandboxing and isolated context enabled.
 2. It starts the Express backend through `startServer(0, { host: "127.0.0.1" })` on an ephemeral localhost port.
 3. It waits for `/health` to respond, then opens `/tool` in the browser window.
+4. `server/runtimePolicy.js` disables Upstash, task persistence and external Missevan proxy routes for desktop even when environment credentials exist. Both drama search APIs are called directly; the platform-owned Manbo fallback remains available.
+5. The desktop workspace shares search, episode, result and task primitives without mounting the web shell. Favorites, history, CV, ranks, comparisons and trends are unavailable. Removed API paths return JSON 404 responses.
+6. Desktop tasks live only in memory. Old favorites, information stores and task snapshots are not read or migrated. Only filtered operational diagnostics are written; queries, imported values and task results are excluded, and legacy usage logs are left untouched.
 
 ### Development Flow
 - `vite.config.js` injects `__APP_VERSION__` from `package.json`.
-- The Vite dev server proxies API paths such as `/app-config`, `/unified-search`, `/cv-profile`, `/search`, `/manbo/*`, `/ranks`, `/ranks/trends`, `/ongoing`, `/stat-tasks`, and `/usage-log` to the Express server.
+- The Vite dev server proxies API paths such as `/app-config`, `/unified-search`, `/cv-profile`, `/search`, `/manbo/*`, `/ranks`, `/ranks/trends`, `/ongoing`, `/stat-tasks`, `/usage-log`, `/feedback`, and `/favorites/meta` to the Express server.
 
 ## Repository Layout
 
@@ -140,6 +143,8 @@ The backend currently exposes these route families.
 
 ## Search, Content, and Enrichment Flow
 
+The library/CV/new-drama flows below describe the web service. Desktop keyword search calls both drama APIs in parallel, and direct input, pagination and card metrics use only the corresponding platform APIs. One platform failure does not discard the other platform's results.
+
 ### Missevan
 - Primary search path is the local/upstash-backed info store.
 - If library search is unavailable or insufficient, `/search` can fall back to the Missevan public search API.
@@ -165,6 +170,8 @@ The backend currently exposes these route families.
 - The store persists through Upstash when configured, with JSON fallback files under `runtime/`.
 
 ## Data Stores and Persistence
+
+The persistent stores below belong to the web service. Desktop skips store prewarming, database probes, new-drama registration, task snapshot load/save and usage-log migration. Its task engine still calls `restore()` with no store to release the readiness gate.
 
 ### Mutable Runtime Locations
 - `logs/usage.log`: append-only structured `user_action` and `task_summary` telemetry
@@ -220,6 +227,7 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 - `MANBO_STATS_EPISODE_CONCURRENCY`: default 4
 - `MANBO_FETCH_TIMEOUT_MS`: default 10 seconds
 - `MANBO_DANMAKU_CACHE_MAX_ENTRIES`: hosted deployments default to 20, local mode defaults to 200
+- `MANBO_STATS_TASK_TTL_MS`: hosted task snapshots default to 15 minutes, local task snapshots default to 60 minutes
 
 ## Task Execution Engine
 
@@ -304,8 +312,8 @@ Snapshot values may expose `view_count`, `watch_count`, or `play_count` records 
 - Upstash v2 probes: `INFO_STORE_META_POLL_INTERVAL_MS` (5 minutes by default)
 - cooldown: `MISSEVAN_PERSISTENT_COOLDOWN`, `MISSEVAN_COOLDOWN_KEY`, `MISSEVAN_COOLDOWN_HOURS`
 - cache tuning: `RANKS_CACHE_TTL_MS`, `WEEKLY_PLAYBACK_CACHE_TTL_MS`
-- Manbo runtime tuning: `MANBO_FETCH_TIMEOUT_MS`, `MANBO_DANMAKU_PAGE_CONCURRENCY`, `MANBO_STATS_EPISODE_CONCURRENCY`
-- task persistence tuning: `STATS_TASK_PERSISTENCE_DEBOUNCE_MS` (10 seconds by default, clamped to 1–60 seconds)
+- Manbo runtime tuning: `MANBO_FETCH_TIMEOUT_MS`, `MANBO_DANMAKU_PAGE_CONCURRENCY`, `MANBO_STATS_EPISODE_CONCURRENCY`, `MANBO_DANMAKU_CACHE_MAX_ENTRIES`, `MANBO_STATS_TASK_TTL_MS`
+- task persistence tuning: `STATS_TASK_PERSISTENCE_DEBOUNCE_MS` (10 seconds by default, clamped to 1–60 seconds; progress updates are coalesced within a bounded window and do not reset its timer)
 
 ### Environment Resolution Order
 - Desktop mode checks `.env` under the executable directory and app data directory first.

@@ -353,11 +353,28 @@ test("tool view URL helper rejects unavailable desktop views", () => {
   assert.equal(readToolViewFromLocation({ search: "?view=ranks" }, { desktopApp: true }), "search");
   assert.equal(readToolViewFromLocation({ search: "?view=home" }, { desktopApp: true }), "search");
   assert.equal(readToolViewFromLocation({ search: "?view=feedback" }, { desktopApp: true }), "search");
+  assert.equal(readToolViewFromLocation({ search: "?view=favorites" }, { desktopApp: true }), "search");
+  assert.equal(readToolViewFromLocation({ search: "?view=cv" }, { desktopApp: true }), "search");
+});
+
+test("desktop route normalization clears removed feature parameters and retains valid drama search links", () => {
+  const obsolete = readToolRouteStateFromLocation({
+    search: "?view=cv&cv=旧CV&q=旧关键词&platform=cv&category=drama&rank=top&metric=paid_id&payment=paid",
+  }, { desktopApp: true });
+  assert.equal(obsolete.view, "search");
+  assert.equal(obsolete.platform, "missevan");
+  assert.equal(obsolete.q, "");
+  for (const key of ["cv", "cvKey", "category", "rank"]) assert.equal(obsolete[key], "");
+  assert.equal(obsolete.metric, "playback");
+  assert.equal(obsolete.payment, "all");
+  const valid = readToolRouteStateFromLocation({ search: "?view=search&q=合法关键词&platform=manbo" }, { desktopApp: true });
+  assert.equal(valid.q, "合法关键词");
+  assert.equal(valid.platform, "manbo");
 });
 
 test("tool view URL helper exposes platform-specific allowed views", () => {
   assert.deepEqual(getAllowedToolViews(), ["home", "search", "cv", "ongoing", "ranks", "favorites", "feedback"]);
-  assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search", "cv", "favorites"]);
+  assert.deepEqual(getAllowedToolViews({ desktopApp: true }), ["search"]);
 });
 
 test("tool view URL builder keeps explicit views and omits default home view", () => {
