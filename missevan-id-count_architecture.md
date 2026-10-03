@@ -1,6 +1,6 @@
 # M&M Toolkit Architecture
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 ## Project Snapshot
 - **Name**: M&M Toolkit (`missevan-counter`)
@@ -330,3 +330,15 @@ The following items may exist in the repository or on disk, but they are not par
 - `runtime/`: mutable fallback storage created by the running app
 
 `RELEASE.md` explicitly states that packaged executables should be published as release assets and should not be committed as normal source changes.
+
+### Episode Danmaku Cache
+
+`server/services/episodeDanmakuCache.js` coordinates independent Missevan/Manbo in-process caches and cancellation-safe shared requests. Each platform defaults to 100 episodes with a fixed 30-minute TTL measured at successful fetch completion. Cache hits update LRU recency without extending TTL; an unref-ed one-minute timer prunes expired entries. Zero capacity disables retention. Restart clears caches; replicas do not share entries.
+
+Only episode counts and unique ID arrays are cached, including successful empty episodes. Failed/cancelled fetches are not retained. Caller titles and task sources remain per-call. Summary APIs and successful task episode details expose `fetchedAt` (ISO) and `cached` (boolean); shared in-flight results are fresh, not cache hits. Result details do not display fetch timestamps or cache metadata; both remain available in logs for tracking. Old results without timestamps remain readable. Per-call logs include `cached`, `sharedWait`, `fetchedAt`, `cacheAgeMs`, and `cacheEntries`, without ID arrays.
+
+### Website Log Retention
+
+`server/websiteLogPolicy.js` is installed only on the website application logger. It returns the original payload unchanged or suppresses it before console and file output. User actions, task summaries, every error, and every danmaku summary remain intact. Non-error external attempt records already embedded in danmaku summaries are suppressed; other warnings, unknown events and desktop diagnostics remain unchanged.
+
+HTTP 4xx/5xx and slow requests are retained; ordinary successful requests are randomly sampled at `HTTP_SUCCESS_LOG_SAMPLE_RATE` (default 0.01). `OPERATION_LOG_SLOW_MS` (default 5000) also defines slow image/datastore operations. Fast first-attempt image successes and explicitly successful datastore reads without fallback are suppressed. Missing status/duration metadata is retained conservatively. Datastore reads now carry a success flag based on whether the command resolved. Historic logs are not rewritten, and sampled HTTP records must not be used as total request counts.

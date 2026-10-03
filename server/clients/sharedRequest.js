@@ -51,6 +51,9 @@ export function createSharedRequestRegistry() {
   const entries = new Map();
 
   return {
+    has(key) {
+      return entries.has(String(key));
+    },
     run(key, signal, factory) {
       if (typeof factory !== "function") {
         throw new TypeError("Shared request registry requires a factory");

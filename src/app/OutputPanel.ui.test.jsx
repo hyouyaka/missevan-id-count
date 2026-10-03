@@ -5,6 +5,28 @@ import { OutputPanel } from "@/app/OutputPanel";
 
 afterEach(cleanup);
 
+test("episode details hide fetch metadata and cache explanations while old details remain readable", () => {
+  render(<OutputPanel
+    platform="missevan"
+    showHistory={false}
+    idResults={[{ dramaId: "100", title: "作品", selectedEpisodeCount: 2, danmaku: 4, users: 3 }]}
+    episodeDetails={[
+      { key: "missevan:100:1", dramaId: "100", title: "新记录", status: "success", fetchedDanmaku: 2, uniqueUsers: 2, fetchedAt: "2026-10-03T04:00:00.000Z", cached: true },
+      { key: "missevan:100:2", dramaId: "100", title: "旧记录", status: "success", fetchedDanmaku: 2, uniqueUsers: 2 },
+    ]}
+  />);
+  fireEvent.click(screen.getByRole("button", { name: /分集明细 2 集/ }));
+  expect(screen.queryByText(/弹幕数据最多缓存/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/弹幕抓取于/)).not.toBeInTheDocument();
+  const expectedTime = new Date("2026-10-03T04:00:00.000Z").toLocaleTimeString("zh-CN", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  });
+  expect(screen.queryByText(expectedTime)).not.toBeInTheDocument();
+  expect(screen.queryByText("2026-10-03T04:00:00.000Z")).not.toBeInTheDocument();
+  expect(screen.queryByText(/使用缓存/)).not.toBeInTheDocument();
+  expect(screen.getByText("旧记录")).toBeInTheDocument();
+});
+
 const replay = {
   version: 1,
   operation: "paid_id",

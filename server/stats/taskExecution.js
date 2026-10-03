@@ -13,6 +13,8 @@ function createEpisodeDetail({
   totalDanmaku,
   fetchedDanmaku,
   uniqueUsers,
+  fetchedAt,
+  cached,
 }) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedDramaId = String(dramaId ?? "").trim();
@@ -28,6 +30,7 @@ function createEpisodeDetail({
     episodeId: normalizedEpisodeId,
     title: normalizedTitle || "未知分集",
     status: normalizedStatus,
+    ...(normalizedStatus === "success" && fetchedAt ? { fetchedAt, cached: cached === true } : {}),
     totalDanmaku:
       totalDanmaku != null && Number.isFinite(normalizedTotal) && normalizedTotal >= 0
         ? normalizedTotal
@@ -435,6 +438,8 @@ export function createStatsTaskExecutor(dependencies = {}) {
             totalDanmaku,
             fetchedDanmaku: result.danmaku,
             uniqueUsers: episodeUserSet.size,
+            fetchedAt: result.fetchedAt,
+            cached: result.cached,
           }));
         } else {
           episodeDetails.set(detailKey, createEpisodeDetail({
@@ -590,6 +595,8 @@ export function createStatsTaskExecutor(dependencies = {}) {
               totalDanmaku: overflowAssessment.totalDanmaku,
               fetchedDanmaku: result.danmaku,
               uniqueUsers: episodeUserSet.size,
+              fetchedAt: result.fetchedAt,
+              cached: result.cached,
             }));
           } else {
             episodeDetails.set(detailKey, createEpisodeDetail({
@@ -1023,6 +1030,8 @@ export function createStatsTaskExecutor(dependencies = {}) {
             totalDanmaku,
             fetchedDanmaku: danmakuResult.danmaku,
             uniqueUsers: episodeUserSet.size,
+            fetchedAt: danmakuResult.fetchedAt,
+            cached: danmakuResult.cached,
           }));
           advanceRevenueProgress(
             task,
@@ -1365,6 +1374,8 @@ export function createStatsTaskExecutor(dependencies = {}) {
               totalDanmaku: overflowAssessment.totalDanmaku,
               fetchedDanmaku: danmakuResult.danmaku,
               uniqueUsers: episodeUserSet.size,
+              fetchedAt: danmakuResult.fetchedAt,
+              cached: danmakuResult.cached,
             }));
             advanceRevenueProgress(
               task,

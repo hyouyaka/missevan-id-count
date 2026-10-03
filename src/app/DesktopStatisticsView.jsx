@@ -512,8 +512,16 @@ export function DesktopStatisticsView({ initialAppConfig }) {
       selectMode: "paid",
     });
     const target = String(dramaId);
-    const episodes = collectSelectedEpisodesFromDramas(imported.dramas || [])
-      .filter((episode) => String(episode.drama_id) === target);
+    const drama = (imported.dramas || []).find((item) => String(item?.drama?.id) === target);
+    const paidEpisodes = (drama?.episodes?.episode || [])
+      .filter((episode) => isPaidEpisode(activePlatform, episode) || isMemberEpisode(activePlatform, episode));
+    const episodes = paidEpisodes.map((episode) => ({
+      drama_id: target,
+      sound_id: episode.sound_id,
+      drama_title: drama?.drama?.name || "",
+      episode_title: episode.name,
+      duration: Number(episode.duration ?? 0),
+    }));
     if (!episodes.length) {
       toast.warning("没有可统计的付费分集。");
       return;

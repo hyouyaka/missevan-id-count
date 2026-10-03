@@ -84,7 +84,7 @@ function createDependencies(overrides = {}) {
   };
 }
 
-async function runManboRevenueTask(dramaInfo, usersBySetId = {}) {
+async function runManboRevenueTask(dramaInfo, usersBySetId = {}, metadata = {}) {
   const executor = createStatsTaskExecutor(createDependencies({
     aggregateRevenueFinancials,
     isLikelyManboDanmakuOverflow: async () => ({
@@ -108,6 +108,7 @@ async function runManboRevenueTask(dramaInfo, usersBySetId = {}) {
           success: true,
           danmaku: users.length,
           users,
+          ...metadata,
         };
       },
     },
@@ -143,6 +144,26 @@ test("refreshed ID tasks forward their source unchanged to platform operations",
     assert.equal(calls[0][3], "123456payIDrefresh");
     assert.equal(calls[0][4].signal, task.abortSignal);
     assert.equal(task.failedCount, 0);
+  }
+});
+
+test("both platforms preserve episode fetch metadata and deduplicate users across episodes", async () => {
+  for (const platform of ["missevan", "manbo"]) {
+    const episodes = [1, 2].map((id) => ({ sound_id: id, drama_id: "9", drama_title: "作品", episode_title: `第${id}集` }));
+    const task = createIdTask(platform, episodes);
+    const executor = createStatsTaskExecutor(createDependencies({
+      [platform === "manbo" ? "manboClient" : "missevanClient"]: {
+        async getDanmakuSummary(id) {
+          return { success: true, danmaku: 2, users: ["shared", `user-${id}`], fetchedAt: "2026-10-03T04:00:00.000Z", cached: Number(id) === 1 };
+        },
+      },
+      isLikelyManboDanmakuOverflow: async () => ({ overflow: false, totalDanmaku: 2 }),
+    }));
+    await executor(task, { report() {} });
+    assert.equal(task.result.totalUsers, 3);
+    assert.equal(task.result.episodeDetails.length, 2);
+    assert.ok(task.result.episodeDetails.every((detail) => detail.fetchedAt === "2026-10-03T04:00:00.000Z"));
+    assert.deepEqual(task.result.episodeDetails.map((detail) => detail.cached), [true, false]);
   }
 });
 
@@ -453,9 +474,11 @@ test("Manbo episode revenue uses the lowest set price and both paid ID counts", 
     {
       11: ["a", "b"],
       12: ["b", "c", "d"],
-    }
+    },
+    { fetchedAt: "2026-10-03T04:00:00.000Z", cached: true }
   );
 
+  assert.ok(episodeDetails.every((detail) => detail.fetchedAt === "2026-10-03T04:00:00.000Z" && detail.cached));
   assert.equal(result.summaryRevenueMode, "range");
   assert.equal(result.paidCountSource, "pay_count_and_danmaku_ids");
   assert.equal(result.payCount, 2);
@@ -537,7 +560,7 @@ test("Missevan paid revenue exposes episode details without querying totals for 
         return null;
       },
       async getDanmakuSummary() {
-        return { success: true, danmaku: 499, users: ["a", "a", "b"] };
+        return { success: true, danmaku: 499, users: ["a", "a", "b"], fetchedAt: "2026-10-03T04:00:00.000Z", cached: true };
       },
       async getSoundSummary(soundId) {
         soundSummaryCalls.push(soundId);
@@ -564,6 +587,8 @@ test("Missevan paid revenue exposes episode details without querying totals for 
       totalDanmaku: null,
       fetchedDanmaku: 499,
       uniqueUsers: 2,
+      fetchedAt: "2026-10-03T04:00:00.000Z",
+      cached: true,
     },
   ]);
 });

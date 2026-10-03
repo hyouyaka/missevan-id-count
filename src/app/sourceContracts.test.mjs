@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import { selectDramaEpisodesByMode } from "./app-utils.js";
+import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 function readSourceIfExists(relativeUrl) {
   const url = new URL(relativeUrl, import.meta.url);
@@ -3018,7 +3021,7 @@ test("Missevan external requests are paced with a shared jitter limiter", () => 
     "cooldown errors raised after waiting for a getdm slot should not retry"
   );
   const danmakuStart = serverSource.indexOf("async function fetchDanmakuSummary");
-  const cacheIndex = serverSource.indexOf("const cached = getCachedValue", danmakuStart);
+  const cacheIndex = serverSource.indexOf("return missevanEpisodeCache.get", danmakuStart);
   const limiterIndex = serverSource.indexOf("beforeAttempt: () => waitForMissevanRequestSlot(options.signal)", danmakuStart);
   const getdmCallStart = serverSource.indexOf("const text = await fetchTextWithRetry", danmakuStart);
   const getdmCallEnd = serverSource.indexOf(");", getdmCallStart);
@@ -4929,4 +4932,52 @@ test("statistics history replay keeps responsive actions and refreshes works bef
   assert.match(toolViewSource, /replayPreparationAbortControllerRef\.current\?\.abort/);
   assert.match(toolViewSource, /isAnyBackgroundTaskRunning\(\)/);
   assert.match(toolViewSource, /buildPlayCountDramasFromDramas\(playCountDramas\)/);
+});
+
+
+test("desktop paid-ID action excludes selected free episodes and other dramas on both platforms", async () => {
+  const start = desktopStatisticsSource.indexOf("async function startPaidIdStatistics(");
+  const end = desktopStatisticsSource.indexOf("\n  function cancelStatistics", start);
+  const actionSource = desktopStatisticsSource.slice(start, end).trim();
+  for (const platform of ["missevan", "manbo"]) {
+    for (const selection of ["free-only", "all"]) {
+      const episodes = [
+        { sound_id: "free", name: "免费", selected: true },
+        { sound_id: "paid", name: "付费", selected: selection === "all", ...(platform === "manbo" ? { pay_type: 1 } : { need_pay: 1 }), duration: 123 },
+        { sound_id: "member", name: "会员", vip_free: 1, selected: selection === "all" },
+      ];
+      const dramas = [{ drama: { id: "42", name: "目标作品" }, episodes: { episode: episodes } },
+        { drama: { id: "99", name: "其他作品" }, episodes: { episode: [{ sound_id: "other", price: 10, selected: true }] } }];
+      const calls = [];
+      const action = runInNewContext("(" + actionSource + ")", {
+        activePlatform: platform, isPaidEpisode, isMemberEpisode,
+        addDramas: async (ids, options) => {
+          selectDramaEpisodesByMode(dramas, ids, { mode: options.selectMode, checked: true,
+            isSelectableEpisode: (episode) => isPaidEpisode(platform, episode) || isMemberEpisode(platform, episode) });
+          return { dramas };
+        },
+        runStats: (...args) => calls.push(args),
+        toast: { warning: () => assert.fail("eligible episodes should create a task") },
+      });
+      await action("42", { source: "paid-button" });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0], platform);
+      assert.equal(calls[0][1], "id");
+      assert.deepEqual(Array.from(calls[0][2].episodes, (episode) => episode.sound_id), ["paid", "member"]);
+      assert.equal(calls[0][2].episodes[0].drama_title, "目标作品");
+      assert.equal(calls[0][2].episodes[0].duration, 123);
+      assert.equal(calls[0][2].source, "paid-button");
+      assert.equal(episodes[0].selected, true);
+    }
+    let warning = "";
+    let started = false;
+    const action = runInNewContext("(" + actionSource + ")", {
+      activePlatform: platform, isPaidEpisode, isMemberEpisode,
+      addDramas: async () => ({ dramas: [{ drama: { id: "42" }, episodes: { episode: [{ sound_id: "free", selected: true }] } }] }),
+      runStats: () => { started = true; }, toast: { warning: (message) => { warning = message; } },
+    });
+    await action("42");
+    assert.equal(started, false);
+    assert.equal(warning, "没有可统计的付费分集。");
+  }
 });

@@ -60,6 +60,21 @@ Railway Columns 推荐添加 `category`、`event`、`platform`、`keywordText`�
 
 同一次弹幕操作的请求与汇总共享 `operationId`。正常成功只写一条 `danmaku_summary`；发生重试、fallback、取消或失败时，汇总中额外包含 `attempts`，便于按需排查。首次启用新格式时，旧 `logs/usage.log` 会自动改名为 `logs/usage.legacy-<timestamp>.log`。
 
+网站日志保留策略优先完整保留 `user_action`、`task_summary` 和所有 `error`，不改变事件、级别、字段及完整任务结果。所有 `danmaku_summary`（包括抓取时间、缓存命中和共享等待）也完整保留。与弹幕汇总 `attempts` 重复的非 error `external_request_attempt` 不再单独输出，其他 warn 和未知事件保留。
+
+| 网站操作日志 | 保留规则 |
+|------|------|
+| HTTP 完成 | 所有 4xx/5xx、耗时至少 5 秒；常规成功请求采样 1% |
+| 图片代理 | 失败、重试后成功、耗时至少 5 秒；删除首次快速成功记录 |
+| 存储读取 | 失败、fallback、耗时至少 5 秒；删除明确成功的常规快速读取，未知成功状态保留 |
+
+策略同时作用于 stdout/stderr 和本地文件，桌面日志策略不变；不修改历史日志。普通 HTTP 日志是随机样本，不能用其条数计算请求总量。
+
+| 配置 | 默认值 | 取值规则 |
+|------|------|------|
+| `HTTP_SUCCESS_LOG_SAMPLE_RATE` | `0.01` | 0–1；0 不保留常规成功请求，1 全部保留；非法或空值回退默认值 |
+| `OPERATION_LOG_SLOW_MS` | `5000` | 正数，单位毫秒；非法或空值回退默认值 |
+
 Railway 常用过滤：
 
 | 目的 | 查询 |
@@ -187,7 +202,7 @@ MISSEVAN_FORCE_FALLBACK=0
 | `MANBO_DANMAKU_PAGE_CONCURRENCY` | 弹幕分页抓取并发数 | `12` |
 | `MANBO_STATS_EPISODE_CONCURRENCY` | 统计任务分集并发数 | `4` |
 | `MANBO_FETCH_TIMEOUT_MS` | 请求超时毫秒数 | `10000` |
-| `MANBO_DANMAKU_CACHE_MAX_ENTRIES` | 弹幕用户缓存最大条目数，托管部署默认更小以降低内存占用 | Railway `20`，本地 `200` |
+| `MANBO_DANMAKU_CACHE_MAX_ENTRIES` | 单集弹幕用户缓存最大条目数，`0` 禁用 | `100` |
 | `MANBO_STATS_TASK_TTL_MS` | 统计任务结果保留时间，托管部署默认更短以降低内存占用 | Railway `900000`，本地 `3600000` |
 
 ### 资源保护
@@ -196,7 +211,7 @@ MISSEVAN_FORCE_FALLBACK=0
 |------|------|--------|
 | `CACHE_MAX_ENTRIES` | 普通详情、摘要、搜索和趋势缓存最大条目数 | Railway `500`，本地 `1000` |
 | `WEEKLY_PLAYBACK_CACHE_TTL_MS` | 周度播放量索引与快照缓存时间 | `300000`（5 分钟） |
-| `MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES` | 猫耳弹幕用户缓存最大条目数 | Railway `20`，本地 `200` |
+| `MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES` | 猫耳单集弹幕用户缓存最大条目数，`0` 禁用 | `100` |
 | `STATS_TASK_MAX_ITEMS` | 单个统计任务允许的最大作品或分集数 | `1000` |
 | `MISSEVAN_STATS_MAX_CONCURRENCY` | 同时运行的猫耳统计任务数 | `2` |
 | `MANBO_STATS_MAX_CONCURRENCY` | 同时运行的漫播统计任务数 | `3` |
@@ -244,3 +259,9 @@ FEEDBACK_RECIPIENT_EMAIL=admin@example.com
 3. `APP_DATA_DIR/.env`
 
 开发启动时还可读取项目 `.env`；打包版不会读取项目目录。桌面运行策略始终禁用云端资料库、云端代理和任务持久化，不受这些文件中的旧凭据影响。
+
+### 单集弹幕缓存
+
+猫耳与漫播各默认缓存 100 集，每个服务实例合计最多 200 集。成功抓取完成后有效期为 30 分钟，命中不会续期；历史和收藏刷新也复用有效缓存。缓存保留去重 ID 集合供跨集去重使用，同集并发请求合并，失败或取消不缓存。弹幕抓取时间和缓存命中情况记录在日志中，分集明细不显示这些信息。过期项每分钟清理，容量不足时按 LRU 淘汰。
+
+缓存仅在进程内保存，重启清空，多实例各自独立。部署时检查 `MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES` 和 `MANBO_DANMAKU_CACHE_MAX_ENTRIES` 是否仍覆盖为旧值 `20`；按需更新为 `100`。上线后对比命中率、共享等待、弹幕请求数、统计耗时、418 比例及 Railway 平均内存；模拟堆内存不等于实际计费内存。

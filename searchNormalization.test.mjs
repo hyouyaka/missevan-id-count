@@ -2443,3 +2443,35 @@ test("ranks cache expires after ten minutes once the morning update window start
   assert.equal(isRanksCacheEntryFreshForConfig(loadedAt, Date.parse("2026-01-10T23:08:00Z"), config), true);
   assert.equal(isRanksCacheEntryFreshForConfig(loadedAt, Date.parse("2026-01-10T23:10:00Z"), config), false);
 });
+
+
+test("website retention preserves real danmaku trace summaries and removes only repeated attempt records", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildOperationTraceLog, normalizeOperationAttemptLogFields } = await import("./server.js");
+  const { createWebsiteLogPolicy } = await import("./server/websiteLogPolicy.js");
+  const { createLogPayload } = await import("./server/logger.js");
+  const policy = createWebsiteLogPolicy({ sampleRate: 0 });
+  for (const outcome of ["completed", "failed", "cancelled"]) {
+    const trace = { event: "danmaku_summary", fields: { platform: "missevan", soundId: 123 }, startedAt: 1000,
+      attempts: [
+        { endpoint: "sound/getdm", attempt: 1, status: 418, durationMs: 100, success: false, accessDenied: true },
+        { endpoint: "sound/getdm", attempt: 2, status: outcome === "cancelled" ? "cancelled" : 200,
+          durationMs: 200, success: outcome === "completed", fallbackUsed: true, fallbackRoute: "render" },
+      ] };
+    const result = buildOperationTraceLog(trace, { action: "danmaku_summary", success: outcome === "completed",
+      cancelled: outcome === "cancelled", status: outcome, fetchedAt: "2026-10-03T00:00:00.000Z",
+      cached: false, sharedWait: false, cacheAgeMs: 0, cacheEntries: 1 }, 2000);
+    const summary = createLogPayload({ level: result.level, category: "operation", event: "danmaku_summary",
+      fields: { ...result.fields, operationId: "same-operation", taskId: "same-task" } });
+    assert.strictEqual(policy(summary), summary);
+    assert.equal(summary.attempts.length, 2);
+    assert.equal(summary.attempts[0].status, 418);
+    assert.equal(summary.fetchedAt, "2026-10-03T00:00:00.000Z");
+    assert.equal(summary.operationId, "same-operation");
+    for (const attempt of result.anomalousAttempts) {
+      const duplicate = createLogPayload({ level: "warn", category: "operation", event: "external_request_attempt",
+        fields: { operation: "danmaku_summary", ...normalizeOperationAttemptLogFields(attempt) } });
+      assert.equal(policy(duplicate), null);
+    }
+  }
+});
