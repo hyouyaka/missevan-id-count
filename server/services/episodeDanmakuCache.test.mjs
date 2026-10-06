@@ -7,7 +7,7 @@ import { createEpisodeDanmakuCache } from "./episodeDanmakuCache.js";
 
 function fixture(maxEntries = 100) {
   let time = 0;
-  const cache = new TtlLruCache({ maxEntries, ttlMs: 30 * 60 * 1000, now: () => time });
+  const cache = new TtlLruCache({ maxEntries, ttlMs: 15 * 60 * 1000, now: () => time });
   const service = createEpisodeDanmakuCache({ cache, now: () => time });
   const logs = [];
   let calls = 0;
@@ -26,15 +26,15 @@ test("successful zero results are retained, hits do not renew TTL, and expiry re
   assert.equal(fresh.fetchedAt, "1970-01-01T00:00:00.000Z");
   assert.equal(fresh.drama_title, undefined);
   assert.equal(fresh.source, undefined);
-  f.advance(29 * 60 * 1000);
+  f.advance(14 * 60 * 1000);
   const hit = await f.get("1");
   assert.equal(hit.cached, true);
   assert.equal(hit.fetchedAt, fresh.fetchedAt);
-  assert.equal(f.logs.at(-1).cacheAgeMs, 29 * 60 * 1000);
+  assert.equal(f.logs.at(-1).cacheAgeMs, 14 * 60 * 1000);
   f.advance(60 * 1000);
   assert.equal((await f.get("1")).cached, false);
   assert.equal(f.calls(), 2);
-  f.advance(30 * 60 * 1000);
+  f.advance(15 * 60 * 1000);
   f.cache.pruneExpired();
   assert.equal(f.cache.size, 0);
 });

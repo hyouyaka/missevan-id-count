@@ -2338,7 +2338,7 @@ test("episode details use the requested column order and an accessible responsiv
 
 test("episode detail collection keeps request limits and reuses platform totals", () => {
   assert.match(serverSource, /sound\.comment_count/);
-  assert.match(serverSource, /cached && !options\.forceRefresh/);
+  assert.doesNotMatch(serverSource, /const SOUND_SUMMARY_CACHE_TTL_MS/);
   assert.match(
     serverSource,
     /Number\(danmakuCount \?\? 0\) <= totalDanmaku \* 0\.9/
@@ -2366,6 +2366,14 @@ test("episode detail collection keeps request limits and reuses platform totals"
     outputPanelSource,
     /size="xs"[\s\S]*data-touch="compact"[\s\S]*className="relative h-7 max-w-full overflow-visible[\s\S]*after:-inset-y-2/
   );
+});
+
+test("only danmaku is cached in live statistics requests, for 15 minutes on both platforms", () => {
+  assert.match(serverSource, /const EPISODE_DANMAKU_CACHE_TTL_MS = 15 \* 60 \* 1000;/);
+  for (const cache of ["danmakuCache", "manboDanmakuCache"]) {
+    assert.match(serverSource, new RegExp(`const ${cache} = new TtlLruCache\\(\\{\\s*ttlMs: EPISODE_DANMAKU_CACHE_TTL_MS,`));
+  }
+  assert.doesNotMatch(serverSource, /\b(?:dramaCache|soundSummaryCache|rewardSummaryCache|rewardDetailCache|manboDramaCache|manboSetCache|manboSetV530Cache|findCachedManboEpisodeBySetId)\b/);
 });
 
 test("completed background tasks collapse and dismiss after opening results", () => {
@@ -4935,8 +4943,8 @@ test("statistics history replay keeps responsive actions and refreshes works bef
     serverSource.indexOf("async function fetchManboDramaDetail"),
     serverSource.indexOf("async function fetchManboDramaPayload")
   );
-  assert.match(missevanDetailSource, /cached && !options\.forceRefresh/);
-  assert.match(manboDetailSource, /cached && !options\.forceRefresh/);
+  assert.doesNotMatch(missevanDetailSource, /getCachedValue|setCachedValue/);
+  assert.doesNotMatch(manboDetailSource, /getCachedValue|setCachedValue/);
   assert.match(toolViewSource, /replayPreparationAbortControllerRef\.current\?\.abort/);
   assert.match(toolViewSource, /isAnyBackgroundTaskRunning\(\)/);
   assert.match(toolViewSource, /buildPlayCountDramasFromDramas\(playCountDramas\)/);

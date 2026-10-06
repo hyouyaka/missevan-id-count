@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-test("real episode routes reuse cached data and merge concurrent fetches with caller titles", async () => {
+test("real routes refresh metrics while caching danmaku and merging concurrent fetches with caller titles", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mm-episode-cache-"));
   try {
     const { stdout } = await promisify(execFile)(process.execPath, ["server/testFixtures/episodeCacheScenario.mjs"], {

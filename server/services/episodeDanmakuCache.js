@@ -1,6 +1,6 @@
 import { createSharedRequestRegistry } from "../clients/sharedRequest.js";
 
-// Cache only episode data; caller titles, task sources and logs remain per call.
+// Cache only danmaku counts and user IDs; titles, task sources and logs remain per call.
 export function createEpisodeDanmakuCache({ cache, now = Date.now }) {
   const requests = createSharedRequestRegistry();
   return {

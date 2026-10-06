@@ -259,22 +259,15 @@ const MANBO_DANMAKU_CACHE_MAX_ENTRIES = Math.max(
     )
   )
 );
-const MISSEVAN_DANMAKU_CACHE_TTL_MS = 30 * 60 * 1000;
+const EPISODE_DANMAKU_CACHE_TTL_MS = 15 * 60 * 1000;
 const danmakuCache = new TtlLruCache({
-  ttlMs: MISSEVAN_DANMAKU_CACHE_TTL_MS,
+  ttlMs: EPISODE_DANMAKU_CACHE_TTL_MS,
   maxEntries: MISSEVAN_DANMAKU_CACHE_MAX_ENTRIES,
 });
-const dramaCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const soundSummaryCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const rewardSummaryCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const rewardDetailCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const missevanSearchApiCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const manboSearchApiCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const manboDramaCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const manboSetCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const manboSetV530Cache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const manboDanmakuCache = new TtlLruCache({
-  ttlMs: 30 * 60 * 1000,
+  ttlMs: EPISODE_DANMAKU_CACHE_TTL_MS,
   maxEntries: MANBO_DANMAKU_CACHE_MAX_ENTRIES,
 });
 const missevanEpisodeCache = createEpisodeDanmakuCache({ cache: danmakuCache });
@@ -416,13 +409,7 @@ function getFiniteNumberEnv(name, fallbackValue) {
   return Number.isFinite(normalizedValue) ? normalizedValue : fallbackValue;
 }
 
-const DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
-const SOUND_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
-const REWARD_SUMMARY_CACHE_TTL_MS = 30 * 60 * 1000;
-const REWARD_DETAIL_CACHE_TTL_MS = 30 * 60 * 1000;
 const MISSEVAN_SEARCH_API_CACHE_TTL_MS = 10 * 60 * 1000;
-const MANBO_DRAMA_CACHE_TTL_MS = 30 * 60 * 1000;
-const MANBO_SET_CACHE_TTL_MS = 30 * 60 * 1000;
 
 const DEFAULT_MANBO_STATS_TASK_TTL_MS = isHostedDeployment()
   ? 15 * 60 * 1000
@@ -9303,18 +9290,6 @@ export function normalizeMissevanDramaInfo(info) {
 }
 
 async function fetchSoundSummary(soundId, options = {}) {
-  const cached = getCachedValue(
-    soundSummaryCache,
-    soundId,
-    SOUND_SUMMARY_CACHE_TTL_MS
-  );
-  if (cached && !options.forceRefresh) {
-    return {
-      ...cached,
-      cached: true,
-    };
-  }
-
   const data = await fetchJsonWithRetry(
     `https://www.missevan.com/sound/getsound?soundid=${soundId}`,
     2,
@@ -9344,7 +9319,6 @@ async function fetchSoundSummary(soundId, options = {}) {
     cached: false,
   };
 
-  setCachedValue(soundSummaryCache, soundId, summary);
   return summary;
 }
 
@@ -9375,12 +9349,6 @@ function writeWatchCountUsageLog({
 }
 
 async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
-  const cacheKey = soundId ? `sound:${soundId}` : `drama:${dramaId}`;
-  const cached = getCachedValue(dramaCache, cacheKey, DRAMA_CACHE_TTL_MS);
-  if (cached && !options.forceRefresh) {
-    return cached;
-  }
-
   const data = await fetchJsonWithRetry(
     soundId
       ? `https://www.missevan.com/dramaapi/getdramabysound?sound_id=${soundId}`
@@ -9434,17 +9402,6 @@ async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
       }
     }
 
-    setCachedValue(dramaCache, cacheKey, normalized);
-
-    const resolvedDramaId = Number(normalized?.drama?.id ?? dramaId);
-    if (resolvedDramaId > 0) {
-      setCachedValue(dramaCache, `drama:${resolvedDramaId}`, normalized);
-    }
-
-    if (resolvedSoundId > 0) {
-      setCachedValue(dramaCache, `sound:${resolvedSoundId}`, normalized);
-    }
-
     return normalized;
   }
 
@@ -9452,15 +9409,6 @@ async function fetchDramaInfo(dramaId, soundId = null, options = {}) {
 }
 
 async function fetchRewardSummary(dramaId, options = {}) {
-  const cached = getCachedValue(
-    rewardSummaryCache,
-    dramaId,
-    REWARD_SUMMARY_CACHE_TTL_MS
-  );
-  if (cached) {
-    return cached;
-  }
-
   const data = await fetchJsonWithRetry(
     `https://www.missevan.com/reward/user-reward-rank?period=3&drama_id=${dramaId}`,
     2,
@@ -9480,20 +9428,10 @@ async function fetchRewardSummary(dramaId, options = {}) {
     error: "",
   };
 
-  setCachedValue(rewardSummaryCache, dramaId, summary);
   return summary;
 }
 
 async function fetchRewardDetailMeta(dramaId, options = {}) {
-  const cached = getCachedValue(
-    rewardDetailCache,
-    dramaId,
-    REWARD_DETAIL_CACHE_TTL_MS
-  );
-  if (cached) {
-    return cached;
-  }
-
   const data = await fetchJsonWithRetry(
     `https://www.missevan.com/reward/drama-reward-detail?drama_id=${dramaId}`,
     2,
@@ -9509,7 +9447,6 @@ async function fetchRewardDetailMeta(dramaId, options = {}) {
     error: "",
   };
 
-  setCachedValue(rewardDetailCache, dramaId, summary);
   return summary;
 }
 
@@ -9969,41 +9906,6 @@ function isManboMemberDramaInfo(info) {
   );
 }
 
-function findCachedManboEpisodeBySetId(setId) {
-  const normalizedSetId = String(setId ?? "").trim();
-  if (!normalizedSetId) {
-    return null;
-  }
-
-  for (const entry of manboDramaCache.values()) {
-    const info = entry?.value;
-    const drama = info?.drama;
-    const episode = info?.episodes?.episode?.find(
-      (item) => String(item?.sound_id ?? "").trim() === normalizedSetId
-    );
-
-    if (episode) {
-      return {
-        drama,
-        episode,
-      };
-    }
-  }
-
-  return null;
-}
-
-function resolveManboEpisodeTitle(setId, episodeTitle = "") {
-  const normalizedTitle = String(episodeTitle ?? "").trim();
-  if (normalizedTitle) {
-    return normalizedTitle;
-  }
-
-  const cachedEntry = findCachedManboEpisodeBySetId(setId);
-  const cachedTitle = String(cachedEntry?.episode?.name ?? "").trim();
-  return cachedTitle;
-}
-
 export function buildManboWebApiUrls(path) {
   const normalizedPath = `/${String(path ?? "").replace(/^\/+/, "")}`;
   return [MANBO_API_BASE, MANBO_API_FALLBACK_BASE].map(
@@ -10189,24 +10091,12 @@ export async function fetchManboWebJsonWithFallback(path, requestJson, options =
 
 async function fetchManboDramaDetail(dramaId, options = {}) {
   const normalizedDramaId = String(dramaId ?? "").trim();
-  const cached = getCachedValue(
-    manboDramaCache,
-    normalizedDramaId,
-    MANBO_DRAMA_CACHE_TTL_MS
-  );
-  if (cached && !options.forceRefresh) {
-    return cached;
-  }
-
   const payload = await fetchManboDramaPayload(normalizedDramaId, options);
   if (!payload) {
     return null;
   }
 
   const normalized = normalizeManboDramaInfo(payload);
-  if (normalized?.drama?.id) {
-    setCachedValue(manboDramaCache, normalized.drama.id, normalized);
-  }
 
   return normalized;
 }
@@ -10246,11 +10136,6 @@ async function fetchManboSetDetail(setId, options = {}) {
     return null;
   }
 
-  const cached = getCachedValue(manboSetCache, normalizedSetId, MANBO_SET_CACHE_TTL_MS);
-  if (cached) {
-    return cached;
-  }
-
   const data = await fetchManboWebJsonWithFallback(
     `/dramaSetDetail?dramaSetId=${normalizedSetId}`,
     (url) => fetchJsonWithRetry(url, 2, 250, { signal: options.signal }),
@@ -10260,7 +10145,6 @@ async function fetchManboSetDetail(setId, options = {}) {
     return null;
   }
 
-  setCachedValue(manboSetCache, normalizedSetId, data.data);
   return data.data;
 }
 
@@ -10268,11 +10152,6 @@ async function fetchManboV530SetDetail(setId, options = {}) {
   const normalizedSetId = String(setId ?? "").trim();
   if (!isNumericId(normalizedSetId)) {
     return null;
-  }
-
-  const cached = getCachedValue(manboSetV530Cache, normalizedSetId, MANBO_SET_CACHE_TTL_MS);
-  if (cached) {
-    return cached;
   }
 
   try {
@@ -10283,7 +10162,6 @@ async function fetchManboV530SetDetail(setId, options = {}) {
       { signal: options.signal }
     );
     if (Number(v530Data?.h?.code) === 200 && v530Data?.b) {
-      setCachedValue(manboSetV530Cache, normalizedSetId, v530Data.b);
       return v530Data.b;
     }
   } catch (_v530Err) {
@@ -10655,22 +10533,6 @@ async function resolveManboItem(item) {
 }
 
 async function fetchManboSetSummary(setId) {
-  const cachedEpisode = findCachedManboEpisodeBySetId(setId);
-  if (cachedEpisode) {
-    const watchCount = Number(cachedEpisode.episode?.play_count ?? 0);
-    if (watchCount > 0) {
-      return {
-        sound_id: String(setId),
-        success: true,
-        view_count: watchCount,
-        viewCountWan: formatPlayCountWan(watchCount),
-        playCountFailed: false,
-        accessDenied: false,
-        error: "",
-      };
-    }
-  }
-
   const detail = await fetchManboStatsSetDetail(setId);
   const watchCount = Number(detail?.watchCount ?? 0);
 
@@ -10693,7 +10555,7 @@ async function fetchManboDanmakuSummary(
   options = {}
 ) {
   const source = normalizeStatsTaskSource(rawSource);
-  const resolvedEpisodeTitle = resolveManboEpisodeTitle(setId, episodeTitle);
+  const resolvedEpisodeTitle = String(episodeTitle ?? "").trim();
   if (!options.operationTraceActive) {
     return runWithOperationTrace("danmaku_summary", {
       platform: "manbo",
@@ -11256,17 +11118,6 @@ function createRequestAbortContext(req, res) {
   };
 }
 
-function getSearchCardMetricsCacheState(platform, id, soundId = null) {
-  if (platform === "missevan") {
-    const infoKey = soundId ? `sound:${soundId}` : `drama:${id}`;
-    return Boolean(
-      getCachedValue(dramaCache, infoKey, DRAMA_CACHE_TTL_MS) &&
-      getCachedValue(rewardDetailCache, id, REWARD_DETAIL_CACHE_TTL_MS)
-    );
-  }
-  return Boolean(getCachedValue(manboDramaCache, String(id), MANBO_DRAMA_CACHE_TTL_MS));
-}
-
 const SEARCH_CARD_PATCH_FIELDS = [
   "cover",
   "name",
@@ -11334,7 +11185,6 @@ export async function fetchSearchCardMetrics(
   signal,
   requestOptions = {}
 ) {
-  const cached = getSearchCardMetricsCacheState(platform, id, soundId);
   if (platform === "missevan") {
     await refreshMissevanCooldownState();
     if (shouldBlockMissevanAccessForCooldown()) {
@@ -11369,7 +11219,7 @@ export async function fetchSearchCardMetrics(
       });
     }
     return {
-      cached,
+      cached: false,
       metrics: {
         view_count: Number(info.drama.view_count ?? 0),
         subscription_num: normalizeOptionalFiniteNumber(info.drama.subscription_num),
@@ -11385,7 +11235,7 @@ export async function fetchSearchCardMetrics(
     throw new Error("Manbo drama metrics are unavailable");
   }
   return {
-    cached,
+    cached: false,
     metrics: {
       view_count: normalizeOptionalFiniteNumber(card.view_count),
       subscription_num: normalizeOptionalFiniteNumber(card.subscription_num),
