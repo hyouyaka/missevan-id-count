@@ -82,7 +82,7 @@ const profileResponse = {
       partners: ["丁"],
       playCount: null,
     },
-    ...Array.from({ length: 46 }, (_, index) => ({
+    ...Array.from({ length: 48 }, (_, index) => ({
       platform: "missevan",
       id: String(index + 7),
       title: `渐进作品 ${index + 1}`,
@@ -95,6 +95,13 @@ const profileResponse = {
     })),
   ],
 };
+
+profileResponse.works.forEach((work) => {
+  if (work.platform === "missevan" && ["1", "4", "5"].includes(work.id)) {
+    work.seriesId = "missevan:series:responsive";
+    work.seriesTitle = "响应式分组系列";
+  }
+});
 
 test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }, testInfo) => {
   await page.addInitScript((version) => {
@@ -120,6 +127,16 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
   await page.goto("/?view=cv&cv=%E5%93%8D%E5%BA%94%E5%BC%8F%E6%B5%8B%E8%AF%95%20CV&sort=plays_asc");
   await expect(page.getByRole("heading", { name: "响应式测试 CV" })).toBeVisible();
 
+  const groupToggle = page.getByRole("button", { name: "展开系列响应式分组系列" });
+  await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: shortTitle, exact: true })).toHaveCount(0);
+  await groupToggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: shortTitle, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "收起系列响应式分组系列" }).click();
+  await page.getByRole("button", { name: "展开系列响应式分组系列" }).click();
+  await expect(page.getByRole("button", { name: shortTitle, exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "收起系列低播放作品" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /当前按播放量/ })).toHaveCount(0);
   const getVisibleTitleText = (accessibleName) =>
     page.getByRole("button", { name: accessibleName, exact: true }).evaluate((button) =>
@@ -133,7 +150,7 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
     `${Array.from(longTitle).slice(0, 18).join("")}...广播剧`
   );
 
-  const titleButtons = page.locator(".cv-profile-work-grid > article button[aria-label]").filter({ hasText: shortTitle });
+  const titleButtons = page.locator(".cv-series-works > article button[aria-label]").filter({ hasText: shortTitle });
   await expect(titleButtons.first()).toHaveAttribute("aria-label", shortTitle);
   const filterButtons = page.locator('button[aria-label*="筛选，"]');
   await expect(filterButtons).toHaveCount(4);
@@ -159,9 +176,9 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
   await page.getByRole("button", { name: "时间筛选，全部" }).click();
   const releaseOptions = page.getByRole("dialog", { name: "时间筛选选项", exact: true });
   await expect(releaseOptions).toHaveAttribute("data-slot", "popover-content");
-  await expect(releaseOptions.getByRole("button", { name: /筛选2024，\d+部作品/ })).toBeVisible();
-  await expect(releaseOptions.getByRole("button", { name: /筛选暂无，\d+部作品/ })).toBeVisible();
-  const releaseChip = releaseOptions.getByRole("button", { name: /筛选2024，\d+部作品/ });
+  await expect(releaseOptions.getByRole("button", { name: /筛选2024，\d+个系列/ })).toBeVisible();
+  await expect(releaseOptions.getByRole("button", { name: /筛选暂无，\d+个系列/ })).toBeVisible();
+  const releaseChip = releaseOptions.getByRole("button", { name: /筛选2024，\d+个系列/ });
   await releaseOptions.evaluate(async (element) => {
     await Promise.all(element.getAnimations({ subtree: true }).map((animation) =>
       animation.finished.catch(() => undefined)
@@ -182,7 +199,7 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
   const loadMoreBox = await loadMoreButton.boundingBox();
   expect(loadMoreBox?.height).toBeLessThanOrEqual(32);
 
-  const firstArticle = page.locator(".cv-profile-work-grid > article").first();
+  const firstArticle = page.locator(".cv-series-works > article").filter({ has: page.getByRole("button", { name: "渐进作品 1", exact: true }) }).first();
   const coverBox = await firstArticle.locator("[data-cv-work-cover]").boundingBox();
   const metaBox = await firstArticle.locator("[data-cv-work-meta]").boundingBox();
   const playbackBox = await firstArticle.locator("[data-cv-work-playback]").boundingBox();
@@ -224,13 +241,13 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
   ];
   for (const { width, count } of expectedColumns) {
     await page.setViewportSize({ width, height: 800 });
-    const columnCount = await page.locator(".cv-profile-work-grid").evaluate((element) =>
+    const columnCount = await page.locator(".cv-profile-work-grid").first().evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(/\s+/).filter(Boolean).length
     );
     expect(columnCount).toBe(count);
     if (count > 1) {
-      const cardStyles = await page.locator(".cv-profile-work-grid").evaluate((element) => {
-        const articleStyle = getComputedStyle(element.querySelector("article"));
+      const cardStyles = await page.locator(".cv-profile-work-grid").first().evaluate((element) => {
+        const articleStyle = getComputedStyle(element.querySelector(":scope > [data-cv-series]"));
         const gridStyle = getComputedStyle(element);
         return {
           borderWidth: Number.parseFloat(articleStyle.borderTopWidth),
@@ -250,6 +267,42 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
       document.documentElement.scrollWidth > document.documentElement.clientWidth
     );
     expect(hasHorizontalOverflow).toBe(false);
+    const seriesCard = page.locator('[data-cv-series="missevan:series:responsive"]');
+    await seriesCard.scrollIntoViewIfNeeded();
+    const beforeCard = await seriesCard.boundingBox();
+    const nextRow = page.locator('.cv-profile-work-grid [data-cv-series]').nth(count);
+    const beforeNextRow = await nextRow.boundingBox();
+    await page.getByRole("button", { name: "展开系列响应式分组系列" }).click();
+    const panel = page.locator('[data-cv-series-panel]');
+    await expect(panel).toHaveAttribute("data-cv-series-panel", count > 1 ? "row" : "inline");
+    await expect(page.getByRole("button", { name: shortTitle, exact: true })).toBeVisible();
+    await panel.evaluate(async (element) => {
+      await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)));
+    });
+    const afterCard = await seriesCard.boundingBox();
+    const afterNextRow = await nextRow.boundingBox();
+    if (count > 1) {
+      expect(Math.abs(afterCard.height - beforeCard.height)).toBeLessThan(1);
+      expect(afterNextRow.y - afterCard.y).toBeGreaterThan(beforeNextRow.y - beforeCard.y);
+      const panelBox = await panel.boundingBox();
+      const gridBox = await page.locator(".cv-profile-work-grid").boundingBox();
+      expect(panelBox.width).toBeCloseTo(gridBox.width, 0);
+      expect(panelBox.y).toBeGreaterThanOrEqual(afterCard.y + afterCard.height);
+      expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(afterNextRow.y);
+      const detailColumns = await panel.locator(".cv-series-works").evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length);
+      expect(detailColumns).toBe(count);
+    } else {
+      expect(afterCard.height).toBeGreaterThan(beforeCard.height);
+      expect(afterNextRow.y - afterCard.y).toBeGreaterThan(beforeNextRow.y - beforeCard.y);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`cv-series-${width}.png`), fullPage: false });
+    await page.getByRole("button", { name: "收起系列响应式分组系列" }).click();
+    await expect(panel).toHaveCount(0);
+    await page.getByRole("button", { name: "展开系列响应式分组系列" }).click();
+    if (count > 1) await page.getByRole("button", { name: "关闭响应式分组系列系列详情" }).click();
+    else await page.mouse.click(2, 200);
+    await expect(page.getByRole("button", { name: "展开系列响应式分组系列" })).toHaveAttribute("aria-expanded", "false");
     const actionModes = await page.locator('[data-cv-work-actions="true"]').evaluateAll((elements) =>
       [...new Set(elements.map((element) => element.dataset.actionMode))]
     );
@@ -290,5 +343,66 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
       element.style.width = flexBasis;
     }, width);
     await expect(firstWorkActions).toHaveAttribute("data-action-mode", mode);
+  }
+});
+
+test("CV rank series cards expand inline at all viewport widths", async ({ page }, testInfo) => {
+  await page.addInitScript((version) => {
+    window.localStorage.setItem("missevan-changelog-seen-version", version);
+  }, appVersion);
+  const works = [
+    { platform: "missevan", dramaId: "101", title: "榜单第一季", viewCount: 5000, mainCvs: ["CV甲", "CV乙"], seriesId: "rank-series", seriesTitle: "榜单系列" },
+    { platform: "missevan", dramaId: "102", title: "榜单第二季", viewCount: 4000, mainCvs: ["CV乙", "CV丙"], seriesId: "rank-series", seriesTitle: "榜单系列" },
+    { platform: "missevan", dramaId: "103", title: "榜单单部", viewCount: 3000, mainCvs: ["CV甲"] },
+  ];
+  await page.route("**/ranks?**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      success: true,
+      schemaVersion: 6,
+      updatedAt: "2026-10-10",
+      platforms: { missevan: { key: "missevan", label: "猫耳", categories: [{ key: "cv", label: "CV榜", ranks: [{ key: "cv", name: "CV总榜", label: "总榜", items: [{ cvName: "CV甲", rank: 1, totalViewCount: 12000, seriesCount: 2, workCount: 3, works }] }] }] } },
+    }),
+  }));
+  for (const width of [376, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/?view=ranks&platform=missevan&category=cv&rank=cv");
+    await page.getByRole("button", { name: "展开CV甲作品列表" }).click();
+    const seriesCard = page.locator('[data-cv-series="rank-series"]');
+    await expect(seriesCard.getByText("CV甲、CV乙、CV丙", { exact: true })).toBeVisible();
+    const before = await seriesCard.boundingBox();
+    await page.getByRole("button", { name: "展开系列榜单系列" }).click();
+    const panel = page.locator('[data-cv-series-panel]');
+    await expect(panel).toHaveAttribute("data-cv-series-panel", "inline");
+    await expect(page.getByRole("button", { name: "榜单第一季", exact: true })).toBeVisible();
+    const after = await seriesCard.boundingBox();
+    expect(after.height).toBeGreaterThan(before.height);
+    const typography = await seriesCard.evaluate((card) => {
+      const properties = (element) => {
+        const style = getComputedStyle(element);
+        return [style.fontSize, style.fontWeight, style.color];
+      };
+      const summary = card.firstElementChild;
+      const details = card.querySelector("[data-cv-series-panel]");
+      const idRow = details.querySelector('[aria-label="作品ID：101"]');
+      const icon = idRow.firstElementChild.getBoundingClientRect();
+      const id = idRow.lastElementChild.getBoundingClientRect();
+      return {
+        seriesCv: properties(summary.querySelector('[title^="主役CV："] span')),
+        workCv: properties(details.querySelector('svg[aria-label="主役CV"] + span')),
+        seriesPlayback: properties(summary.querySelector('[aria-label^="系列总播放量："] > span')),
+        workPlayback: properties(details.querySelector('svg[aria-label="播放量"] + span')),
+        idAlignment: Math.abs(icon.y + icon.height / 2 - id.y - id.height / 2),
+        idLinks: idRow.querySelectorAll("a").length,
+      };
+    });
+    expect(typography.seriesCv).toEqual(typography.workCv);
+    expect(typography.seriesPlayback).toEqual(typography.workPlayback);
+    expect(typography.idAlignment).toBeLessThanOrEqual(1);
+    expect(typography.idLinks).toBe(0);
+    await page.screenshot({ path: testInfo.outputPath(`cv-rank-series-${width}.png`), fullPage: false });
+    await page.mouse.click(2, 200);
+    await expect(page.getByRole("button", { name: "展开系列榜单系列" })).toHaveAttribute("aria-expanded", "false");
   }
 });

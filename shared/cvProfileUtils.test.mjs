@@ -1,3 +1,4 @@
+import { buildCvSeriesIndex } from "./cvSeriesUtils.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -488,6 +489,7 @@ test("CV works preserve platform rows and exclude the current CV from partners",
   });
   assert.equal(works.length, 3);
   assert.deepEqual(works.find((work) => work.id === "101").partners, ["魏超"]);
+  assert.deepEqual(works.find((work) => work.id === "101").mainCvs, ["路知行", "魏超"]);
   assert.deepEqual(works.find((work) => work.id === "102").partners, []);
   assert.deepEqual(works.find((work) => work.id === "201").partners, ["张福正"]);
   assert.equal(works.find((work) => work.id === "101").category, "radio_drama");
@@ -552,12 +554,14 @@ test("CV profile uses each work latest point, discloses stale dates and excludes
   assert.equal(response.freshness.missevan.latestDate, "2026-07-20");
   assert.deepEqual(response.stats.missevan, {
     workCount: 2,
+    seriesCount: 2,
     playback: 10,
     dataUpdatedAt: "2026-07-20",
     staleWorkCount: 0,
   });
   assert.deepEqual(response.stats.manbo, {
     workCount: 1,
+    seriesCount: 1,
     playback: 20,
     dataUpdatedAt: "2026-07-27",
     staleWorkCount: 0,
@@ -576,4 +580,41 @@ test("CV profile returns null totals when no watchcount data exists", () => {
   });
   assert.equal(response.totals.playback, null);
   assert.equal(response.totals.missevanPlayback, null);
+});
+
+
+test("CV profile publishes series metadata, summaries and per-platform counts", () => {
+  const seriesIndex = buildCvSeriesIndex({ sample: { platform: "猫耳", "series title": "系列名", dramaIds: ["1", "2", "3"] } });
+  const response = buildCvProfileResponse({
+    name: "CV",
+    seriesIndex,
+    works: [
+      { platform: "missevan", id: "1", title: "第一季", mainCvs: ["CV甲", "CV甲", "CV乙"] },
+      { platform: "missevan", id: "2", title: "第二季" },
+      { platform: "manbo", id: "2235647356781461610", title: "单部" },
+    ],
+    playbackBundles: { missevan: { dates: ["2026-10-10"], snapshotsByDate: { "2026-10-10": { dramas: { 1: { view_count: 60 }, 2: { view_count: 40 } } } } } },
+  });
+  assert.equal(response.seriesCount, 2);
+  assert.equal(response.stats.missevan.seriesCount, 1);
+  assert.equal(response.stats.manbo.seriesCount, 1);
+  assert.equal(response.stats.missevan.workCount, 2);
+  assert.equal(response.totals.seriesCount, 2);
+  assert.equal(response.topSeries[0].title, "系列名");
+  assert.equal(response.topSeries[0].playCount, 100);
+  assert.equal(response.series[0].works.length, 2);
+  assert.equal(response.works[0].seriesTitle, "系列名");
+  assert.deepEqual(response.works[0].mainCvs, ["CV甲", "CV乙"]);
+  assert.equal(response.works.at(-1).id, "2235647356781461610");
+});
+
+test("CV profile does not turn missing playback metrics into zero", () => {
+  const response = buildCvProfileResponse({
+    name: "CV",
+    works: [{ platform: "missevan", id: "1", title: "暂无播放量" }],
+    playbackBundles: { missevan: { dates: ["2026-10-10"], snapshotsByDate: { "2026-10-10": { dramas: { 1: { view_count: null, play_count: null } } } } } },
+  });
+  assert.equal(response.series[0].playCount, null);
+  assert.equal(response.works[0].playCount, null);
+  assert.equal(response.totals.playback, null);
 });

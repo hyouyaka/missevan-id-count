@@ -921,7 +921,7 @@ test("home rank previews keep titles compact and expose formatted playback conte
   assert.doesNotMatch(cvItemSource, /whitespace-nowrap/);
   assert.match(cvItemSource, /underline underline-offset-4/);
   assert.match(cvItemSource, /formatRankCompactCount\(item\?\.totalViewCount\)/);
-  assert.match(cvItemSource, /getHomeCvWorksPreviewText\(item\?\.topWorks \|\| item\?\.works\)/);
+  assert.match(cvItemSource, /getHomeCvWorksPreviewText\(item\?\.topSeries \|\| item\?\.topWorks \|\| item\?\.works\)/);
   assert.match(cvItemSource, /className="[^"]*line-clamp-2[^"]*" title=\{topWorksText\}/);
   assert.doesNotMatch(cvItemSource, /\btruncate\b/);
   assert.doesNotMatch(cvItemSource, /formatCompactCount\(item\?\.totalViewCount\)/);
@@ -1446,8 +1446,8 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(toolViewSource, /profileId=\{toolRouteState\.cvKey\}/);
   assert.match(cvProfileViewSource, /播放量更新/);
   assert.doesNotMatch(indexCssSource, /\.cv-profile-work-grid::before|\.cv-profile-work-grid::after/);
-  assert.match(indexCssSource, /@media \(min-width: 48rem\) \{[\s\S]*\.cv-profile-work-grid \{[\s\S]*gap: 0\.75rem/);
-  assert.match(indexCssSource, /\.cv-profile-work-grid > article,[\s\S]*\.cv-profile-work-grid > article:last-child \{[\s\S]*border: 1px solid[\s\S]*border-radius:[\s\S]*background: var\(--card\)[\s\S]*box-shadow: var\(--shadow-card\)/);
+  assert.match(indexCssSource, /\.cv-profile-work-grid \.cv-series-card \{[\s\S]*align-self: start/);
+  assert.match(indexCssSource, /\.cv-series-works > article \{[\s\S]*padding-inline: 0\.75rem/);
   assert.match(platformTabLabelSource, /text-foreground\/70/);
   assert.match(cvProfileViewSource, /加载更多/);
   assert.match(cvProfileViewSource, /className="h-8 min-h-8 rounded-full px-4 text-sm! leading-none"/);
@@ -2155,7 +2155,7 @@ test("search cards keep a non-link work ID with its platform icon and move the s
   assert.match(ranksPanelSource, /appearance="menu" platform=\{platform\} dramaId=\{favoriteDramaId\} source="ranks"/);
   assert.match(
     ranksPanelSource,
-    /<PlatformDramaLink[\s\S]*dramaId=\{work\.dramaId\}[\s\S]*source="ranks_cv"[\s\S]*dramaTitle=\{work\.title\}[\s\S]*frontendVersion=\{frontendVersion\}[\s\S]*textClassName="truncate text-foreground"/
+    /aria-label=\{`作品ID：\$\{work\.dramaId\}`\}[\s\S]*<PlatformIdIcon[\s\S]*\{work\.dramaId\}<\/span>/
   );
   assert.match(rankTrendUiSource, /PlatformIdIcon platform=\{platform\} aria-label="作品ID"/);
 
@@ -3502,13 +3502,14 @@ test("CV rank works expose platform ids and search result jumps", () => {
   assert.notEqual(cvWorksEnd, -1, "CV works list should end before CV item card");
   const cvWorksSource = ranksPanelSource.slice(cvWorksStart, cvWorksEnd);
 
-  assert.match(cvWorksSource, /PlatformDramaLink[\s\S]*platform=\{platform\}[\s\S]*dramaId=\{work\.dramaId\}/);
+  assert.match(cvWorksSource, /PlatformIdIcon[\s\S]*platform=\{platform\}/);
+  assert.doesNotMatch(cvWorksSource, /PlatformDramaLink|ExternalLinkIcon|<a\b/);
   assert.match(cvWorksSource, /dramaId: work\.dramaId/);
   assert.match(cvWorksSource, /usageAction: "ranks_open_search_result"/);
   assert.match(cvWorksSource, /underline underline-offset-4/);
   assert.match(cvWorksSource, /formatRankCompactCount\(work\.viewCount\)/);
   assert.match(cvWorksSource, /title=\{work\.title\}/);
-  assert.match(cvWorksSource, /textClassName="truncate text-foreground"/);
+  assert.match(cvWorksSource, /<span className="min-w-0 break-all text-foreground">\{work\.dramaId\}<\/span>/);
   assert.match(cvWorksSource, /truncate/);
 });
 
@@ -3524,14 +3525,14 @@ test("CV rank works share one responsive cover and four-row details layout", () 
     /grid-cols-\[4rem_minmax\(0,1fr\)\][\s\S]*sm:grid-cols-\[4\.5rem_minmax\(0,1fr\)\]/
   );
   assert.match(cvWorksSource, /size-16[\s\S]*sm:size-\[4\.5rem\]/);
-  assert.equal(cvWorksSource.match(/<PlatformDramaLink/g)?.length ?? 0, 1);
+  assert.equal(cvWorksSource.match(/<PlatformIdIcon/g)?.length ?? 0, 1);
   assert.equal(cvWorksSource.match(/<PlayCircleIcon/g)?.length ?? 0, 1);
   assert.equal(cvWorksSource.match(/<MicIcon/g)?.length ?? 0, 1);
   assert.doesNotMatch(cvWorksSource, /sm:hidden/);
   assert.doesNotMatch(cvWorksSource, /hidden min-w-0 sm:block/);
   assert.match(
     cvWorksSource,
-    /title=\{work\.title\}[\s\S]*className="[^"]*w-full truncate[^"]*"[\s\S]*PlatformDramaLink[\s\S]*dramaId=\{work\.dramaId\}[\s\S]*PlayCircleIcon[\s\S]*MicIcon/
+    /title=\{work\.title\}[\s\S]*className="[^"]*w-full truncate[^"]*"[\s\S]*PlatformIdIcon[\s\S]*\{work\.dramaId\}[\s\S]*PlayCircleIcon[\s\S]*MicIcon/
   );
   assert.doesNotMatch(
     cvWorksSource.slice(cvWorksSource.indexOf("<PlayCircleIcon"), cvWorksSource.indexOf("<MicIcon")),
@@ -3540,13 +3541,14 @@ test("CV rank works share one responsive cover and four-row details layout", () 
   assert.doesNotMatch(cvWorksSource.slice(cvWorksSource.indexOf("<MicIcon")), /truncate/);
 });
 
-test("CV works scroll directly inside the single works-list frame", () => {
+test("CV series scroll without an outer works-list frame", () => {
   const cvWorksStart = ranksPanelSource.indexOf("function CvWorksList");
   const cvWorksEnd = ranksPanelSource.indexOf("function useCvRankTrend", cvWorksStart);
   const cvWorksSource = ranksPanelSource.slice(cvWorksStart, cvWorksEnd);
-  const scrollClass = cvWorksSource.match(/className="([^"]*max-h-\[24rem\][^"]*)"/)?.[1] ?? "";
+  const scrollClass = ranksPanelSource.match(/className="([^"]*max-h-\[24rem\][^"]*)"/)?.[1] ?? "";
 
-  assert.match(cvWorksSource, /className="mt-3 rounded-lg border border-border\/80 bg-background\/78 p-2\.5 sm:p-3"/);
+  assert.doesNotMatch(cvWorksSource, /作品列表|rounded-lg border/);
+  assert.match(ranksPanelSource, /<CvSeriesGroup/);
   assert.match(scrollClass, /overflow-y-auto/);
   assert.match(scrollClass, /overscroll-contain/);
   assert.doesNotMatch(scrollClass, /\brounded/);
@@ -3774,6 +3776,10 @@ test("CV profile work cards reuse responsive actions and platform watermarks", (
   assert.match(workRowSource, /data-cv-work-footer[\s\S]*data-cv-work-playback/);
   assert.match(workRowSource, /data-cv-work-actions/);
   assert.match(workRowSource, /data-cv-work-watermark[\s\S]*tone="inherit"/);
+  const seriesGroupSource = readSourceIfExists("./CvSeriesGroup.jsx");
+  assert.match(seriesGroupSource, /!compact[\s\S]*data-cv-series-watermark/);
+  assert.match(seriesGroupSource, /cv-profile-platform-watermark pointer-events-none absolute right-3 top-3 z-0/);
+  assert.match(seriesGroupSource, /<PlatformGlyph platform=\{series\.platform\} tone="inherit" className="size-\[4\.75rem\] sm:size-\[5\.5rem\]"/);
   assert.match(toolViewSource, /<CvProfileView[\s\S]*favoriteKeys=\{favoriteKeySet\}[\s\S]*onAddCompareItem=\{addDramaToCompareBasket\}[\s\S]*onStartRevenueEstimate=\{startRevenueEstimate\}/);
   assert.match(serverSource, /!\["ongoing", "ranks", "cv_profile", "homeview"\]\.includes\(source\)/);
   assert.match(indexCssSource, /\.cv-profile-platform-watermark[\s\S]*var\(--foreground\) 7%/);

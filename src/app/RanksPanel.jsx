@@ -1,3 +1,5 @@
+import { groupCvSeries } from "../../shared/cvSeriesUtils.js";
+import { CvSeriesGroup } from "@/app/CvSeriesGroup";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
@@ -642,7 +644,7 @@ function getCvWorksPreviewText(works) {
   return titles.length ? `TOP3：${titles.map((title) => `《${title}》`).join(" ")}` : "TOP3：暂无";
 }
 
-function CvWorksList({ works = [], platform, frontendVersion = "0.0.0", onOpenSearchResult }) {
+function CvWorksList({ works = [], platform, onOpenSearchResult }) {
   function openWorkInSearch(work) {
     if (!work?.dramaId || !work?.title) {
       return;
@@ -658,9 +660,8 @@ function CvWorksList({ works = [], platform, frontendVersion = "0.0.0", onOpenSe
   }
 
   return (
-    <div className="mt-3 rounded-lg border border-border/80 bg-background/78 p-2.5 sm:p-3">
-      <div className="mb-2 text-sm font-semibold leading-5">作品列表</div>
-      <div className="max-h-[24rem] overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
+    <div>
+      <div>
         {works.length ? (
           <div className="divide-y divide-border/70">
             {works.map((work) => {
@@ -689,20 +690,14 @@ function CvWorksList({ works = [], platform, frontendVersion = "0.0.0", onOpenSe
                     >
                       {work.title}
                     </button>
-                    <PlatformDramaLink
-                      platform={platform}
-                      dramaId={work.dramaId}
-                      source="ranks_cv"
-                      dramaTitle={work.title}
-                      frontendVersion={frontendVersion}
-                      className="sm:text-sm"
-                      iconClassName={metaIconClassName}
-                      textClassName="truncate text-foreground"
-                    />
+                    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:text-sm" aria-label={`作品ID：${work.dramaId}`}>
+                      <PlatformIdIcon aria-hidden="true" platform={platform} className={metaIconClassName} tone="inherit" />
+                      <span className="min-w-0 break-all text-foreground">{work.dramaId}</span>
+                    </div>
                     <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:text-sm">
                       <PlayCircleIcon aria-label="播放量" className={metaIconClassName} title="播放量" />
                       <span className="min-w-0 break-words font-medium tabular-nums text-foreground">
-                        {formatRankCompactCount(work.viewCount)}
+                        {Number.isFinite(work.viewCount) ? formatRankCompactCount(work.viewCount) : "暂无数据"}
                       </span>
                     </div>
                     <div className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground sm:text-sm">
@@ -796,13 +791,13 @@ function CvRankActions({ item, canShowTrend, onOpenTrend, className }) {
   return (
     <div className={className}>
       <div
-        aria-label={`作品数: ${formatPlainNumber(item.workCount)}`}
-        title={`作品数: ${formatPlainNumber(item.workCount)}`}
+        aria-label={`系列数: ${formatPlainNumber(item.seriesCount ?? item.workCount)}`}
+        title={`系列数: ${formatPlainNumber(item.seriesCount ?? item.workCount)}`}
         className="flex min-w-0 items-center gap-1.5"
       >
         <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
         <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-          {formatPlainNumber(item.workCount)}
+          {formatPlainNumber(item.seriesCount ?? item.workCount)}
         </span>
       </div>
       <RankTrendDeltaBadge
@@ -834,6 +829,8 @@ function CvRankItemCard({
   onOpenCv,
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [expandedSeries, setExpandedSeries] = useState(() => new Set());
+  const series = item.series || groupCvSeries(item.works || []);
   const worksRegionId = useId();
   const {
     canShowTrend,
@@ -843,7 +840,7 @@ function CvRankItemCard({
     trendState,
   } = useCvRankTrend({ item, frontendVersion, handleVersionResponse });
   const avatarUrl = buildProxyImageUrl(item.avatar);
-  const topWorksText = getCvWorksPreviewText(item.topWorks || item.works);
+  const topWorksText = getCvWorksPreviewText(item.topSeries || series);
 
   return (
     <Card className="relative isolate overflow-hidden py-3">
@@ -908,12 +905,28 @@ function CvRankItemCard({
         </div>
         {isExpanded ? (
           <div id={worksRegionId}>
-            <CvWorksList
-              works={item.works || []}
-              platform={platform}
-              frontendVersion={frontendVersion}
-              onOpenSearchResult={onOpenSearchResult}
-            />
+            <div className="mt-3 max-h-[24rem] space-y-3 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
+              {!series.length ? <div className="px-4 py-6 text-center text-sm text-muted-foreground">暂无作品明细</div> : null}
+              {series.map((group) => (
+                <CvSeriesGroup
+                  key={group.id}
+                  series={group}
+                  open={expandedSeries.has(group.id)}
+                  compact
+                  onOpenChange={(open) => setExpandedSeries((current) => {
+                    const next = new Set(current);
+                    if (open) next.add(group.id); else next.delete(group.id);
+                    return next;
+                  })}
+                >
+                  <CvWorksList
+                    works={group.works}
+                    platform={platform}
+                    onOpenSearchResult={onOpenSearchResult}
+                  />
+                </CvSeriesGroup>
+              ))}
+            </div>
           </div>
         ) : null}
         {canShowTrend && isTrendOpen ? (

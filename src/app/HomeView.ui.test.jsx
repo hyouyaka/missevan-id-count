@@ -34,7 +34,7 @@ vi.mock("@/app/ranksData", () => ({
           categories: [
             { key: "new", ranks: [{ key: "new_daily", items: [{ id: "22", name: "首页榜单剧", rank: 2, main_cv_text: "CV乙", view_count: 8800 }] }] },
             { key: "peak", ranks: [{ key: "peak", items: [{ name: "首页巅峰系列", type: "peak", rank: 1, drama_ids: ["33"], view_count: 9900, daily_view_delta: { available: true, delta: 100 } }] }] },
-            { key: "cv", ranks: [{ key: "cv", items: [{ cvName: "首页CV", rank: 3, totalViewCount: 7700, works: [] }] }] },
+            { key: "cv", ranks: [{ key: "cv", items: [{ cvName: "首页CV", rank: 3, totalViewCount: 7700, topSeries: [{ title: "首页系列" }], topWorks: [{ title: "旧剧集" }], works: [] }] }] },
           ],
         },
       },
@@ -138,6 +138,8 @@ test("home peak and CV menus expose only actions supported by their rank type", 
   expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["趋势", "对比"]);
   await user.keyboard("{Escape}");
 
+  expect(screen.getByText("TOP3：《首页系列》")).toBeInTheDocument();
+  expect(screen.queryByText(/旧剧集/)).not.toBeInTheDocument();
   const cvTrigger = screen.getByRole("button", { name: "首页CV更多操作" });
   await user.click(cvTrigger);
   expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["趋势"]);

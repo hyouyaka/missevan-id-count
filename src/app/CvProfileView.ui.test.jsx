@@ -129,6 +129,136 @@ function ProfileHarness({
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+test("desktop series expansion stays in the grid and keeps nested work menus usable", async () => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener() {}, removeEventListener() {} })));
+  const user = userEvent.setup();
+  const onToggleFavorite = vi.fn();
+  const data = createProfileData(4);
+  data.works.forEach((work, index) => {
+    work.platform = "missevan";
+    work.seriesId = index < 2 ? "desktop-series" : "second-series";
+    work.seriesTitle = index < 2 ? "桌面系列" : "另一系列";
+  });
+  mockProfileFetch(data);
+  const { container } = render(<ProfileHarness onToggleFavorite={onToggleFavorite} />);
+  await user.click(await screen.findByRole("button", { name: "展开系列桌面系列" }));
+  const overlay = await screen.findByRole("region", { name: "桌面系列系列作品" });
+  expect(overlay).toHaveAttribute("data-cv-series-panel", "row");
+  expect(container).toContainElement(overlay);
+  await user.click(screen.getByRole("button", { name: "展开系列另一系列" }));
+  expect(screen.queryByRole("region", { name: "桌面系列系列作品" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("region", { name: /系列作品$/ })).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "展开系列桌面系列" }));
+  await user.click(screen.getByRole("button", { name: "作品1更多操作" }));
+  expect(container.querySelector('[aria-label="收起系列桌面系列"]')).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByRole("menuitem", { name: "收藏" }));
+  expect(onToggleFavorite).toHaveBeenCalledWith(expect.objectContaining({ dramaId: "1" }));
+  expect(screen.getByRole("button", { name: "收起系列桌面系列" })).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByRole("button", { name: "关闭桌面系列系列详情" }));
+  expect(screen.getByRole("button", { name: "展开系列桌面系列" })).toHaveAttribute("aria-expanded", "false");
+  await user.click(screen.getByRole("button", { name: "展开系列桌面系列" }));
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("button", { name: "展开系列桌面系列" })).toHaveFocus();
+});
+
+test("series cards default closed, use the first cover and deduplicate all CVs", async () => {
+  const user = userEvent.setup();
+  const data = createProfileData(5);
+  data.works = data.works.map((work, index) => ({
+    ...work,
+    platform: "missevan",
+    mainCvs: index === 0 ? ["路知行", "CV甲"] : ["CV甲", "CV乙"],
+    seriesId: index < 2 ? "group-a" : index < 4 ? "group-b" : "single",
+    seriesTitle: index < 2 ? "系列甲" : index < 4 ? "系列乙" : "单部",
+  }));
+  mockProfileFetch(data);
+  render(<ProfileHarness />);
+  const first = await screen.findByRole("button", { name: "展开系列系列甲" });
+  expect(first).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: "作品1" })).not.toBeInTheDocument();
+  expect(screen.getByAltText("系列甲系列封面")).toHaveAttribute("src", "/image-proxy?url=https%3A%2F%2Fexample.com%2F1.jpg");
+  expect(screen.getByText("路知行、CV甲、CV乙")).toBeInTheDocument();
+  expect(screen.queryByText("单部")).not.toBeInTheDocument();
+  expect(within(screen.getByLabelText("猫耳平台数据")).getByText("3")).toBeInTheDocument();
+  await user.click(first);
+  expect(screen.getByRole("button", { name: "作品1" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "展开系列系列乙" })).toHaveAttribute("aria-expanded", "false");
+  await user.click(screen.getByRole("button", { name: "收起系列系列甲" }));
+  expect(screen.queryByRole("button", { name: "作品1" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "展开系列系列甲" }));
+  await user.click(screen.getByRole("heading", { name: "路知行" }));
+  expect(screen.getByRole("button", { name: "展开系列系列甲" })).toHaveAttribute("aria-expanded", "false");
+  const payment = screen.getByRole("button", { name: "付费筛选，全部" });
+  await user.click(payment);
+  await user.click(screen.getByRole("button", { name: "筛选免费，2个系列" }));
+  await user.click(payment);
+  await waitFor(() => expect(screen.getByRole("button", { name: "作品1" })).toBeVisible());
+  expect(screen.queryByRole("button", { name: /系列系列/ })).not.toBeInTheDocument();
+});
+
+test("progressive rendering never splits a series across load-more batches", async () => {
+  const user = userEvent.setup();
+  const data = createProfileData(54);
+  data.works.forEach((work, index) => {
+    work.platform = "missevan";
+    work.playCount = 10000 - index;
+    if (index < 2) { work.seriesId = "leading-series"; work.seriesTitle = "完整系列"; }
+  });
+  mockProfileFetch(data);
+  const { container } = render(<ProfileHarness />);
+  const toggle = await screen.findByRole("button", { name: "展开系列完整系列" });
+  expect(container.querySelectorAll("[data-cv-series]")).toHaveLength(24);
+  await user.click(toggle);
+  expect(screen.getByRole("button", { name: "作品1" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "作品2" })).toBeVisible();
+  expect(container.querySelectorAll(".cv-series-works > article")).toHaveLength(25);
+  await user.click(screen.getByRole("button", { name: "加载更多" }));
+  expect(container.querySelectorAll("[data-cv-series]")).toHaveLength(48);
+});
+
+test("all filter facets count distinct series and intersect other filters at work level", async () => {
+  const user = userEvent.setup();
+  const data = createProfileData(5);
+  const fields = [
+    ["missevan", "series-a", true, "2026.01", ["搭档甲"]],
+    ["missevan", "series-a", false, "2025.01", ["搭档甲"]],
+    ["missevan", "series-a", true, "2026.02", ["搭档乙"]],
+    ["missevan", "series-b", true, "2026.03", ["搭档甲"]],
+    ["manbo", undefined, false, "2025.02", []],
+  ];
+  data.works.forEach((work, index) => {
+    const [platform, seriesId, needpay, createTime, partners] = fields[index];
+    Object.assign(work, { platform, seriesId, needpay, createTime, partners });
+  });
+  mockProfileFetch(data);
+  render(<ProfileHarness />);
+  await screen.findByRole("heading", { name: "路知行" });
+  for (const [filter, expected] of [
+    ["平台", ["筛选猫耳，2个系列", "筛选漫播，1个系列"]],
+    ["付费", ["筛选付费，2个系列", "筛选免费，2个系列"]],
+    ["时间", ["筛选2026，2个系列", "筛选2025，2个系列"]],
+    ["搭档", ["筛选搭档甲，2个系列", "筛选搭档乙，1个系列", "筛选无搭档，1个系列"]],
+  ]) {
+    const trigger = screen.getByRole("button", { name: `${filter}筛选，全部` });
+    await user.click(trigger);
+    expected.forEach((name) => expect(screen.getByRole("button", { name })).toBeInTheDocument());
+    await user.click(trigger);
+  }
+  const payment = screen.getByRole("button", { name: "付费筛选，全部" });
+  await user.click(payment);
+  await user.click(screen.getByRole("button", { name: "筛选付费，2个系列" }));
+  await user.click(payment);
+  const platform = screen.getByRole("button", { name: "平台筛选，全部" });
+  await user.click(platform);
+  expect(screen.getByRole("button", { name: "筛选猫耳，1个系列" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "筛选漫播，1个系列" })).toBeInTheDocument();
+  await user.click(platform);
+  await user.click(screen.getByRole("button", { name: "时间筛选，全部" }));
+  expect(screen.getByRole("button", { name: "筛选2026，0个系列" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "筛选2025，2个系列" })).toBeInTheDocument();
 });
 
 test("CV profile includes the search identity discriminator in its request", async () => {
@@ -186,7 +316,7 @@ test("CV profile commits popover filters on close and recalculates platform stat
   const platformTrigger = screen.getByRole("button", { name: "平台筛选，全部" });
   await user.click(platformTrigger);
   expect(screen.getByLabelText("平台筛选选项")).toBeInTheDocument();
-  const catEarOption = screen.getByRole("button", { name: "筛选猫耳，2部作品" });
+  const catEarOption = screen.getByRole("button", { name: "筛选猫耳，2个系列" });
   await user.click(catEarOption);
   expect(catEarOption).toHaveAttribute("aria-pressed", "false");
   expect(screen.getByRole("button", { name: "作品1" })).toBeInTheDocument();
@@ -217,7 +347,7 @@ test("CV profile commits popover filters on close and recalculates platform stat
 
   const paymentTrigger = screen.getByRole("button", { name: "付费筛选，全部" });
   await user.click(paymentTrigger);
-  await user.click(screen.getByRole("button", { name: "筛选免费，1部作品" }));
+  await user.click(screen.getByRole("button", { name: "筛选免费，1个系列" }));
   await user.click(screen.getByRole("button", { name: "应用" }));
   expect(routeChange).toHaveBeenCalledWith({ payment: "paid" });
   expect(scrollIntoView).not.toHaveBeenCalled();
@@ -325,19 +455,19 @@ test("CV profile filters release years and exposes counts under current filters"
   expect(await screen.findByRole("button", { name: "时间筛选，全部" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "时间筛选，全部" }));
   const releasePopover = screen.getByLabelText("时间筛选选项");
-  expect(within(releasePopover).getByRole("button", { name: "筛选2026，1部作品" })).toHaveAttribute("aria-pressed", "true");
-  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" })).toHaveAttribute("aria-pressed", "true");
-  expect(within(releasePopover).getByRole("button", { name: "筛选暂无，2部作品" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选2026，1个系列" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1个系列" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选暂无，2个系列" })).toHaveAttribute("aria-pressed", "true");
   await user.click(within(releasePopover).getByRole("button", { name: "全选" }));
   await user.click(screen.getByRole("button", { name: "清空" }));
-  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" })).toHaveAttribute("aria-pressed", "false");
-  await user.click(screen.getByRole("button", { name: "筛选2025，1部作品" }));
-  await user.click(screen.getByRole("button", { name: "筛选2026，1部作品" }));
-  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" })).toHaveAttribute("aria-pressed", "true");
-  expect(within(releasePopover).getByRole("button", { name: "筛选2026，1部作品" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1个系列" })).toHaveAttribute("aria-pressed", "false");
+  await user.click(screen.getByRole("button", { name: "筛选2025，1个系列" }));
+  await user.click(screen.getByRole("button", { name: "筛选2026，1个系列" }));
+  expect(within(releasePopover).getByRole("button", { name: "筛选2025，1个系列" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(releasePopover).getByRole("button", { name: "筛选2026，1个系列" })).toHaveAttribute("aria-pressed", "true");
   await user.click(within(releasePopover).getByRole("button", { name: "全选" }));
   await user.click(within(releasePopover).getByRole("button", { name: "清空" }));
-  await user.click(within(releasePopover).getByRole("button", { name: "筛选2025，1部作品" }));
+  await user.click(within(releasePopover).getByRole("button", { name: "筛选2025，1个系列" }));
   await user.click(screen.getByRole("button", { name: "应用" }));
   expect(routeChange).toHaveBeenCalledWith({ release: "2025" });
   expect(await screen.findByRole("button", { name: "作品3" })).toBeInTheDocument();
@@ -349,13 +479,13 @@ test("CV profile filters release years and exposes counts under current filters"
   expect(partnerTrigger).toHaveFocus();
   expect(screen.getByRole("textbox", { name: "搜索搭档" })).not.toHaveFocus();
   await user.type(screen.getByRole("textbox", { name: "搜索搭档" }), "逗号");
-  expect(within(partnerPopover).getByRole("button", { name: "筛选名字,带逗号，0部作品" })).toBeInTheDocument();
+  expect(within(partnerPopover).getByRole("button", { name: "筛选名字,带逗号，0个系列" })).toBeInTheDocument();
   expect(within(partnerPopover).queryByRole("button", { name: /筛选搭档甲/ })).not.toBeInTheDocument();
   await user.clear(screen.getByRole("textbox", { name: "搜索搭档" }));
-  expect(within(partnerPopover).getByRole("button", { name: "筛选搭档甲，1部作品" })).toBeInTheDocument();
-  expect(within(partnerPopover).getByRole("button", { name: "筛选无搭档，0部作品" })).toBeInTheDocument();
+  expect(within(partnerPopover).getByRole("button", { name: "筛选搭档甲，1个系列" })).toBeInTheDocument();
+  expect(within(partnerPopover).getByRole("button", { name: "筛选无搭档，0个系列" })).toBeInTheDocument();
   await user.click(within(partnerPopover).getByRole("button", { name: "清空" }));
-  await user.click(within(partnerPopover).getByRole("button", { name: "筛选无搭档，0部作品" }));
+  await user.click(within(partnerPopover).getByRole("button", { name: "筛选无搭档，0个系列" }));
   await user.click(screen.getByRole("button", { name: "应用" }));
   expect(routeChange).toHaveBeenCalledWith({
     partners: JSON.stringify(["__none__"]),

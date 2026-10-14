@@ -1,3 +1,4 @@
+import { buildCvSeriesIndex } from "./shared/cvSeriesUtils.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -117,7 +118,9 @@ test("rank response appends normalized CV ranks per platform", async () => {
     updatedAt: "2026-06-10T09:30:00+00:00",
     missevanDramaCount: 842,
     manboDramaCount: 331,
+    seriesMappingVersion: response.cvSummary.seriesMappingVersion,
   });
+  assert.match(response.cvSummary.seriesMappingVersion, /^[a-f0-9]{64}$/);
 
   const missevanCvCategory = response.platforms.missevan.categories.find((category) => category.key === "cv");
   assert.equal(missevanCvCategory.label, "CV榜");
@@ -2380,4 +2383,70 @@ test("rank-derived caches expire by daily update cycle", async () => {
     ),
     false
   );
+});
+
+
+test("CV total and paid ranks aggregate only their own works into top series", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+  const works = [
+    { dramaId: "1", title: "第一季", viewCount: 60 },
+    { dramaId: "2", title: "第二季", viewCount: 50 },
+    { dramaId: "3", title: "独立作品", viewCount: 100 },
+  ];
+  const seriesIndex = buildCvSeriesIndex({ source: { platform: "猫耳", "series title": "两季系列", dramaIds: ["1", "2", "4"] } });
+  const response = buildNormalizedRanksResponse({}, null, {
+    rankings: { missevan: [{ cvName: "测试CV", works, workCount: 3, totalViewCount: 210 }] },
+    paidRankings: { missevan: [{ cvName: "测试CV", works: [works[0], works[2]], workCount: 2, totalViewCount: 160 }] },
+  }, { seriesIndex });
+  const ranks = response.platforms.missevan.categories.find((category) => category.key === "cv").ranks;
+  const total = ranks[0].items[0];
+  assert.equal(total.workCount, 3);
+  assert.equal(total.seriesCount, 2);
+  assert.deepEqual(total.topSeries.map(({ title, playCount }) => [title, playCount]), [["两季系列", 110], ["独立作品", 100]]);
+  assert.equal(total.works.length, 3);
+  const paid = ranks[1].items[0];
+  assert.equal(paid.seriesCount, 2);
+  assert.deepEqual(paid.topSeries.map(({ title, playCount }) => [title, playCount]), [["独立作品", 100], ["两季系列", 60]]);
+  assert.equal(paid.series[1].works.length, 1);
+});
+
+
+test("rank validators change for series merges, renames and recovery but remain stable on identical reads", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("./server.js");
+  const snapshot = { generatedAt: "2026-10-12T00:00:00Z", rankings: { missevan: [{
+    cvName: "测试CV", works: [
+      { dramaId: "1", title: "第一季", viewCount: 60 },
+      { dramaId: "2", title: "第二季", viewCount: 50 },
+    ], workCount: 2, totalViewCount: 110,
+  }] } };
+  const record = { platform: "猫耳", "series title": "合并系列", dramaIds: ["1", "2"] };
+  const build = (seriesIndex) => buildNormalizedRanksResponse({}, null, snapshot, { seriesIndex });
+  const standalone = build(new Map());
+  const index = buildCvSeriesIndex({ sample: record });
+  const merged = build(index);
+  const renamed = build(buildCvSeriesIndex({ sample: { ...record, "series title": "新系列名" } }));
+  const getItem = (response) => response.platforms.missevan.categories.find(({ key }) => key === "cv").ranks[0].items[0];
+  assert.equal(getItem(standalone).seriesCount, 2);
+  assert.equal(getItem(merged).seriesCount, 1);
+  assert.equal(standalone.cvSummary.updatedAt, merged.cvSummary.updatedAt);
+  assert.notEqual(getRanksResponseCacheValidator(standalone), getRanksResponseCacheValidator(merged));
+  assert.notEqual(getRanksResponseCacheValidator(merged), getRanksResponseCacheValidator(renamed));
+  assert.equal(getRanksResponseCacheValidator(merged), getRanksResponseCacheValidator(build(new Map([...index].reverse()))));
+  const { createCvSeriesStore } = await import("./server/services/cvSeriesStore.js");
+  let fail = true;
+  const store = createCvSeriesStore({ ttlMs: 100, readSnapshot: async () => {
+    if (fail) throw new Error("offline");
+    return { sample: record };
+  } });
+  await store.read({ now: 0 });
+  const fallbackValidator = getRanksResponseCacheValidator(build(store.index));
+  fail = false;
+  await store.read({ now: 100 });
+  const recoveredValidator = getRanksResponseCacheValidator(build(store.index));
+  assert.notEqual(fallbackValidator, recoveredValidator);
+  fail = true;
+  await store.read({ now: 200 });
+  assert.equal(getRanksResponseCacheValidator(build(store.index)), recoveredValidator);
 });

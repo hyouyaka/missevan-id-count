@@ -687,7 +687,7 @@ function RankDramaItem({
 function RankCvItem({ item, platform, rankKey, onOpenCv, onOpenTrend, canOpenTrend = false, actionProps }) {
   const avatarUrl = buildProxyImageUrl(item?.avatar);
   const playCountText = formatRankCompactCount(item?.totalViewCount);
-  const topWorksText = getHomeCvWorksPreviewText(item?.topWorks || item?.works);
+  const topWorksText = getHomeCvWorksPreviewText(item?.topSeries || item?.topWorks || item?.works);
   return (
     <div className="relative isolate grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden">
       <RankWatermark rank={item?.rank} placement="row" />

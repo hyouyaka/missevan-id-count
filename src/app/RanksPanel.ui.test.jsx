@@ -116,6 +116,36 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+test("CV ranks preview series cards closed and retain closed groups when the outer list reopens", async () => {
+  const user = userEvent.setup();
+  const works = [
+    { platform: "missevan", dramaId: "101", title: "第一季", viewCount: 5000, mainCvs: ["CV甲"], seriesId: "group", seriesTitle: "合并系列" },
+    { platform: "missevan", dramaId: "102", title: "第二季", viewCount: 4000, mainCvs: ["CV甲"], seriesId: "group", seriesTitle: "合并系列" },
+    { platform: "missevan", dramaId: "103", title: "单部作品", viewCount: 3000, mainCvs: ["CV甲"] },
+  ];
+  testState.payload.platforms.missevan.categories = [{
+    key: "cv", label: "CV榜", ranks: [{
+      key: "cv", label: "总榜", name: "CV总榜", items: [{ cvName: "CV甲", rank: 1, seriesCount: 2, workCount: 3, totalViewCount: 12000, works }],
+    }],
+  }];
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "cv", rank: "cv" }} />);
+  const openButtons = await screen.findAllByRole("button", { name: "展开CV甲作品列表" });
+  expect(openButtons[0]).toHaveTextContent("《合并系列》 《单部作品》");
+  expect(screen.getAllByLabelText("系列数: 2").length).toBeGreaterThan(0);
+  await user.click(openButtons[0]);
+  const group = screen.getByRole("button", { name: "展开系列合并系列" });
+  expect(group).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: "第一季", exact: true })).not.toBeInTheDocument();
+  await user.click(group);
+  expect(screen.getByRole("button", { name: "第一季", exact: true })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "收起系列单部作品" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "收起系列合并系列" }));
+  expect(screen.queryByRole("button", { name: "第一季", exact: true })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "收起CV甲作品列表" }));
+  await user.click(screen.getAllByRole("button", { name: "展开CV甲作品列表" })[0]);
+  expect(screen.getByRole("button", { name: "展开系列合并系列" })).toHaveAttribute("aria-expanded", "false");
+});
+
 test("rank title share buttons are per-rank on desktop, active-rank only on mobile, and disabled for empty ranks", async () => {
   const user = userEvent.setup();
   shareState.failNext = true;

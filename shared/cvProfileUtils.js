@@ -1,3 +1,4 @@
+import { attachCvSeries, groupCvSeries } from "./cvSeriesUtils.js";
 import {
   buildPinyinFullSearchTokens,
   buildPinyinSearchTokens,
@@ -640,6 +641,7 @@ export function collectCvWorks({
         needpay: record?.needpay === true,
         createTime: normalizeName(record?.createTime),
         partners,
+        mainCvs: uniqueNames(identities.map((identity) => identity.name)),
       });
     });
   }
@@ -654,7 +656,9 @@ function getLatestPlaybackPoint(bundle, id) {
   for (let index = dates.length - 1; index >= 0; index -= 1) {
     const date = String(dates[index] ?? "").trim();
     const record = bundle?.snapshotsByDate?.[date]?.dramas?.[String(id)];
-    const value = Number(record?.view_count ?? record?.watch_count ?? record?.play_count);
+    const rawValue = record?.view_count ?? record?.watch_count ?? record?.play_count;
+    if (rawValue == null || rawValue === "") continue;
+    const value = Number(rawValue);
     if (date && Number.isFinite(value)) {
       return { date, value };
     }
@@ -667,8 +671,9 @@ export function buildCvProfileResponse({
   avatar = "",
   works = [],
   playbackBundles = {},
+  seriesIndex = new Map(),
 } = {}) {
-  const normalizedWorks = (Array.isArray(works) ? works : []).map((work) => {
+  const normalizedWorks = attachCvSeries((Array.isArray(works) ? works : []).map((work) => {
     const point = getLatestPlaybackPoint(playbackBundles?.[work.platform], work.id);
     return {
       platform: work.platform,
@@ -681,11 +686,13 @@ export function buildCvProfileResponse({
       needpay: work?.needpay === true,
       createTime: normalizeName(work?.createTime),
       partners: uniqueNames(work.partners),
+      mainCvs: uniqueNames(work.mainCvs),
       playCount: point?.value ?? null,
       dataDate: point?.date ?? "",
     };
-  });
+  }), seriesIndex);
 
+  const series = groupCvSeries(normalizedWorks);
   const freshness = {};
   ["missevan", "manbo"].forEach((platform) => {
     const platformWorks = normalizedWorks.filter((work) => work.platform === platform);
@@ -715,6 +722,7 @@ export function buildCvProfileResponse({
         platform,
         {
           workCount: platformWorks.length,
+          seriesCount: groupCvSeries(platformWorks).length,
           playback: sumPlatform(platform),
           dataUpdatedAt: freshness[platform].latestDate,
           staleWorkCount: freshness[platform].staleWorkCount,
@@ -729,11 +737,15 @@ export function buildCvProfileResponse({
       avatar: normalizeName(avatar),
     },
     stats,
+    series,
+    topSeries: series.slice(0, 3),
+    seriesCount: series.length,
     totals: {
       playback: sumPlatform(),
       missevanPlayback: sumPlatform("missevan"),
       manboPlayback: sumPlatform("manbo"),
       workCount: normalizedWorks.length,
+      seriesCount: series.length,
       availableWorkCount,
       missingWorkCount: normalizedWorks.length - availableWorkCount,
     },

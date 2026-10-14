@@ -128,7 +128,7 @@ function getRankShareColumns(platform, categoryKey, rankKey) {
     return [
       { key: "title", label: "CV", minWidth: 160, maxWidth: 300 },
       { key: "view", label: "播放量", minWidth: 125, maxWidth: 210, align: "center" },
-      { key: "workCount", label: "剧集数量", minWidth: 125, maxWidth: 180, align: "center" },
+      { key: "workCount", label: "系列数量", minWidth: 125, maxWidth: 180, align: "center" },
       { key: "top3", label: "TOP3", minWidth: 280, maxWidth: 560 },
     ];
   }
@@ -177,8 +177,8 @@ function getRankShareRow({ item, index, platform, categoryKey, rankKey }) {
   };
 
   if (categoryKey === "cv") {
-    row.workCount = formatOptionalRankMetric(item?.workCount, { plain: true });
-    const topWorks = Array.isArray(item?.topWorks) ? item.topWorks : Array.isArray(item?.works) ? item.works : [];
+    row.workCount = formatOptionalRankMetric(item?.seriesCount ?? item?.workCount, { plain: true });
+    const topWorks = Array.isArray(item?.topSeries) ? item.topSeries : Array.isArray(item?.topWorks) ? item.topWorks : Array.isArray(item?.works) ? item.works : [];
     row.top3 = topWorks.slice(0, 3).map((work) => String(work?.title ?? "").trim()).filter(Boolean)
       .map((title) => `《${title}》`).join(" ") || "暂无";
     return row;

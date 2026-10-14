@@ -191,20 +191,22 @@ test("CV share tables include TOP3, date status, and compact playback values", (
         rank: 2,
         cvName: "CV乙",
         totalViewCount: 12345,
-        workCount: 0,
+        workCount: 4,
+        seriesCount: 2,
+        topSeries: [{ title: "系列甲" }, { title: "系列乙" }],
         topWorks: [{ title: "作品甲" }, { title: "作品乙" }, { title: "作品丙" }, { title: "作品丁" }],
       }],
     },
   });
   assert.equal(table.title, "漫播CV付费榜");
   assert.deepEqual(table.metadata, { inlineText: "更新日期：2026-09-29", statusText: "*此榜单非官方" });
-  assert.deepEqual(table.columns.map(({ label }) => label), ["CV", "播放量", "剧集数量", "TOP3"]);
+  assert.deepEqual(table.columns.map(({ label }) => label), ["CV", "播放量", "系列数量", "TOP3"]);
   assert.equal(table.columns.at(-1).maxWidth, 560);
   assert.deepEqual(table.rows[0], {
     title: "2. CV乙",
     view: "1.23万",
-    workCount: "0",
-    top3: "《作品甲》 《作品乙》 《作品丙》",
+    workCount: "2",
+    top3: "《系列甲》 《系列乙》",
   });
 });
 

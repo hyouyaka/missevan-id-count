@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { getCvSeriesId, groupCvSeries } from "../../shared/cvSeriesUtils.js";
+import { CvSeriesGroup, useCvSeriesColumns } from "@/app/CvSeriesGroup";
+import { Fragment, useCallback, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
   ArrowLeftIcon,
@@ -129,9 +131,9 @@ function PlatformStatCard({ platform, stats }) {
         <PlatformGlyph platform={platform} className="size-7" />
       </div>
       <div className="min-w-0">
-        <div className="text-xs text-muted-foreground">作品总数</div>
+        <div className="text-xs text-muted-foreground">系列总数</div>
         <strong className="mt-1 block text-xl font-semibold tabular-nums">
-          {Number(stats?.workCount ?? 0) || 0}
+          {Number(stats?.seriesCount ?? stats?.workCount ?? 0) || 0}
         </strong>
       </div>
       <div aria-hidden="true" className="h-10 w-px bg-border" />
@@ -632,7 +634,7 @@ function MultiSelectFilterContent({
                   variant="ghost"
                   className="h-auto min-h-11 max-w-full shrink whitespace-normal border-0! bg-transparent! px-0 py-1 shadow-none! hover:bg-transparent! focus-visible:ring-2"
                   aria-pressed={selected}
-                  aria-label={`筛选${option.label}，${option.count}部作品`}
+                  aria-label={`筛选${option.label}，${option.count}个系列`}
                   onClick={() => onToggle(option.key)}
                 >
                   <span className={`pointer-events-none flex h-auto min-h-9 min-w-0 max-w-full items-center justify-center rounded-full border px-3 py-1.5 text-left text-sm leading-5 ${selected
@@ -939,18 +941,24 @@ export function CvProfileView({
     [state.data]
   );
   const filterOptions = useMemo(() => {
-    const platformCounts = { missevan: 0, manbo: 0 };
-    const paymentCounts = { paid: 0, free: 0 };
+    const platformCounts = { missevan: new Set(), manbo: new Set() };
+    const paymentCounts = { paid: new Set(), free: new Set() };
     const releaseCounts = new Map();
     const partnerCounts = new Map();
 
+    function addSeries(counts, key, seriesId) {
+      if (!counts.has(key)) counts.set(key, new Set());
+      counts.get(key).add(seriesId);
+    }
+
     works.forEach((work) => {
+      const seriesId = getCvSeriesId(work);
       const platform = work.platform === "manbo" ? "manbo" : "missevan";
       const payment = work.needpay === true ? "paid" : "free";
       const release = getReleaseYear(work.createTime);
-      platformCounts[platform] += 1;
-      paymentCounts[payment] += 1;
-      releaseCounts.set(release, (releaseCounts.get(release) || 0) + 1);
+      platformCounts[platform].add(seriesId);
+      paymentCounts[payment].add(seriesId);
+      addSeries(releaseCounts, release, seriesId);
 
       const partners = [...new Set(
         (Array.isArray(work.partners) ? work.partners : [])
@@ -958,10 +966,10 @@ export function CvProfileView({
           .filter(Boolean)
       )];
       if (!partners.length) {
-        partnerCounts.set(NO_PARTNER_KEY, (partnerCounts.get(NO_PARTNER_KEY) || 0) + 1);
+        addSeries(partnerCounts, NO_PARTNER_KEY, seriesId);
       } else {
         partners.forEach((name) => {
-          partnerCounts.set(name, (partnerCounts.get(name) || 0) + 1);
+          addSeries(partnerCounts, name, seriesId);
         });
       }
     });
@@ -982,28 +990,28 @@ export function CvProfileView({
       if (right === NO_PARTNER_KEY) {
         return -1;
       }
-      return (partnerCounts.get(right) || 0) - (partnerCounts.get(left) || 0) ||
+      return (partnerCounts.get(right)?.size || 0) - (partnerCounts.get(left)?.size || 0) ||
         left.localeCompare(right, "zh-Hans-CN");
     });
 
     return {
       platform: [
-        { key: "missevan", label: "猫耳", count: platformCounts.missevan },
-        { key: "manbo", label: "漫播", count: platformCounts.manbo },
+        { key: "missevan", label: "猫耳", count: platformCounts.missevan.size },
+        { key: "manbo", label: "漫播", count: platformCounts.manbo.size },
       ],
       payment: [
-        { key: "paid", label: "付费", count: paymentCounts.paid },
-        { key: "free", label: "免费", count: paymentCounts.free },
+        { key: "paid", label: "付费", count: paymentCounts.paid.size },
+        { key: "free", label: "免费", count: paymentCounts.free.size },
       ],
       release: releaseKeys.map((key) => ({
         key,
         label: key === UNKNOWN_RELEASE_KEY ? "暂无" : key,
-        count: releaseCounts.get(key) || 0,
+        count: releaseCounts.get(key)?.size || 0,
       })),
       partners: partnerKeys.map((key) => ({
         key,
         label: key === NO_PARTNER_KEY ? "无搭档" : key,
-        count: partnerCounts.get(key) || 0,
+        count: partnerCounts.get(key)?.size || 0,
       })),
     };
   }, [works]);
@@ -1056,28 +1064,28 @@ export function CvProfileView({
     const counts = Object.fromEntries(
       Object.entries(filterOptions).map(([group, options]) => [
         group,
-        new Map(options.map((option) => [option.key, 0])),
+        new Map(options.map((option) => [option.key, new Set()])),
       ])
     );
-    function increment(group, key) {
+    function increment(group, key, work) {
       const groupCounts = counts[group];
       if (groupCounts.has(key)) {
-        groupCounts.set(key, groupCounts.get(key) + 1);
+        groupCounts.get(key).add(getCvSeriesId(work));
       }
     }
 
     works.forEach((work) => {
       if (matchesWorkSelections(work, appliedSelections, "platform")) {
-        increment("platform", work.platform);
+        increment("platform", work.platform, work);
       }
       if (matchesWorkSelections(work, appliedSelections, "payment")) {
-        increment("payment", work.needpay ? "paid" : "free");
+        increment("payment", work.needpay ? "paid" : "free", work);
       }
       if (matchesWorkSelections(work, appliedSelections, "release")) {
-        increment("release", getReleaseYear(work.createTime));
+        increment("release", getReleaseYear(work.createTime), work);
       }
       if (matchesWorkSelections(work, appliedSelections, "partners")) {
-        getWorkPartnerKeys(work).forEach((name) => increment("partners", name));
+        getWorkPartnerKeys(work).forEach((name) => increment("partners", name, work));
       }
     });
 
@@ -1086,7 +1094,7 @@ export function CvProfileView({
         group,
         options.map((option) => ({
           ...option,
-          count: counts[group].get(option.key) || 0,
+          count: counts[group].get(option.key)?.size || 0,
         })),
       ])
     );
@@ -1109,12 +1117,20 @@ export function CvProfileView({
     appliedSelections,
     works,
   ]);
-  const renderedWorks = useMemo(
-    () => filteredWorks.length > PROGRESSIVE_RENDER_THRESHOLD
-      ? filteredWorks.slice(0, visibleCount)
-      : filteredWorks,
-    [filteredWorks, visibleCount]
+  const filteredSeries = useMemo(() => groupCvSeries(filteredWorks), [filteredWorks]);
+  const seriesColumns = useCvSeriesColumns();
+  const detailsId = useId();
+  const [expandedSeries, setExpandedSeries] = useState(() => new Set());
+  useEffect(() => {
+    setExpandedSeries(new Set());
+  }, [cvName, profileId]);
+  const renderedSeries = useMemo(
+    () => filteredSeries.length > PROGRESSIVE_RENDER_THRESHOLD
+      ? filteredSeries.slice(0, visibleCount)
+      : filteredSeries,
+    [filteredSeries, visibleCount]
   );
+  const renderedWorks = useMemo(() => renderedSeries.flatMap((series) => series.works), [renderedSeries]);
   const trendLookupByPlatform = useMemo(() => ({
     missevan: Array.from(new Set(
       renderedWorks.filter((work) => work?.platform !== "manbo")
@@ -1233,6 +1249,7 @@ export function CvProfileView({
         platform,
         {
           workCount: platformWorks.length,
+          seriesCount: groupCvSeries(platformWorks).length,
           playback: playbackValues.length
             ? playbackValues.reduce((sum, value) => sum + value, 0)
             : null,
@@ -1241,7 +1258,31 @@ export function CvProfileView({
       ];
     })
   );
-  const hasMore = renderedWorks.length < filteredWorks.length;
+  function renderSeriesWorks(group) {
+    return (
+      <div className="cv-series-works divide-y divide-border/70">
+        {group.works.map((work) => (
+          <WorkRow
+            key={`${work.platform}:${work.id}`}
+            work={work}
+            frontendVersion={frontendVersion}
+            handleVersionResponse={handleVersionResponse}
+            onOpenSearchResult={onOpenSearchResult}
+            favoriteKeys={favoriteKeys}
+            favoriteActionsDisabled={favoriteActionsDisabled}
+            statisticsActionsDisabled={statisticsActionsDisabled}
+            onToggleFavorite={onToggleFavorite}
+            onAddCompareItem={onAddCompareItem}
+            onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+            onStartRevenueEstimate={onStartRevenueEstimate}
+            trendAvailable={availableTrendIdsByPlatform[work.platform === "manbo" ? "manbo" : "missevan"].has(String(work.id))}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const hasMore = renderedSeries.length < filteredSeries.length;
   const emptyLabel = works.length ? "当前筛选下暂无作品" : "暂无作品数据";
 
   function commitPlatform(selection) {
@@ -1341,24 +1382,40 @@ export function CvProfileView({
         </CardHeader>
         <CardContent className="p-4">
           {renderedWorks.length ? (
-            <div className="cv-profile-work-grid grid md:grid-cols-2 xl:grid-cols-3">
-              {renderedWorks.map((work) => (
-                <WorkRow
-                  key={`${work.platform}:${work.id}`}
-                  work={work}
-                  frontendVersion={frontendVersion}
-                  handleVersionResponse={handleVersionResponse}
-                  onOpenSearchResult={onOpenSearchResult}
-                  favoriteKeys={favoriteKeys}
-                  favoriteActionsDisabled={favoriteActionsDisabled}
-                  statisticsActionsDisabled={statisticsActionsDisabled}
-                  onToggleFavorite={onToggleFavorite}
-                  onAddCompareItem={onAddCompareItem}
-                  onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
-                  onStartRevenueEstimate={onStartRevenueEstimate}
-                  trendAvailable={availableTrendIdsByPlatform[work.platform === "manbo" ? "manbo" : "missevan"].has(String(work.id))}
-                />
-              ))}
+            <div className="cv-profile-work-grid grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: Math.ceil(renderedSeries.length / seriesColumns) }, (_, rowIndex) => {
+                const row = renderedSeries.slice(rowIndex * seriesColumns, (rowIndex + 1) * seriesColumns);
+                const active = row.find((series) => series.works.length > 1 && expandedSeries.has(series.id));
+                return (
+                  <Fragment key={row[0].id}>
+                    {row.map((series) => (
+                      <CvSeriesGroup
+                        key={series.id}
+                        series={series}
+                        open={expandedSeries.has(series.id)}
+                        cvName={data?.cv?.name || cvName}
+                        externalDetails={seriesColumns > 1}
+                        panelId={seriesColumns > 1 ? detailsId : undefined}
+                        onOpenChange={(open) => setExpandedSeries(open ? new Set([series.id]) : new Set())}
+                      >
+                        {renderSeriesWorks(series)}
+                      </CvSeriesGroup>
+                    ))}
+                    {seriesColumns > 1 && active ? (
+                      <section id={detailsId} role="region" aria-label={`${active.title}系列作品`} data-cv-series-panel="row" className="col-span-full min-w-0 rounded-lg border border-primary/35 bg-muted/20">
+                        <div className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2">
+                          <h4 className="min-w-0 break-words text-sm font-semibold">{active.title}</h4>
+                          <Button variant="ghost" className="shrink-0" aria-label={`关闭${active.title}系列详情`} onClick={() => {
+                            setExpandedSeries(new Set());
+                            document.querySelector(`button[aria-controls="${detailsId}"]`)?.focus();
+                          }}>收起</Button>
+                        </div>
+                        <div className="cv-series-row-details">{renderSeriesWorks(active)}</div>
+                      </section>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
             </div>
           ) : (
             <div className="flex min-h-40 flex-col items-center justify-center gap-3 text-center">

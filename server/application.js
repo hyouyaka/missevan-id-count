@@ -35,6 +35,8 @@ import {
   resolveCvCatalogEntry,
   searchCvCatalog,
 } from "../shared/cvProfileUtils.js";
+import { attachCvSeries, groupCvSeries } from "../shared/cvSeriesUtils.js";
+import { createCvSeriesStore } from "./services/cvSeriesStore.js";
 import { canonicalizeCompatibleSearchText } from "../shared/searchCompatibility.js";
 import { createUpstashRestClient } from "../shared/upstashRestClient.js";
 import { loadLocalEnv } from "../envConfig.js";
@@ -427,6 +429,15 @@ const RANKS_CACHE_TTL_MS = Math.max(
   60 * 1000,
   Number(process.env.RANKS_CACHE_TTL_MS ?? 30 * 60 * 1000) || 30 * 60 * 1000
 );
+const cvSeriesStore = createCvSeriesStore({
+  readSnapshot: async () => {
+    const raw = await upstashClient.command(["GET", "drama:series-info:v1"], { timeoutMs: 10_000 });
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  },
+  ttlMs: RANKS_CACHE_TTL_MS,
+  onUpdate: () => { if (ranksCache.response) updateCombinedRanksResponseCache(); },
+  onError: (error) => { void logger.operation("cv_series_read_failed", {}, "warn", error); },
+});
 const RANKS_EXPECTED_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const ONGOING_CACHE_TTL_MS = Math.max(
   10 * 1000,
@@ -3079,7 +3090,7 @@ function normalizeCvRankWork(work, platform) {
     title,
     cover: normalizeTextValue(work.cover),
     mainCvs: normalizeStringArray(work.mainCvs ?? work.main_cvs, 20),
-    viewCount: normalizeRankNumber(work.viewCount ?? work.view_count) ?? 0,
+    viewCount: normalizeRankNumber(work.viewCount ?? work.view_count),
     isPaid: work.isPaid === true || work.is_paid === true,
   };
 }
@@ -3180,9 +3191,10 @@ function normalizeCvRankItem(item, index, platform, options = {}) {
     return null;
   }
 
-  const works = (Array.isArray(item.works) ? item.works : [])
+  const works = attachCvSeries((Array.isArray(item.works) ? item.works : [])
     .map((work) => normalizeCvRankWork(work, platform))
-    .filter(Boolean);
+    .filter(Boolean), options.seriesIndex);
+  const series = groupCvSeries(works);
   const explicitWorkCount = normalizeRankNumber(item.workCount ?? item.work_count);
 
   return {
@@ -3192,6 +3204,9 @@ function normalizeCvRankItem(item, index, platform, options = {}) {
     totalViewCount: normalizeRankNumber(item.totalViewCount ?? item.total_view_count) ?? 0,
     workCount: explicitWorkCount ?? works.length,
     topWorks: works.slice(0, 3),
+    seriesCount: series.length,
+    series,
+    topSeries: series.slice(0, 3),
     works,
     trendKind: "cv",
     trendScope: options.scope === "paid" ? "paid" : "total",
@@ -3453,6 +3468,15 @@ export function buildNormalizedRanksResponse(
       ? snapshot
       : {};
   const cvSummary = buildCvRanksSummary(cvSnapshot);
+  // Hash the effective mapping, not the read time: identical refreshes and stale
+  // fallbacks keep their validator, while mapping recovery invalidates old ETags.
+  cvSummary.seriesMappingVersion = createHash("sha256")
+    .update(JSON.stringify(
+      [...(cvTrendOptions.seriesIndex || new Map()).entries()]
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([id, series]) => [id, series.seriesId, series.seriesTitle])
+    ))
+    .digest("hex");
   const growthSummary = buildWeeklyGrowthSummary(weeklyGrowthSnapshot);
   const meta = buildRanksResponseMeta(cvTrendOptions.meta);
   const safeWeeklyGrowthCovers =
@@ -3495,6 +3519,7 @@ export function getRanksResponseCacheValidator(response = {}) {
     response?.schemaVersion || RANKS_RESPONSE_SCHEMA_VERSION,
     normalizeTextValue(response?.updatedAt),
     normalizeTextValue(response?.cvSummary?.updatedAt),
+    normalizeTextValue(response?.cvSummary?.seriesMappingVersion),
     normalizeTextValue(response?.growthSummary?.updatedAt),
     normalizeTextValue(response?.meta?.normal?.publishedAt),
     normalizeTextValue(response?.meta?.cv?.publishedAt),
@@ -3718,6 +3743,7 @@ function updateCombinedRanksResponseCache() {
     ranksCache.cvSnapshot,
     {
       cvTrendSnapshots: ranksCache.cvTrendSnapshots,
+      seriesIndex: cvSeriesStore.index,
       meta: ranksCache.meta,
     },
     ranksCache.weeklyGrowthSnapshot,
@@ -3832,6 +3858,7 @@ function recordRanksMetaPostRefreshBackoff(source, cycleIds, now = Date.now()) {
 }
 
 async function loadInitialRanksResponse() {
+  await cvSeriesStore.read();
   const [normalBundle, cvBundle, growthBundle] = await Promise.all([
     readNormalRanksBundle(),
     readCvRanksBundle({ tolerateError: true }),
@@ -3881,6 +3908,7 @@ function getRanksProbePhaseHeaderValue(probePlan = {}) {
 }
 
 export async function getCachedRanksResponse(options = {}) {
+  if (!options.readCvRanksBundle && !options.readRanksMeta) await cvSeriesStore.read();
   const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
   const readNormalBundle = options.readNormalRanksBundle || readNormalRanksBundle;
   const readCvBundle = options.readCvRanksBundle || readCvRanksBundle;
@@ -4073,6 +4101,7 @@ function getAdminCacheRefreshReason(value) {
 }
 
 export async function refreshAdminRanksCacheTarget(options = {}) {
+  if (!options.readCvRanksBundle && !options.readRanksMeta) await cvSeriesStore.read({ force: options.force === true });
   const target = normalizeAdminCacheRefreshTarget(options.target || "ranks");
   const force = options.force === true;
   const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
@@ -11507,7 +11536,9 @@ if (!DESKTOP_APP) app.get("/cv-profile", expensiveDataLimiter, async (req, res) 
           }).catch(() => null)
         : null,
     ]);
+    const seriesIndex = await cvSeriesStore.read();
     const response = buildCvProfileResponse({
+      seriesIndex,
       name: catalogEntry.name,
       avatar: catalogEntry.avatar,
       works,
