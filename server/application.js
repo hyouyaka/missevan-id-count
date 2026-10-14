@@ -113,6 +113,11 @@ import { createDramaService } from "./services/dramaService.js";
 import { createWeeklyPlaybackStore } from "./services/weeklyPlaybackService.js";
 import { searchLibraryWithFallback } from "./services/searchService.js";
 import { createSearchSuggestionService } from "./services/searchSuggestionService.js";
+import {
+  createRenderKeepAliveService,
+  resolveRenderKeepAliveConfig,
+  resolveRenderKeepAliveState,
+} from "./services/renderKeepAliveService.js";
 import { registerSearchSuggestionRoutes } from "./routes/searchSuggestionRoutes.js";
 import {
   createRequestSecurityMiddleware,
@@ -588,6 +593,8 @@ const manboFetchDispatcher = new UndiciAgent({
 });
 
 let accessDeniedUntil = 0;
+let renderKeepAliveService = null;
+let renderKeepAliveConfig = null;
 let accessDeniedUseShortCooldown = false;
 let accessDeniedCooldownMode = "none";
 const fallbackAccessDeniedCooldowns = {
@@ -1253,6 +1260,13 @@ function applyDirectCooldownState(state = {}) {
   accessDeniedUntil = normalizedState.accessUntil;
   accessDeniedCooldownMode = normalizedState.cooldownMode;
   accessDeniedUseShortCooldown = normalizedState.useShortCooldown;
+  syncRenderKeepAlive();
+}
+
+function syncRenderKeepAlive() {
+  if (renderKeepAliveService && renderKeepAliveConfig) {
+    renderKeepAliveService.sync(resolveRenderKeepAliveState(renderKeepAliveConfig, accessDeniedUntil));
+  }
 }
 
 function getFallbackCooldownState(routeKey) {
@@ -1492,6 +1506,7 @@ function markSuccessfulMissevanRequest() {
   cooldownStateLoaded = true;
   lastCooldownRefreshSucceeded = true;
   void clearPersistedAccessDeniedCooldown();
+  syncRenderKeepAlive();
 }
 
 function isCooldownError(error) {
@@ -12257,6 +12272,27 @@ export async function startServer(port = defaultPort, options = {}) {
   });
 
   const actualPort = serverInstance.address()?.port ?? port;
+  renderKeepAliveConfig = resolveRenderKeepAliveConfig({
+    hosted: isHostedDeployment(),
+    desktop: DESKTOP_APP,
+    missevanEnabled: MISSEVAN_ENABLED,
+    renderConfigured: isMissevanFallbackEnabled(),
+    baseUrl: MISSEVAN_FALLBACK_BASE_URL,
+  });
+  const keepAlive = createRenderKeepAliveService({
+    ...renderKeepAliveConfig,
+    log: (event, fields, level) => logger.operation(event, fields, level),
+  });
+  renderKeepAliveService = keepAlive;
+  syncRenderKeepAlive();
+  serverInstance.once("close", () => {
+    keepAlive.dispose();
+    if (renderKeepAliveService === keepAlive) {
+      renderKeepAliveService = null;
+      renderKeepAliveConfig = null;
+      serverInstance = null;
+    }
+  });
   logger.info("server_started", { port: actualPort, host: options?.host || null });
   if (runtimePolicy.cloudData) void Promise.all([
     ensureInfoStoreLoaded(missevanInfoStore),

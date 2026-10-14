@@ -140,8 +140,15 @@ Windows 桌面版会直接在界面中提示这一步。
 | `MISSEVAN_SECONDARY_FALLBACK_PROXY_TOKEN` | 二级备用代理鉴权 token；为空则禁用二级备用 | — |
 | `MISSEVAN_SECONDARY_FALLBACK_TIMEOUT_MS` | 二级备用代理请求超时毫秒数 | `15000` |
 | `MISSEVAN_FORCE_FALLBACK` | 本地/灰度强制猫耳 JSON/XML 请求出口：`0` 直连优先，`1` 一级 Render，`2` 二级 Deno | `0` |
+| `MISSEVAN_RENDER_KEEPALIVE_ENABLED` | Render 按需保活开关；仅 Railway 网站部署、猫耳启用且一级代理已配置时生效，`false` 关闭 | `true` |
+| `MISSEVAN_RENDER_KEEPALIVE_INTERVAL_MS` | 每次健康请求完成后的等待毫秒数；正整数限制为 1–10 分钟，无效值使用默认值 | `300000` |
+| `MISSEVAN_RENDER_KEEPALIVE_TIMEOUT_MS` | 后台健康请求超时毫秒数；正整数限制为 1–120 秒，无效值使用默认值 | `90000` |
 
 Render 不承载本项目网页主站，只作为猫耳 418 时的一级备用代理；Deno 是二级备用代理。两者只代理猫耳 JSON/XML 请求，不用于图片、音频、视频或漫播请求。触发备用代理时，`logs/operations.log` 会写入 `fallbackUsed=true`、`fallbackRoute=render/deno` 和 `fallbackReason`。Render 免费实例冷启动可能需要几十秒；Render 失败后会再尝试 Deno。
+
+Railway 主路径命中猫耳 418 后，会立即在后台请求一级代理 origin 下的 `/healthz`，并在整个直连 cooldown 期间定期保活；冷却到期或直连恢复后停止。启动时会恢复尚未结束的 cooldown 保活。健康接口无需 token、不调用猫耳，保活不增加 Redis 读写，也不等待或改变用户请求的 Render/Deno 切换。`MISSEVAN_FORCE_FALLBACK=1` 在 Railway 持续保活，`=2` 不启用 Render 保活；桌面端及普通本地运行不保活。
+
+每个实例只有一个保活循环，健康失败后按正常周期继续尝试；日志只记录启动、停止、首次失败和恢复。多副本分别保活，不共享分布式锁。首次切换仍可能遇到 Render 冷启动；搜索卡片的一级代理预算仍为 8 秒、总预算仍为 20 秒，调整 `MISSEVAN_FALLBACK_TIMEOUT_MS` 不会覆盖这两个预算。可设置 `MISSEVAN_RENDER_KEEPALIVE_ENABLED=false` 关闭保活。
 
 本地强制测试链路：
 
