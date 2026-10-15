@@ -31,6 +31,29 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+test("mixed Han and Latin search submits without a keyword-too-short notice", async () => {
+  const onNotice = vi.fn();
+  render(<Harness onNotice={onNotice} />);
+  await type("磕CP");
+  fireEvent.submit(input().closest("form"));
+  await advance(1);
+  expect(fetch.mock.calls.some(([url]) => String(url).includes(`/unified-search?keyword=${encodeURIComponent("磕CP")}`))).toBe(true);
+  expect(onNotice).not.toHaveBeenCalled();
+});
+
+test("insufficient mixed input shows the updated length guidance without searching", async () => {
+  const onNotice = vi.fn();
+  render(<Harness onNotice={onNotice} />);
+  await type("磕C");
+  fireEvent.submit(input().closest("form"));
+  await advance(1);
+  expect(fetch.mock.calls.some(([url]) => String(url).includes("/unified-search"))).toBe(false);
+  expect(onNotice).toHaveBeenCalledWith(expect.objectContaining({
+    title: "关键词太短",
+    description: "关键词太短，请输入至少 2 个汉字，或 1 个汉字加 2 位字母/数字；纯字母/数字至少 3 位。",
+  }));
+});
+
 test("debounces single Han input, shows labeled choices, and starts with no selection", async () => {
   render(<Harness />);
   fireEvent.focus(input());

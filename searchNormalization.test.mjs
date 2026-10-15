@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 test("new drama id normalization preserves long Manbo ids as strings", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
@@ -78,6 +80,180 @@ function buildManboSearchRecord(name, dramaId) {
     catalogName: "",
   };
 }
+
+test("Missevan library search matches explicit aliases without changing original records", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const records = [
+    { ...buildMissevanSearchRecord("我嗑了对家X我的CP", "21102"), aliases: ["嗑对家"] },
+    { ...buildMissevanSearchRecord("沙子，时间，雨树", "94825"), aliases: ["时间沙子"] },
+    { ...buildMissevanSearchRecord("我只喜欢你的人设 第一季", "29154"), aliases: ["我喜欢你的人设"] },
+  ];
+  const before = structuredClone(records);
+  for (const record of records) {
+    const result = searchMissevanLibraryRecords(records, record.aliases[0], null, "strict");
+    assert.deepEqual(result, [record]);
+    assert.equal(result[0], record);
+  }
+  for (const query of ["时间沙子", "时间", "间沙"]) {
+    assert.deepEqual(searchMissevanLibraryRecords(records, query).map((item) => item.dramaId), ["94825"]);
+  }
+  assert.deepEqual(records, before);
+});
+
+test("Missevan alias pinyin supports precomputed units and the dynamic fallback", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  const { buildCombinedPinyinSearchUnits } = await import("./shared/pinyinSearchUtils.js");
+  const record = { ...buildMissevanSearchRecord("City of Angels 全一季", "87409"), aliases: ["天使之城"] };
+  for (const candidate of [
+    record,
+    { ...record, searchPinyinUnits: [] },
+    { ...record, searchPinyinUnits: buildCombinedPinyinSearchUnits([record.title, record.aliases]) },
+  ]) {
+    for (const query of ["tianshizhicheng", "tszc"]) {
+      assert.equal(searchMissevanLibraryRecords([candidate], query, null, "strict")[0], candidate);
+    }
+  }
+});
+
+test("Missevan alias compatibility handles Traditional Chinese and optional internal 的", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  for (const [alias, query] of [["囂張的故事", "嚣张故事"], ["嚣张的故事", "囂張故事"]]) {
+    const record = { ...buildMissevanSearchRecord("另一部作品", "101"), aliases: [alias], cover: "original-cover" };
+    assert.deepEqual(searchMissevanLibraryRecords([record], query, null, "strict"), []);
+    assert.equal(searchMissevanLibraryRecords([record], query, null, "compatible")[0], record);
+    assert.equal(searchMissevanLibraryRecords([record], query)[0], record);
+    assert.deepEqual(record.aliases, [alias]);
+  }
+});
+
+test("Missevan alias matching preserves title priority and supports records without aliases", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { searchMissevanLibraryRecords } = await import("./server.js");
+  for (const query of ["时间沙子", "时间", "间沙"]) {
+    const titleMatch = buildMissevanSearchRecord("时间沙子", "101");
+    const aliasMatch = { ...buildMissevanSearchRecord("另一部作品", "999"), aliases: ["时间沙子"] };
+    assert.deepEqual(searchMissevanLibraryRecords([aliasMatch, titleMatch], query).map((item) => item.dramaId), ["101", "999"]);
+  }
+  for (const record of [
+    buildMissevanSearchRecord("我嗑了对家X我的CP", "21102"),
+    { ...buildMissevanSearchRecord("我嗑了对家X我的CP", "21102"), aliases: [] },
+  ]) {
+    assert.equal(searchMissevanLibraryRecords([record], "我嗑了对家")[0], record);
+    assert.deepEqual(searchMissevanLibraryRecords([record], "嗑对家"), []);
+  }
+});
+
+test("loaded Missevan aliases match unified search and suggestions without external API calls", async () => {
+  const script = `
+    import assert from "node:assert/strict";
+    import { createHash } from "node:crypto";
+    const nativeFetch = globalThis.fetch;
+    const snapshots = {
+      "missevan:info:v2": JSON.stringify({
+        21102: { dramaId: 21102, title: "我嗑了对家X我的CP", aliases: ["嗑对家"] },
+        94825: { dramaId: 94825, title: "沙子，时间，雨树", aliases: ["时间沙子"] },
+        29154: { dramaId: 29154, title: "我只喜欢你的人设 第一季", aliases: ["我喜欢你的人设"] },
+        87409: { dramaId: 87409, title: "City of Angels 全一季", alias: " 天使之城 ", aliases: ["天使城", "天使城", null, ""] },
+        101: { dramaId: 101, title: "正常作品" },
+        102: { dramaId: 102, title: "旧的作品", aliases: [] },
+        103: { dramaId: 103, title: "另一部作品", aliases: ["囂張的故事"] },
+        104: { dramaId: 104, title: "磕CP" },
+      }),
+      "manbo:info:v2": JSON.stringify({ records: [] }),
+      "cvid-map:v1": JSON.stringify([]),
+    };
+    for (const [dataKey, raw] of Object.entries(snapshots)) {
+      const metaKey = dataKey === "cvid-map:v1" ? "cvid-map:meta:v1" : dataKey.replace(":info:v2", ":info:meta:v2");
+      snapshots[metaKey] = JSON.stringify({
+        schemaVersion: dataKey === "cvid-map:v1" ? 1 : 2,
+        dataKey, updatedAt: "2026-10-14T00:00:00Z",
+        contentSha1: createHash("sha1").update(raw).digest("hex"), bytes: Buffer.byteLength(raw),
+      });
+    }
+    let externalCalls = 0;
+    console.log = console.error = () => {};
+    globalThis.fetch = async (url, options = {}) => {
+      if (String(url).startsWith("http://127.0.0.1:")) return nativeFetch(url, options);
+      if (String(url) !== "https://redis.test") {
+        externalCalls++;
+        throw new Error("Unexpected external API call");
+      }
+      const [command, ...keys] = JSON.parse(options.body);
+      if (command === "MGET") return Response.json({ result: keys.map((key) => snapshots[key] ?? null) });
+      if (command === "GET") return Response.json({ result: snapshots[keys[0]] ?? null });
+      if (command === "HGETALL" || command === "SMEMBERS") return Response.json({ result: [] });
+      throw new Error("Unexpected Redis command: " + command);
+    };
+    const { startServer } = await import("./server.js");
+    const server = await startServer(0, { host: "127.0.0.1" });
+    const origin = "http://127.0.0.1:" + server.address().port;
+    try {
+      for (const [keyword, id, title] of [
+        ["嗑对家", 21102, "我嗑了对家X我的CP"],
+        ["时间沙子", 94825, "沙子，时间，雨树"],
+        ["我喜欢你的人设", 29154, "我只喜欢你的人设 第一季"],
+        ["天使之城", 87409, "City of Angels 全一季"],
+        ["天使城", 87409, "City of Angels 全一季"],
+        ["tianshizhicheng", 87409, "City of Angels 全一季"],
+        ["tszc", 87409, "City of Angels 全一季"],
+        ["嚣张故事", 103, "另一部作品"],
+        ["正常作品", 101, "正常作品"],
+        ["旧的作品", 102, "旧的作品"],
+        ["磕CP", 104, "磕CP"],
+      ]) {
+        const response = await nativeFetch(origin + "/unified-search?keyword=" + encodeURIComponent(keyword));
+        assert.equal(response.status, 200, keyword);
+        const payload = await response.json();
+        assert.equal(payload.success, true, keyword);
+        assert.equal(payload.meta.usedApiFallback, false, keyword);
+        assert.equal(payload.results.missevan.meta.source, "library", keyword);
+        assert.deepEqual(payload.results.missevan.results.map((item) => [item.id, item.name]), [[id, title]], keyword);
+        if (id === 103) continue; // Suggestions retain their existing strict compatibility policy.
+        const suggestions = await (await nativeFetch(origin + "/search-suggestions?keyword=" + encodeURIComponent(keyword))).json();
+        assert.equal(suggestions.suggestions[0]?.id, String(id), keyword);
+        assert.equal(suggestions.suggestions[0]?.name, title, keyword);
+      }
+      for (const route of ["/unified-search", "/search", "/manbo/search"]) {
+        const response = await nativeFetch(origin + route + "?keyword=" + encodeURIComponent("磕C"));
+        assert.equal(response.status, 200, route);
+        const payload = await response.json();
+        const platformResults = route === "/unified-search"
+          ? [payload.results.missevan, payload.results.manbo]
+          : [payload];
+        for (const result of platformResults) {
+          assert.equal(result.meta.keywordTooShort, true, route);
+          assert.match(result.message, /1 个汉字加 2 位字母/);
+        }
+      }
+      assert.equal(externalCalls, 0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+    process.exit(0);
+  `;
+  await promisify(execFile)(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: process.cwd(),
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      NODE_TEST_CONTEXT: "child-v8",
+      START_SERVER_ON_IMPORT: "false",
+      DESKTOP_APP: "false",
+      DESKTOP_PACKAGED_APP: "true",
+      ENABLE_MISSEVAN: "true",
+      MISSEVAN_PERSISTENT_COOLDOWN: "false",
+      MISSEVAN_FALLBACK_BASE_URL: "",
+      MISSEVAN_SECONDARY_FALLBACK_BASE_URL: "",
+      RESEND_API_KEY: "",
+      UPSTASH_REDIS_REST_URL: "https://redis.test",
+      UPSTASH_REDIS_REST_TOKEN: "test",
+    },
+  });
+});
 
 test("library search falls back to Traditional and Simplified Chinese compatibility", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";

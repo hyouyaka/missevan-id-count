@@ -154,6 +154,30 @@ test("home peak and CV menus expose only actions supported by their rank type", 
   });
 });
 
+test("home work titles open previews while peak series and CV titles keep their original destinations", async () => {
+  const user = userEvent.setup();
+  const usageFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, headers: { get: () => null }, json: async () => ({ success: true, metrics: { view_count: 123456, subscription_num: 456, reward_num: 7 } }) });
+  const props = renderHome();
+  for (const name of ["首页更新剧", "首页榜单剧"]) {
+    await user.click(await screen.findByRole("button", { name, exact: true }));
+    expect(await screen.findByRole("dialog", { name })).toBeVisible();
+    expect(await screen.findByText("123456")).toBeVisible();
+    expect(props.onOpenSearchResult).not.toHaveBeenCalled();
+    expect(usageFetch.mock.calls.some(([url, options]) => String(url).includes("/usage-log") && JSON.parse(options.body).source === "homeview")).toBe(true);
+    await user.click(screen.getByRole("button", { name: "关闭数据速览" }));
+  }
+  await user.click(screen.getByRole("button", { name: "首页榜单剧", exact: true }));
+  await user.click(screen.getByRole("button", { name: "进入统计" }));
+  expect(props.onOpenSearchResult).toHaveBeenCalledWith(expect.objectContaining({ id: "22", usageSource: "homeview" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: "首页巅峰系列", exact: true }));
+  expect(props.onOpenSearchResult).toHaveBeenCalledWith(expect.objectContaining({ ids: ["33"] }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "首页CV", exact: true }));
+  expect(props.onOpenCv).toHaveBeenCalledWith("首页CV", expect.objectContaining({ source: "ranks" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
 test("home shows query history above weekly updates and refreshes from the shared entry", async () => {
   const user = userEvent.setup();
   const onReplayHistoryEntry = vi.fn();

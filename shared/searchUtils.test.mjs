@@ -24,7 +24,7 @@ test("drama aliases support both singular and plural fields without splitting st
   assert.equal(getDramaSearchAliases({ aliases: Array.from({ length: 40 }, (_, i) => `别名${i}`) }).length, 30);
 });
 
-test("isSearchKeywordLongEnough requires two Han chars or three normalized non-Han chars", () => {
+test("isSearchKeywordLongEnough counts mixed Han and Latin input while preserving existing limits", () => {
   assert.equal(isSearchKeywordLongEnough("猫"), false);
   assert.equal(isSearchKeywordLongEnough("猫耳"), true);
   assert.equal(isSearchKeywordLongEnough("a猫"), false);
@@ -32,6 +32,12 @@ test("isSearchKeywordLongEnough requires two Han chars or three normalized non-H
   assert.equal(isSearchKeywordLongEnough("abc"), true);
   assert.equal(isSearchKeywordLongEnough("12"), false);
   assert.equal(isSearchKeywordLongEnough("123"), true);
+  for (const keyword of ["磕CP", "嗑cp", "CP磕", "猫12", "𠮷CP", " 磕 C，P "]) {
+    assert.equal(isSearchKeywordLongEnough(keyword), true, keyword);
+  }
+  for (const keyword of ["磕C", "猫1", "猫！？", "磕，C！", "猫😀", "猫😀😀", "", "   "]) {
+    assert.equal(isSearchKeywordLongEnough(keyword), false, keyword);
+  }
 });
 
 test("parseMissevanInputToken extracts drama IDs from mdrama share links", () => {

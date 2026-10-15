@@ -4,6 +4,15 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.8.6",
+    changes: [
+      "更新了CV榜单和CV主页作品的统计与显示形式，自动合并多季作品",
+      "更新了剧集标题的跳转形式，点击剧集标题可直接查看最新数据，并按需进入统计页面",
+      "稍微优化了一下搜索，添加了一点常见别名",
+      "优化了启用备用服务时的稳定性",
+    ],
+  },
+  {
     version: "1.8.5",
     changes: [
       "新增作品与 CV 搜索联想，支持作品名和拼音匹配，点击可直接打开对应内容",

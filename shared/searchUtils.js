@@ -23,12 +23,15 @@ export function isSearchKeywordLongEnough(value) {
     return false;
   }
 
-  const hanChars = raw.match(/\p{Script=Han}/gu) || [];
+  const normalized = normalizeSearchText(raw);
+  const hanChars = normalized.match(/\p{Script=Han}/gu) || [];
   if (hanChars.length > 0) {
-    return hanChars.length >= 2;
+    const lettersAndDigits = normalized.match(/[\p{L}\p{N}]/gu) || [];
+    // Han characters count twice; other letters and digits count once.
+    return lettersAndDigits.length + hanChars.length >= 4;
   }
 
-  return normalizeSearchText(raw).length >= 3;
+  return normalized.length >= 3;
 }
 
 const MISSEVAN_SHARE_HOSTS = new Set(["missevan.com", "www.missevan.com"]);

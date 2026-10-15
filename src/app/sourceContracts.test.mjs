@@ -43,6 +43,7 @@ const statsHistorySource = readFileSync(new URL("./useStatsHistory.js", import.m
 const statsHistoryListSource = readFileSync(new URL("./StatsHistoryList.jsx", import.meta.url), "utf8");
 const searchCardMetricsSource = readFileSync(new URL("./useSearchCardMetrics.js", import.meta.url), "utf8");
 const searchCardMetricDisplaySource = readFileSync(new URL("./searchCardMetricDisplay.js", import.meta.url), "utf8");
+const dramaMetricsPreviewSource = readFileSync(new URL("./DramaMetricsPreview.jsx", import.meta.url), "utf8");
 const searchResultsStateSource = readFileSync(new URL("./searchResultsState.js", import.meta.url), "utf8");
 const toolNavigationSource = readFileSync(new URL("./useToolNavigation.js", import.meta.url), "utf8");
 const rankTrendDataSource = readFileSync(new URL("./rankTrendData.js", import.meta.url), "utf8");
@@ -639,7 +640,7 @@ test("home view maps requested sections and see-more routes", () => {
   assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ranks",\s*platform,\s*category: rankConfig\.categoryKey,\s*rank: rankConfig\.rankKey/);
 });
 
-test("home drama titles open the shared statistics result flow", () => {
+test("home single-drama titles preview metrics while series titles retain direct navigation", () => {
   const ongoingItemStart = homeViewSource.indexOf("function OngoingMiniItem");
   const ongoingItemEnd = homeViewSource.indexOf("function OngoingPlatformList", ongoingItemStart);
   const rankItemStart = homeViewSource.indexOf("function RankDramaItem");
@@ -658,10 +659,13 @@ test("home drama titles open the shared statistics result flow", () => {
   assert.match(ongoingItemSource, /function OngoingMiniItem\(\{[\s\S]*onOpenSearchResult,[\s\S]*featured = false/);
   assert.match(ongoingItemSource, /usageAction: options\.suppressUsageLog \? undefined : "ongoing_open_search_result"/);
   assert.match(ongoingItemSource, /usageSource: "homeview"/);
+  assert.match(ongoingItemSource, /<DramaMetricsPreview[\s\S]*source="homeview"[\s\S]*onEnterStatistics=\{openSearchResult\}/);
   assert.match(rankItemSource, /function RankDramaItem\(\{[\s\S]*item,[\s\S]*platform,[\s\S]*onOpenSearchResult/);
   assert.match(rankItemSource, /const searchDramaIds = isMissevanPeak[\s\S]*item\.drama_ids[\s\S]*\[item\.id\]/);
   assert.match(rankItemSource, /usageAction: options\.suppressUsageLog \? undefined : "ranks_open_search_result"/);
   assert.match(rankItemSource, /usageSource: "homeview"/);
+  assert.match(rankItemSource, /onClick=\{isMissevanPeak \? openSearchResult : undefined\}/);
+  assert.match(rankItemSource, /isMissevanPeak \? titleButton : \([\s\S]*<DramaMetricsPreview/);
   assert.match(homeViewSource, /onOpenSearchResult=\{onOpenSearchResult\}/);
   assert.match(homeViewSource, /underline underline-offset-4 hover:text-primary/);
   assert.match(homeViewSource, /className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary/);
@@ -1809,7 +1813,7 @@ test("ongoing titles keep content type badges visible while truncating long name
   const ongoingTitleStart = ongoingPanelSource.indexOf("function OngoingTitle");
   const ongoingTitleEnd = ongoingPanelSource.indexOf("function buildProxyImageUrl", ongoingTitleStart);
   const ongoingTitleSource = ongoingPanelSource.slice(ongoingTitleStart, ongoingTitleEnd);
-  const titleButtonStart = ongoingTitleSource.search(/<button\s+type="button"[\s\S]*?onClick=\{onClick\}/);
+  const titleButtonStart = ongoingTitleSource.search(/<button\s+type="button"/);
   assert.notEqual(titleButtonStart, -1, "title button markup should exist");
   const titleButtonEnd = ongoingTitleSource.indexOf("</button>", titleButtonStart);
   assert.notEqual(titleButtonEnd, -1, "title button should have a closing tag");
@@ -1946,6 +1950,65 @@ test("search metric legend is permanent on web and toggled on mobile", () => {
   assert.notEqual(asideEnd, -1, "search results desktop aside should close");
   const asideSource = searchResultsSource.slice(asideStart, asideEnd);
   assert.doesNotMatch(asideSource, /<MetricLegend/);
+});
+
+test("drama previews share responsive surfaces and preserve the intrinsic blue statistics action", () => {
+  assert.match(dramaMetricsPreviewSource, /<PopoverContent[\s\S]*w-\[380px\]/);
+  assert.match(dramaMetricsPreviewSource, /<SheetContent side="bottom"[\s\S]*max-h-\[80dvh\]/);
+  assert.match(dramaMetricsPreviewSource, /data-preview-footer[\s\S]*justify-between[\s\S]*updatedText[\s\S]*ml-auto flex shrink-0 items-center/);
+  assert.match(dramaMetricsPreviewSource, /<Button type="button" size="sm"[\s\S]*w-fit[\s\S]*<ArrowRightIcon data-icon="inline-start"/);
+  assert.doesNotMatch(dramaMetricsPreviewSource, /formatCompact|formatRankCompact|stat-tasks|getdramas|bg-blue-/);
+  assert.match(ongoingPanelSource, /<DramaMetricsPreview[\s\S]*onEnterStatistics=\{onClick\}/);
+  assert.match(cvProfileViewSource, /<DramaMetricsPreview[\s\S]*source="cv_profile"/);
+  assert.doesNotMatch(dramaMetricsPreviewSource, /RefreshCwIcon|drama_preview_refresh/);
+  assert.match(dramaMetricsPreviewSource, /数据获取于：/);
+  assert.match(dramaMetricsPreviewSource, /<PopoverContent[\s\S]*data-drama-preview[\s\S]*bg-card/);
+  assert.match(dramaMetricsPreviewSource, /<SheetContent[\s\S]*data-drama-preview[\s\S]*bg-card/);
+  assert.match(applicationSource, /if \(\["drama_preview_open", "drama_preview_enter_statistics"\]\.includes\(action\)\)[\s\S]*Invalid drama preview usage log payload/);
+});
+
+test("CV series retain their darker headers while work panels share the outer card surface", () => {
+  const seriesSource = readSourceIfExists("./CvSeriesGroup.jsx");
+  assert.match(seriesSource, /multiple \? "bg-background" : "bg-card"/);
+  assert.match(seriesSource, /data-cv-series-panel="inline" className="[^"]*bg-card/);
+  assert.match(seriesSource, /compact \? "text-sm font-semibold leading-5 sm:text-base" : "text-base! font-semibold! leading-5!"/);
+  assert.match(seriesSource, /document\.addEventListener\("click", prepareClick, true\)/);
+  assert.match(seriesSource, /document\.addEventListener\("click", dismiss\)/);
+  assert.match(cvProfileViewSource, /<DropdownMenu modal=\{false\}>/);
+  assert.match(cvProfileViewSource, /className="cv-series-works divide-y divide-border\/70 bg-card"/);
+});
+
+test("preview telemetry accepts every supported origin and rejects invalid drama action payloads", async () => {
+  const start = applicationSource.indexOf('if (!DESKTOP_APP) app.post("/usage-log"');
+  const end = applicationSource.indexOf("\n});", start) + 4;
+  const entries = [];
+  let handler;
+  runInNewContext(applicationSource.slice(start, end), {
+    DESKTOP_APP: false,
+    app: { post: (_route, callback) => { handler = callback; } },
+    isSameHostUsageLogRequest: () => true,
+    normalizeTextValue: (value) => String(value ?? "").trim(),
+    isNumericId: (value) => /^\d+$/.test(value),
+    writeUsageLog: async (entry) => entries.push(entry),
+  });
+  async function send(body) {
+    let status = 200;
+    await handler({ body }, { status(code) { status = code; return this; }, json() {} });
+    return status;
+  }
+  const valid = { platform: "manbo", dramaId: "1467142227078676553", dramaName: "作品", source: "ranks", success: true, action: "drama_preview_open" };
+  for (const source of ["ongoing", "ranks", "ranks_cv", "cv_profile", "homeview"]) {
+    for (const action of ["drama_preview_open", "drama_preview_enter_statistics"]) {
+      assert.equal(await send({ ...valid, source, action }), 200);
+      assert.equal(entries.at(-1).source, source);
+      assert.equal(entries.at(-1).action, action);
+    }
+  }
+  const count = entries.length;
+  for (const invalid of [{ platform: "other" }, { dramaId: "invalid" }, { dramaName: "" }, { source: "search" }, { success: false }]) {
+    assert.equal(await send({ ...valid, ...invalid }), 400);
+  }
+  assert.equal(entries.length, count);
 });
 
 test("external drama title jump clears both search result panes before injecting target import", () => {
@@ -3265,7 +3328,7 @@ test("ongoing title content-type badge is rendered inside the title button", () 
   const ongoingTitleStart = ongoingPanelSource.indexOf("function OngoingTitle");
   const ongoingTitleEnd = ongoingPanelSource.indexOf("function buildProxyImageUrl", ongoingTitleStart);
   const ongoingTitleSource = ongoingPanelSource.slice(ongoingTitleStart, ongoingTitleEnd);
-  const titleButtonStart = ongoingTitleSource.search(/<button\s+type="button"[\s\S]*?onClick=\{onClick\}/);
+  const titleButtonStart = ongoingTitleSource.search(/<button\s+type="button"/);
   assert.notEqual(titleButtonStart, -1, "title button markup should exist");
 
   const titleButtonEnd = ongoingTitleSource.indexOf("</button>", titleButtonStart);
@@ -3402,7 +3465,9 @@ test("rank title keeps content type badges inside one two-line clickable flow", 
   const titleSource = ranksPanelSource.slice(titleStart, titleEnd);
   assert.match(titleSource, /titleTags\.map/);
   assert.match(titleSource, /line-clamp-2/);
-  assert.match(titleSource, /onClick=\{\(\) => openSearchResult\(\)\}/);
+  assert.match(titleSource, /onClick=\{isMissevanPeak \? \(\) => openSearchResult\(\) : undefined\}/);
+  assert.match(titleSource, /if \(isMissevanPeak\) return titleButton/);
+  assert.match(titleSource, /<DramaMetricsPreview[\s\S]*onEnterStatistics=\{openSearchResult\}/);
 });
 
 test("peak rank titles pass all available drama ids to search result jump", () => {

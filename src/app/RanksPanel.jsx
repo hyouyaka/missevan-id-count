@@ -1,5 +1,6 @@
 import { groupCvSeries } from "../../shared/cvSeriesUtils.js";
 import { CvSeriesGroup } from "@/app/CvSeriesGroup";
+import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
@@ -557,9 +558,10 @@ function RankItemCard({
 
   function renderTitle() {
     const content = <><span>{displayTitle}</span>{titleTags.map((label) => <Badge key={`${item.rank}-${item.id || item.name}-${label}`} variant={rankTagVariants[label] || "outline"} className={mobileInlineBadgeClassName}>{label}</Badge>)}</>;
-    return canOpenSearchResult ? (
-      <button type="button" className={`line-clamp-2 min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`} onClick={() => openSearchResult()} title={item.name}>{content}</button>
-    ) : <div className={`line-clamp-2 min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`} title={item.name}>{content}</div>;
+    if (!canOpenSearchResult) return <div className={`line-clamp-2 min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`} title={item.name}>{content}</div>;
+    const titleButton = <button type="button" className={`line-clamp-2 min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`} onClick={isMissevanPeak ? () => openSearchResult() : undefined} title={item.name}>{content}</button>;
+    if (isMissevanPeak) return titleButton;
+    return <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={paymentTag} contentTypeLabel={titleTags[0]} source="ranks" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={openSearchResult}>{titleButton}</DramaMetricsPreview>;
   }
 
   function renderTrendButton(ref, visible = true) {
@@ -644,18 +646,19 @@ function getCvWorksPreviewText(works) {
   return titles.length ? `TOP3：${titles.map((title) => `《${title}》`).join(" ")}` : "TOP3：暂无";
 }
 
-function CvWorksList({ works = [], platform, onOpenSearchResult }) {
+function CvWorksList({ works = [], platform, onOpenSearchResult, frontendVersion, handleVersionResponse }) {
   function openWorkInSearch(work) {
     if (!work?.dramaId || !work?.title) {
       return;
     }
-    onOpenSearchResult?.({
+    return onOpenSearchResult?.({
       platform,
       id: work.dramaId,
       dramaId: work.dramaId,
       titles: [work.title],
       name: work.title,
       usageAction: "ranks_open_search_result",
+      usageSource: "ranks_cv",
     });
   }
 
@@ -682,14 +685,15 @@ function CvWorksList({ works = [], platform, onOpenSearchResult }) {
                     )}
                   </div>
                   <div className="grid min-w-0 content-start gap-1.5">
-                    <button
-                      type="button"
-                      title={work.title}
-                      className="min-w-0 w-full truncate rounded-sm text-left text-sm font-semibold leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-base"
-                      onClick={() => openWorkInSearch(work)}
-                    >
-                      {work.title}
-                    </button>
+                    <DramaMetricsPreview platform={platform} id={work.dramaId} name={work.title} item={work} source="ranks_cv" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={() => openWorkInSearch(work)}>
+                      <button
+                        type="button"
+                        title={work.title}
+                        className="min-w-0 w-full truncate rounded-sm text-left text-sm font-semibold leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-base"
+                      >
+                        {work.title}
+                      </button>
+                    </DramaMetricsPreview>
                     <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:text-sm" aria-label={`作品ID：${work.dramaId}`}>
                       <PlatformIdIcon aria-hidden="true" platform={platform} className={metaIconClassName} tone="inherit" />
                       <span className="min-w-0 break-all text-foreground">{work.dramaId}</span>
@@ -923,6 +927,8 @@ function CvRankItemCard({
                     works={group.works}
                     platform={platform}
                     onOpenSearchResult={onOpenSearchResult}
+                    frontendVersion={frontendVersion}
+                    handleVersionResponse={handleVersionResponse}
                   />
                 </CvSeriesGroup>
               ))}

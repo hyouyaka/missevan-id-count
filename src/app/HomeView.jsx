@@ -24,6 +24,7 @@ import {
 } from "@/app/app-utils";
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
+import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
 import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankWatermark } from "@/app/RankBadge";
 import { StatsHistoryList } from "@/app/StatsHistoryList";
@@ -390,6 +391,7 @@ function OngoingMiniItem({
   onStartDramaPaidIdStatistics,
   onStartRevenueEstimate,
   frontendVersion,
+  handleVersionResponse,
 }) {
   const coverUrl = buildProxyImageUrl(item?.cover);
   const delta = getSevenDayViewDelta(item);
@@ -425,14 +427,15 @@ function OngoingMiniItem({
         </div>
       </div>
       <div className="home-editorial-update-copy">
-        <button
-          type="button"
-          className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-base"
-          title={item?.name || "未命名剧集"}
-          onClick={openSearchResult}
-        >
-          {item?.name || "未命名剧集"}
-        </button>
+        <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item.payment_label} contentTypeLabel={item.content_type_label} source="homeview" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={openSearchResult}>
+          <button
+            type="button"
+            className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-base"
+            title={item?.name || "未命名剧集"}
+          >
+            {item?.name || "未命名剧集"}
+          </button>
+        </DramaMetricsPreview>
         <div className="flex min-w-0 items-start gap-1.5 text-xs leading-5 text-muted-foreground">
           <MicIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
           <span className="line-clamp-1 min-w-0">{getMainCvText(item)}</span>
@@ -625,6 +628,17 @@ function RankDramaItem({
     });
   }
 
+  const titleButton = (
+    <button
+      type="button"
+      className={`${homeRankItemTitleClassName} block w-full rounded-sm text-left underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
+      title={item?.name || "未命名剧集"}
+      onClick={isMissevanPeak ? openSearchResult : undefined}
+    >
+      {item?.name || "未命名剧集"}
+    </button>
+  );
+
   return (
     <div className="relative isolate grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] items-center gap-2 overflow-hidden">
       <RankWatermark rank={item?.rank} placement="row" />
@@ -641,14 +655,11 @@ function RankDramaItem({
       </div>
       <div className="relative z-10 min-w-0">
         {searchDramaIds.length ? (
-          <button
-            type="button"
-            className={`${homeRankItemTitleClassName} block w-full rounded-sm text-left underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
-            title={item?.name || "未命名剧集"}
-            onClick={openSearchResult}
-          >
-            {item?.name || "未命名剧集"}
-          </button>
+          isMissevanPeak ? titleButton : (
+            <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item?.payment_label || item?.paymentLabel || item?.payStatus} contentTypeLabel={item?.content_type_label || item?.contentTypeLabel} source="homeview" frontendVersion={actionProps.frontendVersion} handleVersionResponse={actionProps.handleVersionResponse} onEnterStatistics={openSearchResult}>
+              {titleButton}
+            </DramaMetricsPreview>
+          )
         ) : (
           <div className={`${homeRankItemTitleClassName} w-full`}>
             {item?.name || "未命名剧集"}
@@ -1148,7 +1159,7 @@ export function HomeView({
               onOpenSearchResult={onOpenSearchResult}
               canOpenTrend={canOpenHomeTrend}
               onOpenTrend={openHomeTrend}
-              actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion }}
+              actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion, handleVersionResponse }}
             />
             <OngoingPlatformList
               platform="manbo"
@@ -1159,7 +1170,7 @@ export function HomeView({
               onOpenSearchResult={onOpenSearchResult}
               canOpenTrend={canOpenHomeTrend}
               onOpenTrend={openHomeTrend}
-              actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion }}
+              actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion, handleVersionResponse }}
             />
         </div>
       </section>
@@ -1195,7 +1206,7 @@ export function HomeView({
                     onOpenCv={onOpenCv}
                     canOpenTrend={canOpenHomeTrend}
                     onOpenTrend={openHomeTrend}
-                    actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion }}
+                    actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion, handleVersionResponse }}
                   />
                 </CarouselItem>
               );

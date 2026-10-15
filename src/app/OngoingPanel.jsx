@@ -28,6 +28,7 @@ import {
   resolveRankTrendAvailabilityIds,
 } from "@/app/rankTrendData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
+import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
 import { RankWatermark } from "@/app/RankBadge";
 import { PlatformDramaLink, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import {
@@ -304,7 +305,7 @@ function OngoingActionLayout({ children }) {
   );
 }
 
-function OngoingTitle({ itemId, onClick, title, titleTags }) {
+function OngoingTitle({ itemId, onClick, title, titleTags, preview }) {
   const containerRef = useRef(null);
   const measureRef = useRef(null);
   const measureTitleRef = useRef(null);
@@ -379,14 +380,15 @@ function OngoingTitle({ itemId, onClick, title, titleTags }) {
   const titleTextClassName = "break-words text-base! font-semibold! leading-5!";
   return (
     <div ref={containerRef} className="relative min-w-0 max-h-[42px] overflow-hidden" title={normalizedTitle}>
-      <button
-        type="button"
-        className="block w-full rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        onClick={onClick}
-      >
-        <span className={titleTextClassName}>{visibleTitle}</span>
-        {renderTags()}
-      </button>
+      <DramaMetricsPreview {...preview} onEnterStatistics={onClick}>
+        <button
+          type="button"
+          className="block w-full rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        >
+          <span className={titleTextClassName}>{visibleTitle}</span>
+          {renderTags()}
+        </button>
+      </DramaMetricsPreview>
       <span
         ref={measureRef}
         aria-hidden="true"
@@ -558,7 +560,7 @@ function OngoingCard({
     if (!platform || !item?.id) {
       return;
     }
-    onOpenSearchResult?.({
+    return onOpenSearchResult?.({
       platform,
       id: item.id,
       titles: [item.name],
@@ -683,7 +685,7 @@ function OngoingCard({
               ) : null}
             </div>
             <div className="flex min-w-0 flex-col gap-1.5 pt-0.5">
-              <OngoingTitle itemId={item.id} onClick={openSearchResult} title={item.name} titleTags={titleTags} />
+              <OngoingTitle itemId={item.id} onClick={openSearchResult} title={item.name} titleTags={titleTags} preview={{ platform, id: item.id, name: item.name, item, paymentLabel: paymentTag, contentTypeLabel: titleTags[0], source: "ongoing", frontendVersion, handleVersionResponse }} />
               <div
                 className="flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground"
                 aria-label={`${platformLabels[platform] || "平台"}作品ID：${item.id}`}

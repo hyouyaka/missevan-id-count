@@ -1,8 +1,9 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDownIcon, ImageIcon, MicIcon, PlayCircleIcon } from "lucide-react";
 import { formatCompactMetricValue } from "@/app/app-utils";
 import { PlatformGlyph } from "@/app/platformTabLabel";
 import { LazyImage } from "@/components/ui/lazy-image";
+import { captureSeriesScrollAnchor, restoreSeriesScrollAnchor } from "@/app/seriesScrollAnchor";
 
 function subscribeColumns(callback) {
   const queries = [768, 1280].map((width) => window.matchMedia?.(`(min-width: ${width}px)`));
@@ -36,6 +37,9 @@ export function CvSeriesGroup({ series, open = false, onOpenChange, cvName = "",
   const generatedId = useId();
   const regionId = panelId || generatedId;
   const cardRef = useRef(null);
+  const protectedPointerRef = useRef(false);
+  const dismissOnClickRef = useRef(false);
+  const scrollAnchorRef = useRef(null);
   const multiple = series.works.length > 1;
   const cvs = [...new Set(series.works.flatMap((work) => Array.isArray(work.mainCvs)
     ? work.mainCvs
@@ -43,24 +47,49 @@ export function CvSeriesGroup({ series, open = false, onOpenChange, cvName = "",
   const cvText = cvs.join("、") || "暂无";
   const playbackText = Number.isFinite(series.playCount) ? formatCompactMetricValue(series.playCount) : "暂无数据";
 
+  useLayoutEffect(() => {
+    if (open) return;
+    restoreSeriesScrollAnchor(scrollAnchorRef.current);
+    scrollAnchorRef.current = null;
+  }, [open]);
+
   useEffect(() => {
     if (!open || !multiple) return undefined;
-    function dismiss(event) {
-      if (externalDetails || cardRef.current?.contains(event.target)) return;
-      // Keep nested work menus and trend dialogs usable while the series is open.
+    function recordPointer() {
+      // Remember the top layer before Radix closes it on pointerdown.
+      protectedPointerRef.current = Boolean(document.querySelector('[data-drama-preview][data-state="open"]'));
+    }
+    function prepareClick(event) {
+      const protectedClick = event.detail !== 0 && protectedPointerRef.current;
+      protectedPointerRef.current = false;
+      dismissOnClickRef.current = false;
+      scrollAnchorRef.current = null;
+      if (externalDetails || protectedClick || cardRef.current?.contains(event.target)) return;
       if (event.target.closest?.('[data-slot="popover-content"], [role="menu"], [role="dialog"]')) return;
+      // Keep the hit target in place until its click handler has run.
+      scrollAnchorRef.current = captureSeriesScrollAnchor(event.target);
+      dismissOnClickRef.current = true;
+    }
+    function dismiss() {
+      if (!dismissOnClickRef.current) return;
+      dismissOnClickRef.current = false;
       onOpenChange?.(false);
     }
     function escape(event) {
-      if (event.key === "Escape" && !event.defaultPrevented) {
+      if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector('[data-drama-preview][data-state="open"]')) {
+        scrollAnchorRef.current = null;
         onOpenChange?.(false);
         cardRef.current?.querySelector("button[aria-expanded]")?.focus();
       }
     }
-    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("pointerdown", recordPointer, true);
+    document.addEventListener("click", prepareClick, true);
+    document.addEventListener("click", dismiss);
     document.addEventListener("keydown", escape);
     return () => {
-      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("pointerdown", recordPointer, true);
+      document.removeEventListener("click", prepareClick, true);
+      document.removeEventListener("click", dismiss);
       document.removeEventListener("keydown", escape);
     };
   }, [open, externalDetails, multiple, onOpenChange]);
@@ -79,14 +108,14 @@ export function CvSeriesGroup({ series, open = false, onOpenChange, cvName = "",
     </button>
   );
   const card = (
-    <section ref={cardRef} data-cv-series={series.id} className={`cv-series-card min-w-0 rounded-lg border bg-background ${open && externalDetails ? "border-primary ring-1 ring-primary/25" : "border-border/80"}`}>
+    <section ref={cardRef} data-cv-series={series.id} className={`cv-series-card min-w-0 overflow-hidden rounded-lg border ${multiple ? "bg-background" : "bg-card"} ${open && externalDetails ? "border-primary ring-1 ring-primary/25" : "border-border/80"}`}>
       {multiple ? (
         <div className={`relative isolate grid min-w-0 items-center gap-3 p-3 sm:p-4 ${compact ? "grid-cols-[4rem_minmax(0,1fr)] sm:grid-cols-[4.5rem_minmax(0,1fr)]" : "grid-cols-[5rem_minmax(0,1fr)] sm:grid-cols-[6rem_minmax(0,1fr)]"}`}>
           <div className="relative z-10">
             <SeriesCover work={series.works[0]} title={series.title} compact={compact} />
           </div>
           <div className="relative z-10 min-w-0">
-            <h4 className="break-words text-sm font-semibold leading-5 sm:text-base">{series.title}</h4>
+            <h4 className={`break-words text-foreground ${compact ? "text-sm font-semibold leading-5 sm:text-base" : "text-base! font-semibold! leading-5!"}`}>{series.title}</h4>
             <div className={`mt-2 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground ${compact ? "sm:text-sm" : ""}`} title={`主役CV：${cvText}`}>
               <MicIcon aria-label="主役CV" className="mt-0.5 size-3.5 shrink-0" />
               <span className={`min-w-0 break-words ${compact ? "text-foreground" : ""}`}>{cvText}</span>
@@ -105,7 +134,7 @@ export function CvSeriesGroup({ series, open = false, onOpenChange, cvName = "",
         </div>
       ) : children}
       {multiple && !externalDetails && open ? (
-        <div id={regionId} data-cv-series-panel="inline" className="border-t border-border/70">{children}</div>
+        <div id={regionId} data-cv-series-panel="inline" className="border-t border-border/70 bg-card">{children}</div>
       ) : null}
     </section>
   );

@@ -1,5 +1,6 @@
 import { getCvSeriesId, groupCvSeries } from "../../shared/cvSeriesUtils.js";
 import { CvSeriesGroup, useCvSeriesColumns } from "@/app/CvSeriesGroup";
+import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
 import { Fragment, useCallback, useId, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
@@ -397,7 +398,7 @@ function WorkRow({
       <div ref={actionLayout.containerRef} data-cv-work-actions="true" data-action-mode={mode} className="relative flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2">
         {renderTrendButton(actionLayout.trendButtonRef, mode !== "more-only")}
         {renderCompareButton(actionLayout.compareButtonRef, mode === "all")}
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button ref={actionLayout.moreButtonRef} type="button" variant="outline" data-touch="compact" className={workActionButtonClassName} aria-label={`${work.title}更多操作`} title="更多操作">
               <MoreHorizontalIcon data-icon="inline-start" />
@@ -423,17 +424,18 @@ function WorkRow({
       </div>
       <div data-cv-work-meta="true" className="relative z-10 flex min-w-0 self-center flex-col">
         {onOpenSearchResult ? (
-          <button
-            type="button"
-            className="min-w-0 break-words rounded-sm text-left text-base! font-semibold! leading-5! text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            aria-label={work.title}
-            title={work.title}
-            onClick={openSearchResult}
-          >
-            <span className="sm:hidden">{mobileDisplayTitle}</span>
-            <span className="hidden sm:inline">{desktopDisplayTitle}</span>
-            {categoryBadge}
-          </button>
+          <DramaMetricsPreview platform={work.platform} id={work.id} name={work.title} item={work} paymentLabel={work.needpay ? "付费" : "免费"} contentTypeLabel={categoryLabel} source="cv_profile" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={openSearchResult}>
+            <button
+              type="button"
+              className="min-w-0 break-words rounded-sm text-left text-base! font-semibold! leading-5! text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              aria-label={work.title}
+              title={work.title}
+            >
+              <span className="sm:hidden">{mobileDisplayTitle}</span>
+              <span className="hidden sm:inline">{desktopDisplayTitle}</span>
+              {categoryBadge}
+            </button>
+          </DramaMetricsPreview>
         ) : (
           <h4 className="min-w-0 break-words text-base! font-semibold! leading-5!" title={work.title}>
             <span className="sm:hidden">{mobileDisplayTitle}</span>
@@ -1260,7 +1262,7 @@ export function CvProfileView({
   );
   function renderSeriesWorks(group) {
     return (
-      <div className="cv-series-works divide-y divide-border/70">
+      <div className="cv-series-works divide-y divide-border/70 bg-card">
         {group.works.map((work) => (
           <WorkRow
             key={`${work.platform}:${work.id}`}
@@ -1396,15 +1398,20 @@ export function CvProfileView({
                         cvName={data?.cv?.name || cvName}
                         externalDetails={seriesColumns > 1}
                         panelId={seriesColumns > 1 ? detailsId : undefined}
-                        onOpenChange={(open) => setExpandedSeries(open ? new Set([series.id]) : new Set())}
+                        onOpenChange={(open) => setExpandedSeries((current) => {
+                          if (open) return new Set([series.id]);
+                          const next = new Set(current);
+                          next.delete(series.id);
+                          return next;
+                        })}
                       >
                         {renderSeriesWorks(series)}
                       </CvSeriesGroup>
                     ))}
                     {seriesColumns > 1 && active ? (
-                      <section id={detailsId} role="region" aria-label={`${active.title}系列作品`} data-cv-series-panel="row" className="col-span-full min-w-0 rounded-lg border border-primary/35 bg-muted/20">
+                      <section id={detailsId} role="region" aria-label={`${active.title}系列作品`} data-cv-series-panel="row" className="col-span-full min-w-0 overflow-hidden rounded-lg border border-primary/35 bg-muted/20">
                         <div className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2">
-                          <h4 className="min-w-0 break-words text-sm font-semibold">{active.title}</h4>
+                          <h4 className="min-w-0 break-words text-base! font-semibold! leading-5!">{active.title}</h4>
                           <Button variant="ghost" className="shrink-0" aria-label={`关闭${active.title}系列详情`} onClick={() => {
                             setExpandedSeries(new Set());
                             document.querySelector(`button[aria-controls="${detailsId}"]`)?.focus();

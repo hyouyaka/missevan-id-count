@@ -2048,7 +2048,7 @@ function buildKeywordTooShortSearchResponse(keyword, offset, limit, extraMeta = 
   return {
     success: false,
     results: [],
-    message: "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。",
+    message: "关键词太短，请输入至少 2 个汉字，或 1 个汉字加 2 位字母/数字；纯字母/数字至少 3 位。",
     meta: {
       ...buildSearchPageMeta(keyword, 0, offset, limit),
       keywordTooShort: true,
@@ -2192,7 +2192,7 @@ export function buildUserActionKeywordText(action, fields = {}) {
   if (["search", "ranks", "ongoing"].includes(normalizedAction)) {
     return normalizeTextValue(fields.keyword);
   }
-  if (["trend", "paid_id_click", "revenue_click"].includes(normalizedAction)) {
+  if (["trend", "paid_id_click", "revenue_click", "drama_preview_open", "drama_preview_enter_statistics"].includes(normalizedAction)) {
     return normalizeTextValue(fields.dramaName);
   }
   if (normalizedAction === "compare") {
@@ -5336,6 +5336,7 @@ function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey
     seasonKey: normalizeTextValue(seasonKey),
     searchPinyinTokens: buildCombinedPinyinSearchTokens([
       title,
+      aliases,
       seriesTitle,
       Object.values(cvnames),
       Object.values(cvroles),
@@ -5343,6 +5344,7 @@ function normalizeMissevanSeasonRecord(node, fallbackSeriesTitle = "", seasonKey
     ]),
     searchPinyinUnits: buildCombinedPinyinSearchUnits([
       stripSearchSeasonSuffix(title),
+      aliases,
       stripSearchSeasonSuffix(seriesTitle),
       Object.values(cvnames),
       Object.values(cvroles),
@@ -6301,6 +6303,7 @@ function getMissevanRecordPinyinUnits(record) {
   }
   return buildCombinedPinyinSearchUnits([
     stripSearchSeasonSuffix(record?.title),
+    record?.aliases,
     stripSearchSeasonSuffix(record?.seriesTitle),
     Object.values(record?.cvnames || {}),
     Object.values(record?.cvroles || {}),
@@ -6381,6 +6384,7 @@ function scoreMissevanLibraryRecord(record, keyword, options = {}) {
   const textScore = getWeightedSearchScore(
     [
       { value: stripSearchSeasonSuffix(record.title), boost: 220 },
+      { value: record.aliases, boost: 180 },
       { value: stripSearchSeasonSuffix(record.seriesTitle), boost: 170 },
       { value: Object.values(record.cvnames || {}), boost: 150 },
       { value: Object.values(record.cvroles || {}), boost: 130 },
@@ -6685,6 +6689,7 @@ function buildCompatibleMissevanSearchRecord(record) {
   return {
     ...record,
     title: canonicalizeCompatibleSearchText(record?.title),
+    aliases: canonicalizeCompatibleStringArray(record?.aliases),
     seriesTitle: canonicalizeCompatibleSearchText(record?.seriesTitle),
     cvnames: canonicalizeCompatibleStringMap(record?.cvnames),
     cvroles: canonicalizeCompatibleStringMap(record?.cvroles),
@@ -11893,6 +11898,20 @@ if (!DESKTOP_APP) app.post("/usage-log", async (req, res) => {
         });
       }
       await writeUsageLog(entry);
+      return res.json({ success: true });
+    }
+
+    if (["drama_preview_open", "drama_preview_enter_statistics"].includes(action)) {
+      const dramaId = String(payload.dramaId ?? "").trim().slice(0, 80);
+      const dramaName = normalizeTextValue(payload.dramaName).slice(0, 200);
+      const source = normalizeTextValue(payload.source).slice(0, 40);
+      if (
+        !["missevan", "manbo"].includes(platform) || !isNumericId(dramaId) || !dramaName ||
+        !["ongoing", "ranks", "ranks_cv", "cv_profile", "homeview"].includes(source) || payload.success !== true
+      ) {
+        return res.status(400).json({ success: false, message: "Invalid drama preview usage log payload" });
+      }
+      await writeUsageLog({ platform, action, dramaId, dramaName, source, success: true });
       return res.json({ success: true });
     }
 

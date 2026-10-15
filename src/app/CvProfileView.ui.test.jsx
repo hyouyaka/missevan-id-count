@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { useState } from "react";
@@ -199,6 +199,72 @@ test("series cards default closed, use the first cover and deduplicate all CVs",
   expect(screen.queryByRole("button", { name: /系列系列/ })).not.toBeInTheDocument();
 });
 
+test.each([false, true])("inline profile series stays open when dismissing its nested preview (popover=%s)", async (popover) => {
+  vi.stubGlobal("matchMedia", vi.fn((query) => ({ matches: popover && query === "(min-width: 640px)", addEventListener() {}, removeEventListener() {} })));
+  const user = userEvent.setup();
+  const data = createProfileData(2);
+  data.works.forEach((work) => Object.assign(work, { platform: "missevan", seriesId: "nested", seriesTitle: "嵌套系列" }));
+  mockProfileFetch(data);
+  render(<ProfileHarness />);
+  await user.click(await screen.findByRole("button", { name: "展开系列嵌套系列" }));
+  await user.click(screen.getByRole("button", { name: "作品1" }));
+  expect(screen.getByRole("dialog", { name: "作品1" })).toBeVisible();
+  const outside = popover ? document.body : document.querySelector('[data-slot="sheet-overlay"][data-state="open"]');
+  await user.click(outside);
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "作品1" })).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "收起系列嵌套系列" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("button", { name: "作品1" })).toBeVisible();
+  await user.click(document.body);
+  expect(screen.getByRole("button", { name: "展开系列嵌套系列" })).toHaveAttribute("aria-expanded", "false");
+  await user.click(screen.getByRole("button", { name: "展开系列嵌套系列" }));
+  await user.click(screen.getByRole("button", { name: "作品1" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "作品1" })).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "收起系列嵌套系列" })).toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("button", { name: "展开系列嵌套系列" })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("mobile series waits for the completed click before switching to another series", async () => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
+  const data = createProfileData(5);
+  data.works.forEach((work, index) => Object.assign(work, { platform: "missevan", ...(index < 4 ? { seriesId: index < 2 ? "a" : "b", seriesTitle: index < 2 ? "系列甲" : "系列乙" } : {}) }));
+  mockProfileFetch(data);
+  const user = userEvent.setup();
+  render(<ProfileHarness />);
+  await user.click(await screen.findByRole("button", { name: "展开系列系列甲" }));
+  const next = screen.getByRole("button", { name: "展开系列系列乙" });
+  fireEvent.pointerDown(next, { pointerType: "touch", button: 0 });
+  expect(screen.getByRole("button", { name: "收起系列系列甲" })).toHaveAttribute("aria-expanded", "true");
+  fireEvent.pointerUp(next, { pointerType: "touch", button: 0 });
+  fireEvent.click(next, { detail: 1 });
+  expect(screen.getByRole("button", { name: "展开系列系列甲" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("button", { name: "收起系列系列乙" })).toHaveAttribute("aria-expanded", "true");
+});
+
+test("mobile work menus toggle in place and an outside work menu still collapses the old series", async () => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
+  const data = createProfileData(3);
+  data.works.forEach((work, index) => Object.assign(work, { platform: "missevan", ...(index < 2 ? { seriesId: "a", seriesTitle: "系列甲" } : {}) }));
+  mockProfileFetch(data);
+  const user = userEvent.setup();
+  render(<ProfileHarness />);
+  await user.click(await screen.findByRole("button", { name: "展开系列系列甲" }));
+  const ownMore = screen.getByRole("button", { name: "作品1更多操作" });
+  await user.click(ownMore);
+  expect(screen.getByRole("menu")).toBeVisible();
+  await user.click(ownMore);
+  await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "收起系列系列甲" })).toHaveAttribute("aria-expanded", "true");
+  await user.click(ownMore);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "收起系列系列甲" })).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByRole("button", { name: "作品3更多操作" }));
+  expect(screen.getByRole("button", { name: "展开系列系列甲" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("menu")).toBeVisible();
+});
+
 test("progressive rendering never splits a series across load-more batches", async () => {
   const user = userEvent.setup();
   const data = createProfileData(54);
@@ -271,6 +337,19 @@ test("CV profile includes the search identity discriminator in its request", asy
   );
 });
 
+test("CV profile work titles fetch a preview before navigating to statistics", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn(async () => true);
+  const fetchMock = mockProfileFetch(createProfileData());
+  render(<ProfileHarness onOpenSearchResult={open} />);
+  await user.click(await screen.findByRole("button", { name: "作品1" }));
+  expect(screen.getByRole("dialog", { name: "作品1" })).toBeVisible();
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/search-card-metrics"))).toBe(true);
+  expect(open).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "进入统计" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: "1", usageAction: "cv_profile_open_search_result", usageSource: "cv_profile" }));
+});
+
 test("CV profile commits popover filters on close and recalculates platform stats", async () => {
   const user = userEvent.setup();
   const routeChange = vi.fn();
@@ -333,6 +412,8 @@ test("CV profile commits popover filters on close and recalculates platform stat
   expect(within(missevanStats).getByText("暂无数据")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "作品2" }));
+  expect(openSearchResult).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "进入统计" }));
   expect(openSearchResult).toHaveBeenCalledWith({
     platform: "manbo",
     id: "2",
@@ -343,6 +424,7 @@ test("CV profile commits popover filters on close and recalculates platform stat
     usageAction: "cv_profile_open_search_result",
     usageSource: "cv_profile",
   });
+  await user.click(screen.getByRole("button", { name: "关闭数据速览" }));
   expect(screen.queryByRole("link", { name: /打开作品ID/ })).not.toBeInTheDocument();
 
   const paymentTrigger = screen.getByRole("button", { name: "付费筛选，全部" });

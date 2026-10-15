@@ -1318,6 +1318,21 @@ test("classifyMergedSearchInput rejects short keyword searches", () => {
   assert.equal(classifyMergedSearchInput("abc", "manbo").action, "search");
 });
 
+test("mixed Han and Latin keywords pass both unified and platform search classification", () => {
+  for (const keyword of ["磕CP", "嗑cp", "猫12"]) {
+    assert.equal(classifyUnifiedSearchInput(keyword).action, "search", keyword);
+    for (const platform of ["missevan", "manbo"]) {
+      assert.equal(classifyMergedSearchInput(keyword, platform).action, "search", `${platform}: ${keyword}`);
+    }
+  }
+  for (const keyword of ["磕C", "猫1", "磕！？"]) {
+    assert.equal(classifyUnifiedSearchInput(keyword).action, "keyword_too_short", keyword);
+    for (const platform of ["missevan", "manbo"]) {
+      assert.equal(classifyMergedSearchInput(keyword, platform).action, "keyword_too_short", `${platform}: ${keyword}`);
+    }
+  }
+});
+
 test("classifyMergedSearchInput treats mixed Missevan import tokens and text as search", () => {
   assert.deepEqual(classifyMergedSearchInput("93420 撒野", "missevan"), {
     action: "search",

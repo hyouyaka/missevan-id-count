@@ -520,6 +520,18 @@ test("ongoing share snapshots no, multiple, and platform-specific CV selections"
   await clearCurrentSelection();
 });
 
+test("ongoing titles preview metrics and only navigate after entering statistics", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn(async () => true);
+  render(<OngoingPanel routeState={{ view: "ongoing", platform: "missevan" }} onOpenSearchResult={open} />);
+  const title = (await screen.findAllByRole("button", { name: /猫甲/ })).find((button) => button.textContent.includes("猫甲"));
+  await user.click(title);
+  expect(screen.getByRole("dialog", { name: "猫甲" })).toBeVisible();
+  expect(open).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "进入统计" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ platform: "missevan", id: "1", usageAction: "ongoing_open_search_result" }));
+});
+
 test("ongoing share buttons are disabled when the current list has no visible rows", async () => {
   testState.fetchByPlatform.missevan = createFetchResult(createPayload("missevan", []));
   render(<OngoingPanel routeState={{ view: "ongoing", platform: "missevan" }} />);

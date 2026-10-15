@@ -192,7 +192,7 @@ export function SearchPanel({
   }
 
   function showKeywordTooShortNotice() {
-    showBlockingNotice("关键词太短", "关键词太短，请至少输入 2 个汉字，或 3 位字母/数字。");
+    showBlockingNotice("关键词太短", "关键词太短，请输入至少 2 个汉字，或 1 个汉字加 2 位字母/数字；纯字母/数字至少 3 位。");
   }
 
   function buildUnifiedSearchPath(keyword) {

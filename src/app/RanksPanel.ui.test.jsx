@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
@@ -144,6 +144,76 @@ test("CV ranks preview series cards closed and retain closed groups when the out
   await user.click(screen.getByRole("button", { name: "收起CV甲作品列表" }));
   await user.click(screen.getAllByRole("button", { name: "展开CV甲作品列表" })[0]);
   expect(screen.getByRole("button", { name: "展开系列合并系列" })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("CV rank series switching keeps the next expand button mounted until click completes", async () => {
+  const user = userEvent.setup();
+  const works = [1, 2, 3, 4].map((id) => ({ platform: "missevan", dramaId: String(id), title: `作品${id}`, viewCount: 1000 - id, seriesId: id < 3 ? "a" : "b", seriesTitle: id < 3 ? "系列甲" : "系列乙" }));
+  testState.payload.platforms.missevan.categories = [{ key: "cv", label: "CV榜", ranks: [{ key: "cv", name: "CV总榜", items: [{ cvName: "CV甲", rank: 1, works }] }] }];
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "cv", rank: "cv" }} />);
+  await user.click((await screen.findAllByRole("button", { name: "展开CV甲作品列表" }))[0]);
+  await user.click(screen.getByRole("button", { name: "展开系列系列甲" }));
+  const next = screen.getByRole("button", { name: "展开系列系列乙" });
+  fireEvent.pointerDown(next, { pointerType: "touch", button: 0 });
+  expect(screen.getByRole("button", { name: "收起系列系列甲" })).toHaveAttribute("aria-expanded", "true");
+  fireEvent.pointerUp(next, { pointerType: "touch", button: 0 });
+  fireEvent.click(next, { detail: 1 });
+  expect(screen.getByRole("button", { name: "展开系列系列甲" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("button", { name: "收起系列系列乙" })).toHaveAttribute("aria-expanded", "true");
+});
+
+test("ordinary rank titles preview metrics before entering search while peak series keep direct navigation", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn(async () => true);
+  const view = render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "new", rank: "new_daily" }} onOpenSearchResult={open} />);
+  await user.click((await screen.findAllByRole("button", { name: "要分享的剧集" }))[0]);
+  expect(screen.getByRole("dialog", { name: "要分享的剧集" })).toBeVisible();
+  expect(open).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "进入统计" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: 101, usageAction: "ranks_open_search_result" }));
+  view.unmount();
+  open.mockClear();
+  testState.payload.platforms.missevan.categories[0].ranks[0].items[0] = { rank: 1, name: "系列巅峰", type: "peak", drama_ids: [101, 102] };
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "new", rank: "new_daily" }} onOpenSearchResult={open} />);
+  await user.click((await screen.findAllByRole("button", { name: "系列巅峰" }))[0]);
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ ids: [101, 102] }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+test.each([false, true])("CV rank series dismisses only after its nested preview is closed (popover=%s)", async (popover) => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: popover, addEventListener() {}, removeEventListener() {} })));
+  const user = userEvent.setup();
+  const works = [1, 2].map((id) => ({ dramaId: String(id), title: `系列作品${id}`, viewCount: 100, seriesId: "nested", seriesTitle: "嵌套系列" }));
+  testState.payload.platforms.missevan.categories = [{ key: "cv", label: "CV榜", ranks: [{ key: "cv", name: "CV总榜", items: [{ cvName: "CV甲", rank: 1, works }] }] }];
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "cv", rank: "cv" }} onOpenSearchResult={vi.fn(async () => true)} />);
+  await user.click((await screen.findAllByRole("button", { name: "展开CV甲作品列表" }))[0]);
+  await user.click(screen.getByRole("button", { name: "展开系列嵌套系列" }));
+  await user.click(screen.getByRole("button", { name: "系列作品1" }));
+  expect(screen.getByRole("dialog", { name: "系列作品1" })).toBeVisible();
+  await user.click(popover ? document.body : document.querySelector('[data-slot="sheet-overlay"][data-state="open"]'));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "系列作品1" })).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "收起系列嵌套系列" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("button", { name: "系列作品1" })).toBeVisible();
+  await user.click(document.body);
+  expect(screen.getByRole("button", { name: "展开系列嵌套系列" })).toHaveAttribute("aria-expanded", "false");
+  await user.click(screen.getByRole("button", { name: "展开系列嵌套系列" }));
+  await user.click(screen.getByRole("button", { name: "收起系列嵌套系列" }));
+  expect(screen.getByRole("button", { name: "展开系列嵌套系列" })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("CV rank work titles preview without changing the series disclosure or CV profile navigation", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn(async () => true);
+  const onOpenCv = vi.fn();
+  testState.payload.platforms.missevan.categories = [{ key: "cv", label: "CV榜", ranks: [{ key: "cv", name: "CV总榜", items: [{ cvName: "CV甲", rank: 1, works: [{ dramaId: "101", title: "单部作品", viewCount: 100 }] }] }] }];
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "cv", rank: "cv" }} onOpenSearchResult={open} onOpenCv={onOpenCv} />);
+  await user.click((await screen.findAllByRole("button", { name: "展开CV甲作品列表" }))[0]);
+  await user.click(screen.getByRole("button", { name: "单部作品" }));
+  expect(screen.getByRole("dialog", { name: "单部作品" })).toBeVisible();
+  expect(open).not.toHaveBeenCalled();
+  expect(onOpenCv).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "进入统计" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: "101", usageSource: "ranks_cv" }));
 });
 
 test("rank title share buttons are per-rank on desktop, active-rank only on mobile, and disabled for empty ranks", async () => {
