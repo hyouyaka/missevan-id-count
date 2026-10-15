@@ -380,7 +380,7 @@ function OngoingTitle({ itemId, onClick, title, titleTags, preview }) {
   const titleTextClassName = "break-words text-base! font-semibold! leading-5!";
   return (
     <div ref={containerRef} className="relative min-w-0 max-h-[42px] overflow-hidden" title={normalizedTitle}>
-      <DramaMetricsPreview {...preview} onEnterStatistics={onClick}>
+      <DramaMetricsPreview {...preview} onEnterStatistics={() => onClick({ suppressUsageLog: true })}>
         <button
           type="button"
           className="block w-full rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -556,7 +556,7 @@ function OngoingCard({
     }
   }
 
-  function openSearchResult() {
+  function openSearchResult(options = {}) {
     if (!platform || !item?.id) {
       return;
     }
@@ -567,7 +567,8 @@ function OngoingCard({
       name: item.name,
       paymentLabel: item.payment_label,
       contentTypeLabel: item.content_type_label,
-      usageAction: "ongoing_open_search_result",
+      usageAction: options.suppressUsageLog ? undefined : "ongoing_open_search_result",
+      suppressUsageLog: options.suppressUsageLog === true,
     });
   }
 

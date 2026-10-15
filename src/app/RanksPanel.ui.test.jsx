@@ -170,13 +170,14 @@ test("ordinary rank titles preview metrics before entering search while peak ser
   expect(screen.getByRole("dialog", { name: "要分享的剧集" })).toBeVisible();
   expect(open).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "进入统计" }));
-  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: 101, usageAction: "ranks_open_search_result" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: 101, suppressUsageLog: true, usageAction: undefined }));
+  expect(getUsageLogEntries("drama_preview_enter_statistics")).toEqual([expect.objectContaining({ dramaId: "101", source: "ranks" })]);
   view.unmount();
   open.mockClear();
   testState.payload.platforms.missevan.categories[0].ranks[0].items[0] = { rank: 1, name: "系列巅峰", type: "peak", drama_ids: [101, 102] };
   render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "new", rank: "new_daily" }} onOpenSearchResult={open} />);
   await user.click((await screen.findAllByRole("button", { name: "系列巅峰" }))[0]);
-  expect(open).toHaveBeenCalledWith(expect.objectContaining({ ids: [101, 102] }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ ids: [101, 102], suppressUsageLog: false, usageAction: "ranks_open_search_result" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -213,7 +214,8 @@ test("CV rank work titles preview without changing the series disclosure or CV p
   expect(open).not.toHaveBeenCalled();
   expect(onOpenCv).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "进入统计" }));
-  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: "101", usageSource: "ranks_cv" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: "101", usageAction: "ranks_open_search_result", usageSource: "ranks_cv" }));
+  expect(open.mock.calls[0][0].suppressUsageLog).not.toBe(true);
 });
 
 test("rank title share buttons are per-rank on desktop, active-rank only on mobile, and disabled for empty ranks", async () => {

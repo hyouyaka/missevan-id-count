@@ -529,7 +529,8 @@ test("ongoing titles preview metrics and only navigate after entering statistics
   expect(screen.getByRole("dialog", { name: "猫甲" })).toBeVisible();
   expect(open).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "进入统计" }));
-  expect(open).toHaveBeenCalledWith(expect.objectContaining({ platform: "missevan", id: "1", usageAction: "ongoing_open_search_result" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ platform: "missevan", id: "1", suppressUsageLog: true, usageAction: undefined }));
+  expect(getUsageLogEntries("drama_preview_enter_statistics")).toEqual([expect.objectContaining({ dramaId: "1", source: "ongoing" })]);
 });
 
 test("ongoing share buttons are disabled when the current list has no visible rows", async () => {

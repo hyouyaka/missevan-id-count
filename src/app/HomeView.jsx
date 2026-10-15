@@ -427,7 +427,7 @@ function OngoingMiniItem({
         </div>
       </div>
       <div className="home-editorial-update-copy">
-        <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item.payment_label} contentTypeLabel={item.content_type_label} source="homeview" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={openSearchResult}>
+        <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item.payment_label} contentTypeLabel={item.content_type_label} source="homeview" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={() => openSearchResult({ suppressUsageLog: true })}>
           <button
             type="button"
             className="line-clamp-1 rounded-sm text-left text-sm font-semibold! leading-5 text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:text-base"
@@ -656,7 +656,7 @@ function RankDramaItem({
       <div className="relative z-10 min-w-0">
         {searchDramaIds.length ? (
           isMissevanPeak ? titleButton : (
-            <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item?.payment_label || item?.paymentLabel || item?.payStatus} contentTypeLabel={item?.content_type_label || item?.contentTypeLabel} source="homeview" frontendVersion={actionProps.frontendVersion} handleVersionResponse={actionProps.handleVersionResponse} onEnterStatistics={openSearchResult}>
+            <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item?.payment_label || item?.paymentLabel || item?.payStatus} contentTypeLabel={item?.content_type_label || item?.contentTypeLabel} source="homeview" frontendVersion={actionProps.frontendVersion} handleVersionResponse={actionProps.handleVersionResponse} onEnterStatistics={() => openSearchResult({ suppressUsageLog: true })}>
               {titleButton}
             </DramaMetricsPreview>
           )

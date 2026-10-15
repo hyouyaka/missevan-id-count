@@ -659,7 +659,7 @@ test("home single-drama titles preview metrics while series titles retain direct
   assert.match(ongoingItemSource, /function OngoingMiniItem\(\{[\s\S]*onOpenSearchResult,[\s\S]*featured = false/);
   assert.match(ongoingItemSource, /usageAction: options\.suppressUsageLog \? undefined : "ongoing_open_search_result"/);
   assert.match(ongoingItemSource, /usageSource: "homeview"/);
-  assert.match(ongoingItemSource, /<DramaMetricsPreview[\s\S]*source="homeview"[\s\S]*onEnterStatistics=\{openSearchResult\}/);
+  assert.match(ongoingItemSource, /<DramaMetricsPreview[\s\S]*source="homeview"[\s\S]*onEnterStatistics=\{\(\) => openSearchResult\(\{ suppressUsageLog: true \}\)\}/);
   assert.match(rankItemSource, /function RankDramaItem\(\{[\s\S]*item,[\s\S]*platform,[\s\S]*onOpenSearchResult/);
   assert.match(rankItemSource, /const searchDramaIds = isMissevanPeak[\s\S]*item\.drama_ids[\s\S]*\[item\.id\]/);
   assert.match(rankItemSource, /usageAction: options\.suppressUsageLog \? undefined : "ranks_open_search_result"/);
@@ -1958,7 +1958,7 @@ test("drama previews share responsive surfaces and preserve the intrinsic blue s
   assert.match(dramaMetricsPreviewSource, /data-preview-footer[\s\S]*justify-between[\s\S]*updatedText[\s\S]*ml-auto flex shrink-0 items-center/);
   assert.match(dramaMetricsPreviewSource, /<Button type="button" size="sm"[\s\S]*w-fit[\s\S]*<ArrowRightIcon data-icon="inline-start"/);
   assert.doesNotMatch(dramaMetricsPreviewSource, /formatCompact|formatRankCompact|stat-tasks|getdramas|bg-blue-/);
-  assert.match(ongoingPanelSource, /<DramaMetricsPreview[\s\S]*onEnterStatistics=\{onClick\}/);
+  assert.match(ongoingPanelSource, /<DramaMetricsPreview[\s\S]*onEnterStatistics=\{\(\) => onClick\(\{ suppressUsageLog: true \}\)\}/);
   assert.match(cvProfileViewSource, /<DramaMetricsPreview[\s\S]*source="cv_profile"/);
   assert.doesNotMatch(dramaMetricsPreviewSource, /RefreshCwIcon|drama_preview_refresh/);
   assert.match(dramaMetricsPreviewSource, /数据获取于：/);
@@ -3467,7 +3467,7 @@ test("rank title keeps content type badges inside one two-line clickable flow", 
   assert.match(titleSource, /line-clamp-2/);
   assert.match(titleSource, /onClick=\{isMissevanPeak \? \(\) => openSearchResult\(\) : undefined\}/);
   assert.match(titleSource, /if \(isMissevanPeak\) return titleButton/);
-  assert.match(titleSource, /<DramaMetricsPreview[\s\S]*onEnterStatistics=\{openSearchResult\}/);
+  assert.match(titleSource, /<DramaMetricsPreview[\s\S]*onEnterStatistics=\{\(\) => openSearchResult\(\{ suppressUsageLog: true \}\)\}/);
 });
 
 test("peak rank titles pass all available drama ids to search result jump", () => {

@@ -561,7 +561,7 @@ function RankItemCard({
     if (!canOpenSearchResult) return <div className={`line-clamp-2 min-w-0 break-words text-foreground ${getTitleClassName(item.name)}`} title={item.name}>{content}</div>;
     const titleButton = <button type="button" className={`line-clamp-2 min-w-0 break-words rounded-sm text-left text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${getTitleClassName(item.name)}`} onClick={isMissevanPeak ? () => openSearchResult() : undefined} title={item.name}>{content}</button>;
     if (isMissevanPeak) return titleButton;
-    return <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={paymentTag} contentTypeLabel={titleTags[0]} source="ranks" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={openSearchResult}>{titleButton}</DramaMetricsPreview>;
+    return <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={paymentTag} contentTypeLabel={titleTags[0]} source="ranks" frontendVersion={frontendVersion} handleVersionResponse={handleVersionResponse} onEnterStatistics={() => openSearchResult({ suppressUsageLog: true })}>{titleButton}</DramaMetricsPreview>;
   }
 
   function renderTrendButton(ref, visible = true) {
