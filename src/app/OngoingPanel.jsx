@@ -669,7 +669,7 @@ function OngoingCard({
     <>
       <Card className="relative isolate overflow-hidden py-0">
         <RankWatermark rank={rank} />
-        <CardContent className="relative z-10 p-0">
+        <CardContent className="relative z-10 flex flex-1 flex-col p-0">
           <div className="grid grid-cols-[116px_minmax(0,1fr)] items-stretch gap-3 p-3.5">
             <div className="relative size-[116px] shrink-0 self-center overflow-hidden rounded-md border border-border/70 bg-muted/50">
               {coverUrl ? (
@@ -805,7 +805,7 @@ function OngoingCard({
               </div>
             </div>
           </div>
-          <div className={`grid ${metricGridClassName} border-t border-border/70 bg-background/54 py-2`}>
+          <div className={`mt-auto grid ${metricGridClassName} border-t border-border/70 bg-background/54 py-2`}>
             {metricKeys.map((metricKey) => (
               <OngoingMetric key={metricKey} item={item} metricKey={metricKey} windowKey={windowKey} />
             ))}
