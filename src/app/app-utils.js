@@ -817,8 +817,14 @@ export function normalizeStatsHistoryReplay(value) {
     return { dramaId, episodeIds: Array.from(new Set(rawEpisodeIds.map((id) => String(id).trim()))) };
   });
   if (dramas.some((drama) => !drama)) return null;
+  const source = Object.hasOwn(value, "source") ? String(value.source ?? "").trim() : "custom";
+  // Older whole-paid selections stored fixed IDs, but resolveIdStatisticsSource
+  // marked them as payID. Recover that intent when saving or loading history.
+  if (operation === "id" && dramas.length === 1 && source === `${dramas[0].dramaId}payID`) {
+    return { version: STATS_HISTORY_REPLAY_VERSION, operation: "paid_id", dramaIds: [dramas[0].dramaId], source };
+  }
   return dramas.length
-    ? { version: STATS_HISTORY_REPLAY_VERSION, operation, source: Object.hasOwn(value, "source") ? String(value.source ?? "").trim() : "custom", dramas }
+    ? { version: STATS_HISTORY_REPLAY_VERSION, operation, source, dramas }
     : null;
 }
 

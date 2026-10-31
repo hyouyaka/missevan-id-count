@@ -1780,12 +1780,12 @@ export function ToolView({ initialAppConfig }) {
       ids.push(episodeId);
       byDrama.set(dramaId, ids);
     });
-    return {
+    return normalizeStatsHistoryReplay({
       version: 1,
       operation,
       source,
       dramas: Array.from(byDrama, ([dramaId, episodeIds]) => ({ dramaId, episodeIds: Array.from(new Set(episodeIds)) })),
-    };
+    });
   }
 
   function appendRefreshSource(source) {

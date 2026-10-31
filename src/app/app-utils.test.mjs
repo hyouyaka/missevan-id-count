@@ -2104,6 +2104,42 @@ test("history replay parameters reject malformed episode ranges instead of shrin
   });
 });
 
+test("history replay recovers whole-paid intent without expanding custom episode ranges", () => {
+  const fixedRange = { version: 1, operation: "id", source: "96914payID", dramas: [{ dramaId: "96914", episodeIds: ["13821053"] }] };
+  const wholePaid = { version: 1, operation: "paid_id", source: "96914payID", dramaIds: ["96914"] };
+  assert.deepEqual(normalizeStatsHistoryReplay(fixedRange), wholePaid);
+  assert.deepEqual(normalizeStatsHistoryReplay(wholePaid), wholePaid);
+  for (const source of ["custom", "", "otherpayID", "96914payIDrefresh"]) {
+    const partial = { ...fixedRange, source };
+    assert.deepEqual(normalizeStatsHistoryReplay(partial), partial);
+  }
+  const playCount = { ...fixedRange, operation: "play_count" };
+  assert.deepEqual(normalizeStatsHistoryReplay(playCount), playCount);
+  const multiple = { ...fixedRange, dramas: [...fixedRange.dramas, { dramaId: "123", episodeIds: ["456"] }] };
+  assert.deepEqual(normalizeStatsHistoryReplay(multiple), multiple);
+  assert.equal(normalizeStatsHistoryReplay({ ...fixedRange, dramas: [{ dramaId: "96914", episodeIds: ["13821053", ""] }] }), null);
+});
+
+test("new and persisted legacy whole-paid history use dynamic paid episode replay on both platforms", () => {
+  for (const platform of ["missevan", "manbo"]) {
+    const legacyReplay = { version: 1, operation: "id", source: "96914payID", dramas: [{ dramaId: "96914", episodeIds: ["13821053"] }] };
+    const entry = createStatsHistoryEntry(platform, {
+      activeTaskType: "id", totalDanmaku: 531, totalUsers: 169,
+      idResults: [{ dramaId: "96914", title: "示例作品", selectedEpisodeCount: 1, danmaku: 531, users: 169 }],
+    }, { createdAt: 1710000000000, replay: legacyReplay });
+    const expected = { version: 1, operation: "paid_id", source: "96914payID", dramaIds: ["96914"] };
+    assert.deepEqual(entry.replay, expected);
+    const storage = createStorageMock();
+    storage.setItem(STATS_HISTORY_STORAGE_KEY, JSON.stringify({
+      version: 1, [platform]: [{ ...entry, replay: legacyReplay }],
+    }));
+    const loaded = loadPersistedHistoryEntries(storage);
+    assert.deepEqual(loaded[platform][0].replay, expected);
+    savePersistedHistoryEntries(loaded, storage);
+    assert.deepEqual(JSON.parse(storage.getItem(STATS_HISTORY_STORAGE_KEY))[platform][0].replay, expected);
+  }
+});
+
 test("history persistence evicts only the oldest entries after quota errors", () => {
   const writes = [];
   const storage = {

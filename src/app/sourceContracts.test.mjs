@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { selectDramaEpisodesByMode } from "./app-utils.js";
+import { normalizeStatsHistoryReplay, resolveIdStatisticsSource, selectDramaEpisodesByMode } from "./app-utils.js";
 import { isMemberEpisode, isPaidEpisode } from "../../shared/episodeRules.js";
 
 function readSourceIfExists(relativeUrl) {
@@ -5021,6 +5021,57 @@ test("statistics history replay keeps responsive actions and refreshes works bef
   assert.match(toolViewSource, /buildPlayCountDramasFromDramas\(playCountDramas\)/);
 });
 
+
+test("history refresh includes new paid episodes only for whole-paid statistics on both platforms", async () => {
+  const buildStart = toolViewSource.indexOf("function buildSelectedEpisodesReplay(");
+  const buildEnd = toolViewSource.indexOf("\n  function appendRefreshSource(", buildStart);
+  const buildReplay = runInNewContext("(" + toolViewSource.slice(buildStart, buildEnd).trim() + ")", { normalizeStatsHistoryReplay });
+  const refreshStart = toolViewSource.indexOf("async function replayHistoryEntry(");
+  const refreshEnd = toolViewSource.indexOf("\n  const missevanResultCount", refreshStart);
+  const refreshSource = toolViewSource.slice(refreshStart, refreshEnd).trim();
+  for (const platform of ["missevan", "manbo"]) {
+    const paid = { sound_id: "13821053", name: "第6集", ...(platform === "manbo" ? { pay_type: 1 } : { need_pay: 1 }) };
+    const member = { sound_id: "13824944", name: "第7集", vip_free: 1 };
+    const added = { ...paid, sound_id: "new", name: "新增付费集" };
+    const drama = { drama: { id: "96914", name: "示例作品" }, episodes: { episode: [paid, member, { sound_id: "free", name: "免费集" }] } };
+    const freshDrama = { ...drama, episodes: { episode: [...drama.episodes.episode, added] } };
+    for (const selection of ["whole-paid", "partial", "with-free", "legacy-whole-paid"]) {
+      const originalEpisodes = (selection === "partial" ? [paid] : selection === "with-free" ? drama.episodes.episode : [paid, member])
+        .map((episode) => ({ drama_id: "96914", sound_id: episode.sound_id }));
+      const source = resolveIdStatisticsSource({ platform, dramas: [drama], selectedEpisodes: originalEpisodes, source: "custom" });
+      const replay = selection === "legacy-whole-paid"
+        ? { version: 1, operation: "id", source, dramas: [{ dramaId: "96914", episodeIds: ["13821053", "13824944"] }] }
+        : buildReplay("id", originalEpisodes, source);
+      const calls = [];
+      const context = {
+        AbortController, normalizeStatsHistoryReplay, isPaidEpisode, isMemberEpisode,
+        replayPreparingRef: { current: new Set() }, setReplayPreparingEntryIds: () => {}, isAnyBackgroundTaskRunning: () => false,
+        replayPreparationAbortControllerRef: { current: null }, replayCardsAbortControllerRef: { current: null }, replaySearchGenerationRef: { current: 0 },
+        updatePlatformState: () => {}, openSearchPlatform: () => {}, updateReplaySearch: () => {},
+        appConfigRef: { current: {} }, buildVersionedUrl: (url) => url,
+        fetch: async () => ({ ok: true }), parseVersionedJsonResponse: async () => ({ success: true, results: [{ id: "96914" }] }),
+        fetchDramasByIds: async (requestedPlatform, ids, signal, options) => {
+          assert.equal(requestedPlatform, platform);
+          assert.deepEqual(Array.from(ids), ["96914"]);
+          assert.equal(options.forceRefresh, true);
+          return [{ success: true, drama: freshDrama }];
+        },
+        startIdStatisticsForEpisodes: async (episodes, message, options) => { calls.push({ episodes, options }); },
+        isAbortError: () => false, getStatsRequestErrorMessage: (error) => error.message,
+        console: { error: (message, error) => assert.fail(`${message}: ${error.message}`) },
+        toast: { warning: (message) => assert.fail(message), error: (message) => assert.fail(message) },
+      };
+      const refresh = runInNewContext("(" + refreshSource + ")", context);
+      await refresh({ id: "history-entry", platform, replay });
+      assert.equal(calls.length, 1, `${platform}: ${selection}`);
+      const expectedIds = selection === "partial" ? ["13821053"] : selection === "with-free" ? ["13821053", "13824944", "free"] : ["13821053", "13824944", "new"];
+      assert.deepEqual(Array.from(calls[0].episodes, (episode) => episode.sound_id), expectedIds, `${platform}: ${selection}`);
+      assert.equal(calls[0].options.isHistoryRefresh, true);
+      assert.equal(calls[0].options.replay.operation, selection === "partial" || selection === "with-free" ? "id" : "paid_id");
+      assert.equal(calls[0].options.source, source);
+    }
+  }
+});
 
 test("desktop paid-ID action excludes selected free episodes and other dramas on both platforms", async () => {
   const start = desktopStatisticsSource.indexOf("async function startPaidIdStatistics(");
