@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import { createRevenueDisplayLogRecorder, shouldDeferRevenueLog } from "./stats/revenueDisplayLog.js";
 import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import compression from "compression";
@@ -743,6 +744,7 @@ const statsTaskEngine = createStatsTaskEngine({
   retentionMs: MANBO_STATS_TASK_TTL_MS,
   onTerminal: async (snapshot) => {
     if (DESKTOP_APP) return;
+    if (shouldDeferRevenueLog(snapshot)) return;
     const entry = buildStatsTaskCompletedUsageLog(snapshot);
     if (entry) {
       await writeUsageLog(entry);
@@ -2236,6 +2238,7 @@ export function buildStatsTaskCompletedUsageLog(snapshot = {}) {
     taskType,
     status,
     success,
+    ...(taskType === "revenue" ? { revenueStage: "server_base", paidCoefficient: 1 } : {}),
     ...(keywordText ? { keywordText } : {}),
     ...(keyResultText ? { keyResultText } : {}),
     ...(source ? { source } : {}),
@@ -11817,6 +11820,12 @@ if (!DESKTOP_APP) registerNewDramaRoutes(app, {
   queueNewDramaIdsAppend,
 });
 
+const recordRevenueDisplayLog = createRevenueDisplayLogRecorder({
+  getSnapshot: (taskId) => statsTaskEngine.getSnapshot(taskId),
+  writeLog: writeUsageLog,
+  buildCompletedLog: buildStatsTaskCompletedUsageLog,
+});
+
 if (!DESKTOP_APP) app.post("/usage-log", async (req, res) => {
   try {
     if (!isSameHostUsageLogRequest(req)) {
@@ -11830,6 +11839,13 @@ if (!DESKTOP_APP) app.post("/usage-log", async (req, res) => {
     const platform = String(payload.platform ?? "").trim();
     const action = String(payload.action ?? "").trim();
     const error = String(payload.error ?? "").trim();
+
+    if (action === "stats_task_displayed") {
+      if (!await recordRevenueDisplayLog(payload)) {
+        return res.status(400).json({ success: false, message: "Invalid revenue display log payload" });
+      }
+      return res.json({ success: true });
+    }
 
     if (action === "compare") {
       const dramaIds = (Array.isArray(payload.dramaIds) ? payload.dramaIds : [])

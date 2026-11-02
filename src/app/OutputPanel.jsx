@@ -1,4 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { applyPaidCoefficient } from "../../shared/paidCoefficient.js";
+import { getPaidCoefficient, subscribePaidCoefficient, setPaidCoefficient, persistPaidCoefficients } from "./paidCoefficientStore.js";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChevronDownIcon, CoinsIcon, GemIcon, HandCoinsIcon, PauseCircleIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -100,8 +103,63 @@ function ResultStrip({ metrics, compact = false }) {
   );
 }
 
-function ResultCard({ title, metrics, emphasized = false, footer = null }) {
+function PaidCoefficientControl({ drama, platform }) {
+  const applicable = drama.paidCoefficientApplicable;
+  const value = drama.paidCoefficient;
+  const maximum = drama.paidCoefficientBasis?.maxCoefficient ?? 10;
+  const lastStep = Math.ceil(maximum);
+  return (
+    <span className="inline-flex shrink-0 items-baseline whitespace-nowrap text-xs font-normal">
+      付费系数：
+      {applicable ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button" className="min-w-6 rounded px-1 font-semibold text-primary underline decoration-dotted underline-offset-4 focus-visible:outline-2" aria-label={`${drama.title} 付费系数：${value}`}>
+              {value}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent side="top" align="end" className="w-56 max-w-[calc(100vw-1rem)] flex-row items-center" onCloseAutoFocus={persistPaidCoefficients}>
+            <span aria-hidden="true">1</span>
+            <input
+              type="range"
+              min="1"
+              max={lastStep}
+              step="1"
+              value={Math.ceil(value)}
+              aria-valuetext={String(value)}
+              disabled={maximum <= 1}
+              aria-label="付费系数"
+              aria-orientation="horizontal"
+              className="h-6 min-w-0 flex-1 cursor-pointer accent-primary"
+              onChange={(event) => setPaidCoefficient(platform, Math.min(Number(event.target.value), maximum))}
+              onPointerUp={persistPaidCoefficients}
+              onKeyUp={persistPaidCoefficients}
+              onBlur={persistPaidCoefficients}
+            />
+            <span aria-hidden="true">{maximum}</span>
+          </PopoverContent>
+        </Popover>
+      ) : <span className="text-muted-foreground" title={drama.paidCoefficientBasis?.reason || "旧结果缺少计算依据，请刷新统计"}>不可用</span>}
+    </span>
+  );
+}
+
+function ResultCard({ title, metrics, emphasized = false, footer = null, titleAction = null }) {
   const compact = metrics?.length === 1 && !footer;
+  const headingRef = useRef(null);
+  const actionRef = useRef(null);
+  useEffect(() => {
+    if (!titleAction || !headingRef.current || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const action = actionRef.current;
+      const heading = headingRef.current;
+      if (action && heading) action.dataset.wrapped = String(action.getBoundingClientRect().top - heading.getBoundingClientRect().top > 12);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(headingRef.current);
+    update();
+    return () => observer.disconnect();
+  }, [title, titleAction]);
 
   return (
     <Card
@@ -117,8 +175,9 @@ function ResultCard({ title, metrics, emphasized = false, footer = null }) {
           compact && "flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
         )}
       >
-        <CardTitle className="min-w-0 break-words text-xs font-medium leading-5 text-foreground/80">
-          {title}
+        <CardTitle ref={headingRef} className="flex min-w-0 flex-wrap gap-x-2 break-words text-xs font-medium leading-5 text-foreground/80">
+          <span className="min-w-0 max-w-full">{title}</span>
+          {titleAction ? <span ref={actionRef} className="shrink-0 data-[wrapped=true]:ml-auto">{titleAction}</span> : null}
         </CardTitle>
         {compact ? <ResultStrip metrics={metrics} compact /> : null}
       </CardHeader>
@@ -304,7 +363,9 @@ export function OutputPanel({
   idSelectedEpisodeCount,
   totalDanmaku,
   totalUsers,
-  revenueResults,
+  revenueResults: baseRevenueResults,
+  revenueDisplayTaskId,
+  onRevenueDisplayed,
   revenueSummary,
   isRunning,
   onCancelStatistics,
@@ -317,11 +378,19 @@ export function OutputPanel({
   onCancelReplayPreparation,
   showHistory = true,
 }) {
+  const coefficient = useSyncExternalStore(subscribePaidCoefficient, () => getPaidCoefficient(platform), () => 1);
+  const revenueResults = baseRevenueResults?.map((drama) => applyPaidCoefficient(drama, coefficient));
   const resolvedRevenueSummary = resolveRevenueSummaryForDisplay(
     revenueResults,
     platform,
     revenueSummary || null
   ) || buildRevenueSummary(revenueResults, platform);
+
+  useEffect(() => {
+    if (revenueDisplayTaskId && baseRevenueResults?.some((item) => !item.failed)) {
+      onRevenueDisplayed?.({ taskId: revenueDisplayTaskId, platform, paidCoefficient: coefficient });
+    }
+  }, [revenueDisplayTaskId, baseRevenueResults, platform, coefficient, onRevenueDisplayed]);
 
   function getSummaryPaidCountLabel(summary) {
     if (summary?.platform === "manbo" && summary?.paidCountSourceSummary === "pay_count") {
@@ -474,10 +543,10 @@ export function OutputPanel({
                 metrics={[
                   ...(resolvedRevenueSummary.paidCountSourceSummary === "mixed"
                     ? [
-                        { label: "总付费人次", value: resolvedRevenueSummary.failed ? "访问失败" : formatPlainNumber(resolvedRevenueSummary.totalPayCount) },
+                        ...(Number(resolvedRevenueSummary.totalPayCount) > 0 || resolvedRevenueSummary.failed ? [{ label: "总付费人次", value: resolvedRevenueSummary.failed ? "访问失败" : formatPlainNumber(resolvedRevenueSummary.totalPayCount) }] : []),
                         { label: "总和去重 ID", value: resolvedRevenueSummary.failed ? "访问失败" : formatPlainNumber(resolvedRevenueSummary.totalDanmakuPaidUserCount) },
                       ]
-                    : [
+                    : platform === "manbo" && resolvedRevenueSummary.paidCountSourceSummary === "pay_count" && !resolvedRevenueSummary.failed && Number(resolvedRevenueSummary.totalPaidUserCount) === 0 ? [] : [
                         {
                           label: getSummaryPaidCountLabel(resolvedRevenueSummary),
                           value: resolvedRevenueSummary.failed ? "访问失败" : formatPlainNumber(resolvedRevenueSummary.totalPaidUserCount),
@@ -517,6 +586,7 @@ export function OutputPanel({
                 <ResultCard
                   key={`revenue-${drama.dramaId}`}
                   title={drama.subtitle || `${drama.title} / 单价 ${drama.price || 0} 钻石`}
+                  titleAction={<PaidCoefficientControl drama={drama} platform={platform} />}
                   metrics={[
                     ...buildRevenuePaidMetricSegments(drama).map((segment) => ({
                       label: segment.label,

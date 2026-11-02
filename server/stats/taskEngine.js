@@ -39,6 +39,7 @@ function buildTaskSnapshot(task, queuePosition = 0) {
     taskId: task.taskId,
     platform: task.platform,
     taskType: task.taskType,
+    logOnFirstDisplay: task.logOnFirstDisplay === true,
     status: task.status,
     progress: task.progress,
     currentAction: task.currentAction,

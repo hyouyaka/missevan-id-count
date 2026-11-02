@@ -432,16 +432,16 @@ test("search result cards show original author between ID and main CV with a dis
 
 test("search result data actions use intrinsic-width responsive controls and reveal selection toggles only after import", () => {
   assert.match(searchResultsSource, /function SearchResultActionLayout\(\{ imported, children, \.\.\.props \}\)/);
-  assert.match(searchResultsSource, /const actionCount = imported \? 6 : 4;/);
-  assert.match(searchResultsSource, /const minimumSingleLineWidth = actionCount \* 44 \+ \(actionCount - 1\) \* 4;/);
-  assert.match(searchResultsSource, /shouldWrap \? "flex-wrap gap-y-3" : "flex-nowrap gap-y-1\.5"/);
+  assert.match(searchResultsSource, /const labels = \["trend", "paid-id", "import", "more"\]/);
+  assert.match(searchResultsSource, /button\.getBoundingClientRect\(\)\.width/);
+  assert.match(searchResultsSource, /container\.dataset\.wrap = String\(requiredWidth\(\) > width \+ 0\.5\)/);
   assert.match(searchResultsSource, /<SearchResultActionLayout data-search-card-actions="true" imported=\{Boolean\(importedDrama\)\}>/);
   assert.doesNotMatch(searchResultsSource, /max-\[360px\]:flex-wrap|data-search-card-actions[\s\S]{0,240}(?:overflow-x-auto|overflow-y-auto|no-scrollbar)/);
-  assert.match(searchResultsSource, /resultActionButtonClass = "relative h-8 min-w-11 shrink justify-center[\s\S]*lg:min-w-0"/);
+  assert.match(searchResultsSource, /resultActionButtonClass = "relative h-8 min-w-11 shrink-0 justify-center/);
   assert.match(searchResultsSource, /variant=\{importedDrama \? "outline" : "default"\}/);
   assert.match(searchResultsSource, /\{importedDrama \? <Button[\s\S]*aria-pressed=\{allEpisodesSelected\}[\s\S]*>全选<\/span>/);
   assert.match(searchResultsSource, /\{importedDrama \? <Button[\s\S]*aria-pressed=\{paidEpisodesSelected\}[\s\S]*>付费<\/span>/);
-  assert.match(searchResultsSource, /importedDrama && "hidden lg:inline"/);
+  assert.doesNotMatch(searchResultsSource, /importedDrama && "hidden lg:inline"/);
   assert.match(searchResultsSource, /min-w-0 truncate whitespace-nowrap/);
   assert.match(searchResultsSource, /className=\{trendResultActionButtonClass\}[\s\S]*趋势[\s\S]*variant="secondary"[\s\S]*付费ID/);
   assert.match(searchResultsSource, /resultActionButtonClass[\s\S]*after:-inset-y-1\.5/);

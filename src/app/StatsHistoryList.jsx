@@ -152,6 +152,7 @@ export function StatsHistoryList({ entries = [], onDeleteHistoryEntry, onClearHi
               {entry.items?.map((item) => (
                 <div key={item.id} className="flex flex-wrap items-center gap-1.5 break-words">
                   <span className="font-medium text-foreground/82">{item.title}：</span>
+                  {entry.taskType === "revenue" ? <span>付费系数：{item.paidCoefficientApplicable === false ? "不可用" : item.paidCoefficient ?? 1}</span> : null}
                   {item.segments?.map((segment) => (
                     <HistoryMetric
                       key={`${item.id}-${segment.metricKey}-${segment.value}-${segment.unit || "none"}`}

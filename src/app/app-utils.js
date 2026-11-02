@@ -885,6 +885,7 @@ function normalizeHistoryItem(item) {
     id,
     title,
     segments,
+    ...(item.paidCoefficient != null ? { paidCoefficient: item.paidCoefficient, paidCoefficientApplicable: item.paidCoefficientApplicable } : {}),
   };
 }
 
@@ -1675,11 +1676,11 @@ export function buildRevenuePaidMetricSegments(drama) {
         formatPlainNumber(drama?.episodePaidUserCountTotal),
         "ID"
       ),
-      buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.payCount)),
+      ...(Number(drama?.payCount) > 0 ? [buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.payCount))] : []),
     ];
   }
   if (drama?.platform === "manbo" && drama?.paidCountSource === "pay_count") {
-    return [buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.paidUserCount))];
+    return Number(drama?.paidUserCount) > 0 ? [buildHistoryMetricSegment("paidCount", "付费人数", formatPlainNumber(drama?.paidUserCount))] : [];
   }
   if (isMissevanEpisodeRevenueResult(drama)) {
     const seasonPaidUserCount =
@@ -1708,13 +1709,13 @@ export function buildRevenuePaidMetricSegments(drama) {
 function buildRevenueSummaryPaidMetricSegments(summary) {
   if (summary?.paidCountSourceSummary === "mixed") {
     return [
-      buildHistoryMetricSegment("paidCount", "总付费人次", formatPlainNumber(summary?.totalPayCount)),
+      ...(Number(summary?.totalPayCount) > 0 ? [buildHistoryMetricSegment("paidCount", "总付费人次", formatPlainNumber(summary?.totalPayCount))] : []),
       buildHistoryMetricSegment("uniqueUsers", "总和去重 ID", formatPlainNumber(summary?.totalDanmakuPaidUserCount), "ID"),
     ];
   }
 
   if (summary?.platform === "manbo" && summary?.paidCountSourceSummary === "pay_count") {
-    return [buildHistoryMetricSegment("paidCount", "总付费人次", formatPlainNumber(summary?.totalPaidUserCount))];
+    return Number(summary?.totalPaidUserCount) > 0 ? [buildHistoryMetricSegment("paidCount", "总付费人次", formatPlainNumber(summary?.totalPaidUserCount))] : [];
   }
 
   return [buildHistoryMetricSegment("uniqueUsers", "总和去重 ID", formatPlainNumber(summary?.totalPaidUserCount), "ID")];
@@ -1841,6 +1842,8 @@ function buildRevenueHistoryEntry(platform, stats, createdAt) {
         return {
           id: String(drama?.dramaId ?? drama?.title ?? `revenue-${index}`),
           title: drama?.title || "未知作品",
+          paidCoefficient: drama.paidCoefficient ?? 1,
+          paidCoefficientApplicable: drama.paidCoefficientApplicable,
           segments: [
             ...buildRevenuePaidMetricSegments(drama),
             buildHistoryMetricSegment("rewardTotal", getHistoryRewardLabel(platform), formatHistoryRewardMetric(platform, rewardValue), platform === "manbo" ? "红豆" : "钻石"),

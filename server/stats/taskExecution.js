@@ -1,4 +1,5 @@
 import { getManboRevenueType as resolveManboRevenueType, getRevenueEpisodesForDrama } from "../../shared/revenueEpisodeSelection.js";
+import { buildPaidCoefficientBasis } from "../../shared/paidCoefficient.js";
 
 export function getManboRevenueType(info, isMemberDramaInfo) {
   return resolveManboRevenueType(info, typeof isMemberDramaInfo === "function" ? isMemberDramaInfo : () => false);
@@ -218,7 +219,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
   function compactRevenueResults(results) {
     return (Array.isArray(results) ? results : []).map((item) => {
       const { paidUserIds: _paidUserIds, ...compactItem } = item || {};
-      return compactItem;
+      return { ...compactItem, paidCoefficientBasis: buildPaidCoefficientBasis(compactItem) };
     });
   }
 
@@ -892,7 +893,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
 
     reportStatsTask(task, {
       status: "running",
-      currentAction: "开始最低收益预估",
+      currentAction: "开始收益统计",
       progress: 0,
     });
 
@@ -1203,7 +1204,7 @@ export function createStatsTaskExecutor(dependencies = {}) {
 
     reportStatsTask(task, {
       status: "running",
-      currentAction: "开始最低收益预估",
+      currentAction: "开始收益统计",
       progress: 0,
     });
 
@@ -1510,6 +1511,8 @@ export function createStatsTaskExecutor(dependencies = {}) {
               summaryRevenueMode: hasRevenueRange ? "range" : "single",
               payCount: normalizedPayCount,
               paidCountSource: "pay_count_and_danmaku_ids",
+              paidEpisodeCount,
+              minimumEpisodePrice,
               paidUserIds,
               paidUserCount,
               episodePaidUserCountTotal,

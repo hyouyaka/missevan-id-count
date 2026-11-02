@@ -481,6 +481,9 @@ test("Manbo episode revenue uses the lowest set price and both paid ID counts", 
   assert.ok(episodeDetails.every((detail) => detail.fetchedAt === "2026-10-03T04:00:00.000Z" && detail.cached));
   assert.equal(result.summaryRevenueMode, "range");
   assert.equal(result.paidCountSource, "pay_count_and_danmaku_ids");
+  assert.equal(result.paidCoefficientBasis.applicable, true);
+  assert.equal(result.paidCoefficientBasis.mode, "manbo_official_episode");
+  assert.equal(result.paidCoefficientBasis.maxCoefficient, 1);
   assert.equal(result.payCount, 2);
   assert.equal(result.episodePaidUserCountTotal, 5);
   assert.equal(result.seasonPaidUserCount, 4);

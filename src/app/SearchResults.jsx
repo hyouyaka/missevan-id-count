@@ -284,36 +284,44 @@ function SearchResultTitle({ imported, itemId, title, titleClassName, titleTags 
 
 function SearchResultActionLayout({ imported, children, ...props }) {
   const containerRef = useRef(null);
-  const [shouldWrap, setShouldWrap] = useState(false);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return undefined;
-
-    const actionCount = imported ? 6 : 4;
-    const minimumSingleLineWidth = actionCount * 44 + (actionCount - 1) * 4;
-    const updateWrapping = (width) => {
-      const nextShouldWrap = width + 0.5 < minimumSingleLineWidth;
-      setShouldWrap((current) => (current === nextShouldWrap ? current : nextShouldWrap));
+    let disposed = false;
+    const updateLayout = () => {
+      if (disposed) return;
+      const buttons = Array.from(container.children).filter((element) => element.tagName === "BUTTON");
+      const labels = ["trend", "paid-id", "import", "more"]
+        .map((key) => container.querySelector(`[data-action-label="${key}"]`)).filter(Boolean);
+      // Always measure the expanded state, so widening restores every label.
+      labels.forEach((label) => { label.style.display = ""; });
+      const width = container.getBoundingClientRect().width;
+      const gap = parseFloat(getComputedStyle(container).columnGap) || 0;
+      const requiredWidth = () => buttons.reduce((sum, button) => sum + button.getBoundingClientRect().width, 0)
+        + Math.max(0, buttons.length - 1) * gap;
+      for (const label of labels) {
+        if (requiredWidth() <= width + 0.5) break;
+        label.style.display = "none";
+      }
+      container.dataset.wrap = String(requiredWidth() > width + 0.5);
     };
-
-    updateWrapping(container.getBoundingClientRect().width);
-    if (typeof ResizeObserver === "undefined") return undefined;
-
-    const resizeObserver = new ResizeObserver(([entry]) => {
-      updateWrapping(entry?.contentRect?.width ?? container.getBoundingClientRect().width);
-    });
-    resizeObserver.observe(container);
-    return () => resizeObserver.disconnect();
-  }, [imported]);
+    updateLayout();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateLayout);
+    observer?.observe(container);
+    window.addEventListener("resize", updateLayout);
+    document.fonts?.ready.then(updateLayout);
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+      window.removeEventListener("resize", updateLayout);
+    };
+  }, [imported, children]);
 
   return (
     <div
       ref={containerRef}
-      className={cn(
-        "relative z-10 flex w-full min-w-0 items-center justify-end gap-x-1 lg:w-auto lg:flex-nowrap lg:gap-y-1.5",
-        shouldWrap ? "flex-wrap gap-y-3" : "flex-nowrap gap-y-1.5"
-      )}
+      className="relative z-10 flex w-full min-w-0 flex-nowrap items-center justify-end gap-x-1 gap-y-1.5 data-[wrap=true]:flex-wrap data-[wrap=true]:gap-y-3 lg:w-0 lg:flex-1"
       {...props}
     >
       {children}
@@ -911,7 +919,7 @@ export function SearchResults({
   const batchSwitchHitAreaClass = "relative block h-11 min-h-11 w-full min-w-0";
   const batchSwitchVisualClass = "absolute inset-x-0 top-1/2 flex h-9 w-full min-w-0 -translate-y-1/2 items-center justify-center gap-1.5 rounded-[calc(var(--radius)-0.12rem)] border border-border/70 bg-background/84 px-1 text-[0.7rem] font-medium text-foreground sm:gap-2 sm:px-2 sm:text-xs";
   const desktopBatchControlClass = "flex h-9 w-full items-center justify-start gap-2 rounded-md border border-border/75 bg-background px-2.5 text-[14px]! font-medium";
-  const resultActionButtonClass = "relative h-8 min-w-11 shrink justify-center gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-center text-[0.7rem] after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-[''] sm:gap-1.5 sm:px-2.5 sm:text-xs lg:min-w-0";
+  const resultActionButtonClass = "relative h-8 min-w-11 shrink-0 justify-center gap-1 rounded-[calc(var(--radius)-0.12rem)] px-1.5 text-center text-[0.7rem] after:absolute after:inset-x-0 after:-inset-y-1.5 after:rounded-md after:content-[''] sm:gap-1.5 sm:px-2.5 sm:text-xs";
   const resultSelectionActionClass = `${resultActionButtonClass} border-border/70 bg-background/84 text-foreground aria-pressed:border-2 aria-pressed:border-primary aria-pressed:bg-primary/8 aria-pressed:font-semibold aria-pressed:text-primary hover:bg-surface-hover`;
   const trendResultActionButtonClass = `${resultActionButtonClass} border-[color-mix(in_oklch,var(--accent-success)_32%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[0_12px_24px_-16px_var(--accent-success)] hover:bg-[color-mix(in_oklch,var(--accent-success)_88%,var(--foreground))] hover:text-[var(--accent-success-foreground)]`;
   function runMobileAction(callback) {
@@ -1251,7 +1259,7 @@ export function SearchResults({
                     </div>
 
                     <div className="flex min-w-0 flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="flex min-w-0 flex-nowrap items-center gap-x-2 text-xs sm:gap-x-3">
+                      <div className="flex min-w-0 flex-nowrap items-center gap-x-2 text-xs sm:gap-x-3 lg:shrink-0">
                         {metrics.map((metric) => (
                           <div
                             key={`${item.id}-${metric.label}`}
@@ -1292,7 +1300,7 @@ export function SearchResults({
                           ) : (
                             <ImportIcon data-icon="inline-start" />
                           )}
-                          <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>{importActionText}</span>
+                          <span data-action-label="import" className="whitespace-nowrap">{importActionText}</span>
                         </Button>
                         {importedDrama ? <Button
                           type="button"
@@ -1329,7 +1337,7 @@ export function SearchResults({
                             onClick={() => openTrendDialog(item)}
                           >
                             <TrendingUpIcon data-icon="inline-start" />
-                            <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>趋势</span>
+                            <span data-action-label="trend" className="whitespace-nowrap">趋势</span>
                           </Button>
                         ) : null}
                         <Button
@@ -1346,7 +1354,7 @@ export function SearchResults({
                           )}
                         >
                           <UserSearchIcon data-icon="inline-start" />
-                          <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>付费ID</span>
+                          <span data-action-label="paid-id" className="whitespace-nowrap">付费ID</span>
                         </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -1359,7 +1367,7 @@ export function SearchResults({
                               title="更多操作"
                             >
                               <MoreHorizontalIcon data-icon="inline-start" />
-                              <span className={cn("min-w-0 truncate whitespace-nowrap", importedDrama && "hidden lg:inline")}>更多</span>
+                              <span data-action-label="more" className="whitespace-nowrap">更多</span>
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" side="bottom">

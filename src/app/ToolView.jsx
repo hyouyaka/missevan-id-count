@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createRevenueDisplayReporter } from "./revenueDisplayLog.js";
 import {
   RefreshCwIcon,
   AlertTriangleIcon,
@@ -231,6 +232,7 @@ export function ToolView({ initialAppConfig }) {
   const refreshRunUnlinksRef = useRef(new Map());
   const replaySearchGenerationRef = useRef(0);
   const historyPersistenceFailureRef = useRef(false);
+  const revenueDisplayReporterRef = useRef(null);
   const [replayPreparingEntryIds, setReplayPreparingEntryIds] = useState([]);
   const statsHistory = useStatsHistory({
     platformStates,
@@ -255,7 +257,7 @@ export function ToolView({ initialAppConfig }) {
     createTask: ({ platform, taskType, payload, signal }) => createStatsTask({
       platform,
       taskType,
-      payload,
+      payload: { ...payload, logOnFirstDisplay: taskType === "revenue" && !appConfigRef.current.desktopApp },
       signal,
       frontendVersion: appConfigRef.current.frontendVersion,
       onVersionStatus: updateVersionStatusFromResponse,
@@ -1413,6 +1415,7 @@ export function ToolView({ initialAppConfig }) {
             ? Number(result.idSelectedEpisodeCount ?? state.stats.idSelectedEpisodeCount ?? 0)
             : state.stats.idSelectedEpisodeCount,
           revenueResults: Array.isArray(result.revenueResults) ? result.revenueResults : state.stats.revenueResults,
+          revenueDisplayTaskId: Array.isArray(result.revenueResults) ? (snapshot.logOnFirstDisplay ? snapshot.taskId : "") : state.stats.revenueDisplayTaskId,
           revenueSummary: Array.isArray(result.revenueResults) ? result.revenueSummary || null : state.stats.revenueSummary,
         },
       };
@@ -1421,6 +1424,14 @@ export function ToolView({ initialAppConfig }) {
 
   function applyStatsTaskSnapshot({ platform, snapshot }) {
     applyTaskSnapshot(platform, snapshot);
+  }
+
+  function logRevenueDisplay(payload) {
+    if (appConfigRef.current.desktopApp) return;
+    revenueDisplayReporterRef.current ||= createRevenueDisplayReporter((entry) =>
+      postJson("/usage-log", entry, undefined, "收益展示日志写入失败")
+    );
+    void revenueDisplayReporterRef.current(payload);
   }
 
   function applyStatsTaskCompleted({ platform, taskType, taskId, snapshot, runData }) {
@@ -2077,7 +2088,7 @@ export function ToolView({ initialAppConfig }) {
         ...state,
         stats: {
           ...state.stats,
-          currentAction: "开始最低收益预估",
+          currentAction: "开始收益统计",
         },
       }));
       ensureStatsRunActive(platform, runId, signal);
@@ -2651,6 +2662,8 @@ export function ToolView({ initialAppConfig }) {
               playCountTotal: sharedStatsState?.playCountTotal,
               progress: sharedStatsState?.progress,
               revenueResults: sharedStatsState?.revenueResults,
+              revenueDisplayTaskId: sharedStatsState?.revenueDisplayTaskId,
+              onRevenueDisplayed: logRevenueDisplay,
               revenueSummary: sharedRevenueSummary,
               episodeDetails: sharedStatsState?.episodeDetails,
               totalDanmaku: sharedStatsState?.totalDanmaku,

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildPaidCoefficientBasis } from "../../shared/paidCoefficient.js";
+import { setPaidCoefficient } from "./paidCoefficientStore.js";
 
 import {
   createPlatformState,
   createRuntimeMeta,
   createStatsState,
+  createStatsHistoryEntry,
+  savePersistedHistoryEntries,
+  loadPersistedHistoryEntries,
 } from "./app-utils.js";
 import {
   createPlatformStatesWithHistory,
@@ -12,6 +17,44 @@ import {
   getMergedStatsHistoryEntries,
   persistStatsHistoryEntries,
 } from "./useStatsHistory.js";
+
+test("completed revenue freezes the current platform coefficient and survives history persistence", () => {
+  const harness = createHistoryHarness({ createStatsHistoryEntry });
+  const base = { dramaId: "10", title: "测试", platform: "missevan", revenueType: "season", paidUserCount: 10, rewardCoinTotal: 50, estimatedRevenueYuan: 15 };
+  const result = { ...base, paidCoefficientBasis: buildPaidCoefficientBasis(base) };
+  const snapshot = { result: { revenueResults: [result] } };
+  setPaidCoefficient("missevan", 4);
+  harness.controller.recordCompletedStatsHistory("missevan", "revenue", "first", snapshot);
+  const entry = harness.getPlatformStates().missevan.historyEntries[0];
+  assert.equal(entry.items[0].paidCoefficient, 4);
+  assert.equal(entry.items[0].segments.find((item) => item.metricKey === "revenue").value, "45");
+  setPaidCoefficient("missevan", 8);
+  assert.equal(entry.items[0].paidCoefficient, 4);
+  assert.equal(entry.items[0].segments.find((item) => item.metricKey === "revenue").value, "45");
+  harness.controller.recordCompletedStatsHistory("missevan", "revenue", "second", snapshot);
+  assert.equal(harness.getPlatformStates().missevan.historyEntries[0].items[0].paidCoefficient, 8);
+  assert.equal(result.estimatedRevenueYuan, 15);
+  let serialized;
+  const storage = { setItem(_key, value) { serialized = value; }, getItem() { return serialized; } };
+  savePersistedHistoryEntries({ missevan: [entry], manbo: [] }, storage);
+  const restored = loadPersistedHistoryEntries(storage);
+  assert.equal(restored.missevan[0].items[0].paidCoefficient, 4);
+  setPaidCoefficient("missevan", 1);
+});
+
+test("Manbo history freezes each drama's effective fractional or integer coefficient", () => {
+  const harness = createHistoryHarness({ createStatsHistoryEntry });
+  const base = { dramaId: "special", title: "特殊单集", platform: "manbo", revenueType: "episode", payCount: 76, seasonPaidUserCount: 10, episodePaidUserCountTotal: 20, paidEpisodeCount: 2, minimumEpisodePrice: 10, diamondValue: 500, estimatedRevenueYuan: 12.6, minRevenueYuan: 12.6, maxRevenueYuan: 81 };
+  const ordinary = { ...base, dramaId: "ordinary", title: "普通单集", payCount: 0 };
+  setPaidCoefficient("manbo", 9);
+  harness.controller.recordCompletedStatsHistory("manbo", "revenue", "fractional", {
+    result: { revenueResults: [base, ordinary].map((result) => ({ ...result, paidCoefficientBasis: buildPaidCoefficientBasis(result) })) },
+  });
+  const entry = harness.getPlatformStates().manbo.historyEntries[0];
+  assert.deepEqual(entry.items.map((item) => item.paidCoefficient), [7.6, 9]);
+  setPaidCoefficient("manbo", 1);
+  assert.deepEqual(entry.items.map((item) => item.paidCoefficient), [7.6, 9]);
+});
 
 function createHistoryHarness(overrides = {}) {
   let platformStates = {

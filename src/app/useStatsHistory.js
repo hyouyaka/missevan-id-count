@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { applyPaidCoefficient } from "../../shared/paidCoefficient.js";
+import { getPaidCoefficient } from "./paidCoefficientStore.js";
 
 import {
   createPlatformState,
@@ -166,6 +168,12 @@ export function createStatsHistoryController(initialOptions = {}) {
         : baseStats.revenueSummary,
     };
 
+    if (taskType === "revenue") {
+      completedStats.revenueResults = completedStats.revenueResults.map((drama) => applyPaidCoefficient(drama, getPaidCoefficient(platform)));
+      completedStats.revenueSummary = (options.resolveRevenueSummaryForHistory || resolveRevenueSummaryForHistory)(
+        completedStats.revenueResults, platform, completedStats.revenueSummary
+      );
+    }
     const historyEntry = (options.createStatsHistoryEntry || createStatsHistoryEntry)(platform, completedStats, {
       taskType,
       createdAt: (options.now || Date.now)(),

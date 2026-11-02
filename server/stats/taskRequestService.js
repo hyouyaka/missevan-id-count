@@ -88,11 +88,13 @@ export function createStatsTaskRequestService({
     playCountDramas = [],
     source = "",
     clientKey = "unknown",
+    logOnFirstDisplay = false,
   }) {
     const task = {
       taskId: createTaskId(),
       platform,
       taskType,
+      logOnFirstDisplay: taskType === "revenue" && logOnFirstDisplay === true,
       status: "queued",
       progress: 0,
       currentAction: "任务已创建",
@@ -183,6 +185,7 @@ export function createStatsTaskRequestService({
       playCountDramas,
       source,
       clientKey: req.ip,
+      logOnFirstDisplay: req.body?.logOnFirstDisplay === true,
     });
     const enqueueResult = statsTaskEngine.enqueue(task);
     if (!enqueueResult.accepted) {
