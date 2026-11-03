@@ -137,6 +137,8 @@ import { registerManboRoutes } from "./routes/manboRoutes.js";
 import { registerImageProxyRoutes } from "./routes/imageProxyRoutes.js";
 import { registerNewDramaRoutes } from "./routes/newDramaRoutes.js";
 import { registerFeedbackRoutes } from "./routes/feedbackRoutes.js";
+import { registerSiteNoticesRoutes } from "./routes/siteNoticesRoutes.js";
+import { createSiteNoticesStore } from "./services/siteNoticesStore.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
@@ -909,6 +911,19 @@ if (!DESKTOP_APP) registerFeedbackRoutes(app, {
   sendEmail: resendClient
     ? (payload) => resendClient.emails.send(payload)
     : null,
+});
+
+if (!DESKTOP_APP) registerSiteNoticesRoutes(app, {
+  store: createSiteNoticesStore({ client: upstashClient }),
+  adminToken: ADMIN_CACHE_REFRESH_TOKEN,
+  adminLimiter: rateLimit({
+    windowMs: 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    handler: createJsonRateLimitHandler("ADMIN_RATE_LIMITED", "操作过于频繁，请稍后再试。", 60),
+  }),
+  logger,
 });
 
 function sleep(ms, signal) {
@@ -12232,6 +12247,13 @@ export function isStatsTaskItemLimitExceeded(
 
 const distDirectory = path.join(__dirname, "dist");
 const distAssetsDirectory = path.join(distDirectory, "assets");
+
+app.get("/adminupdate", (_req, res) => {
+  if (DESKTOP_APP) return res.status(404).json({ success: false, message: "接口不存在" });
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  return res.sendFile(path.join(distDirectory, "index.html"));
+});
 
 app.use("/assets", express.static(distAssetsDirectory, {
   fallthrough: true,

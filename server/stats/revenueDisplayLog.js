@@ -30,7 +30,7 @@ export function buildRevenueDisplayLog(snapshot, payload) {
     revenueStage: "first_display",
     requestedPaidCoefficient: coefficient,
     paidCoefficient: coefficient,
-    result: { revenueResults, revenueSummary },
+    result: { ...snapshot.result, revenueResults, revenueSummary },
   };
 }
 

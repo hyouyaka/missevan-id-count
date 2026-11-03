@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { buildVersionedUrl } from "@/app/app-utils";
+import { SiteNoticesBoard } from "@/app/SiteNoticesBoard";
 
 const MAX_FEEDBACK_MESSAGE_LENGTH = 3000;
 const MIN_FEEDBACK_MESSAGE_LENGTH = 5;
@@ -200,6 +201,7 @@ export function FeedbackView({ frontendVersion, feedbackEnabled = false }) {
           </Accordion>
         </CardContent>
       </Card>
+      <SiteNoticesBoard />
       <Card className="border-border/70 bg-card/92">
         <CardHeader>
           <div className="flex items-start gap-3">

@@ -60,12 +60,23 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.8.6", () => {
-  assert.equal(packageJson.version, "1.8.6");
+test("package version is 1.8.7", () => {
+  assert.equal(packageJson.version, "1.8.7");
 });
 
-test("latest changelog contains the approved 1.8.6 updates", () => {
+test("latest changelog contains the approved 1.8.7 updates", () => {
   assert.deepEqual(CHANGELOG_ENTRIES[0], {
+    version: "1.8.7",
+    changes: [
+      "增加“付费系数”功能，即付费人数与付费ID数的比值，收益计算时可自行调整，默认为1。具体计算规则请参考说明与反馈页面",
+      "说明与反馈页面中增加管理员日志，主要记录一下数据库的变动",
+      "修复了在某些情况下刷新付费ID时会出现漏掉最新集数的问题",
+    ],
+  });
+});
+
+test("changelog keeps the approved 1.8.6 updates", () => {
+  assert.deepEqual(CHANGELOG_ENTRIES.find((item) => item.version === "1.8.6"), {
     version: "1.8.6",
     changes: [
       "更新了CV榜单和CV主页作品的统计与显示形式，自动合并多季作品",

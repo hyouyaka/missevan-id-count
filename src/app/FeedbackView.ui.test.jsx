@@ -4,6 +4,10 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { FeedbackView } from "@/app/FeedbackView";
 
+// The independently tested board polls its own endpoint; keep feedback form
+// assertions focused on submissions and explanation telemetry.
+vi.mock("@/app/SiteNoticesBoard", () => ({ SiteNoticesBoard: () => null }));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

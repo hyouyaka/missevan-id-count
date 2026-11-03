@@ -12,6 +12,7 @@ import {
 
 const WebToolView = lazy(() => import("@/app/ToolView").then((module) => ({ default: module.ToolView })));
 const DesktopStatisticsView = lazy(() => import("@/app/DesktopStatisticsView"));
+const AdminUpdatesView = lazy(() => import("@/app/AdminUpdatesView"));
 
 function hasTrustedDesktopMarker() {
   return typeof window !== "undefined" && window.mmToolkit?.desktopApp === true;
@@ -89,7 +90,8 @@ export function RootApp() {
   );
 
   if (configReady) {
-    const View = versionedConfig.desktopApp ? DesktopStatisticsView : WebToolView;
+    const WebView = /^\/adminupdate\/?$/.test(window.location.pathname) ? AdminUpdatesView : WebToolView;
+    const View = versionedConfig.desktopApp ? DesktopStatisticsView : WebView;
     return (
       <Suspense fallback={(
         <div className="flex min-h-screen items-center justify-center px-4 py-10">

@@ -106,6 +106,7 @@ export default defineConfig({
       "/image-proxy": backendTarget,
       "/app-config": backendTarget,
       "/feedback": backendTarget,
+      "/admin/site-notices": backendTarget,
       "/favorites/meta": backendTarget,
       "/usage-log": backendTarget,
       "/register-new-drama-ids": backendTarget,

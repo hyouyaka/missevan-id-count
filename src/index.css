@@ -851,6 +851,14 @@ body {
   [data-slot="tabs-trigger"]:not([data-touch="compact"]) {
     min-height: 2.5rem;
   }
+
+  /* Wide touch layouts use the desktop tabs but still need 40px hit targets.
+     Let the track contain those targets plus its padding; compact tabs keep
+     their existing dimensions at narrow breakpoints. */
+  [data-slot="tabs-list"]:has(> [data-slot="tabs-trigger"]:not([data-touch="compact"])) {
+    height: auto;
+    min-height: 3rem;
+  }
 }
 
 .metric-motion-play,

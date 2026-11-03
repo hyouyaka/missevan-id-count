@@ -25,6 +25,60 @@ test("display log uses effective coefficients and recalculated revenues, not cli
   assert.equal(buildRevenueDisplayLog({ ...raw, status: "running" }, { platform: "manbo", paidCoefficient: 9 }), null);
 });
 
+test("display log preserves original result fields while replacing only adjusted revenue data", () => {
+  for (const status of ["completed", "cancelled"]) {
+    const raw = snapshot();
+    raw.status = status;
+    raw.result.episodeDetails = [
+      { key: "manbo:1:101", dramaId: "1", episodeId: "101", title: "第一集", status: "success", totalDanmaku: 25, fetchedDanmaku: 24, uniqueUsers: 8, cached: true },
+      { key: "manbo:1:102", dramaId: "1", episodeId: "102", title: "第二集", status: "failed", totalDanmaku: null, fetchedDanmaku: 0, uniqueUsers: 0, cached: false },
+    ];
+    raw.result.diagnostics = { cachedEpisodeCount: 1, failedEpisodeCount: 1 };
+    raw.result.revenueSummary = { minRevenueYuan: 17.6, maxRevenueYuan: 86, dramaCount: 2 };
+    const original = structuredClone(raw);
+    const entry = buildRevenueDisplayLog(raw, { platform: "manbo", paidCoefficient: 9 });
+
+    const { revenueResults, revenueSummary, ...originalFields } = entry.result;
+    assert.deepEqual(originalFields, {
+      episodeDetails: original.result.episodeDetails,
+      diagnostics: original.result.diagnostics,
+    });
+    assert.equal(revenueResults[0].minRevenueYuan, 20.2);
+    assert.equal(revenueSummary.minRevenueYuan, 25.2);
+    assert.equal(revenueSummary.dramaCount, 2);
+    assert.notEqual(entry.result, raw.result);
+    assert.deepEqual(raw, original, "building a display log must not mutate the task snapshot");
+  }
+});
+
+test("first-display recorder preserves the complete result in completion metadata and serialized logs", async () => {
+  const raw = snapshot();
+  raw.result.episodeDetails = [
+    { episodeId: "101", status: "success", fetchedDanmaku: 24, uniqueUsers: 8 },
+    { episodeId: "102", status: "failed", fetchedDanmaku: 0, uniqueUsers: 0 },
+  ];
+  raw.result.diagnostics = { failedEpisodeCount: 1 };
+  const original = structuredClone(raw);
+  let completedSnapshot;
+  let logged;
+  const recorder = createRevenueDisplayLogRecorder({
+    getSnapshot: () => raw,
+    buildCompletedLog: (task) => {
+      completedSnapshot = task;
+      return { episodeCount: task.result.episodeDetails?.length || 0 };
+    },
+    writeLog: async (entry) => { logged = JSON.parse(JSON.stringify(entry)); },
+  });
+  assert.equal(await recorder({ taskId: raw.taskId, platform: "manbo", paidCoefficient: 9 }), true);
+  assert.deepEqual(completedSnapshot.result.episodeDetails, original.result.episodeDetails);
+  assert.deepEqual(logged.result.episodeDetails, original.result.episodeDetails);
+  assert.deepEqual(logged.result.diagnostics, original.result.diagnostics);
+  assert.equal(logged.episodeCount, 2);
+  assert.equal(logged.result.revenueResults[0].minRevenueYuan, 20.2);
+  assert.equal(logged.result.revenueSummary.minRevenueYuan, 25.2);
+  assert.deepEqual(raw, original);
+});
+
 test("concurrent and later display deliveries log once without changing the first coefficient", async () => {
   const entries = [];
   const recorder = createRevenueDisplayLogRecorder({ getSnapshot: (id) => id === "task-1" ? snapshot() : null, writeLog: async (entry) => entries.push(entry) });

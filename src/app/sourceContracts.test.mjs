@@ -23,6 +23,28 @@ const favoritesRefreshServiceSource = readFileSync(new URL("./favoritesRefreshSe
 const favoritesStorageSource = readFileSync(new URL("./favoritesStorage.js", import.meta.url), "utf8");
 const useFavoriteRefreshSource = readFileSync(new URL("./useFavoriteRefresh.js", import.meta.url), "utf8");
 const feedbackViewSource = readSourceIfExists("./FeedbackView.jsx");
+const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
+const siteNoticesBoardSource = readSourceIfExists("./SiteNoticesBoard.jsx");
+const siteNoticesFeedSource = readSourceIfExists("./SiteNoticesFeed.jsx");
+const adminUpdatesViewSource = readSourceIfExists("./AdminUpdatesView.jsx");
+
+test("admin logs are a public feed with matching icon and a separate unlinked editor", () => {
+  assert.match(siteNoticesBoardSource, /<CardTitle>管理员日志<\/CardTitle>/);
+  assert.match(siteNoticesBoardSource, /一些数据库的更新和已发现待解决的问题/);
+  assert.match(siteNoticesBoardSource, /size-10 shrink-0 items-center justify-center rounded-xl bg-primary\/10 text-primary/);
+  assert.match(siteNoticesBoardSource, /<LightbulbIcon aria-hidden="true" className="size-5" \/>/);
+  assert.doesNotMatch(siteNoticesBoardSource, /管理员编辑|ADMIN_CACHE_REFRESH_TOKEN|adminupdate|\/admin\//);
+  assert.match(siteNoticesFeedSource, /<AvatarImage src="\/icon.png"/);
+  assert.match(siteNoticesFeedSource, />MMToolkit<\/span>/);
+  assert.match(siteNoticesFeedSource, /max-h-\[min\(32rem,65dvh\)\]/);
+  assert.match(siteNoticesFeedSource, /overflow-y-auto/);
+  assert.match(siteNoticesFeedSource, /onDelete \?/);
+  assert.doesNotMatch(siteNoticesFeedSource, /Accordion|entry\.type|entry\.status/);
+  assert.match(rootAppSource, /import\("@\/app\/AdminUpdatesView"\)/);
+  assert.match(rootAppSource, /window\.location\.pathname\) \? AdminUpdatesView : WebToolView/);
+  assert.match(adminUpdatesViewSource, /type="password" autoComplete="off"/);
+  assert.doesNotMatch(adminUpdatesViewSource, /localStorage|sessionStorage|记录类型|问题状态/);
+});
 const homeViewSource = readSourceIfExists("./HomeView.jsx");
 const lazyRankTrendDialogSource = readSourceIfExists("./LazyRankTrendDialog.jsx");
 const landingViewSource = readSourceIfExists("./LandingView.jsx");
@@ -61,7 +83,6 @@ const dramaCompareSource = readFileSync(new URL("./DramaCompare.jsx", import.met
 const dramaCompareUtilsSource = readFileSync(new URL("./dramaCompareUtils.js", import.meta.url), "utf8");
 const useDramaCompareSource = readFileSync(new URL("./useDramaCompare.js", import.meta.url), "utf8");
 const navigationSource = readFileSync(new URL("./navigation.jsx", import.meta.url), "utf8");
-const rootAppSource = readFileSync(new URL("./RootApp.jsx", import.meta.url), "utf8");
 const desktopStatisticsSource = readFileSync(new URL("./DesktopStatisticsView.jsx", import.meta.url), "utf8");
 const desktopRuntimePolicySource = readFileSync(new URL("../../server/runtimePolicy.js", import.meta.url), "utf8");
 const applicationSource = readFileSync(new URL("../../server/application.js", import.meta.url), "utf8");
@@ -240,6 +261,8 @@ test("search result platform tabs avoid WebKit intrinsic grid sizing", () => {
   const resultsHeaderStart = searchResultsSource.indexOf("{showResultsHeader ? (");
   const resultsHeaderEnd = searchResultsSource.indexOf("{showingCvResults ? (", resultsHeaderStart);
   const resultsHeaderSource = searchResultsSource.slice(resultsHeaderStart, resultsHeaderEnd);
+  // Search uses this same compact tab row at both phone and wide touch widths.
+  assert.match(resultsHeaderSource, /<TabsTrigger[\s\S]*data-touch="compact"[\s\S]*data-platform=\{item\.key\}/);
   assert.doesNotMatch(resultsHeaderSource, /grid-cols-2|grid-template-columns/);
   assert.doesNotMatch(resultsHeaderSource, /flex-1/);
 });
@@ -993,7 +1016,7 @@ test("desktop uses an independent statistics container without legacy feature ow
   assert.doesNotMatch(platformSource, /\{ key: "favorites", label: "收藏" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "ongoing", label: "更新" \}/);
   assert.doesNotMatch(platformSource, /\{ key: "ranks", label: "榜单" \}/);
-  assert.match(rootAppSource, /versionedConfig\.desktopApp \? DesktopStatisticsView : WebToolView/);
+  assert.match(rootAppSource, /versionedConfig\.desktopApp \? DesktopStatisticsView : WebView/);
   assert.match(desktopStatisticsSource, /<SearchPanel[\s\S]*<SearchWorkspace/);
   assert.match(desktopStatisticsSource, /showHistory: false/);
   assert.match(desktopStatisticsSource, /window\.addEventListener\("pagehide", notifyPageExit\)/);
@@ -1101,6 +1124,9 @@ test("web feedback route uses the anonymous Resend-backed form", () => {
   assert.match(feedbackViewSource, /请填写表格提交反馈，也可私信小红书账号/);
   assert.match(feedbackViewSource, /<CardTitle>建议反馈<\/CardTitle>/);
   assert.match(feedbackViewSource, /<CardTitle>统计说明<\/CardTitle>/);
+  assert.match(feedbackViewSource, /<SiteNoticesBoard \/>/);
+  assert.ok(feedbackViewSource.indexOf("<SiteNoticesBoard />") > feedbackViewSource.indexOf("<CardTitle>统计说明</CardTitle>"));
+  assert.ok(feedbackViewSource.indexOf("<SiteNoticesBoard />") < feedbackViewSource.indexOf("<CardTitle>建议反馈</CardTitle>"));
   assert.match(feedbackViewSource, /feedbackEnabled \?/);
   assert.match(feedbackViewSource, /反馈暂未启用/);
   assert.match(feedbackViewSource, /如需交流，可私信小红书账号/);
@@ -1260,6 +1286,13 @@ test("mobile compact controls preserve visual density with non-layout hit areas"
   assert.match(rankTrendUiSource, /const trendActionVisualClassName =\s*\n\s*"pointer-events-none inline-flex/);
   assert.match(checkboxSource, /size-4[^"]*after:-inset-x-3 after:-inset-y-2/);
   assert.match(switchSource, /after:-inset-x-3 after:-inset-y-2/);
+});
+
+test("touch tab tracks expand with non-compact hit targets at desktop breakpoints", () => {
+  const start = indexCssSource.indexOf("@media (pointer: coarse)");
+  const coarseStyles = indexCssSource.slice(start, indexCssSource.indexOf("\n}", start) + 2);
+  assert.match(coarseStyles, /\[data-slot="tabs-trigger"\]:not\(\[data-touch="compact"\]\) \{\s*min-height: 2\.5rem;/);
+  assert.match(coarseStyles, /\[data-slot="tabs-list"\]:has\(> \[data-slot="tabs-trigger"\]:not\(\[data-touch="compact"\]\)\) \{\s*height: auto;\s*min-height: 3rem;/);
 });
 
 test("running statistics cancel keeps a compact visual with an expanded hit area", () => {

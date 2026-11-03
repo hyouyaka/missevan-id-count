@@ -206,6 +206,7 @@ These runtime locations resolve relative to `APP_DATA_DIR` when running in deskt
 | `missevanInfoStore` | Upstash `missevan:info:meta:v2` + `missevan:info:v2` | stale in-memory snapshot, then empty snapshot | Searchable Missevan title metadata |
 | `cvInfoStore` | Upstash `cvid-map:meta:v1` + `cvid-map:v1` | stale in-memory snapshot, then empty snapshot | Canonical CV identities, explicit aliases, platform IDs, and avatars |
 | `newDramaIdsStore` | Upstash `new:dramaIDs` | `runtime/new-drama-ids.json` | Captured new IDs |
+| administrator logs | Upstash `site:notices:v1` | last successfully loaded in-process snapshot | Unified public post feed, edited through the separate `/adminupdate` page; one startup GET, one SET per changed publication, no Redis reads on visitor requests |
 | cooldown state | Upstash `missevan:cooldown:v1` | in-memory only when persistence disabled | Direct, Render fallback, and Deno fallback access-denial recovery state |
 | ranks and ongoing snapshots | Latest/common keys plus v2 Hash `ranks:trend:{platform}:v2`, `ranks:trend:cv:v2`, `ranks:trend:peak:missevan:v2` | stale entity cache or unavailable trend | Rank, trend, and ongoing APIs |
 | weekly playback snapshots | Upstash Hash `{platform}:watchcount:history` | none | Weekly playback fallback for titles without five valid metric dates |
