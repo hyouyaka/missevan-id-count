@@ -1,5 +1,4 @@
 import {
-  getRepeatedTrendSampleDateSet,
   getRankTrendMetricConfigs,
   normalizeRankTrendDates,
   resolveRankTrendWindowEndDate,
@@ -591,15 +590,8 @@ export function buildOngoingResponse({
   const currentSnapshot = latestDate ? metricSnapshotsByDate[latestDate] : null;
   const items = ids
     .map((id) => {
-      const staleDateSet = getRepeatedTrendSampleDateSet({
-        dates,
-        snapshotsByDate: metricSnapshotsByDate,
-        platform: normalizedPlatform,
-        id,
-      });
-      const currentDrama = staleDateSet.has(latestDate)
-        ? null
-        : getDramaMetrics(currentSnapshot, id);
+      // Equal counters are valid zero growth; only missing current data is unavailable.
+      const currentDrama = getDramaMetrics(currentSnapshot, id);
       const staticDrama = getStaticDrama(staticDramasById, id, dates, metricSnapshotsByDate);
       const hasAnyNonZeroMetricValues = getAnyNonZeroMetricValues(
         normalizedPlatform,

@@ -108,7 +108,7 @@ test("rank response appends normalized CV ranks per platform", async () => {
     },
   });
 
-  assert.equal(response.schemaVersion, 6);
+  assert.equal(response.schemaVersion, 7);
   assert.deepEqual(response.meta, {
     normal: { publishedAt: "2026-06-10T08:05:00+00:00" },
     cv: { publishedAt: "2026-06-10T09:35:00+00:00" },
@@ -356,7 +356,7 @@ test("rank response keeps ordinary ranks when CV snapshot is unavailable", async
     null
   );
 
-  assert.equal(response.schemaVersion, 6);
+  assert.equal(response.schemaVersion, 7);
   assert.deepEqual(response.meta, {
     normal: { publishedAt: "" },
     cv: { publishedAt: "" },
@@ -367,10 +367,12 @@ test("rank response keeps ordinary ranks when CV snapshot is unavailable", async
   assert.equal(response.platforms.manbo.categories.some((category) => category.key === "cv"), false);
 });
 
-test("rank response preserves 30-item and 50-item Missevan popular and bestseller ranks", async () => {
+test("rank response reads legacy, object and mixed Missevan rank items", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildNormalizedRanksResponse } = await import("./server.js");
   const rankKeys = [
+    "new_daily",
+    "new_weekly",
     "popular_weekly",
     "popular_monthly",
     "bestseller_weekly",
@@ -388,30 +390,99 @@ test("rank response preserves 30-item and 50-item Missevan popular and bestselle
         danmaku_uid_count: index >= 30 ? "  无需抓取  " : index,
       },
     ]));
-    const ranks = Object.fromEntries(rankKeys.map((key) => [
-      key,
-      { name: key, items: ids },
-    ]));
+    const formats = [
+      ids.map(Number),
+      ids,
+      ids.map((dramaId, index) => ({ dramaId, position: index + 1 })),
+      ids.map((dramaId, index) => index % 2 ? { dramaId } : Number(dramaId)),
+    ];
+    let legacyRanks;
+    for (const items of formats) {
+      const ranks = Object.fromEntries(rankKeys.map((key) => [
+        key,
+        { name: key, items },
+      ]));
+      const response = buildNormalizedRanksResponse({
+        missevan: { ranks, dramas },
+        manbo: { ranks: {}, dramas: {} },
+      });
+      const ordinaryRanks = response.platforms.missevan.categories.flatMap((category) => category.ranks);
+      legacyRanks ??= ordinaryRanks;
+      assert.deepEqual(ordinaryRanks, legacyRanks);
+      assert.deepEqual(ordinaryRanks.map((rank) => rank.key), rankKeys);
+      ordinaryRanks.forEach((rank) => {
+        assert.equal(rank.items.length, itemCount);
+        assert.equal(rank.items.at(-1).rank, itemCount);
+        assert.equal(rank.items.at(-1).id, 10000 + itemCount - 1);
+        assert.equal(rank.items[29].danmaku_uid_count, 29);
+        if (itemCount === 50) {
+          assert.equal(rank.items[30].danmaku_uid_count, null);
+          assert.equal(rank.items[49].danmaku_uid_count, null);
+        }
+      });
+    }
+  }
+});
 
-    const response = buildNormalizedRanksResponse({
-      missevan: { ranks, dramas },
-      manbo: { ranks: {}, dramas: {} },
-    });
-    const ordinaryRanks = response.platforms.missevan.categories
-      .filter((category) => ["popular", "bestseller"].includes(category.key))
-      .flatMap((category) => category.ranks);
+test("rank response preserves official positions and rank-only cards across platforms", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+  const dramaId = "2238948515889807453";
+  const snapshot = {
+    missevan: {
+      ranks: {
+        popular_weekly: { items: [
+          { dramaId: "invalid", position: 1 },
+          { dramaId: "94604", position: 14 },
+          { dramaId: "86778", position: "15" },
+        ] },
+        peak: { items: [{ name: "巅峰系列", position: 8, dramaIds: ["86778"] }] },
+      },
+      dramas: {
+        "94604": { name: "重创星纪元", cover: "cover.jpg", maincvs: null, view_count: 12345 },
+        "86778": { name: "普通剧目", maincvs: ["甲", "乙"] },
+      },
+    },
+    manbo: {
+      ranks: {
+        hot: { unitName: "热度", items: [{ dramaId, position: 14, hotValue: 88.5 }] },
+        diamond_monthly: { items: [{ dramaId, position: 3, diamondValue: 123.5 }] },
+      },
+      dramas: { [dramaId]: { name: "漫播作品", maincvs: null } },
+    },
+  };
+  const response = buildNormalizedRanksResponse(snapshot);
+  const ranks = (platform) => Object.fromEntries(response.platforms[platform].categories
+    .flatMap((category) => category.ranks).map((rank) => [rank.key, rank.items]));
+  const missevan = ranks("missevan");
+  assert.deepEqual(missevan.popular_weekly.map((item) => [item.id, item.rank]), [[94604, 14], [86778, 15]]);
+  assert.equal(missevan.popular_weekly[0].name, "重创星纪元");
+  assert.equal(missevan.popular_weekly[0].cover, "cover.jpg");
+  assert.equal(missevan.popular_weekly[0].view_count, 12345);
+  assert.deepEqual(missevan.popular_weekly[0].main_cvs, []);
+  assert.deepEqual(missevan.popular_weekly[1].main_cvs, ["甲", "乙"]);
+  assert.equal(missevan.peak[0].rank, 8);
+  const manbo = ranks("manbo");
+  assert.equal(manbo.hot[0].id, dramaId);
+  assert.equal(manbo.hot[0].rank, 14);
+  assert.equal(manbo.hot[0].rank_value, 88.5);
+  assert.equal(manbo.diamond_monthly[0].rank, 3);
+  assert.equal(manbo.diamond_monthly[0].rank_value, 123.5);
+});
 
-    assert.deepEqual(ordinaryRanks.map((rank) => rank.key), rankKeys);
-    ordinaryRanks.forEach((rank) => {
-      assert.equal(rank.items.length, itemCount);
-      assert.equal(rank.items.at(-1).rank, itemCount);
-      assert.equal(rank.items.at(-1).id, 10000 + itemCount - 1);
-      assert.equal(rank.items[29].danmaku_uid_count, 29);
-      if (itemCount === 50) {
-        assert.equal(rank.items[30].danmaku_uid_count, null);
-        assert.equal(rank.items[49].danmaku_uid_count, null);
-      }
-    });
+test("rank response falls back to source order for missing or invalid positions", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+  const positions = [undefined, null, "", 0, -1, 1.5, "bad", Infinity, true, [], {}];
+  const items = positions.map((position) => ({ dramaId: "1", name: "系列", position }));
+  const response = buildNormalizedRanksResponse({
+    missevan: { ranks: { new_daily: { items }, peak: { items } }, dramas: { "1": { name: "猫耳作品" } } },
+    manbo: { ranks: { hot: { items } }, dramas: { "1": { name: "漫播作品" } } },
+  });
+  for (const platform of Object.values(response.platforms)) {
+    for (const rank of platform.categories.flatMap((category) => category.ranks)) {
+      assert.deepEqual(rank.items.map((item) => item.rank), positions.map((_, index) => index + 1));
+    }
   }
 });
 
@@ -565,7 +636,7 @@ test("cached ranks response syncs published times when meta versions are unchang
     cvUpdatedAt: "cv-version",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "normal-version",
       cvSummary: { updatedAt: "cv-version" },
       meta: {
@@ -887,7 +958,7 @@ test("cached ranks response refreshes normal snapshot when meta normal version a
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -951,7 +1022,7 @@ test("cached ranks response throttles stale fallback meta probes outside active 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1009,7 +1080,7 @@ test("cached ranks response periodically probes meta even when idle response is 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1071,7 +1142,7 @@ test("cached ranks response backs off fallback meta probe failures", async () =>
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1129,7 +1200,7 @@ test("cached ranks response reports meta-refresh when active probe reads unchang
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "2026-06-14T20:37:24-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1174,7 +1245,7 @@ test("cached ranks response records meta versions after refresh to avoid repeate
     cvUpdatedAt: "old-cv",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
       platforms: {
@@ -1236,7 +1307,7 @@ test("cached ranks response reads and commits only the independently refreshed C
   };
   const response = {
     success: true,
-    schemaVersion: 6,
+    schemaVersion: 7,
     updatedAt: "same-normal",
     cvSummary: { updatedAt: "same-cv" },
     growthSummary: { updatedAt: "old-growth" },
@@ -1354,7 +1425,7 @@ test("cached ranks response preserves and retries CV or growth when the refreshe
     normalUpdatedAt: "same-normal",
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "same-normal",
       cvSummary: { updatedAt: "old-cv" },
       growthSummary: { updatedAt: "old-growth" },
@@ -1567,7 +1638,7 @@ test("admin ranks force refresh does not partially mutate cache when a requested
     },
     response: {
       success: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
     },
@@ -2286,13 +2357,19 @@ test("admin ranks non-force refresh does not poison a cold cache when meta is un
   assert.equal(__getRanksCacheForTest().response, null);
 });
 
-test("rank response cache validator changes when rank versions or published times update", async () => {
+test("rank response cache validator changes when schema, rank versions or published times update", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
-  const { getRanksResponseCacheValidator } = await import("./server.js");
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("./server.js");
+
+  const response = buildNormalizedRanksResponse({});
+  assert.notEqual(
+    getRanksResponseCacheValidator(response),
+    getRanksResponseCacheValidator({ ...response, schemaVersion: 6 })
+  );
 
   const normalVersion = "2026-06-12T23:10:00+00:00";
   const firstValidator = getRanksResponseCacheValidator({
-    schemaVersion: 6,
+    schemaVersion: 7,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-12T04:04:24+00:00" },
     meta: {
@@ -2301,7 +2378,7 @@ test("rank response cache validator changes when rank versions or published time
     },
   });
   const secondValidator = getRanksResponseCacheValidator({
-    schemaVersion: 6,
+    schemaVersion: 7,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-13T04:04:24+00:00" },
     meta: {

@@ -406,9 +406,9 @@ const ranksCache = {
 const rankTrendAggregateCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const RANKS_RESPONSE_SCHEMA_VERSION = 6;
+const RANKS_RESPONSE_SCHEMA_VERSION = 7;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 8;
-const ONGOING_RESPONSE_SCHEMA_VERSION = 6;
+const ONGOING_RESPONSE_SCHEMA_VERSION = 7;
 
 function getFiniteNumberEnv(name, fallbackValue) {
   const rawValue = process.env[name];
@@ -2891,6 +2891,12 @@ function normalizeRankNumber(value) {
   return Number.isFinite(normalized) ? normalized : null;
 }
 
+function getRankPosition(item, index) {
+  const value = item?.position;
+  const position = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
+  return Number.isSafeInteger(position) && position > 0 ? position : index + 1;
+}
+
 function normalizeDanmakuRankNumber(value) {
   return isSkippedDanmakuMetricValue(value) ? null : normalizeRankNumber(value);
 }
@@ -2967,7 +2973,7 @@ function buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot =
     const mainCvs = normalizeStringArray(item?.cvs, 20);
     const peakSeriesRecord = getMissevanPeakSeriesRecord(peakTrendSnapshot, name);
     return {
-      rank: index + 1,
+      rank: getRankPosition(item, index),
       name,
       cover: normalizeTextValue(item?.cover),
       view_count: normalizeRankNumber(item?.view_count) ?? 0,
@@ -2980,7 +2986,7 @@ function buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot =
     };
   }
 
-  const dramaId = String(item ?? "").trim();
+  const dramaId = String((typeof item === "object" ? item?.dramaId : item) ?? "").trim();
   if (!isNumericId(dramaId)) {
     return null;
   }
@@ -2997,7 +3003,7 @@ function buildMissevanRankCard(rankKey, item, index, dramas, peakTrendSnapshot =
   });
 
   return {
-    rank: index + 1,
+    rank: getRankPosition(item, index),
     id: Number(dramaId),
     name: normalizeTextValue(drama.name),
     cover: normalizeTextValue(drama.cover),
@@ -3049,7 +3055,7 @@ function buildManboRankCard(rankKey, rank, item, index, dramas) {
   });
 
   return {
-    rank: index + 1,
+    rank: getRankPosition(item, index),
     id: dramaId,
     name: normalizeTextValue(drama.name),
     cover: normalizeTextValue(drama.cover),

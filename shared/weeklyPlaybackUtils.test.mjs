@@ -3,57 +3,7 @@ import test from "node:test";
 import {
   buildWeeklyPlaybackTrendResponse,
   countValidMetricSamples,
-  normalizeWeeklyPlaybackIndex,
-  normalizeWeeklyPlaybackBundle,
-  normalizeWeeklyPlaybackSnapshot,
 } from "./weeklyPlaybackUtils.js";
-
-test("weekly playback normalization accepts indexed keys and watch count aliases", () => {
-  const index = normalizeWeeklyPlaybackIndex(JSON.stringify({
-    version: 2,
-    platform: "missevan",
-    granularity: "weekly",
-    dates: ["2026-05-17", "2026-05-10"],
-    keys: { "2026-05-10": "missevan:watchcount:2026-05-10" },
-  }), "missevan");
-  const snapshot = normalizeWeeklyPlaybackSnapshot(JSON.stringify({
-    date: "2026-05-10",
-    records: [{ id: "93038", title: "一屋暗灯", watch_count: "1234" }],
-  }), "missevan");
-
-  assert.deepEqual(index.dates, ["2026-05-10", "2026-05-17"]);
-  assert.equal(index.keys["2026-05-10"], "missevan:watchcount:2026-05-10");
-  assert.deepEqual(snapshot.dramas["93038"], {
-    id: "93038",
-    name: "一屋暗灯",
-    view_count: 1234,
-  });
-});
-
-test("weekly playback normalization accepts production counts snapshots", () => {
-  const snapshot = normalizeWeeklyPlaybackSnapshot(JSON.stringify({
-    _meta: { updated_at: "2026-06-19T00:00:00.000Z" },
-    date: "2026-06-19",
-    counts: {
-      "93038": { name: "一屋暗灯", view_count: 1234, fetched_at: "2026-06-19T00:00:00.000Z" },
-    },
-  }), "missevan");
-
-  assert.deepEqual(snapshot.dramas["93038"], {
-    id: "93038",
-    name: "一屋暗灯",
-    view_count: 1234,
-    generated_at: "2026-06-19T00:00:00.000Z",
-  });
-  assert.equal(snapshot.generatedAt, "2026-06-19T00:00:00.000Z");
-
-  const bundle = normalizeWeeklyPlaybackBundle({
-    platform: "missevan",
-    index: { platform: "missevan", dates: ["2026-06-19"] },
-    snapshotsByDate: { "2026-06-19": snapshot },
-  });
-  assert.equal(bundle.generatedAt, "2026-06-19T00:00:00.000Z");
-});
 
 test("weekly playback trend prefers watchcount and fills missing dates from metric view counts", () => {
   const response = buildWeeklyPlaybackTrendResponse({

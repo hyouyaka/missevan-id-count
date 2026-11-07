@@ -288,22 +288,16 @@ This subsystem is backed by shared domain utilities and Upstash snapshot keys.
 
 #### Weekly playback consumer contract
 
-The canonical index fallback accepts this structure:
+The consumer reads `{platform}:watchcount:history` as a Redis Hash. Each field is a drama ID and its value is a JSON string with this structure:
 
 ```json
 {
-  "version": 1,
-  "platform": "missevan",
-  "granularity": "weekly",
-  "dates": ["2026-05-10", "2026-05-17"],
-  "keys": {
-    "2026-05-10": "missevan:watchcount:2026-05-10",
-    "2026-05-17": "missevan:watchcount:2026-05-17"
-  }
+  "name": "一屋暗灯",
+  "points": [["2026-05-10", 1234], ["2026-05-17", 1567]]
 }
 ```
 
-Snapshot values may expose `view_count`, `watch_count`, or `play_count` records keyed by drama ID. The compatibility fallbacks remain available while production and older clients coexist.
+Only requested drama IDs are fetched with `HMGET`. Missing or invalid history does not trigger reads of retired date snapshots or indexes, and the consumer never scans for those keys. The producer continues to maintain `{platform}:watchcount:latest` and `{platform}:watchcount:archive:v1`; neither is a weekly-history fallback.
 
 ### Ongoing System
 - `GET /ongoing` first reads `ongoing:{platform}` IDs, then requests only those fields from `ranks:trend:{platform}:v2`; invalid v2 falls back to `ranks:trend:{platform}`. It computes 3-day, 7-day, and 30-day windows without changing the response schema.

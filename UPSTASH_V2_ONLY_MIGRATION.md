@@ -122,7 +122,7 @@ python build_cv_ranks.py --backfill-cv-trend-v2
 - 在 v2-only 测试环境通过 mock 或 Upstash 命令记录断言：所有读取只访问 v2 或 canonical key，不得出现上一节列出的 v1 key。
 - 对搜索、普通榜单、趋势、CV、巅峰、在播和周播执行切换前后 HTTP 响应深度快照对比；忽略合法变化的发布时间，其他响应 schema 保持一致。
 - 覆盖 info meta 未变化、单平台变化、SHA 不匹配、v2 缺失、Hash field 缺失、超时和上一份内存快照保留。
-- 覆盖周播正常路径一次 `HGET/HMGET`、history 异常后的 canonical index 回退，以及“至少两个不同日期的数据点才可显示”。
+- 覆盖周播正常路径按实体一次 `HMGET`、history 缺失或异常时不读取日期快照/index、不执行 `SCAN`，以及“至少两个不同日期的数据点才可显示”。
 - 执行：
 
 ```powershell
