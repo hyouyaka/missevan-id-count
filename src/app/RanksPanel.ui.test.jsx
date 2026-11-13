@@ -116,6 +116,56 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+test.each(["missevan", "manbo"])("labor rank %s emphasizes series counts without trend or growth", async (platform) => {
+  const works = [{ platform, dramaId: "101", title: "勤劳作品", viewCount: 100 }];
+  testState.payload.platforms[platform] ||= { key: platform, label: platform === "manbo" ? "漫播" : "猫耳", categories: [] };
+  testState.payload.platforms[platform].categories = [{ key: "cv", label: "CV榜", ranks: [
+    { key: "cv-series-count", label: "勤劳榜", name: "CV勤劳榜", fetchedAt: "2026-11-13T12:00:00Z", items: [
+      { cvName: "勤劳CV", rank: 1, seriesCount: 48, totalViewCount: 123456789, works, playbackDelta: { available: true, delta: 100 } },
+      { cvName: "无播放CV", rank: 2, seriesCount: 47, totalViewCount: null, works: [] },
+    ] },
+  ] }];
+  const onOpenCv = vi.fn();
+  render(<RanksPanel routeState={{ view: "ranks", platform, category: "cv", rank: "cv-series-count" }} onOpenCv={onOpenCv} />);
+  const count = screen.getAllByLabelText("系列数: 48")[0];
+  expect(count).toHaveClass("font-semibold");
+  const playback = screen.getAllByLabelText("总播放量: 1.23亿")[0];
+  expect(playback.querySelector("span")).toHaveClass("font-medium");
+  expect(screen.getAllByLabelText("总播放量: 暂无数据").length).toBeGreaterThan(0);
+  expect(screen.queryByText(/周增：/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "查看勤劳CV趋势" })).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getAllByRole("button", { name: "勤劳CV", exact: true })[0]);
+  expect(onOpenCv).toHaveBeenCalledWith("勤劳CV", expect.objectContaining({ platform, rankKey: "cv-series-count" }));
+  await user.click(screen.getAllByRole("button", { name: "展开勤劳CV作品列表" })[0]);
+  expect(screen.getByRole("button", { name: "勤劳作品", exact: true })).toBeInTheDocument();
+});
+
+test("labor ranks render all 32 CVs including every tied 30th place", () => {
+  const items = Array.from({ length: 32 }, (_, index) => ({
+    cvName: `并列显示CV${index + 1}`, rank: index < 29 ? index + 1 : 30,
+    seriesCount: index < 29 ? 40 - index : 10, totalViewCount: null, works: [],
+  }));
+  testState.payload.platforms.missevan.categories = [{ key: "cv", label: "CV榜", ranks: [
+    { key: "cv-series-count", label: "勤劳榜", name: "CV勤劳榜", fetchedAt: "", items },
+  ] }];
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "cv", rank: "cv-series-count" }} />);
+  const rendered = screen.getAllByRole("button", { name: /^并列显示CV\d+$/ });
+  // The responsive component mounts desktop and mobile columns; each keeps all rows.
+  expect(rendered).toHaveLength(64);
+  expect(screen.getAllByText("32 位 CV")).toHaveLength(2);
+  expect(screen.getAllByText("第30名")).toHaveLength(6);
+  expect(screen.getAllByRole("button", { name: "并列显示CV32", exact: true })).toHaveLength(2);
+});
+
+test("labor ranks keep empty legacy data visible", () => {
+  testState.payload.platforms.missevan.categories = [{ key: "cv", label: "CV榜", ranks: [
+    { key: "cv-series-count", label: "勤劳榜", name: "CV勤劳榜", fetchedAt: "", items: [] },
+  ] }];
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "cv", rank: "cv-series-count" }} />);
+  expect(screen.getAllByText("该榜单暂无数据").length).toBeGreaterThan(0);
+});
+
 test("CV ranks preview series cards closed and retain closed groups when the outer list reopens", async () => {
   const user = userEvent.setup();
   const works = [

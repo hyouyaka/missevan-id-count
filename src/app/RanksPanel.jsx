@@ -721,14 +721,14 @@ function CvWorksList({ works = [], platform, onOpenSearchResult, frontendVersion
   );
 }
 
-function useCvRankTrend({ item, frontendVersion, handleVersionResponse }) {
+function useCvRankTrend({ item, frontendVersion, handleVersionResponse, enabled = true }) {
   const [isTrendOpen, setIsTrendOpen] = useState(false);
   const [trendState, setTrendState] = useState({
     isLoading: false,
     error: "",
     data: null,
   });
-  const canShowTrend = Boolean(item.cvName);
+  const canShowTrend = enabled && Boolean(item.cvName);
 
   async function openTrendDialog() {
     if (!canShowTrend) {
@@ -791,25 +791,30 @@ function useCvRankTrend({ item, frontendVersion, handleVersionResponse }) {
   };
 }
 
-function CvRankActions({ item, canShowTrend, onOpenTrend, className }) {
+function CvRankActions({ item, canShowTrend, onOpenTrend, className, isSeriesCountRank = false }) {
+  const label = isSeriesCountRank ? "总播放量" : "系列数";
+  const text = isSeriesCountRank
+    ? Number.isFinite(item.totalViewCount) ? formatRankCompactCount(item.totalViewCount) : "暂无数据"
+    : formatPlainNumber(item.seriesCount ?? item.workCount);
+  const MetricIcon = isSeriesCountRank ? PlayCircleIcon : ScrollTextIcon;
   return (
     <div className={className}>
       <div
-        aria-label={`系列数: ${formatPlainNumber(item.seriesCount ?? item.workCount)}`}
-        title={`系列数: ${formatPlainNumber(item.seriesCount ?? item.workCount)}`}
+        aria-label={`${label}: ${text}`}
+        title={`${label}: ${text}`}
         className="flex min-w-0 items-center gap-1.5"
       >
-        <ScrollTextIcon aria-hidden="true" className={metaIconClassName} />
+        <MetricIcon aria-hidden="true" className={metaIconClassName} />
         <span className="min-w-0 break-all font-medium tabular-nums text-foreground">
-          {formatPlainNumber(item.seriesCount ?? item.workCount)}
+          {text}
         </span>
       </div>
-      <RankTrendDeltaBadge
+      {!isSeriesCountRank && <RankTrendDeltaBadge
         metric={item.playbackDelta}
         className="h-[1.35rem] px-1.5 text-[0.68rem]"
       >
         周增：{formatRankTrendCompactDelta(item.playbackDelta)}
-      </RankTrendDeltaBadge>
+      </RankTrendDeltaBadge>}
       {canShowTrend ? (
         <RankTrendButton
           appearance="link"
@@ -834,6 +839,11 @@ function CvRankItemCard({
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedSeries, setExpandedSeries] = useState(() => new Set());
+  const isSeriesCountRank = rankKey === "cv-series-count";
+  const primaryMetricLabel = isSeriesCountRank ? "系列数" : "总播放量";
+  const primaryMetricText = isSeriesCountRank
+    ? formatPlainNumber(item.seriesCount ?? item.workCount) : formatRankCompactCount(item.totalViewCount);
+  const PrimaryMetricIcon = isSeriesCountRank ? ScrollTextIcon : PlayCircleIcon;
   const series = item.series || groupCvSeries(item.works || []);
   const worksRegionId = useId();
   const {
@@ -842,7 +852,7 @@ function CvRankItemCard({
     openTrendDialog,
     setIsTrendOpen,
     trendState,
-  } = useCvRankTrend({ item, frontendVersion, handleVersionResponse });
+  } = useCvRankTrend({ item, frontendVersion, handleVersionResponse, enabled: !isSeriesCountRank });
   const avatarUrl = buildProxyImageUrl(item.avatar);
   const topWorksText = getCvWorksPreviewText(item.topSeries || series);
 
@@ -875,17 +885,18 @@ function CvRankItemCard({
               {item.cvName}
             </button>
             <div
-              aria-label={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
-              title={`总播放量: ${formatRankCompactCount(item.totalViewCount)}`}
+              aria-label={`${primaryMetricLabel}: ${primaryMetricText}`}
+              title={`${primaryMetricLabel}: ${primaryMetricText}`}
               className="flex shrink-0 items-center gap-1 text-sm font-semibold leading-5 text-foreground"
             >
-              <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0 text-foreground" />
-              <span className="tabular-nums">{formatRankCompactCount(item.totalViewCount)}</span>
+              <PrimaryMetricIcon aria-hidden="true" className="size-3.5 shrink-0 text-foreground" />
+              <span className="tabular-nums">{primaryMetricText}</span>
             </div>
           </div>
           <div className="col-start-2 min-w-0 text-sm">
             <CvRankActions
               item={item}
+              isSeriesCountRank={isSeriesCountRank}
               canShowTrend={canShowTrend}
               onOpenTrend={openTrendDialog}
               className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5"
@@ -1517,8 +1528,14 @@ export function RanksPanel({
   const hasGrowthDramaCounts =
     growthSummary.missevanDramaCount != null && growthSummary.manboDramaCount != null;
   const rankRefreshAt = resolveRankRefreshAt(rankData, category?.key, activeRank);
+  function getCvRankInfoText(rank) {
+    if (rank?.key === "cv-series-count") {
+      return "按在库主役作品的系列总数排名，同系列多季计1部，独立作品单独计数，不含归档作品，每周更新。";
+    }
+    return `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品，每周更新。此次数据刷新于：${formatRankUpdatedAt(resolveRankRefreshAt(rankData, "cv", rank))}`;
+  }
   const rankInfoText = isCvCategory
-    ? `统计来自猫耳${formatPlainNumber(cvSummary.missevanDramaCount)}部，漫播${formatPlainNumber(cvSummary.manboDramaCount)}部上架中的作品，每周更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`
+    ? getCvRankInfoText(activeRank)
     : isGrowthCategory
       ? hasGrowthDramaCounts
         ? `统计来自猫耳${formatPlainNumber(growthSummary.missevanDramaCount)}部，漫播${formatPlainNumber(growthSummary.manboDramaCount)}部上架中的作品，每周更新。`
@@ -1697,8 +1714,8 @@ export function RanksPanel({
                   platform={selectedPlatform}
                   rank={rank}
                   onShare={handleShareRank}
-                  infoText={rankInfoText}
-                  refreshAt={rankRefreshAt}
+                  infoText={getCvRankInfoText(rank)}
+                  refreshAt={resolveRankRefreshAt(rankData, "cv", rank)}
                   frontendVersion={frontendVersion}
                   handleVersionResponse={handleVersionResponse}
                   onOpenSearchResult={onOpenSearchResult}

@@ -346,6 +346,65 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
   }
 });
 
+test("labor ranks keep series-first metrics and independent dates on both platforms", async ({ page }, testInfo) => {
+  await page.addInitScript((version) => {
+    window.localStorage.setItem("missevan-changelog-seen-version", version);
+  }, appVersion);
+  const payload = {
+    success: true, schemaVersion: 8, updatedAt: "2026-11-13T12:00:00Z",
+    cvSummary: { updatedAt: "2026-11-06T12:00:00Z" },
+    platforms: Object.fromEntries(["missevan", "manbo"].map((platform) => [platform, {
+      key: platform, label: platform === "manbo" ? "漫播" : "猫耳", categories: [{ key: "cv", label: "CV榜", ranks: [
+        ...["cv", "cv-paid"].map((key) => ({ key, label: key === "cv" ? "总榜" : "付费榜", name: key === "cv" ? "CV总榜" : "CV付费榜", fetchedAt: "2026-11-06T12:00:00Z", items: [] })),
+        { key: "cv-series-count", label: "勤劳榜", name: "CV勤劳榜", fetchedAt: platform === "manbo" ? "2026-11-12T12:00:00Z" : "2026-11-13T12:00:00Z", items: [{
+          cvName: "勤劳CV", rank: 1, seriesCount: 48, totalViewCount: 123456789,
+          works: [{ platform, dramaId: "101", title: "勤劳作品", viewCount: 100, mainCvs: ["勤劳CV"] }],
+        }, ...Array.from({ length: 31 }, (_, index) => ({
+          cvName: `并列CV${index + 1}`, rank: index < 28 ? index + 2 : 30,
+          seriesCount: index < 28 ? 47 - index : 10, totalViewCount: null, works: [],
+        }))] },
+      ] }],
+    }])),
+  };
+  await page.route("**/ranks?**", (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify(payload),
+  }));
+  for (const platform of ["missevan", "manbo"]) {
+    for (const width of [375, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/?view=ranks&platform=${platform}&category=cv&rank=cv-series-count`);
+      const rankSection = page.locator("section:visible").filter({ has: page.getByRole("heading", { name: /^CV勤劳榜/ }) }).last();
+      await expect(rankSection).toBeVisible();
+      await expect(rankSection.getByText("32 位 CV", { exact: true })).toBeVisible();
+      await expect(rankSection.getByLabel("系列数: 48", { exact: true })).toBeVisible();
+      await expect(rankSection.getByLabel("总播放量: 1.23亿", { exact: true })).toBeVisible();
+      await expect(rankSection.getByText(/周增/)).toHaveCount(0);
+      await expect(rankSection.getByRole("button", { name: "查看勤劳CV趋势" })).toHaveCount(0);
+      await expect(rankSection.getByText(new RegExp(platform === "manbo" ? "更新：.*2026-11-12" : "更新：.*2026-11-13"))).toBeVisible();
+      if (width >= 1024) {
+        for (const name of ["CV总榜", "CV付费榜"]) {
+          const playbackSection = page.locator("section:visible").filter({ has: page.getByRole("heading", { name: new RegExp(`^${name}`) }) }).last();
+          await expect(playbackSection.getByText(/更新：.*2026-11-06/)).toBeVisible();
+        }
+      }
+      const metricOrder = await rankSection.evaluate((section) => {
+        const count = section.querySelector('[aria-label="系列数: 48"]');
+        const playback = section.querySelector('[aria-label="总播放量: 1.23亿"]');
+        return count.getBoundingClientRect().top < playback.getBoundingClientRect().top;
+      });
+      expect(metricOrder).toBe(true);
+      const lastTiedCv = rankSection.getByRole("button", { name: "并列CV31", exact: true });
+      await lastTiedCv.scrollIntoViewIfNeeded();
+      await expect(lastTiedCv).toBeVisible();
+      await rankSection.getByRole("button", { name: "勤劳CV", exact: true }).scrollIntoViewIfNeeded();
+      await rankSection.getByRole("button", { name: "展开勤劳CV作品列表" }).click();
+      await expect(rankSection.getByRole("button", { name: "勤劳作品", exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`labor-${platform}-${width}.png`), fullPage: false });
+    }
+  }
+});
+
 test("CV rank series cards expand inline at all viewport widths", async ({ page }, testInfo) => {
   await page.addInitScript((version) => {
     window.localStorage.setItem("missevan-changelog-seen-version", version);

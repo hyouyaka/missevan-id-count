@@ -5,6 +5,7 @@ import {
   formatRankCompactCount,
   formatSignedRankCardMetricValue,
 } from "./app-utils.js";
+import { filterItemsByRank, sortRankTiesByPlayback } from "../../shared/rankMetricUtils.js";
 import {
   canvasToPngBlob,
   drawShareBodyWatermark,
@@ -82,6 +83,7 @@ function getRankShareTitle(platform, categoryKey, rank) {
     return `${platformName}飙升榜（${rankKey === "growth_monthly" ? "4周" : "7日"}）`;
   }
   if (categoryKey === "cv") {
+    if (rankKey === "cv-series-count") return `${platformName}CV勤劳榜`;
     const isPaid = rankKey === "cv-paid" || rank?.label === "付费榜";
     return `${platformName}CV${isPaid ? "付费" : "总"}榜`;
   }
@@ -125,12 +127,13 @@ function getRankShareMetadata({ categoryKey, rank, updatedAt }) {
 
 function getRankShareColumns(platform, categoryKey, rankKey) {
   if (categoryKey === "cv") {
-    return [
+    const columns = [
       { key: "title", label: "CV", minWidth: 160, maxWidth: 300 },
       { key: "view", label: "播放量", minWidth: 125, maxWidth: 210, align: "center" },
       { key: "workCount", label: "系列数量", minWidth: 125, maxWidth: 180, align: "center" },
       { key: "top3", label: "TOP3", minWidth: 280, maxWidth: 560 },
     ];
+    return rankKey === "cv-series-count" ? [columns[0], columns[2], columns[1], columns[3]] : columns;
   }
   if (categoryKey === "growth") {
     const growthLabel = rankKey === "growth_monthly" ? "4周增量" : "7日增量";
@@ -172,7 +175,7 @@ function getRankShareRow({ item, index, platform, categoryKey, rankKey }) {
   const row = {
     title: `${formatPlainNumber(item?.rank ?? index + 1)}. ${String(item?.name ?? item?.cvName ?? "未命名").trim() || "未命名"}`,
     view: categoryKey === "cv"
-      ? formatRankCompactCount(item?.totalViewCount)
+      ? rankKey === "cv-series-count" && !hasFiniteMetric(item?.totalViewCount) ? "暂无数据" : formatRankCompactCount(item?.totalViewCount)
       : formatOptionalRankMetric(item?.view_count),
   };
 
@@ -219,7 +222,10 @@ export function buildRanksShareTable({ platform, categoryKey, rank, updatedAt } 
   const normalizedRank = rank && typeof rank === "object" ? rank : {};
   const rankKey = String(normalizedRank.key ?? "").trim();
   const limit = getRankLimit(normalizedCategory, rankKey);
-  const items = Array.isArray(normalizedRank.items) ? normalizedRank.items.slice(0, limit) : [];
+  const sourceItems = Array.isArray(normalizedRank.items) ? normalizedRank.items : [];
+  const items = normalizedCategory === "cv" && rankKey === "cv-series-count"
+    ? sortRankTiesByPlayback(filterItemsByRank(sourceItems, limit))
+    : sourceItems.slice(0, limit);
   const columns = getRankShareColumns(normalizedPlatform, normalizedCategory, rankKey);
   const rows = items.map((item, index) => getRankShareRow({
     item,

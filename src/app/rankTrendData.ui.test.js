@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { resolveRankRefreshAt } from "@/app/ranksData";
 
 import {
   getRankTrendModePreference,
@@ -8,6 +9,13 @@ import {
   resolveRankTrendAvailabilityIds,
   setRankTrendModePreference,
 } from "@/app/rankTrendData";
+
+test("labor ranks keep independent timestamps while playback ranks retain their sample time", () => {
+  const data = { cvSummary: { updatedAt: "2026-11-06", resourceUpdatedAt: "2026-11-13" } };
+  expect(resolveRankRefreshAt(data, "cv", { key: "cv-series-count", fetchedAt: "2026-11-12" })).toBe("2026-11-12");
+  expect(resolveRankRefreshAt(data, "cv", { key: "cv-series-count", fetchedAt: "" })).toBe("");
+  expect(resolveRankRefreshAt(data, "cv", { key: "cv", fetchedAt: "2026-11-13" })).toBe("2026-11-06");
+});
 
 test("trend windows keep their 3, 7, and 30 size when sampling mode changes", () => {
   expect(mapRankTrendWindowKey("3d", "weekly_playback")).toBe("3w");

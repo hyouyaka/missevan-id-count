@@ -38,6 +38,7 @@ export function getCachedRanksData(frontendVersion) {
 
 export function resolveRankRefreshAt(rankData, categoryKey, rank) {
   if (categoryKey === "cv") {
+    if (rank?.key === "cv-series-count") return rank?.fetchedAt || "";
     return rankData?.cvSummary?.updatedAt || rank?.fetchedAt || "";
   }
   if (categoryKey === "growth") {

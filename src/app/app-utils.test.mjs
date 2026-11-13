@@ -1007,6 +1007,19 @@ test("mobile rank navigation items flatten platform categories into direct rank 
   });
 });
 
+test("mobile CV navigation includes labor ranks with a direct platform route", () => {
+  const menu = buildRanksNavigationMenu({ data: { platforms: Object.fromEntries(
+    ["missevan", "manbo"].map((platform) => [platform, { key: platform, categories: [{ key: "cv", label: "CV榜", ranks: [
+      { key: "cv", label: "总榜" }, { key: "cv-paid", label: "付费榜" }, { key: "cv-series-count", label: "勤劳榜" },
+    ] }] }])
+  ) } });
+  for (const entry of menu) {
+    const items = buildMobileRankNavigationItems(entry);
+    assert.equal(items.at(-1).label, "CV勤劳榜");
+    assert.deepEqual(items.at(-1).routePatch, { view: "ranks", platform: entry.key, category: "cv", rank: "cv-series-count" });
+  }
+});
+
 test("mobile rank navigation category defaults land on requested ranks", () => {
   const menu = buildRanksNavigationMenu({
     data: {

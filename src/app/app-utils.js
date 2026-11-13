@@ -522,6 +522,9 @@ function formatMobileRankNavigationLabel(categoryLabel, rankLabel, singleRank = 
     if (normalizedRankLabel === "付费榜") {
       return "CV付费榜";
     }
+    if (normalizedRankLabel === "勤劳榜") {
+      return "CV勤劳榜";
+    }
   }
   if (singleRank) {
     if (!normalizedRankLabel || normalizedRankLabel === normalizedCategoryLabel) {

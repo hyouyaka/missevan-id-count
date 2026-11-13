@@ -178,6 +178,44 @@ test("Manbo rows show a dash without paid listening, retain paid ID zero, and om
   assert.equal("paidId" in peak.rows[0], false);
 });
 
+test("labor shares use platform title, series-first columns and their own timestamp", () => {
+  for (const [platform, label] of [["missevan", "猫耳"], ["manbo", "漫播"]]) {
+    const table = buildRanksShareTable({
+      platform, categoryKey: "cv", updatedAt: "2026-11-06T00:00:00Z",
+      rank: { key: "cv-series-count", label: "勤劳榜", fetchedAt: "2026-11-13T12:00:00Z", items: [
+        { cvName: "勤劳CV", rank: 1, seriesCount: 48, totalViewCount: 123456789, topSeries: [{ title: "系列" }] },
+        { cvName: "无播放CV", rank: 2, seriesCount: 47, totalViewCount: null },
+      ] },
+    });
+    assert.equal(table.title, `${label}CV勤劳榜`);
+    assert.deepEqual(table.columns.map(({ key }) => key), ["title", "workCount", "view", "top3"]);
+    assert.equal(table.rows[0].workCount, "48");
+    assert.equal(table.rows[0].view, "1.23亿");
+    assert.equal(table.rows[1].view, "暂无数据");
+    assert.match(table.metadata.inlineText, /2026-11-13/);
+    assert.equal(table.rows[0].top3, "《系列》");
+  }
+});
+
+test("labor PNG draws every CV tied at 30 and excludes later ranks", async () => {
+  for (const platform of ["missevan", "manbo"]) {
+    const harness = createCanvasHarness();
+    const items = [
+      ...Array.from({ length: 29 }, (_, index) => ({ cvName: `CV${index + 1}`, rank: index + 1, seriesCount: 40 - index })),
+      ...["并列甲", "并列乙", "并列丙"].map((cvName) => ({ cvName, rank: 30, seriesCount: 10 })),
+      { cvName: "不应导出", rank: 33, seriesCount: 9 },
+    ];
+    await createRanksSharePng({
+      platform, categoryKey: "cv", rank: { key: "cv-series-count", items },
+      canvasFactory: () => harness.canvas, loadLogo: async () => ({ local: true }),
+    });
+    for (const name of ["并列甲", "并列乙", "并列丙"]) {
+      assert.ok(harness.calls.texts.includes(`30. ${name}`));
+    }
+    assert.equal(harness.calls.texts.some((text) => text.includes("不应导出")), false);
+  }
+});
+
 test("CV share tables include TOP3, date status, and compact playback values", () => {
   const table = buildRanksShareTable({
     platform: "manbo",

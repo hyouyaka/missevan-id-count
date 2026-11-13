@@ -2,6 +2,209 @@ import { buildCvSeriesIndex } from "./shared/cvSeriesUtils.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 
+test("CV labor rankings preserve published groups and ranks and enrich playback from full trends", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+  const snapshot = {
+    generated_at: "2026-11-06T00:00:00Z",
+    seriesCountMeta: Object.fromEntries(["missevan", "manbo"].map((platform) => [platform, {
+      generated_at: platform === "missevan" ? "2026-11-13T01:00:00Z" : "2026-11-13T02:00:00Z",
+      sourceVersions: { info: "sha256:source", series: "sha256:group" },
+    }])),
+    seriesCountRankings: Object.fromEntries(["missevan", "manbo"].map((platform) => [platform,
+      Array.from({ length: 31 }, (_, index) => ({
+        cvName: index === 0 ? "勤劳CV" : `无播放CV${index}`, rank: index + 1, seriesCount: 2,
+        works: [
+          { seriesKey: "published", title: "上游系列", dramaIds: ["101", "102"] },
+          { seriesKey: `${platform}:drama:103`, title: "独立作品", dramaIds: ["103"] },
+        ],
+      })),
+    ])),
+  };
+  const response = buildNormalizedRanksResponse({}, null, snapshot, {
+    seriesIndex: new Map([["missevan:101", { seriesId: "different", seriesTitle: "新映射" }]]),
+    cvWorkMetadata: { missevan: new Map([["103", { title: "库内独立作品", cover: "library.jpg", maincvs: [1], cvnames: { 1: "勤劳CV" } }]]) },
+    cvTrendSnapshots: Object.fromEntries(["missevan", "manbo"].map((platform) => [platform, { cvs: {
+      勤劳CV: { samples: {
+        "2026-10-30": { metrics: { totalViewCount: 100 } },
+        "2026-11-06": { metrics: { totalViewCount: 200000000 } },
+        "2026-11-13": { metrics: { totalViewCount: null } },
+      }, works: [
+        { dramaId: "101", title: "第一季", cover: "trend.jpg", viewCount: 30 },
+        { dramaId: "102", title: "第二季", viewCount: 20 },
+      ] },
+    } }])),
+  });
+  assert.equal(response.schemaVersion, 8);
+  assert.equal(response.cvSummary.updatedAt, snapshot.generated_at);
+  assert.equal(response.cvSummary.resourceUpdatedAt, snapshot.seriesCountMeta.manbo.generated_at);
+  for (const platform of ["missevan", "manbo"]) {
+    const rank = response.platforms[platform].categories.find((category) => category.key === "cv").ranks.at(-1);
+    assert.equal(rank.key, "cv-series-count");
+    assert.equal(rank.fetchedAt, snapshot.seriesCountMeta[platform].generated_at);
+    assert.deepEqual(rank.sourceVersions, snapshot.seriesCountMeta[platform].sourceVersions);
+    assert.equal(rank.items.length, 30);
+    assert.deepEqual(rank.items.map((item) => item.rank), Array.from({ length: 30 }, (_, index) => index + 1));
+    const first = rank.items[0];
+    assert.equal(first.totalViewCount, 200000000);
+    assert.equal(first.playbackDate, "2026-11-06");
+    assert.equal(first.seriesCount, 2);
+    assert.equal(first.workCount, 3);
+    assert.equal(first.series[0].id, `${platform}:published`);
+    assert.equal(first.series[0].works.length, 2);
+    assert.equal(first.series[0].playCount, 50);
+    assert.equal(first.topSeries[0].title, "上游系列");
+    assert.equal(first.works[0].cover, "trend.jpg");
+    assert.equal(rank.items[1].totalViewCount, null);
+    assert.equal("trendKind" in first, false);
+    assert.equal("playbackDelta" in first, false);
+  }
+  const work = response.platforms.missevan.categories[0].ranks[0].items[0].works[2];
+  assert.equal(work.title, "库内独立作品");
+  assert.equal(work.cover, "library.jpg");
+  assert.deepEqual(work.mainCvs, ["勤劳CV"]);
+});
+
+test("CV labor ranks and shares retain every tied rank through 30 on both platforms", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("./server.js");
+  const { buildRanksShareTable } = await import("./src/app/ranksShare.js");
+  const rows = [
+    ...Array.from({ length: 29 }, (_, index) => ({ cvName: `CV${index + 1}`, rank: index + 1, seriesCount: 40 - index, works: [] })),
+    ...["并列甲", "并列乙", "并列丙"].map((cvName) => ({ cvName, rank: 30, seriesCount: 10, works: [] })),
+    { cvName: "第33名", rank: 33, seriesCount: 9, works: [] },
+    ...[0, -1, 1.5, null, undefined, true, "bad"].map((rank) => ({ cvName: `无效${rank}`, rank, seriesCount: 1, works: [] })),
+  ];
+  const expected = rows.slice(0, 32);
+  const response = buildNormalizedRanksResponse({}, null, {
+    generated_at: "2026-11-13T00:00:00Z",
+    seriesCountRankings: { missevan: rows, manbo: rows },
+  });
+  for (const platform of ["missevan", "manbo"]) {
+    const rank = response.platforms[platform].categories.find((category) => category.key === "cv").ranks.at(-1);
+    assert.equal(rank.items.length, 32);
+    assert.deepEqual(rank.items.map((item) => [item.cvName, item.rank]), expected.map((item) => [item.cvName, item.rank]));
+    const direct = buildRanksShareTable({ platform, categoryKey: "cv", rank: { key: "cv-series-count", items: rows } });
+    const fromApi = buildRanksShareTable({ platform, categoryKey: "cv", rank });
+    assert.deepEqual(fromApi.rows, direct.rows);
+    assert.equal(fromApi.rows.length, 32);
+    assert.deepEqual(fromApi.rows.slice(-3).map((row) => row.title), ["30. 并列甲", "30. 并列乙", "30. 并列丙"]);
+    for (const key of ["cv", "cv-paid"]) {
+      const other = buildRanksShareTable({ platform, categoryKey: "cv", rank: { key, items: rows } });
+      assert.equal(other.rows.length, 30);
+    }
+  }
+  // Old cached responses must not hide the additional ties after deployment.
+  const truncated = structuredClone(response);
+  truncated.platforms.missevan.categories[0].ranks.at(-1).items = truncated.platforms.missevan.categories[0].ranks.at(-1).items.slice(0, 30);
+  assert.notEqual(getRanksResponseCacheValidator(response), getRanksResponseCacheValidator(truncated));
+});
+
+test("CV labor rank filtering preserves ties and upstream order without assigning new ranks", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse } = await import("./server.js");
+  const rows = [
+    { cvName: "并列一", rank: 1, seriesCount: 20 },
+    { cvName: "并列二", rank: 1, seriesCount: 20 },
+    { cvName: "第三名", rank: 3, seriesCount: 19 },
+    { cvName: "越界", rank: 31, seriesCount: 1 },
+    { cvName: "第三十名", rank: "30", seriesCount: 2 },
+  ];
+  const response = buildNormalizedRanksResponse({}, null, { seriesCountRankings: { missevan: rows } });
+  const items = response.platforms.missevan.categories[0].ranks.at(-1).items;
+  assert.deepEqual(items.map((item) => item.rank), [1, 1, 3, 30]);
+  assert.deepEqual(items.map((item) => item.cvName), ["并列一", "并列二", "第三名", "第三十名"]);
+});
+
+test("labor ties use descending playback consistently in API and shares without changing ranks", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("./server.js");
+  const { buildRanksShareTable } = await import("./src/app/ranksShare.js");
+  const entries = [
+    ["第一名", 1, 1], ["缺失甲", 2, null], ["零播放", 2, 0], ["低播放", 2, 100],
+    ["高播放甲", 2, 500], ["高播放乙", 2, 500], ["缺失乙", 2, NaN], ["第八名", 8, 2000],
+  ];
+  const rows = entries.map(([cvName, rank, totalViewCount]) => ({ cvName, rank, totalViewCount, seriesCount: 10, works: [] }));
+  const original = rows.map((item) => item.cvName);
+  const platforms = ["missevan", "manbo"];
+  const cvSnapshot = { seriesCountRankings: Object.fromEntries(platforms.map((platform) => [platform, rows])) };
+  const options = { cvTrendSnapshots: Object.fromEntries(platforms.map((platform) => [platform, {
+    cvs: Object.fromEntries(rows.map((item) => [item.cvName, { samples: {
+      "2026-11-13": { metrics: { totalViewCount: item.totalViewCount } },
+    } }])),
+  }])) };
+  const response = buildNormalizedRanksResponse({}, null, cvSnapshot, options);
+  const expected = ["第一名", "高播放甲", "高播放乙", "低播放", "零播放", "缺失甲", "缺失乙", "第八名"];
+  for (const platform of platforms) {
+    const rank = response.platforms[platform].categories[0].ranks.at(-1);
+    assert.deepEqual(rank.items.map((item) => item.cvName), expected);
+    assert.deepEqual(rank.items.map((item) => item.rank), [1, 2, 2, 2, 2, 2, 2, 8]);
+    const shared = buildRanksShareTable({ platform, categoryKey: "cv", rank: { key: "cv-series-count", items: rows } });
+    const fromApi = buildRanksShareTable({ platform, categoryKey: "cv", rank });
+    assert.deepEqual(shared.rows, fromApi.rows);
+    assert.deepEqual(shared.rows.map((row) => row.title), expected.map((name) => `${name === "第一名" ? 1 : name === "第八名" ? 8 : 2}. ${name}`));
+    for (const key of ["cv", "cv-paid"]) {
+      const unchanged = buildRanksShareTable({ platform, categoryKey: "cv", rank: { key, items: rows } });
+      assert.deepEqual(unchanged.rows.map((row) => row.title), rows.map((item) => `${item.rank}. ${item.cvName}`));
+    }
+  }
+  assert.deepEqual(rows.map((item) => item.cvName), original);
+  const unsorted = structuredClone(response);
+  unsorted.platforms.missevan.categories[0].ranks.at(-1).items.reverse();
+  assert.notEqual(getRanksResponseCacheValidator(response), getRanksResponseCacheValidator(unsorted));
+});
+
+test("CV labor versions affect response validators without changing playback timestamps", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("./server.js");
+  const base = { generated_at: "2026-11-06T00:00:00Z", rankings: { missevan: [{ cvName: "原CV", totalViewCount: 500 }] } };
+  const build = (meta) => buildNormalizedRanksResponse({}, null, { ...base, seriesCountMeta: meta });
+  const old = build({});
+  const newer = build({ missevan: { generated_at: "2026-11-13T00:00:00Z", sourceVersions: { info: "a" } } });
+  const changed = build({ missevan: { generated_at: "2026-11-13T00:00:00Z", sourceVersions: { info: "b" } } });
+  assert.notEqual(getRanksResponseCacheValidator(old), getRanksResponseCacheValidator(newer));
+  assert.notEqual(getRanksResponseCacheValidator(newer), getRanksResponseCacheValidator(changed));
+  assert.equal(newer.cvSummary.updatedAt, base.generated_at);
+  assert.deepEqual(old.platforms.missevan.categories[0].ranks[0], newer.platforms.missevan.categories[0].ranks[0]);
+  assert.equal(old.platforms.missevan.categories[0].ranks.at(-1).items.length, 0);
+  assert.equal(old.platforms.missevan.categories[0].ranks.at(-1).fetchedAt, "");
+});
+
+test("cached CV ranks refresh once when only labor generation time advances", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { getCachedRanksResponse, __setRanksCacheForTest, __getRanksCacheForTest } = await import("./server.js");
+  const saved = __getRanksCacheForTest();
+  const now = Date.parse("2026-11-13T02:00:00Z");
+  const normalTime = new Date(now).toISOString();
+  let version = "2026-11-12T01:00:00Z";
+  let cvReads = 0;
+  const options = {
+    now,
+    readNormalRanksBundle: async () => ({ snapshot: { _meta: { updated_at: normalTime } }, updatedAt: normalTime }),
+    readCvRanksBundle: async () => {
+      cvReads++;
+      return { cvSnapshot: { generated_at: "2026-11-06T00:00:00Z", seriesCountMeta: { missevan: { generated_at: version } } }, updatedAt: version };
+    },
+    readGrowthRanksBundle: async () => ({}),
+    readRanksMeta: async () => ({ normal: { updatedAt: normalTime }, cv: { updatedAt: version } }),
+  };
+  try {
+    __setRanksCacheForTest({ response: null, loadPromise: null, meta: null, metaLoadedAt: 0 });
+    await getCachedRanksResponse(options);
+    version = "2026-11-13T01:00:00Z";
+    __setRanksCacheForTest({ metaLoadedAt: 0 });
+    const refreshed = await getCachedRanksResponse({ ...options, now: now + 1000 });
+    assert.equal(cvReads, 2);
+    assert.equal(refreshed.response.cvSummary.updatedAt, "2026-11-06T00:00:00Z");
+    assert.equal(__getRanksCacheForTest().cvUpdatedAt, version);
+    __setRanksCacheForTest({ metaLoadedAt: 0 });
+    await getCachedRanksResponse({ ...options, now: now + 2000 });
+    assert.equal(cvReads, 2);
+  } finally {
+    __setRanksCacheForTest({ ...saved, loadPromise: null, metaLoadedAt: 0 });
+  }
+});
+
 test("ongoing new-drama month uses the Beijing calendar boundary", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { getBeijingYearMonth } = await import("./server.js");
@@ -108,7 +311,7 @@ test("rank response appends normalized CV ranks per platform", async () => {
     },
   });
 
-  assert.equal(response.schemaVersion, 7);
+  assert.equal(response.schemaVersion, 8);
   assert.deepEqual(response.meta, {
     normal: { publishedAt: "2026-06-10T08:05:00+00:00" },
     cv: { publishedAt: "2026-06-10T09:35:00+00:00" },
@@ -116,6 +319,8 @@ test("rank response appends normalized CV ranks per platform", async () => {
   });
   assert.deepEqual(response.cvSummary, {
     updatedAt: "2026-06-10T09:30:00+00:00",
+    resourceUpdatedAt: "2026-06-10T09:30:00+00:00",
+    seriesCountMeta: {},
     missevanDramaCount: 842,
     manboDramaCount: 331,
     seriesMappingVersion: response.cvSummary.seriesMappingVersion,
@@ -208,6 +413,7 @@ test("rank response exposes CV total and paid ranks with playback deltas", async
     [
       ["cv", "总榜", "CV总榜"],
       ["cv-paid", "付费榜", "CV付费榜"],
+      ["cv-series-count", "勤劳榜", "CV勤劳榜"],
     ]
   );
   assert.equal(cvCategory.ranks[0].items[0].trendKind, "cv");
@@ -356,7 +562,7 @@ test("rank response keeps ordinary ranks when CV snapshot is unavailable", async
     null
   );
 
-  assert.equal(response.schemaVersion, 7);
+  assert.equal(response.schemaVersion, 8);
   assert.deepEqual(response.meta, {
     normal: { publishedAt: "" },
     cv: { publishedAt: "" },
@@ -636,7 +842,7 @@ test("cached ranks response syncs published times when meta versions are unchang
     cvUpdatedAt: "cv-version",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "normal-version",
       cvSummary: { updatedAt: "cv-version" },
       meta: {
@@ -958,7 +1164,7 @@ test("cached ranks response refreshes normal snapshot when meta normal version a
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1022,7 +1228,7 @@ test("cached ranks response throttles stale fallback meta probes outside active 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "2026-06-12T20:46:43-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1080,7 +1286,7 @@ test("cached ranks response periodically probes meta even when idle response is 
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1142,7 +1348,7 @@ test("cached ranks response backs off fallback meta probe failures", async () =>
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "2026-06-15T00:37:24+00:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1200,7 +1406,7 @@ test("cached ranks response reports meta-refresh when active probe reads unchang
     cvUpdatedAt: "same-cv",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "2026-06-14T20:37:24-04:00",
       cvSummary: { updatedAt: "same-cv" },
       platforms: {
@@ -1245,7 +1451,7 @@ test("cached ranks response records meta versions after refresh to avoid repeate
     cvUpdatedAt: "old-cv",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
       platforms: {
@@ -1307,7 +1513,7 @@ test("cached ranks response reads and commits only the independently refreshed C
   };
   const response = {
     success: true,
-    schemaVersion: 7,
+    schemaVersion: 8,
     updatedAt: "same-normal",
     cvSummary: { updatedAt: "same-cv" },
     growthSummary: { updatedAt: "old-growth" },
@@ -1425,7 +1631,7 @@ test("cached ranks response preserves and retries CV or growth when the refreshe
     normalUpdatedAt: "same-normal",
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "same-normal",
       cvSummary: { updatedAt: "old-cv" },
       growthSummary: { updatedAt: "old-growth" },
@@ -1638,7 +1844,7 @@ test("admin ranks force refresh does not partially mutate cache when a requested
     },
     response: {
       success: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       updatedAt: "old-normal",
       cvSummary: { updatedAt: "old-cv" },
     },
@@ -2369,7 +2575,7 @@ test("rank response cache validator changes when schema, rank versions or publis
 
   const normalVersion = "2026-06-12T23:10:00+00:00";
   const firstValidator = getRanksResponseCacheValidator({
-    schemaVersion: 7,
+    schemaVersion: 8,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-12T04:04:24+00:00" },
     meta: {
@@ -2378,7 +2584,7 @@ test("rank response cache validator changes when schema, rank versions or publis
     },
   });
   const secondValidator = getRanksResponseCacheValidator({
-    schemaVersion: 7,
+    schemaVersion: 8,
     updatedAt: normalVersion,
     cvSummary: { updatedAt: "2026-06-13T04:04:24+00:00" },
     meta: {
