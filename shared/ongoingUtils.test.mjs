@@ -742,6 +742,59 @@ test("isOngoingEmptyPaidDanmakuMetric detects unpaid windows for display", () =>
   );
 });
 
+test("ongoing paid episode counts override zero-UID guesses while legacy metrics keep their fallback", () => {
+  const zeroMetric = { key: "danmaku_uid_count", fromValue: 0, toValue: 0, delta: 0, available: true };
+  for (const [paidEpisodesCount, empty] of [
+    [0, true], ["0", true], [5, false], ["23", false],
+    [null, false], [undefined, false], ["", false], ["invalid", false],
+    [-1, false], [0.5, false], [false, false],
+  ]) {
+    const metric = { ...zeroMetric, paidEpisodesCount };
+    assert.equal(isOngoingEmptyPaidDanmakuMetric(metric), empty, String(paidEpisodesCount));
+    assert.deepEqual(getOngoingMetricDisplay({
+      currentValue: 0, metricKey: "danmaku_uid_count", windowMetric: metric,
+    }), empty
+      ? { currentText: "暂无付费集", deltaText: null, showEmptyPaidDanmaku: true }
+      : { currentText: "0", deltaText: "0", showEmptyPaidDanmaku: false });
+  }
+  assert.equal(isOngoingEmptyPaidDanmakuMetric(zeroMetric), true);
+  assert.equal(isOngoingEmptyPaidDanmakuMetric({ ...zeroMetric, key: "view_count", paidEpisodesCount: 0 }), false);
+  assert.equal(isOngoingEmptyPaidDanmakuMetric({
+    key: "danmaku_uid_count", fromValue: null, toValue: 0, available: false, paidEpisodesCount: 0,
+  }), true, "confirmed zero episodes does not require an old baseline");
+});
+
+test("ongoing reads today's paid episode count from v2 samples without requiring historical counts", () => {
+  for (const platform of ["missevan", "manbo"]) {
+    for (const [countMetrics, empty] of [
+      [{ PaidEpisodesCount: 23 }, false], [{ PaidEpisodesCount: 0 }, true],
+      [{ PaidEpisodesCount: null }, false], [{}, true],
+    ]) {
+      const snapshots = buildMetricSnapshotsFromRankTrendAggregate({
+        dates: ["2026-11-09", "2026-11-16"],
+        dramas: { 97187: { samples: {
+          "2026-11-09": { metrics: { view_count: 100, danmaku_uid_count: 0 } },
+          "2026-11-16": { metrics: { view_count: 200, danmaku_uid_count: 0, ...countMetrics } },
+        } } },
+      }, platform);
+      const item = buildOngoingResponse({
+        platform, ongoingIds: ["97187"], ...snapshots,
+        createTimesById: { 97187: "2026.01" }, currentMonth: "2026.11",
+      }).items[0];
+      assert.deepEqual(Object.keys(item.metrics), platform === "missevan"
+        ? ["view_count", "danmaku_uid_count", "subscription_num"]
+        : ["view_count", "danmaku_uid_count", "pay_count"]);
+      for (const [windowKey, window] of Object.entries(item.windows)) {
+        const metric = window.metrics.danmaku_uid_count;
+        assert.equal(Object.hasOwn(metric, "paidEpisodesCount"), Object.hasOwn(countMetrics, "PaidEpisodesCount"));
+        assert.equal(metric.paidEpisodesCount, countMetrics.PaidEpisodesCount);
+        assert.equal(isOngoingEmptyPaidDanmakuMetric(metric),
+          empty && (Object.hasOwn(countMetrics, "PaidEpisodesCount") || windowKey === "7d"));
+      }
+    }
+  }
+});
+
 test("buildOngoingResponse hides only explicitly skipped danmaku metrics", () => {
   const buildResponse = (danmakuValue) => buildOngoingResponse({
     platform: "missevan",

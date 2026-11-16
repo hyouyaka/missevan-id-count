@@ -409,7 +409,7 @@ const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const RANKS_RESPONSE_SCHEMA_VERSION = 8;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 8;
-const ONGOING_RESPONSE_SCHEMA_VERSION = 7;
+const ONGOING_RESPONSE_SCHEMA_VERSION = 8;
 
 function getFiniteNumberEnv(name, fallbackValue) {
   const rawValue = process.env[name];

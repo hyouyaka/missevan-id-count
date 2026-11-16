@@ -160,6 +160,39 @@ async function waitForDrama(name) {
   await waitFor(() => expect(screen.getAllByText(name).length).toBeGreaterThan(0));
 }
 
+test.each(["missevan", "manbo"])("ongoing %s distinguishes paid episodes with zero UIDs from empty and legacy data", async (platform) => {
+  const items = [
+    ["1", "有付费集零弹幕", { paidEpisodesCount: 23 }],
+    ["2", "确认暂无付费集", { paidEpisodesCount: 0 }],
+    ["3", "旧数据兼容", {}],
+    ["4", "集数未知", { paidEpisodesCount: null }],
+  ].map(([id, name, countFields]) => {
+    const item = createItem(id, name, [], 0);
+    item.metrics.danmaku_uid_count.value = 0;
+    item.windows["7d"].metrics.danmaku_uid_count = {
+      key: "danmaku_uid_count", fromValue: 0, toValue: 0, delta: 0, available: true, ...countFields,
+    };
+    return item;
+  });
+  testState.fetchByPlatform[platform] = createFetchResult(createPayload(platform, items));
+  render(<OngoingPanel frontendVersion="1.8.8" routeState={{ platform }} />);
+  await waitForDrama("有付费集零弹幕");
+  for (const [index, item] of items.entries()) {
+    const cards = Array.from(document.querySelectorAll('[data-slot="card"]'))
+      .filter((card) => card.textContent.includes(item.name));
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) {
+      const emptyText = within(card).queryByText("暂无付费集");
+      if (index === 1 || index === 2) {
+        expect(emptyText).toBeInTheDocument();
+      } else {
+        expect(emptyText).not.toBeInTheDocument();
+        expect(within(card).getAllByText("0").length).toBeGreaterThan(0);
+      }
+    }
+  }
+});
+
 function getCardNameOrder(names) {
   return Array.from(document.querySelectorAll('[data-slot="card"]'))
     .map((card) => names.find((name) => card.textContent.includes(name)))

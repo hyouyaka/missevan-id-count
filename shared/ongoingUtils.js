@@ -31,6 +31,14 @@ function normalizeFiniteNumber(value) {
   return Number.isFinite(normalized) ? normalized : null;
 }
 
+function normalizePaidEpisodesCount(value) {
+  if (typeof value !== "number" && typeof value !== "string") {
+    return null;
+  }
+  const count = normalizeFiniteNumber(value);
+  return Number.isInteger(count) && count >= 0 ? count : null;
+}
+
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
@@ -228,6 +236,9 @@ function buildWindowMetric(config, baseline, currentDrama) {
     delta,
     deltaPercent,
     available,
+    ...(config.key === "danmaku_uid_count" && Object.hasOwn(currentDrama || {}, "PaidEpisodesCount")
+      ? { paidEpisodesCount: normalizePaidEpisodesCount(currentDrama.PaidEpisodesCount) }
+      : {}),
   };
 }
 
@@ -453,6 +464,13 @@ export function isOngoingEmptyPaidDanmakuMetric(metric) {
     return false;
   }
 
+  // Only today's episode count is needed, even when older samples predate this field.
+  // An explicit unknown count must not be mistaken for confirmed zero episodes.
+  if (Object.hasOwn(metric, "paidEpisodesCount")) {
+    return normalizePaidEpisodesCount(metric.paidEpisodesCount) === 0;
+  }
+
+  // Legacy samples and cached responses have no episode count; keep their display rule.
   const fromValue = normalizeFiniteNumber(metric?.fromValue);
   const toValue = normalizeFiniteNumber(metric?.toValue);
   return fromValue === 0 && toValue === 0;

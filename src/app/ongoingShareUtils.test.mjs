@@ -214,6 +214,24 @@ test("PNG metric cells use page status text and split only before the delta toke
   ]);
 });
 
+test("share paid ID cells respect episode counts and retain the legacy fallback", () => {
+  for (const platform of ["missevan", "manbo"]) {
+    for (const [countFields, expected] of [
+      [{ paidEpisodesCount: 23 }, "0（0）"],
+      [{ paidEpisodesCount: 0 }, "暂无付费集"],
+      [{ paidEpisodesCount: null }, "0（0）"],
+      [{}, "暂无付费集"],
+    ]) {
+      const item = createItem({ values: { danmaku_uid_count: 0 } });
+      item.windows["7d"].metrics.danmaku_uid_count = {
+        key: "danmaku_uid_count", fromValue: 0, toValue: 0, delta: 0, available: true, ...countFields,
+      };
+      const table = buildOngoingShareTable({ platform, items: [item] });
+      assert.equal(table.rows[0].danmaku_uid_count, expected);
+    }
+  }
+});
+
 test("share rows count as single-line only when all five cells fit", () => {
   const table = buildOngoingShareTable({
     platform: "manbo",
