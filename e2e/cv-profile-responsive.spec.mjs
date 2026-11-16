@@ -180,7 +180,7 @@ test("CV profile rank badges and identity layout fit mobile, tablet and desktop 
   }
 });
 
-test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }, testInfo) => {
+test("CV profile keeps compact filters and work controls usable on mobile", async ({ page }) => {
   await mockCvProfilePage(page);
   await page.setViewportSize({ width: 376, height: 800 });
   await page.goto("/?view=cv&cv=%E5%93%8D%E5%BA%94%E5%BC%8F%E6%B5%8B%E8%AF%95%20CV&sort=plays_asc");
@@ -290,16 +290,20 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
     return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 420);
   }).toBe(true);
   await applyButton.click();
+});
 
-  const expectedColumns = [
+for (const { width, count } of [
     { width: 320, count: 1 },
     { width: 376, count: 1 },
     { width: 768, count: 2 },
     { width: 1280, count: 3 },
     { width: 1584, count: 3 },
-  ];
-  for (const { width, count } of expectedColumns) {
+]) {
+  test(`CV profile series expansion and work columns fit ${width}px`, async ({ page }, testInfo) => {
+    await mockCvProfilePage(page);
     await page.setViewportSize({ width, height: 800 });
+    await page.goto("/?view=cv&cv=%E5%93%8D%E5%BA%94%E5%BC%8F%E6%B5%8B%E8%AF%95%20CV&sort=plays_asc");
+    await expect(page.getByRole("heading", { name: "响应式测试 CV" })).toBeVisible();
     const columnCount = await page.locator(".cv-profile-work-grid").first().evaluate((element) =>
       getComputedStyle(element).gridTemplateColumns.split(/\s+/).filter(Boolean).length
     );
@@ -393,17 +397,19 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
         fullPage: true,
       });
     }
-  }
 
-  const firstWorkActions = page.locator('[data-cv-work-actions="true"]').first();
-  for (const [width, mode] of [["15rem", "all"], ["10rem", "trend-more"], ["6rem", "more-only"]]) {
-    await firstWorkActions.evaluate((element, flexBasis) => {
-      element.style.flex = `0 0 ${flexBasis}`;
-      element.style.width = flexBasis;
-    }, width);
-    await expect(firstWorkActions).toHaveAttribute("data-action-mode", mode);
-  }
-});
+    if (width === 1584) {
+      const firstWorkActions = page.locator('[data-cv-work-actions="true"]').first();
+      for (const [actionWidth, mode] of [["15rem", "all"], ["10rem", "trend-more"], ["6rem", "more-only"]]) {
+        await firstWorkActions.evaluate((element, flexBasis) => {
+          element.style.flex = `0 0 ${flexBasis}`;
+          element.style.width = flexBasis;
+        }, actionWidth);
+        await expect(firstWorkActions).toHaveAttribute("data-action-mode", mode);
+      }
+    }
+  });
+}
 
 test("rank view logs follow the visible single-rank or all-ranks layout", async ({ page }) => {
   await page.addInitScript((version) => {
