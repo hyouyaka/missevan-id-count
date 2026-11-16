@@ -20,6 +20,10 @@ const badgeVariants = cva(
           "border-[color-mix(in_oklch,var(--platform-missevan)_20%,transparent)] bg-[var(--platform-missevan)] text-[var(--accent-neutral-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--platform-missevan-hover)]",
         manboPlatform:
           "border-[color-mix(in_oklch,var(--platform-manbo)_20%,transparent)] bg-[var(--platform-manbo)] text-[var(--accent-purple-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[var(--platform-manbo-hover)]",
+        missevanPlatformSoft:
+          "border-[color-mix(in_oklch,var(--platform-missevan)_20%,transparent)] bg-[var(--platform-missevan-soft)] text-[var(--platform-missevan)]",
+        manboPlatformSoft:
+          "border-[color-mix(in_oklch,var(--platform-manbo)_20%,transparent)] bg-[var(--platform-manbo-soft)] text-[var(--platform-manbo)]",
         free:
           "border-[color-mix(in_oklch,var(--accent-success)_18%,transparent)] bg-[var(--accent-success)] text-[var(--accent-success-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-success)_90%,var(--foreground))]",
         member:

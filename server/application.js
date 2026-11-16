@@ -28,6 +28,7 @@ import {
 } from "../shared/pinyinSearchUtils.js";
 import {
   buildCvCatalog,
+  buildCvProfileRanks,
   buildCvProfileResponse,
   collectCvWorks,
   normalizeCvPlatformId,
@@ -3612,10 +3613,11 @@ export function buildNormalizedRanksResponse(
 }
 
 export function getRanksResponseCacheValidator(response = {}) {
+  // Enrichment may recover without a new publication; hash the rendered contents too.
   const laborRanks = ["missevan", "manbo"].map((platform) =>
     response.platforms?.[platform]?.categories?.find((category) => category.key === "cv")
       ?.ranks?.find((rank) => rank.key === "cv-series-count")
-      ?.items?.map((item) => [item.cvName, item.rank]) || []
+      ?.items || []
   );
   return [
     response?.schemaVersion || RANKS_RESPONSE_SCHEMA_VERSION,
@@ -11587,6 +11589,24 @@ app.get("/unified-search", expensiveDataLimiter, async (req, res) => {
   }
 });
 
+export async function loadCvProfileRanks(catalog, entry, {
+  readRanks = getCachedRanksResponse,
+  readTrends = readCvRankTrendV2SnapshotsForNames,
+  onError = (error) => { void logger.operation("cv_profile_ranks_read_failed", {}, "warn", error); },
+} = {}) {
+  try {
+    const [rankData, trendSnapshots] = await Promise.all([
+      readRanks().then(({ response }) => response).catch((error) => { onError(error); return null; }),
+      readTrends([entry.name, ...(entry.aliases || [])])
+        .catch((error) => { onError(error); return null; }),
+    ]);
+    return buildCvProfileRanks({ catalog, entry, rankData, trendSnapshots });
+  } catch (error) {
+    onError(error);
+    return { updatedAt: "", items: [] };
+  }
+}
+
 if (!DESKTOP_APP) app.get("/cv-profile", expensiveDataLimiter, async (req, res) => {
   const requestedName = normalizeTextValue(req.query.name);
   const requestedProfileId = normalizeTextValue(req.query.profileId).slice(0, 240);
@@ -11612,8 +11632,9 @@ if (!DESKTOP_APP) app.get("/cv-profile", expensiveDataLimiter, async (req, res) 
         message: "CV profile library is unavailable",
       });
     }
+    const catalog = getCvCatalog();
     const resolution = resolveCvCatalogEntry(
-      getCvCatalog(),
+      catalog,
       requestedName,
       requestedProfileId
     );
@@ -11646,7 +11667,7 @@ if (!DESKTOP_APP) app.get("/cv-profile", expensiveDataLimiter, async (req, res) 
         .filter((work) => work.platform === "manbo")
         .map((work) => work.id),
     };
-    const [missevanPlayback, manboPlayback] = await Promise.all([
+    const [missevanPlayback, manboPlayback, cvRanks] = await Promise.all([
       idsByPlatform.missevan.length
         ? getCachedWeeklyPlaybackSnapshot("missevan", {
             ids: idsByPlatform.missevan,
@@ -11657,10 +11678,12 @@ if (!DESKTOP_APP) app.get("/cv-profile", expensiveDataLimiter, async (req, res) 
             ids: idsByPlatform.manbo,
           }).catch(() => null)
         : null,
+      loadCvProfileRanks(catalog, catalogEntry),
     ]);
     const seriesIndex = await cvSeriesStore.read();
     const response = buildCvProfileResponse({
       seriesIndex,
+      cvRanks,
       name: catalogEntry.name,
       avatar: catalogEntry.avatar,
       works,

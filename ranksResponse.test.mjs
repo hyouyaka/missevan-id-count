@@ -2,6 +2,39 @@ import { buildCvSeriesIndex } from "./shared/cvSeriesUtils.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 
+test("CV profile rank loading reuses ranks response and isolates read failures", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { loadCvProfileRanks } = await import("./server.js");
+  const entry = { profileId: "cv:test", name: "测试CV", aliases: [] };
+  const response = {
+    cvSummary: { updatedAt: "2026-11-12" },
+    platforms: { missevan: { categories: [{ key: "cv", ranks: [{ key: "cv", items: [{ cvName: "测试CV", rank: 23 }] }] }] } },
+  };
+  assert.deepEqual(await loadCvProfileRanks([entry], entry, { readRanks: async () => ({ response }), readTrends: async () => null }), {
+    updatedAt: "2026-11-12", updatedAtByPlatform: { missevan: "2026-11-12", manbo: "2026-11-12" },
+    items: [{ platform: "missevan", rankKey: "cv", rank: 23 }],
+  });
+  const failure = new Error("snapshot unavailable");
+  const errors = [];
+  assert.deepEqual(await loadCvProfileRanks([entry], entry, {
+    readRanks: async () => { throw failure; }, readTrends: async () => null, onError: (error) => errors.push(error),
+  }), { updatedAt: "", updatedAtByPlatform: { missevan: "", manbo: "" }, items: [] });
+  assert.deepEqual(errors, [failure]);
+  const trendSnapshots = { missevan: {
+    updated_at: "2026-11-12",
+    cvs: { 测试CV: { samples: { "2026-11-12": { ranks: { total: 57 } } } } },
+  } };
+  assert.deepEqual(await loadCvProfileRanks([entry], entry, {
+    readRanks: async () => { throw failure; }, readTrends: async (names) => {
+      assert.deepEqual(names, ["测试CV"]);
+      return trendSnapshots;
+    }, onError: () => {},
+  }), { updatedAt: "2026-11-12", updatedAtByPlatform: { missevan: "2026-11-12", manbo: "" }, items: [{ platform: "missevan", rankKey: "cv", rank: 57 }] });
+  assert.deepEqual(await loadCvProfileRanks([entry], entry, {
+    readRanks: async () => ({ response }), readTrends: async () => { throw failure; }, onError: () => {},
+  }), { updatedAt: "2026-11-12", updatedAtByPlatform: { missevan: "2026-11-12", manbo: "2026-11-12" }, items: [{ platform: "missevan", rankKey: "cv", rank: 23 }] });
+});
+
 test("CV labor rankings preserve published groups and ranks and enrich playback from full trends", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildNormalizedRanksResponse } = await import("./server.js");
@@ -168,6 +201,48 @@ test("CV labor versions affect response validators without changing playback tim
   assert.deepEqual(old.platforms.missevan.categories[0].ranks[0], newer.platforms.missevan.categories[0].ranks[0]);
   assert.equal(old.platforms.missevan.categories[0].ranks.at(-1).items.length, 0);
   assert.equal(old.platforms.missevan.categories[0].ranks.at(-1).fetchedAt, "");
+});
+
+test("CV labor validators include enriched content even when published versions and ordering do not change", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("./server.js");
+  for (const platform of ["missevan", "manbo"]) {
+    const snapshot = {
+      generated_at: "2026-11-06T00:00:00Z",
+      seriesCountMeta: { [platform]: { generated_at: "2026-11-13T00:00:00Z", sourceVersions: { info: "same-version" } } },
+      rankings: { [platform]: [{ cvName: "原总榜CV", totalViewCount: 999, works: [] }] },
+      paidRankings: { [platform]: [{ cvName: "原付费榜CV", totalViewCount: 888, works: [] }] },
+      seriesCountRankings: { [platform]: [{ cvName: "补全CV", rank: 1, seriesCount: 1,
+        works: [{ seriesKey: "series", title: "系列名称", dramaIds: ["101"] }] }] },
+    };
+    const build = (record, metadata) => buildNormalizedRanksResponse({}, null, snapshot, {
+      cvTrendSnapshots: { [platform]: { cvs: { 补全CV: record } } },
+      cvWorkMetadata: { [platform]: new Map([["101", metadata]]) },
+    });
+    const baseline = build(null);
+    const validator = getRanksResponseCacheValidator(baseline);
+    const recoveries = {
+      playback: { samples: { "2026-11-06": { metrics: { totalViewCount: 123456 } } } },
+      title: { works: [{ dramaId: "101", title: "恢复的作品标题" }] },
+      cover: { works: [{ dramaId: "101", cover: "https://example.com/cover.jpg" }] },
+      workPlayback: { works: [{ dramaId: "101", viewCount: 345 }] },
+      mainCvs: { works: [{ dramaId: "101", mainCvs: ["补全CV"] }] },
+      paid: { works: [{ dramaId: "101", isPaid: true }] },
+      avatar: { avatar: "https://example.com/avatar.jpg" },
+    };
+    for (const [field, record] of Object.entries(recoveries)) {
+      const recovered = build(record);
+      assert.deepEqual(recovered.cvSummary, baseline.cvSummary);
+      assert.notEqual(getRanksResponseCacheValidator(recovered), validator, `${platform}: ${field}`);
+      assert.equal(getRanksResponseCacheValidator(build(structuredClone(record))), getRanksResponseCacheValidator(recovered));
+      const ranks = (response) => response.platforms[platform].categories.find(({ key }) => key === "cv").ranks;
+      assert.deepEqual(ranks(recovered).slice(0, 2), ranks(baseline).slice(0, 2));
+      assert.deepEqual(ranks(recovered).at(-1).items.map(({ cvName, rank }) => [cvName, rank]), [["补全CV", 1]]);
+    }
+    for (const metadata of [{ title: "库内作品标题" }, { cover: "https://example.com/library.jpg" }]) {
+      assert.notEqual(getRanksResponseCacheValidator(build(null, metadata)), validator, `${platform}: library recovery`);
+    }
+  }
 });
 
 test("cached CV ranks refresh once when only labor generation time advances", async () => {

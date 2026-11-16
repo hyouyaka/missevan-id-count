@@ -666,12 +666,93 @@ function getLatestPlaybackPoint(bundle, id) {
   return null;
 }
 
+export function buildCvProfileRanks({ catalog = [], entry, rankData, trendSnapshots } = {}) {
+  const items = [];
+  if (!entry?.profileId) {
+    return { updatedAt: "", items };
+  }
+  const nameKeys = new Set(uniqueNames([entry.name, ...(entry.aliases || [])]).map(normalizeNameKey));
+  const updatedAtByPlatform = {};
+  function latestTimestamp(values) {
+    return values.map(normalizeName).filter((value) => Number.isFinite(Date.parse(value)))
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0] || "";
+  }
+
+  function matchesProfile(item, platform) {
+    const name = normalizeName(item?.cvName ?? item?.name);
+    const nameKey = normalizeNameKey(name);
+    if (!nameKeys.has(nameKey)) {
+      return false;
+    }
+    const resolution = resolveCvCatalogEntry(catalog, name);
+    if (resolution.entry) {
+      return resolution.entry.profileId === entry.profileId;
+    }
+    if (resolution.status !== 409) {
+      return false;
+    }
+
+    // A rank can aggregate homonyms. Only attach it when its work evidence
+    // points to exactly one identity, never choose the first name match.
+    const workIds = new Set((Array.isArray(item?.works) ? item.works : [])
+      .map((work) => normalizeCvPlatformId(work?.dramaId ?? work?.id))
+      .filter(Boolean));
+    const candidates = catalog.filter((candidate) =>
+      uniqueNames([candidate.name, ...(candidate.aliases || [])])
+        .some((alias) => normalizeNameKey(alias) === nameKey) &&
+      (candidate.workIds?.[platform] || [])
+        .some((id) => workIds.has(normalizeCvPlatformId(id)))
+    );
+    return candidates.length === 1 && candidates[0].profileId === entry.profileId;
+  }
+
+  for (const platform of ["missevan", "manbo"]) {
+    const category = rankData?.platforms?.[platform]?.categories
+      ?.find((category) => category.key === "cv");
+    const snapshot = trendSnapshots?.[platform];
+    const platformSnapshotTime = latestTimestamp((category?.ranks || [])
+      .filter((rank) => ["cv", "cv-paid"].includes(rank.key)).map((rank) => rank.fetchedAt)) ||
+      latestTimestamp([rankData?.cvSummary?.updatedAt]);
+    const platformUpdatedAt = latestTimestamp([platformSnapshotTime, snapshot?.updated_at]);
+    const latestDate = platformUpdatedAt.slice(0, 10);
+    updatedAtByPlatform[platform] = platformUpdatedAt;
+    for (const rankKey of ["cv", "cv-paid"]) {
+      const rank = category?.ranks?.find((rank) => rank.key === rankKey);
+      const rankTimestamp = normalizeName(rank?.fetchedAt) || platformSnapshotTime;
+      const matches = (latestDate && Date.parse(rankTimestamp) === Date.parse(platformUpdatedAt) ? rank?.items || [] : []).filter((item) =>
+        Number.isInteger(item.rank) && item.rank > 0 && matchesProfile(item, platform)
+      );
+      if (matches.length === 1) {
+        items.push({ platform, rankKey, rank: matches[0].rank });
+      } else if (!matches.length && latestDate) {
+        const scope = rankKey === "cv-paid" ? "paid" : "total";
+        // Retained historical samples are not evidence of a current ranking.
+        const trendMatches = Object.entries(snapshot?.cvs || {})
+          .map(([name, record]) => ({ ...record, cvName: record.cvName || name }))
+          .filter((record) => {
+            const sample = record.samples?.[latestDate];
+            const rank = sample?.ranks?.[scope];
+            const sampleTimestamp = normalizeName(sample?.generated_at ?? sample?.generatedAt);
+            return Date.parse(snapshot.updated_at) === Date.parse(platformUpdatedAt) &&
+              (!sampleTimestamp || Date.parse(sampleTimestamp) === Date.parse(platformUpdatedAt)) &&
+              Number.isInteger(rank) && rank > 0 && matchesProfile(record, platform);
+          });
+        if (trendMatches.length === 1) {
+          items.push({ platform, rankKey, rank: trendMatches[0].samples[latestDate].ranks[scope] });
+        }
+      }
+    }
+  }
+  return { updatedAt: latestTimestamp(Object.values(updatedAtByPlatform)), updatedAtByPlatform, items };
+}
+
 export function buildCvProfileResponse({
   name,
   avatar = "",
   works = [],
   playbackBundles = {},
   seriesIndex = new Map(),
+  cvRanks = { updatedAt: "", items: [] },
 } = {}) {
   const normalizedWorks = attachCvSeries((Array.isArray(works) ? works : []).map((work) => {
     const point = getLatestPlaybackPoint(playbackBundles?.[work.platform], work.id);
@@ -736,6 +817,7 @@ export function buildCvProfileResponse({
       name: normalizeName(name),
       avatar: normalizeName(avatar),
     },
+    cvRanks,
     stats,
     series,
     topSeries: series.slice(0, 3),

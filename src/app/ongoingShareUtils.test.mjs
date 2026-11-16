@@ -92,6 +92,14 @@ function createCanvasHarness() {
   return { canvas, calls };
 }
 
+test("both platform share tables use two decimals for Yi playback and negative growth", () => {
+  const item = createItem({ values: { view_count: 234567890 }, deltas: { view_count: -123456789 } });
+  for (const platform of ["missevan", "manbo"]) {
+    const table = buildOngoingShareTable({ platform, items: [item] });
+    assert.equal(table.rows[0].view_count, "2.35亿（-1.23亿）");
+  }
+});
+
 test("share table maps current totals and full 7-day deltas for both platforms", () => {
   const item = createItem({
     name: "完整数值测试",
@@ -115,7 +123,7 @@ test("share table maps current totals and full 7-day deltas for both platforms",
   assert.deepEqual(missevanTable.rows[0], {
     title: "完整数值测试",
     mainCv: "CV甲，CV乙",
-    view_count: "123.5万（+1.2万）",
+    view_count: "123.46万（+1.23万）",
     subscription_num: "4321（+20）",
     danmaku_uid_count: "2345（+2）",
   });

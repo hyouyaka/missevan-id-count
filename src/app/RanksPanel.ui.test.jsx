@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
@@ -114,6 +114,51 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+function mockRanksLayout(initialWide) {
+  const listeners = new Set();
+  const media = {
+    matches: initialWide,
+    addEventListener: (_event, listener) => listeners.add(listener),
+    removeEventListener: (_event, listener) => listeners.delete(listener),
+  };
+  vi.stubGlobal("matchMedia", vi.fn((query) => query === "(min-width: 1024px)" ? media : {
+    matches: false, addEventListener() {}, removeEventListener() {},
+  }));
+  return (wide) => act(() => {
+    media.matches = wide;
+    listeners.forEach((listener) => listener());
+  });
+}
+
+test("single-rank views log daily and weekly separately and deduplicate repeat visits", async () => {
+  const setWide = mockRanksLayout(false);
+  const user = userEvent.setup();
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "new", rank: "new_daily" }} />);
+  await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["新品日榜"]));
+  await user.click(screen.getByRole("tab", { name: "周", exact: true }));
+  await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["新品日榜", "新品周榜"]));
+  await user.click(screen.getByRole("tab", { name: "日", exact: true }));
+  expect(getUsageLogEntries("ranks")).toHaveLength(2);
+  setWide(true);
+  await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["新品日榜", "新品周榜", "新品榜"]));
+  setWide(false);
+  expect(getUsageLogEntries("ranks")).toHaveLength(3);
+});
+
+test.each([false, true])("CV view logs match the visible scope (wide=%s)", async (wide) => {
+  mockRanksLayout(wide);
+  const user = userEvent.setup();
+  testState.payload.platforms.missevan.categories = [{ key: "cv", label: "CV榜", ranks: [
+    { key: "cv", label: "总榜", name: "CV总榜", items: [] },
+    { key: "cv-paid", label: "付费榜", name: "CV付费榜", items: [] },
+    { key: "cv-series-count", label: "勤劳榜", name: "CV勤劳榜", items: [] },
+  ] }];
+  render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "cv", rank: "cv" }} />);
+  await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual([wide ? "CV榜" : "CV总榜"]));
+  await user.click(screen.getByRole("tab", { name: "勤劳", exact: true }));
+  await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(wide ? ["CV榜"] : ["CV总榜", "CV勤劳榜"]));
 });
 
 test.each(["missevan", "manbo"])("labor rank %s emphasizes series counts without trend or growth", async (platform) => {

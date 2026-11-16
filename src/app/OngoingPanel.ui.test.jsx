@@ -146,6 +146,16 @@ async function openDesktopFilter(user) {
   return screen.findByRole("dialog", { name: "CV筛选选项" });
 }
 
+test.each(["missevan", "manbo"])("ongoing %s formats playback totals and growth in Yi", async (platform) => {
+  const item = createItem("999", "亿级播放测试", [], 123456789);
+  item.metrics.view_count.value = 234567890;
+  testState.fetchByPlatform[platform] = createFetchResult(createPayload(platform, [item]));
+  render(<OngoingPanel frontendVersion="1.8.7" routeState={{ platform }} />);
+  await waitForDrama("亿级播放测试");
+  expect(screen.getAllByText("2.35亿").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("+1.23亿").length).toBeGreaterThan(0);
+});
+
 async function waitForDrama(name) {
   await waitFor(() => expect(screen.getAllByText(name).length).toBeGreaterThan(0));
 }

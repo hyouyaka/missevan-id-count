@@ -23,6 +23,7 @@ import {
 import {
   buildVersionedUrl,
   formatCompactMetricValue,
+  formatDeviceDateTime,
   getBackendVersionFromResponse,
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
@@ -71,6 +72,11 @@ const workActionButtonClassName =
 
 function formatPlayback(value) {
   return Number.isFinite(value) ? formatCompactMetricValue(value) : "暂无数据";
+}
+
+function formatCvRankUpdatedAt(cvRanks, platform) {
+  const updatedAt = cvRanks.updatedAtByPlatform?.[platform] ?? cvRanks.updatedAt;
+  return updatedAt ? formatDeviceDateTime(updatedAt) : "暂无数据";
 }
 
 function buildProxyImageUrl(url) {
@@ -156,9 +162,8 @@ function CvProfileSkeleton() {
     <div aria-label="正在加载 CV 主页" className="grid animate-pulse gap-4 sm:gap-5">
       <Card>
         <CardHeader className="gap-5">
-          <div className="h-8 w-28 rounded-md bg-muted" />
-          <div className="grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)]">
-            <div className="flex items-center gap-3 lg:flex-col lg:items-start">
+          <div className="grid gap-5 lg:gap-6">
+            <div className="flex items-center gap-4">
               <div className="size-20 rounded-full bg-muted sm:size-24" />
               <div className="h-8 w-32 rounded-md bg-muted" />
             </div>
@@ -1361,12 +1366,27 @@ export function CvProfileView({
     <div className="grid gap-4 sm:gap-5">
       <Card>
         <CardHeader className="gap-5">
-          <div className="grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-center lg:gap-6">
-            <div className="flex min-w-0 items-center gap-4 lg:flex-col lg:items-center">
+          <div className="grid gap-5 lg:gap-6">
+            <div data-cv-profile-identity="true" className="flex min-w-0 items-center gap-4">
               <CvAvatar name={data.cv?.name || cvName} avatar={data.cv?.avatar} />
-              <h2 className="min-w-0 truncate text-2xl font-semibold tracking-tight sm:text-3xl lg:text-center">
-                {data.cv?.name}
-              </h2>
+              <div className="flex min-w-0 flex-col gap-2">
+                <h2 className="min-w-0 max-w-full truncate text-2xl font-semibold tracking-tight sm:text-3xl">
+                  {data.cv?.name}
+                </h2>
+                {data.cvRanks?.items?.length > 0 && (
+                  <div aria-label="CV榜排名" className="flex max-w-full flex-wrap gap-1.5">
+                    {data.cvRanks.items.map(({ platform, rankKey, rank }) => (
+                      <Badge
+                        key={`${platform}:${rankKey}`}
+                        variant={platform === "manbo" ? "manboPlatformSoft" : "missevanPlatformSoft"}
+                        title={`榜单更新时间：${formatCvRankUpdatedAt(data.cvRanks, platform)}`}
+                      >
+                        {platform === "manbo" ? "漫播" : "猫耳"}{rankKey === "cv-paid" ? "付费榜" : "总榜"} #{rank}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <PlatformStatCard platform="missevan" stats={stats.missevan} />

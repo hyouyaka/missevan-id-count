@@ -115,6 +115,60 @@ async function startTestServer(app, t) {
   return listener;
 }
 
+test("ranks conditional requests return recovered labor enrichment with a new ETag on either platform", async (t) => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("../server.js");
+  const snapshot = {
+    generated_at: "2026-11-06T00:00:00Z",
+    seriesCountMeta: {},
+    seriesCountRankings: {},
+  };
+  for (const platform of ["missevan", "manbo"]) {
+    snapshot.seriesCountMeta[platform] = { generated_at: "2026-11-13T00:00:00Z" };
+    snapshot.seriesCountRankings[platform] = [{ cvName: "恢复CV", rank: 1, seriesCount: 1,
+      works: [{ seriesKey: "series", title: "备用标题", dramaIds: ["101"] }] }];
+  }
+  const trends = {};
+  const build = () => buildNormalizedRanksResponse({ _meta: { updated_at: snapshot.generated_at } }, null, snapshot, { cvTrendSnapshots: trends });
+  let response = build();
+  const originalSummary = structuredClone(response.cvSummary);
+  const app = express();
+  createStatsRouteHarness({ router: app, options: {
+    getCachedRanksResponse: async () => ({ response, cacheStatus: "hit" }),
+    getRanksResponseCacheValidator,
+  } });
+  const listener = await startTestServer(app, t);
+  const url = `http://127.0.0.1:${listener.address().port}/ranks`;
+  const initial = await fetch(url);
+  assert.equal(initial.status, 200);
+  let etag = initial.headers.get("etag");
+  assert.ok(etag);
+  const initialBody = await initial.json();
+  const item = (body, platform) => body.platforms[platform].categories.find(({ key }) => key === "cv").ranks.at(-1).items[0];
+  for (const platform of ["missevan", "manbo"]) {
+    assert.equal(item(initialBody, platform).totalViewCount, null);
+    trends[platform] = { cvs: { 恢复CV: {
+      samples: { "2026-11-06": { metrics: { totalViewCount: 123456 } } },
+      works: [{ dramaId: "101", title: "恢复的作品标题", cover: "https://example.com/recovered.jpg" }],
+    } } };
+    response = build();
+    assert.deepEqual(response.cvSummary, originalSummary);
+    const recovered = await fetch(url, { cache: "no-cache", headers: { "If-None-Match": etag } });
+    assert.equal(recovered.status, 200, `${platform}: stale ETag must not yield 304`);
+    assert.notEqual(recovered.headers.get("etag"), etag);
+    etag = recovered.headers.get("etag");
+    const restored = item(await recovered.json(), platform);
+    assert.equal(restored.totalViewCount, 123456);
+    assert.equal(restored.works[0].title, "恢复的作品标题");
+    assert.equal(restored.works[0].cover, "https://example.com/recovered.jpg");
+    response = build();
+    const unchanged = await fetch(url, { cache: "no-cache", headers: { "If-None-Match": etag } });
+    assert.equal(unchanged.status, 304);
+    assert.equal(unchanged.headers.get("etag"), etag);
+    assert.equal(await unchanged.text(), "");
+  }
+});
+
 test("a client abort during task recovery does not create a stats task", async (t) => {
   const recovery = createDeferred();
   const recoveryStarted = createDeferred();

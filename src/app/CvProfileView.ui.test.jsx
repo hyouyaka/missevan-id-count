@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { useState } from "react";
 
 import { CvProfileView } from "@/app/CvProfileView";
+import { formatDeviceDateTime } from "@/app/app-utils";
 
 vi.mock("@/app/LazyRankTrendDialog", () => ({
   LazyRankTrendDialog: ({ open }) => open ? <div data-testid="trend-dialog" /> : null,
@@ -130,6 +131,69 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+test("CV profile shows four non-interactive platform badges unchanged by work filters", async () => {
+  const data = createProfileData();
+  data.cvRanks = {
+    updatedAt: "2026-11-12T00:00:00Z",
+    items: [
+      { platform: "missevan", rankKey: "cv", rank: 8 },
+      { platform: "missevan", rankKey: "cv-paid", rank: 3 },
+      { platform: "manbo", rankKey: "cv", rank: 12 },
+      { platform: "manbo", rankKey: "cv-paid", rank: 6 },
+    ],
+  };
+  const fetchMock = mockProfileFetch(data);
+  const { rerender } = render(<ProfileHarness platformFilter="missevan" />);
+  const ranks = await screen.findByLabelText("CV榜排名");
+  const rankText = ranks.textContent;
+  expect(Array.from(ranks.children).map((badge) => badge.textContent)).toEqual([
+    "猫耳总榜 #8", "猫耳付费榜 #3", "漫播总榜 #12", "漫播付费榜 #6",
+  ]);
+  for (const badge of ranks.children) {
+    expect(badge.tagName).toBe("SPAN");
+    expect(badge).toHaveAttribute("title", `榜单更新时间：${formatDeviceDateTime(data.cvRanks.updatedAt)}`);
+    expect(badge).toHaveAttribute("data-variant", badge.textContent.startsWith("猫耳") ? "missevanPlatformSoft" : "manboPlatformSoft");
+  }
+  expect(screen.queryByRole("button", { name: "作品2" })).not.toBeInTheDocument();
+  rerender(<ProfileHarness platformFilter="manbo" />);
+  expect(screen.getByRole("button", { name: "作品2" })).toBeInTheDocument();
+  expect(screen.getByLabelText("CV榜排名")).toHaveTextContent(rankText);
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/cv-profile?"))).toHaveLength(1);
+});
+
+test("CV badge tooltips use each platform publication date", async () => {
+  const updatedAtByPlatform = { missevan: "2026-11-12T12:00:00Z", manbo: "2026-11-13T12:00:00Z" };
+  mockProfileFetch({ ...createProfileData(), cvRanks: {
+    updatedAt: updatedAtByPlatform.manbo, updatedAtByPlatform,
+    items: [
+      { platform: "missevan", rankKey: "cv", rank: 8 },
+      { platform: "manbo", rankKey: "cv", rank: 17 },
+    ],
+  } });
+  render(<ProfileHarness />);
+  const ranks = await screen.findByLabelText("CV榜排名");
+  expect(within(ranks).getByText("猫耳总榜 #8")).toHaveAttribute("title", `榜单更新时间：${formatDeviceDateTime(updatedAtByPlatform.missevan)}`);
+  expect(within(ranks).getByText("漫播总榜 #17")).toHaveAttribute("title", `榜单更新时间：${formatDeviceDateTime(updatedAtByPlatform.manbo)}`);
+});
+
+test.each([undefined, { updatedAt: "", items: [] }])("CV profile hides badges for legacy or empty ranks (%s)", async (cvRanks) => {
+  mockProfileFetch({ ...createProfileData(), cvRanks });
+  render(<ProfileHarness />);
+  await screen.findByRole("heading", { name: "路知行" });
+  expect(screen.queryByLabelText("CV榜排名")).not.toBeInTheDocument();
+});
+
+test("CV profile only renders the available rank", async () => {
+  mockProfileFetch({ ...createProfileData(), cvRanks: {
+    updatedAt: "", items: [{ platform: "manbo", rankKey: "cv-paid", rank: 9 }],
+  } });
+  render(<ProfileHarness />);
+  const ranks = await screen.findByLabelText("CV榜排名");
+  expect(ranks.children).toHaveLength(1);
+  expect(ranks.firstElementChild).toHaveTextContent("漫播付费榜 #9");
+  expect(ranks.firstElementChild).toHaveAttribute("title", "榜单更新时间：暂无数据");
 });
 
 test("desktop series expansion stays in the grid and keeps nested work menus usable", async () => {

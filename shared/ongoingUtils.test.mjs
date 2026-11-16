@@ -5,6 +5,7 @@ import {
   buildOngoingCvOptions,
   buildOngoingResponse,
   filterOngoingItemsByCvNames,
+  formatOngoingMetricValue,
   getOngoingMetricDisplay,
   isOngoingNewDrama,
   isOngoingEmptyPaidDanmakuMetric,
@@ -15,6 +16,28 @@ import {
 import {
   buildMetricSnapshotsFromRankTrendAggregate,
 } from "./ranksTrendUtils.js";
+
+test("ongoing playback totals and signed deltas use two-decimal Wan and Yi", () => {
+  for (const [value, text] of [
+    [0, "0"], [9999, "9999"], [10000, "1.00万"],
+    [12345678, "1234.57万"], [100000000, "1.00亿"], [1234567890, "12.35亿"],
+    [-10000, "-1.00万"], [-123456789, "-1.23亿"],
+  ]) {
+    const display = getOngoingMetricDisplay({
+      currentValue: value, metricKey: "view_count", windowMetric: { delta: value, available: true },
+    });
+    assert.equal(display.currentText, text);
+    assert.equal(display.deltaText, `${value > 0 ? "+" : ""}${text}`);
+  }
+  assert.equal(formatOngoingMetricValue(12345678, "subscription_num"), "1235万");
+  assert.equal(formatOngoingMetricValue(1234567, "pay_count"), "123.5万");
+  assert.equal(formatOngoingMetricValue(1234567, "danmaku_uid_count"), "1234567");
+  assert.equal(formatOngoingMetricValue(NaN, "view_count"), "暂无");
+  assert.deepEqual(getOngoingMetricDisplay({ metricKey: "view_count" }), {
+    currentText: "暂不可用", deltaText: "暂不可用", showEmptyPaidDanmaku: false,
+  });
+  assert.equal(getOngoingMetricDisplay({ currentValue: 100000000, metricKey: "view_count", windowMetric: { available: false } }).deltaText, "暂无");
+});
 
 const sampleIndex = {
   dates: ["2026-04-01", "2026-04-26", "2026-04-29"],

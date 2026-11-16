@@ -13,6 +13,7 @@ import {
   buildOngoingNavigationMenu,
   buildRankPlatformSwitchRoutePatch,
   buildRanksNavigationMenu,
+  buildRanksViewUsagePayload,
   buildToolRouteUrl,
   buildToolViewUrl,
   classifyMergedSearchInput,
@@ -1005,6 +1006,34 @@ test("mobile rank navigation items flatten platform categories into direct rank 
     category: "box_office",
     rank: "box_office_member",
   });
+});
+
+test("rank view logs identify the visible rank or the full desktop category", () => {
+  for (const [key, label, rankKey, rankLabel, expected] of [
+    ["new", "新品榜", "new_daily", "日榜", "新品日榜"],
+    ["new", "新品榜", "new_weekly", "周榜", "新品周榜"],
+    ["bestseller", "畅销榜", "bestseller_weekly", "周榜", "畅销周榜"],
+    ["cv", "CV榜", "cv", "总榜", "CV总榜"],
+    ["cv", "CV榜", "cv-paid", "付费榜", "CV付费榜"],
+    ["cv", "CV榜", "cv-series-count", "勤劳榜", "CV勤劳榜"],
+    ["box_office", "票房榜", "box_office_total", "总榜", "票房总榜"],
+  ]) {
+    const rank = { key: rankKey, label: rankLabel };
+    const category = { key, label, ranks: [rank, { key: "other" }] };
+    for (const platform of ["missevan", "manbo"]) {
+      assert.deepEqual(buildRanksViewUsagePayload({ platform, category, rank }), {
+        platform, action: "ranks", keyword: expected, success: true,
+      });
+      assert.deepEqual(buildRanksViewUsagePayload({ platform, category, rank, showAllRanks: true }), {
+        platform, action: "ranks", keyword: label, success: true,
+      });
+    }
+  }
+  const rank = { key: "hot", label: "热播榜" };
+  assert.equal(buildRanksViewUsagePayload({ platform: "manbo", category: { key: "hot", label: "热播榜", ranks: [rank] }, rank }).keyword, "热播榜");
+  assert.equal(buildRanksViewUsagePayload({ platform: "missevan", category: { key: "cv", label: "CV榜" }, rank: { key: "cv", name: "CV总榜" } }).keyword, "CV总榜");
+  assert.equal(buildRanksViewUsagePayload(), null);
+  assert.equal(buildRanksViewUsagePayload({ platform: "missevan", category: { key: "new", label: "新品榜" } }), null);
 });
 
 test("mobile CV navigation includes labor ranks with a direct platform route", () => {

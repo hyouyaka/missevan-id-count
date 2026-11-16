@@ -1421,6 +1421,7 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(serverSource, /hasCvProfileLibraryData\([\s\S]*missevanInfoStore\.records,[\s\S]*manboInfoStore\.records[\s\S]*res\.status\(503\)/);
   assert.match(serverSource, /resolveCvCatalogEntry\([\s\S]*requestedName,[\s\S]*requestedProfileId/);
   assert.match(serverSource, /getCachedWeeklyPlaybackSnapshot\("missevan", \{[\s\S]*ids: idsByPlatform\.missevan/);
+  assert.match(serverSource, /const \[missevanPlayback, manboPlayback, cvRanks\] = await Promise\.all\([\s\S]*?loadCvProfileRanks\(catalog, catalogEntry\)/);
   assert.match(serverSource, /results:\s*\{\s*missevan: missevanResult,\s*manbo: manboResult,\s*cv: cvResult,/);
   assert.match(serverSource, /"cvid-map:v1"/);
   assert.match(serverSource, /"cvid-map:meta:v1"/);
@@ -1449,7 +1450,8 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(cvProfileViewSource, /whitespace-normal/);
   assert.match(cvProfileViewSource, /data-touch="compact"/);
   assert.match(cvProfileViewSource, /rounded-full/);
-  assert.match(cvProfileViewSource, /lg:flex-col lg:items-center/);
+  assert.match(cvProfileViewSource, /data-cv-profile-identity="true" className="flex min-w-0 items-center gap-4"/);
+  assert.doesNotMatch(cvProfileViewSource, /lg:grid-cols-\[13rem_minmax\(0,1fr\)\]|lg:flex-col/);
   assert.match(cvProfileViewSource, /cv_profile_open_search_result/);
   assert.match(cvProfileViewSource, /paymentFilter/);
   assert.match(cvProfileViewSource, /releaseFilter/);
@@ -3434,8 +3436,8 @@ test("ongoing page and share use the same metric display and unavailable-state r
   );
   assert.match(
     sharedOngoingUtilsSource,
-    /metricKey === "view_count" \? \{ forceWanDecimal: true \} : \{\}/,
-    "playback current values and deltas should use fixed one-decimal Wan formatting"
+    /metricKey === "view_count"[\s\S]*?100000000[\s\S]*?toFixed\(2\)[\s\S]*?亿[\s\S]*?10000[\s\S]*?toFixed\(2\)[\s\S]*?万/,
+    "playback current values and deltas should use two decimals for Wan and Yi"
   );
   assert.match(
     sharedOngoingUtilsSource,

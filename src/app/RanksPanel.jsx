@@ -1,7 +1,7 @@
 import { groupCvSeries } from "../../shared/cvSeriesUtils.js";
 import { CvSeriesGroup } from "@/app/CvSeriesGroup";
 import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowLeftRightIcon,
   BeanIcon,
@@ -29,6 +29,7 @@ import {
 import {
   buildCvRankProfileId,
   buildRankPlatformSwitchRoutePatch,
+  buildRanksViewUsagePayload,
   buildVersionedUrl,
   formatDeviceDateTime,
   formatPlainNumber,
@@ -98,6 +99,21 @@ const desktopSelectedTabClassName = mobileSelectedTabClassName;
 const desktopSelectedPlatformTabClassName = `${desktopSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
 const desktopRankToolbarClassName = "hidden min-w-0 items-center gap-3 lg:flex lg:flex-nowrap";
 const desktopRankControlsClassName = "flex shrink-0 items-center gap-3";
+const ranksAllColumnsMediaQuery = "(min-width: 1024px)";
+
+function subscribeRanksLayout(callback) {
+  const query = window.matchMedia?.(ranksAllColumnsMediaQuery);
+  if (query) {
+    query.addEventListener("change", callback);
+    return () => query.removeEventListener("change", callback);
+  }
+  window.addEventListener("resize", callback);
+  return () => window.removeEventListener("resize", callback);
+}
+
+function getRanksLayoutSnapshot() {
+  return window.matchMedia?.(ranksAllColumnsMediaQuery)?.matches ?? window.innerWidth >= 1024;
+}
 
 function getRankTabsGridStyle(count) {
   const columns = Math.max(1, Number(count) || 1);
@@ -1131,6 +1147,7 @@ export function RanksPanel({
   const [selectedCategory, setSelectedCategory] = useState(() => String(routeState?.category || "").trim());
   const [selectedRank, setSelectedRank] = useState(() => String(routeState?.rank || "").trim());
   const loggedRanksRef = useRef(new Set());
+  const showAllRanks = useSyncExternalStore(subscribeRanksLayout, getRanksLayoutSnapshot, () => false);
   const handleVersionResponseRef = useRef(handleVersionResponse);
   const shareObjectUrlRef = useRef("");
   const shareRequestRef = useRef(null);
@@ -1460,11 +1477,11 @@ export function RanksPanel({
   }, [onRouteStateChange, platformData, routeState?.view, selectedCategory, selectedPlatform, selectedRank]);
 
   useEffect(() => {
-    if (isLoading || errorMessage || !category?.key || !category?.label) {
-      return;
-    }
+    if (isLoading || errorMessage) return;
+    const payload = buildRanksViewUsagePayload({ platform: selectedPlatform, category, rank: activeRank, showAllRanks });
+    if (!payload) return;
 
-    const logKey = `${selectedPlatform}:${category.key}`;
+    const logKey = `${selectedPlatform}:${category.key}:${showAllRanks ? "all" : activeRank.key}`;
     if (loggedRanksRef.current.has(logKey)) {
       return;
     }
@@ -1473,16 +1490,11 @@ export function RanksPanel({
     fetch(buildVersionedUrl("/usage-log", frontendVersion), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        platform: selectedPlatform,
-        action: "ranks",
-        keyword: category.label,
-        success: true,
-      }),
+      body: JSON.stringify(payload),
     }).catch((error) => {
       console.error("Failed to log ranks view", error);
     });
-  }, [category?.key, category?.label, errorMessage, frontendVersion, isLoading, selectedPlatform]);
+  }, [category, activeRank, showAllRanks, errorMessage, frontendVersion, isLoading, selectedPlatform]);
 
   function updatePlatform(platform) {
     const nextPlatform = getPlatformData(rankData, platform);

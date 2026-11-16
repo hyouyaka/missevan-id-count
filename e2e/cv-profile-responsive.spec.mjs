@@ -11,6 +11,16 @@ const longTitle = "全球进化后我站在食物链顶端第二季下篇特别�
 const profileResponse = {
   success: true,
   cv: { name: "响应式测试 CV", avatar: "" },
+  cvRanks: {
+    updatedAt: "2026-11-13T12:00:00Z",
+    updatedAtByPlatform: { missevan: "2026-11-12T12:00:00Z", manbo: "2026-11-13T12:00:00Z" },
+    items: [
+      { platform: "missevan", rankKey: "cv", rank: 1 },
+      { platform: "missevan", rankKey: "cv-paid", rank: 12 },
+      { platform: "manbo", rankKey: "cv", rank: 123 },
+      { platform: "manbo", rankKey: "cv-paid", rank: 1234 },
+    ],
+  },
   stats: {
     missevan: { workCount: 4, playback: 100000000, dataUpdatedAt: "2026-07-24" },
     manbo: { workCount: 2, playback: 58736200, dataUpdatedAt: "2026-07-24" },
@@ -126,6 +136,44 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
   await page.setViewportSize({ width: 376, height: 800 });
   await page.goto("/?view=cv&cv=%E5%93%8D%E5%BA%94%E5%BC%8F%E6%B5%8B%E8%AF%95%20CV&sort=plays_asc");
   await expect(page.getByRole("heading", { name: "响应式测试 CV" })).toBeVisible();
+  const ranks = page.getByLabel("CV榜排名");
+  await expect(ranks.locator('[data-slot="badge"]')).toHaveCount(4);
+  await expect(ranks.getByText("猫耳总榜 #1", { exact: true })).toHaveAttribute("title", /2026-11-12/);
+  await expect(ranks.getByText("漫播总榜 #123", { exact: true })).toHaveAttribute("title", /2026-11-13/);
+  for (const width of [320, 376, 768, 1280, 1920]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(ranks.getByText("漫播付费榜 #1234", { exact: true })).toBeVisible();
+    const layout = await ranks.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const heading = element.previousElementSibling.getBoundingClientRect();
+      return {
+        belowName: box.top >= heading.bottom,
+        fits: Array.from(element.children).every((badge) => {
+          const rect = badge.getBoundingClientRect();
+          return rect.left >= box.left - 1 && rect.right <= box.right + 1;
+        }),
+        rows: new Set(Array.from(element.children).map((badge) => Math.round(badge.getBoundingClientRect().top))).size,
+      };
+    });
+    expect(layout.belowName).toBe(true);
+    expect(layout.fits).toBe(true);
+    const header = await page.locator('[data-cv-profile-identity="true"]').evaluate((identity) => {
+      const box = identity.getBoundingClientRect();
+      const cards = Array.from(identity.nextElementSibling.children).map((card) => card.getBoundingClientRect());
+      const avatar = identity.firstElementChild.getBoundingClientRect();
+      const name = identity.querySelector("h2").getBoundingClientRect();
+      return {
+        statsBelow: cards.every((card) => card.top >= box.bottom),
+        statsFillWidth: Math.abs(cards[0].left - box.left) < 1 && Math.abs(cards.at(-1).right - box.right) < 1,
+        horizontalIdentity: name.left >= avatar.right,
+      };
+    });
+    expect(header).toEqual({ statsBelow: true, statsFillWidth: true, horizontalIdentity: true });
+    if (width === 320) expect(layout.rows).toBeGreaterThan(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`cv-rank-badges-${width}.png`), fullPage: false });
+  }
+  await page.setViewportSize({ width: 376, height: 800 });
 
   const groupToggle = page.getByRole("button", { name: "展开系列响应式分组系列" });
   await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
@@ -346,6 +394,45 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
   }
 });
 
+test("rank view logs follow the visible single-rank or all-ranks layout", async ({ page }) => {
+  await page.addInitScript((version) => {
+    window.localStorage.setItem("missevan-changelog-seen-version", version);
+  }, appVersion);
+  const logs = [];
+  await page.route("**/usage-log**", async (route) => {
+    const payload = route.request().postDataJSON();
+    if (payload.action === "ranks") logs.push(payload.keyword);
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+  });
+  const category = (key, label, ranks) => ({ key, label, ranks: ranks.map(([key, label]) => ({ key, label, items: [] })) });
+  await page.route("**/ranks?**", (route) => route.fulfill({ status: 200, contentType: "application/json", headers: { "X-Backend-Version": appVersion }, body: JSON.stringify({
+    success: true, schemaVersion: 8, updatedAt: "2026-11-13", platforms: {
+      missevan: { key: "missevan", label: "猫耳", categories: [
+        category("new", "新品榜", [["new_daily", "日榜"], ["new_weekly", "周榜"]]),
+        category("bestseller", "畅销榜", [["bestseller_weekly", "周榜"], ["bestseller_daily", "日榜"]]),
+        category("cv", "CV榜", [["cv", "总榜"], ["cv-series-count", "勤劳榜"]]),
+      ] },
+    },
+  }) }));
+  await page.setViewportSize({ width: 375, height: 900 });
+  await page.goto("/?view=ranks&platform=missevan&category=new&rank=new_daily");
+  await expect.poll(() => [...logs]).toEqual(["新品日榜"]);
+  await page.getByRole("tab", { name: "周", exact: true }).click();
+  await expect.poll(() => [...logs]).toEqual(["新品日榜", "新品周榜"]);
+  await page.getByRole("tab", { name: "CV", exact: true }).click();
+  await expect.poll(() => logs.at(-1)).toBe("CV总榜");
+  await page.getByRole("tab", { name: "勤劳", exact: true }).click();
+  await expect.poll(() => logs.at(-1)).toBe("CV勤劳榜");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect.poll(() => logs.at(-1)).toBe("CV榜");
+  await page.getByRole("tab", { name: "新品榜", exact: true }).click();
+  await expect.poll(() => logs.at(-1)).toBe("新品榜");
+  await page.getByRole("tab", { name: "畅销榜", exact: true }).click();
+  await expect.poll(() => logs.at(-1)).toBe("畅销榜");
+  await page.setViewportSize({ width: 375, height: 900 });
+  await expect.poll(() => [...logs]).toEqual(["新品日榜", "新品周榜", "CV总榜", "CV勤劳榜", "CV榜", "新品榜", "畅销榜", "畅销周榜"]);
+});
+
 test("labor ranks keep series-first metrics and independent dates on both platforms", async ({ page }, testInfo) => {
   await page.addInitScript((version) => {
     window.localStorage.setItem("missevan-changelog-seen-version", version);
@@ -367,7 +454,7 @@ test("labor ranks keep series-first metrics and independent dates on both platfo
     }])),
   };
   await page.route("**/ranks?**", (route) => route.fulfill({
-    status: 200, contentType: "application/json", body: JSON.stringify(payload),
+    status: 200, contentType: "application/json", headers: { "X-Backend-Version": appVersion }, body: JSON.stringify(payload),
   }));
   for (const platform of ["missevan", "manbo"]) {
     for (const width of [375, 768, 1440]) {

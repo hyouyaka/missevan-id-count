@@ -539,6 +539,17 @@ function formatMobileRankNavigationLabel(categoryLabel, rankLabel, singleRank = 
   return `${prefix}${suffix}` || normalizedRankLabel || normalizedCategoryLabel;
 }
 
+export function buildRanksViewUsagePayload({ platform, category, rank, showAllRanks = false } = {}) {
+  if (!["missevan", "manbo"].includes(platform) || !category?.key || !category?.label) return null;
+  if (!showAllRanks && !rank?.key) return null;
+  const keyword = showAllRanks
+    ? normalizeNavigationLabel(category.label, "")
+    : rank.label
+      ? formatMobileRankNavigationLabel(category.label, rank.label, category.ranks?.length === 1)
+      : normalizeNavigationLabel(rank.name, "");
+  return keyword ? { platform, action: "ranks", keyword, success: true } : null;
+}
+
 export const RANK_PLATFORM_CARRY_CATEGORY_KEYS = ["peak", "growth", "cv"];
 
 function getFirstRankCategory(platformData) {

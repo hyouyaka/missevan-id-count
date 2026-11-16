@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   buildCvCatalog,
+  buildCvProfileRanks,
   buildCvProfileResponse,
   collectCvWorks,
   normalizeCvPlatformId,
@@ -58,6 +59,238 @@ const cvInfoRecords = [
     },
   },
 ];
+
+function createCvRankData(itemsByPlatform) {
+  return {
+    cvSummary: { updatedAt: "2026-11-12T00:00:00Z" },
+    platforms: Object.fromEntries(["missevan", "manbo"].map((platform) => [platform, {
+      categories: [{ key: "cv", ranks: ["cv", "cv-paid"].map((key) => ({
+        key, items: itemsByPlatform[platform]?.[key] || [],
+      })) }],
+    }])),
+  };
+}
+
+test("CV profile ranks match canonical names and aliases and preserve all four snapshot ranks", () => {
+  const catalog = buildCvCatalog({ missevanRecords, manboRecords, cvInfoRecords });
+  const entry = resolveCvCatalogEntry(catalog, "路知行").entry;
+  const rankData = createCvRankData({
+    missevan: { cv: [{ cvName: "路知行", rank: 8 }], "cv-paid": [{ cvName: "路老师", rank: 3 }] },
+    manbo: { cv: [{ cvName: "路老师", rank: 12 }], "cv-paid": [{ cvName: "路知行", rank: 6 }] },
+  });
+  const cvRanks = buildCvProfileRanks({ catalog, entry, rankData });
+  assert.deepEqual(cvRanks, {
+    updatedAt: rankData.cvSummary.updatedAt,
+    updatedAtByPlatform: { missevan: rankData.cvSummary.updatedAt, manbo: rankData.cvSummary.updatedAt },
+    items: [
+      { platform: "missevan", rankKey: "cv", rank: 8 },
+      { platform: "missevan", rankKey: "cv-paid", rank: 3 },
+      { platform: "manbo", rankKey: "cv", rank: 12 },
+      { platform: "manbo", rankKey: "cv-paid", rank: 6 },
+    ],
+  });
+  assert.deepEqual(buildCvProfileResponse({ name: entry.name, cvRanks }).cvRanks, cvRanks);
+  assert.deepEqual(buildCvProfileResponse().cvRanks, { updatedAt: "", items: [] });
+});
+
+test("CV profile ranks omit missing, invalid and duplicated matches", () => {
+  const catalog = buildCvCatalog({ missevanRecords, manboRecords, cvInfoRecords });
+  const entry = resolveCvCatalogEntry(catalog, "路知行").entry;
+  const rankData = createCvRankData({
+    missevan: { cv: [{ cvName: "路知行", rank: 25 }] },
+    manbo: {
+      cv: [{ cvName: "路知行", rank: 0 }],
+      "cv-paid": [{ cvName: "路知行", rank: 1 }, { cvName: "路老师", rank: 2 }],
+    },
+  });
+  assert.deepEqual(buildCvProfileRanks({ catalog, entry, rankData }).items, [
+    { platform: "missevan", rankKey: "cv", rank: 25 },
+  ]);
+  assert.deepEqual(buildCvProfileRanks({ catalog, entry }).items, []);
+  assert.deepEqual(buildCvProfileRanks().items, []);
+});
+
+test("homonymous CV ranks require work evidence for exactly one identity", () => {
+  const catalog = [
+    { profileId: "first", name: "同名CV", aliases: ["别名"], workIds: { missevan: ["101", "103"] } },
+    { profileId: "second", name: "同名CV", aliases: ["别名"], workIds: { missevan: ["102", "103"] } },
+  ];
+  for (const [works, expected] of [
+    [[], []], [[{ dramaId: "999" }], []], [[{ dramaId: "103" }], []],
+    [[{ dramaId: "101" }, { dramaId: "102" }], []],
+    [[{ dramaId: "101" }], [{ platform: "missevan", rankKey: "cv", rank: 7 }]],
+  ]) {
+    const rankData = createCvRankData({ missevan: { cv: [{ cvName: "别名", rank: 7, works }] } });
+    assert.deepEqual(buildCvProfileRanks({ catalog, entry: catalog[0], rankData }).items, expected);
+    assert.deepEqual(buildCvProfileRanks({ catalog, entry: catalog[1], rankData }).items, []);
+  }
+});
+
+test("CV profile supplements top-30 ranks with current full-ranking trend samples", () => {
+  const entry = { profileId: "ma", name: "马洋", aliases: ["马老师"] };
+  const rankData = createCvRankData({ manbo: {
+    cv: [{ cvName: "马洋", rank: 17 }], "cv-paid": [{ cvName: "马洋", rank: 15 }],
+  } });
+  const trendSnapshots = { missevan: {
+    updated_at: rankData.cvSummary.updatedAt,
+    cvs: { 马老师: { samples: { "2026-11-12": { ranks: { total: 57, paid: 51 } } } } },
+  } };
+  assert.deepEqual(buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots }).items, [
+    { platform: "missevan", rankKey: "cv", rank: 57 },
+    { platform: "missevan", rankKey: "cv-paid", rank: 51 },
+    { platform: "manbo", rankKey: "cv", rank: 17 },
+    { platform: "manbo", rankKey: "cv-paid", rank: 15 },
+  ]);
+});
+
+test("one platform's newer trend publication does not remove the other platform's current badges", () => {
+  const entry = { profileId: "cv", name: "测试CV" };
+  for (const updatedPlatform of ["missevan", "manbo"]) {
+    const otherPlatform = updatedPlatform === "missevan" ? "manbo" : "missevan";
+    const rankData = createCvRankData(Object.fromEntries(["missevan", "manbo"].map((platform) => [platform, {
+      cv: [{ cvName: entry.name, rank: 8 }], "cv-paid": [{ cvName: entry.name, rank: 3 }],
+    }])));
+    const trendSnapshots = { [updatedPlatform]: {
+      updated_at: "2026-11-13T00:00:00Z",
+      cvs: { 测试CV: { samples: { "2026-11-13": { ranks: { total: 40, paid: 35 } } } } },
+    } };
+    const result = buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots });
+    assert.equal(result.updatedAtByPlatform[otherPlatform], "2026-11-12T00:00:00Z");
+    assert.equal(result.updatedAtByPlatform[updatedPlatform], "2026-11-13T00:00:00Z");
+    assert.deepEqual(result.items.filter((item) => item.platform === otherPlatform), [
+      { platform: otherPlatform, rankKey: "cv", rank: 8 },
+      { platform: otherPlatform, rankKey: "cv-paid", rank: 3 },
+    ]);
+    assert.deepEqual(result.items.filter((item) => item.platform === updatedPlatform), [
+      { platform: updatedPlatform, rankKey: "cv", rank: 40 },
+      { platform: updatedPlatform, rankKey: "cv-paid", rank: 35 },
+    ]);
+  }
+});
+
+test("CV profile respects each platform rank timestamp instead of a newer shared summary", () => {
+  const entry = { profileId: "cv", name: "测试CV" };
+  const rankData = createCvRankData({
+    missevan: { cv: [{ cvName: entry.name, rank: 8 }] },
+    manbo: { cv: [{ cvName: entry.name, rank: 17 }] },
+  });
+  rankData.cvSummary.updatedAt = "2026-11-13T00:00:00Z";
+  for (const platform of ["missevan", "manbo"]) {
+    rankData.platforms[platform].categories[0].ranks.forEach((rank) => {
+      rank.fetchedAt = platform === "missevan" ? "2026-11-12T00:00:00Z" : "2026-11-13T00:00:00Z";
+    });
+  }
+  const result = buildCvProfileRanks({ catalog: [entry], entry, rankData });
+  assert.deepEqual(result.updatedAtByPlatform, { missevan: "2026-11-12T00:00:00Z", manbo: "2026-11-13T00:00:00Z" });
+  assert.deepEqual(result.items, [
+    { platform: "missevan", rankKey: "cv", rank: 8 },
+    { platform: "manbo", rankKey: "cv", rank: 17 },
+  ]);
+});
+
+test("same-day publications use the newest platform timestamp without affecting the other platform", () => {
+  const entry = { profileId: "cv", name: "测试CV" };
+  const rankData = createCvRankData({
+    missevan: { cv: [{ cvName: entry.name, rank: 8 }] },
+    manbo: { cv: [{ cvName: entry.name, rank: 17 }] },
+  });
+  const trendSnapshots = { missevan: {
+    updated_at: "2026-11-12T12:00:00Z",
+    cvs: { 测试CV: { samples: { "2026-11-12": {
+      generated_at: "2026-11-12T12:00:00Z", ranks: { total: 35 },
+    } } } },
+  } };
+  const result = buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots });
+  assert.deepEqual(result.items, [
+    { platform: "missevan", rankKey: "cv", rank: 35 },
+    { platform: "manbo", rankKey: "cv", rank: 17 },
+  ]);
+  assert.deepEqual(result.updatedAtByPlatform, { missevan: "2026-11-12T12:00:00Z", manbo: "2026-11-12T00:00:00Z" });
+  // A retained sample from an earlier publication that day is not current.
+  trendSnapshots.missevan.cvs.测试CV.samples["2026-11-12"].generated_at = "2026-11-12T00:00:00Z";
+  assert.deepEqual(buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots }).items, [
+    { platform: "manbo", rankKey: "cv", rank: 17 },
+  ]);
+  // If the board snapshot is newer, its rank wins over the earlier trend.
+  rankData.cvSummary.updatedAt = "2026-11-12T18:00:00Z";
+  assert.deepEqual(buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots }).items, [
+    { platform: "missevan", rankKey: "cv", rank: 8 },
+    { platform: "manbo", rankKey: "cv", rank: 17 },
+  ]);
+});
+
+test("CV profile never reuses older ranks or backtracks past a current missing rank", () => {
+  const entry = { profileId: "cv", name: "测试CV" };
+  const rankData = createCvRankData({});
+  for (const [updated_at, samples] of [
+    ["2026-11-05", { "2026-11-05": { ranks: { total: 57 } } }],
+    ["2026-11-12", { "2026-11-05": { ranks: { total: 57 } } }],
+    ["2026-11-12", { "2026-11-05": { ranks: { total: 57 } }, "2026-11-12": { ranks: { total: 0, paid: 1.5 } } }],
+  ]) {
+    const trendSnapshots = { missevan: { updated_at, cvs: { 测试CV: { samples } } } };
+    assert.deepEqual(buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots }).items, []);
+  }
+});
+
+test("trend-only badges retain both platforms when their publication dates differ", () => {
+  const entry = { profileId: "cv", name: "测试CV" };
+  const result = buildCvProfileRanks({ catalog: [entry], entry, trendSnapshots: {
+    missevan: { updated_at: "2026-11-12T00:00:00Z", cvs: { 测试CV: { samples: { "2026-11-12": { ranks: { total: 57, paid: 51 } } } } } },
+    manbo: { updated_at: "2026-11-13T00:00:00Z", cvs: { 测试CV: { samples: { "2026-11-13": { ranks: { total: 17, paid: 15 } } } } } },
+  } });
+  assert.deepEqual(result.items, [
+    { platform: "missevan", rankKey: "cv", rank: 57 },
+    { platform: "missevan", rankKey: "cv-paid", rank: 51 },
+    { platform: "manbo", rankKey: "cv", rank: 17 },
+    { platform: "manbo", rankKey: "cv-paid", rank: 15 },
+  ]);
+  assert.deepEqual(result.updatedAtByPlatform, { missevan: "2026-11-12T00:00:00Z", manbo: "2026-11-13T00:00:00Z" });
+});
+
+test("a missing current rank hides only its own platform without reviving old samples", () => {
+  const entry = { profileId: "cv", name: "测试CV" };
+  const rankData = createCvRankData({
+    missevan: { cv: [{ cvName: entry.name, rank: 8 }] },
+    manbo: { cv: [{ cvName: entry.name, rank: 17 }] },
+  });
+  const trendSnapshots = { missevan: {
+    updated_at: "2026-11-13T00:00:00Z",
+    cvs: { 测试CV: { samples: { "2026-11-12": { ranks: { total: 8 } } } } },
+  } };
+  assert.deepEqual(buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots }).items, [
+    { platform: "manbo", rankKey: "cv", rank: 17 },
+  ]);
+});
+
+test("full-ranking trends require unambiguous work evidence for homonyms", () => {
+  const catalog = [
+    { profileId: "one", name: "同名", workIds: { missevan: ["1"] } },
+    { profileId: "two", name: "同名", workIds: { missevan: ["2"] } },
+  ];
+  const record = { works: [], samples: { "2026-11-12": { ranks: { total: 57 } } } };
+  const trendSnapshots = { missevan: { updated_at: "2026-11-12", cvs: { 同名: record } } };
+  const build = (entry) => buildCvProfileRanks({ catalog, entry, trendSnapshots }).items;
+  assert.deepEqual(build(catalog[0]), []);
+  record.works = [{ dramaId: "1" }];
+  assert.deepEqual(build(catalog[0]), [{ platform: "missevan", rankKey: "cv", rank: 57 }]);
+  assert.deepEqual(build(catalog[1]), []);
+  record.works.push({ dramaId: "2" });
+  assert.deepEqual(build(catalog[0]), []);
+});
+
+test("CV profile uses newer trend publication instead of an older top-30 snapshot", () => {
+  const entry = { profileId: "cv", name: "测试CV" };
+  const rankData = createCvRankData({ missevan: { cv: [{ cvName: "测试CV", rank: 28 }] } });
+  const trendSnapshots = { missevan: {
+    updated_at: "2026-11-19T00:00:00Z",
+    cvs: { 测试CV: { samples: { "2026-11-19": { ranks: { total: 35 } } } } },
+  } };
+  assert.deepEqual(buildCvProfileRanks({ catalog: [entry], entry, rankData, trendSnapshots }), {
+    updatedAt: "2026-11-19T00:00:00Z",
+    updatedAtByPlatform: { missevan: "2026-11-19T00:00:00Z", manbo: "2026-11-12T00:00:00Z" },
+    items: [{ platform: "missevan", rankKey: "cv", rank: 35 }],
+  });
+});
 
 test("CV ID map parsing preserves aliases, fallback names and unsafe Manbo IDs", () => {
   const snapshot = parseCvIdMapSnapshot(JSON.stringify({

@@ -4,6 +4,14 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.8.8",
+    changes: [
+      "CV榜新增「勤劳榜」，分平台按作品总数排序（多季算作一部作品）",
+      "CV主页新增播放量排名的标签",
+      "优化更新中页面的数值显示",
+    ],
+  },
+  {
     version: "1.8.7",
     changes: [
       "增加“付费系数”功能，即付费人数与付费ID数的比值，收益计算时可自行调整，默认为1。具体计算规则请参考说明与反馈页面",

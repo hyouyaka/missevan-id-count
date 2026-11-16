@@ -3,6 +3,21 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+test("rank view keywords flow unchanged into keywordText for single and all-rank views", async () => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { normalizeUsageLogFields } = await import("./server.js");
+  const { buildRanksViewUsagePayload } = await import("./src/app/app-utils.js");
+  const category = { key: "new", label: "新品榜", ranks: [{ key: "new_daily", label: "日榜" }, { key: "new_weekly", label: "周榜" }] };
+  for (const [rank, showAllRanks, expected] of [
+    [category.ranks[0], false, "新品日榜"],
+    [category.ranks[1], false, "新品周榜"],
+    [category.ranks[1], true, "新品榜"],
+  ]) {
+    const payload = buildRanksViewUsagePayload({ platform: "missevan", category, rank, showAllRanks });
+    assert.equal(normalizeUsageLogFields(payload, "ranks").keywordText, expected);
+  }
+});
+
 test("new drama id normalization preserves long Manbo ids as strings", async () => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { normalizeNewDramaIdsForPlatform } = await import("./server.js");

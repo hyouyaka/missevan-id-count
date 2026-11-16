@@ -463,21 +463,20 @@ function formatOngoingPlainNumber(value) {
   return Number.isFinite(count) ? `${Math.trunc(count)}` : "0";
 }
 
-function formatOngoingWanNumber(value, options = {}) {
-  const { forceWanDecimal = false } = options;
+function formatOngoingWanNumber(value) {
   const count = Number(value);
   if (!Number.isFinite(count)) {
     return "暂无";
   }
   if (Math.abs(count) >= 10000) {
     const wan = count / 10000;
-    const digits = forceWanDecimal ? 1 : Math.abs(wan) >= 1000 ? 0 : 1;
+    const digits = Math.abs(wan) >= 1000 ? 0 : 1;
     return `${wan.toFixed(digits)}万`;
   }
   return formatOngoingPlainNumber(count);
 }
 
-export function formatOngoingMetricValue(value, metricKey, options = {}) {
+export function formatOngoingMetricValue(value, metricKey) {
   if (value == null || String(value).trim() === "") {
     return "暂不可用";
   }
@@ -488,10 +487,19 @@ export function formatOngoingMetricValue(value, metricKey, options = {}) {
   if (metricKey === "danmaku_uid_count") {
     return formatOngoingPlainNumber(count);
   }
-  return formatOngoingWanNumber(count, options);
+  if (metricKey === "view_count") {
+    if (Math.abs(count) >= 100000000) {
+      return `${(count / 100000000).toFixed(2)}亿`;
+    }
+    if (Math.abs(count) >= 10000) {
+      return `${(count / 10000).toFixed(2)}万`;
+    }
+    return formatOngoingPlainNumber(count);
+  }
+  return formatOngoingWanNumber(count);
 }
 
-export function formatOngoingMetricDelta(value, metricKey, options = {}) {
+export function formatOngoingMetricDelta(value, metricKey) {
   if (value == null || String(value).trim() === "") {
     return "暂不可用";
   }
@@ -500,7 +508,7 @@ export function formatOngoingMetricDelta(value, metricKey, options = {}) {
     return "暂无";
   }
   const prefix = delta > 0 ? "+" : "";
-  return `${prefix}${formatOngoingMetricValue(delta, metricKey, options)}`;
+  return `${prefix}${formatOngoingMetricValue(delta, metricKey)}`;
 }
 
 export function getOngoingMetricDisplay({ currentValue, metricKey, windowMetric } = {}) {
@@ -508,7 +516,6 @@ export function getOngoingMetricDisplay({ currentValue, metricKey, windowMetric 
   const currentMetricUnavailable = currentValue == null || String(currentValue).trim() === "";
   const delta = windowMetric?.delta ?? null;
   const showMissingDelta = !showEmptyPaidDanmaku && (windowMetric?.available === false || delta == null);
-  const numberOptions = metricKey === "view_count" ? { forceWanDecimal: true } : {};
 
   if (showEmptyPaidDanmaku) {
     return { currentText: "暂无付费集", deltaText: null, showEmptyPaidDanmaku: true };
@@ -518,10 +525,10 @@ export function getOngoingMetricDisplay({ currentValue, metricKey, windowMetric 
   }
 
   return {
-    currentText: formatOngoingMetricValue(currentValue, metricKey, numberOptions),
+    currentText: formatOngoingMetricValue(currentValue, metricKey),
     deltaText: showMissingDelta
       ? "暂无"
-      : formatOngoingMetricDelta(delta, metricKey, numberOptions),
+      : formatOngoingMetricDelta(delta, metricKey),
     showEmptyPaidDanmaku: false,
   };
 }
