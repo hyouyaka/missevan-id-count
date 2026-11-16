@@ -113,7 +113,7 @@ profileResponse.works.forEach((work) => {
   }
 });
 
-test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }, testInfo) => {
+async function mockCvProfilePage(page) {
   await page.addInitScript((version) => {
     window.localStorage.setItem("missevan-changelog-seen-version", version);
   }, appVersion);
@@ -121,6 +121,7 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
     route.fulfill({
       status: 200,
       contentType: "application/json",
+      headers: { "X-Backend-Version": appVersion },
       body: JSON.stringify(profileResponse),
     })
   );
@@ -129,10 +130,14 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
     return route.fulfill({
       status: 200,
       contentType: "application/json",
+      headers: { "X-Backend-Version": appVersion },
       body: JSON.stringify({ success: true, ids }),
     });
   });
+}
 
+test("CV profile rank badges and identity layout fit mobile, tablet and desktop widths", async ({ page }, testInfo) => {
+  await mockCvProfilePage(page);
   await page.setViewportSize({ width: 376, height: 800 });
   await page.goto("/?view=cv&cv=%E5%93%8D%E5%BA%94%E5%BC%8F%E6%B5%8B%E8%AF%95%20CV&sort=plays_asc");
   await expect(page.getByRole("heading", { name: "响应式测试 CV" })).toBeVisible();
@@ -173,7 +178,13 @@ test("CV profile keeps compact controls and responsive work columns in WebKit-si
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`cv-rank-badges-${width}.png`), fullPage: false });
   }
+});
+
+test("CV profile keeps compact controls and responsive work columns in WebKit-sized layouts", async ({ page }, testInfo) => {
+  await mockCvProfilePage(page);
   await page.setViewportSize({ width: 376, height: 800 });
+  await page.goto("/?view=cv&cv=%E5%93%8D%E5%BA%94%E5%BC%8F%E6%B5%8B%E8%AF%95%20CV&sort=plays_asc");
+  await expect(page.getByRole("heading", { name: "响应式测试 CV" })).toBeVisible();
 
   const groupToggle = page.getByRole("button", { name: "展开系列响应式分组系列" });
   await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
