@@ -806,7 +806,7 @@ test("home view keeps icon headers and uses shared platform pills", () => {
 test("home update and rank sections use editorial responsive layouts", () => {
   assert.match(homeViewSource, /RefreshCwIcon/);
   assert.match(homeViewSource, /getViewCountValue/);
-  assert.match(homeViewSource, /getSevenDayViewDelta/);
+  assert.match(homeViewSource, /getOngoingMetricDisplay\(\{\s*currentValue: getViewCountValue\(item\),\s*metricKey: "view_count",\s*windowMetric: item\?\.windows\?\.\["7d"\]\?\.metrics\?\.view_count/);
   assert.match(homeViewSource, /ongoingCounts/);
   assert.match(homeViewSource, /ongoingCounts\.missevan/);
   assert.match(homeViewSource, /ongoingCounts\.manbo/);

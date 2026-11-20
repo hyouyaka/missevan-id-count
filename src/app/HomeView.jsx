@@ -51,7 +51,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { sortOngoingItemsByWindowDelta } from "../../shared/ongoingUtils.js";
+import { getOngoingMetricDisplay, sortOngoingItemsByWindowDelta } from "../../shared/ongoingUtils.js";
 
 const platformMeta = {
   missevan: { label: "猫耳" },
@@ -159,11 +159,6 @@ function formatDelta(value) {
 
 function getMainCvText(item) {
   return String(item?.main_cv_text ?? "").replace(/^主要CV：/, "").trim() || "暂无";
-}
-
-function getSevenDayViewDelta(item) {
-  const metric = item?.windows?.["7d"]?.metrics?.view_count;
-  return metric?.available === false ? null : metric?.delta ?? null;
 }
 
 function getViewCountValue(item) {
@@ -394,7 +389,11 @@ function OngoingMiniItem({
   handleVersionResponse,
 }) {
   const coverUrl = buildProxyImageUrl(item?.cover);
-  const delta = getSevenDayViewDelta(item);
+  const { currentText, deltaText } = getOngoingMetricDisplay({
+    currentValue: getViewCountValue(item),
+    metricKey: "view_count",
+    windowMetric: item?.windows?.["7d"]?.metrics?.view_count,
+  });
 
   function openSearchResult(options = {}) {
     if (!platform || !item?.id) {
@@ -448,8 +447,8 @@ function OngoingMiniItem({
           <span className="inline-flex flex-none items-center gap-1 whitespace-nowrap">
             <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
             <span className="tabular-nums">
-              {formatCompactCount(getViewCountValue(item))}
-              <span className="home-editorial-delta">（{formatDelta(delta)}）</span>
+              {currentText}
+              <span className="home-editorial-delta">（{deltaText}）</span>
             </span>
           </span>
           <HomeMoreMenu

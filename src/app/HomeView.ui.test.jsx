@@ -49,6 +49,7 @@ vi.mock("@/app/rankTrendData", () => ({
 }));
 
 import { HomeView } from "@/app/HomeView";
+import { fetchOngoingData } from "@/app/ongoingData";
 import { logRankTrendOpen } from "@/app/rankTrendData";
 
 afterEach(() => {
@@ -95,6 +96,40 @@ function renderHome(overrides = {}) {
   render(<HomeView {...props} />);
   return props;
 }
+
+test.each([
+  [0, 0, true, "0（0）"],
+  [9999, 300, true, "9999（+300）"],
+  [10000, 10000, true, "1.00万（+1.00万）"],
+  [12345678, -12345, true, "1234.57万（-1.23万）"],
+  [100000000, 100000000, true, "1.00亿（+1.00亿）"],
+  [234567890, -123456789, true, "2.35亿（-1.23亿）"],
+  ["123456789", "123456789", true, "1.23亿（+1.23亿）"],
+  [123456789, null, false, "1.23亿（暂无）"],
+  [123456789, 123456789, false, "1.23亿（暂无）"],
+  [null, 300, true, "暂不可用（暂不可用）"],
+])("home ongoing cards format playback %s and delta %s using shared display rules", async (value, delta, available, expected) => {
+  for (const platform of ["missevan", "manbo"]) {
+    vi.mocked(fetchOngoingData).mockResolvedValueOnce({
+      response: { ok: true, headers: { get: () => null } },
+      data: {
+        success: true,
+        items: [{
+          id: platform === "missevan" ? "11" : "12",
+          name: `${platform}格式回归`,
+          metrics: { view_count: { value } },
+          windows: { "7d": { metrics: { view_count: { available, delta } } } },
+        }],
+      },
+    });
+  }
+  renderHome();
+  for (const platform of ["missevan", "manbo"]) {
+    const title = await screen.findByRole("button", { name: `${platform}格式回归` });
+    const card = title.closest("article");
+    expect(card.querySelector(".tabular-nums").textContent).toBe(expected);
+  }
+});
 
 test("home drama menus keep rank action order and start statistics only after a successful jump", async () => {
   const user = userEvent.setup();
