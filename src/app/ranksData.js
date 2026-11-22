@@ -1,4 +1,5 @@
 import { buildVersionedUrl } from "@/app/app-utils";
+import { COMPACT_CV_RANKS_FORMAT, expandCvRanks } from "../../shared/cvRanksWire.js";
 
 const RANKS_CLIENT_CACHE_TTL_MS = 30 * 60 * 1000;
 const RANKS_EXPECTED_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -37,6 +38,7 @@ export function getCachedRanksData(frontendVersion) {
 }
 
 export function resolveRankRefreshAt(rankData, categoryKey, rank) {
+  if (rank?.rankKind) return rank.fetchedAt || "";
   if (categoryKey === "cv") {
     if (rank?.key === "cv-series-count") return rank?.fetchedAt || "";
     return rankData?.cvSummary?.updatedAt || rank?.fetchedAt || "";
@@ -61,10 +63,10 @@ export async function fetchRanksData(frontendVersion, options = {}) {
   ranksClientCache.frontendVersion = normalizedVersion;
   ranksClientCache.promise = (async () => {
     try {
-      const response = await fetch(buildVersionedUrl("/ranks", frontendVersion), {
+      const response = await fetch(buildVersionedUrl(`/ranks?format=${COMPACT_CV_RANKS_FORMAT}`, frontendVersion), {
         cache: "no-cache",
       });
-      const data = await response.json();
+      const data = expandCvRanks(await response.json());
       const payload = {
         response,
         data,

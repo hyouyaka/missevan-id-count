@@ -33,7 +33,7 @@ export function getCvSeriesId(work) {
   return work.seriesId || `work:${work.platform}:${String(work.id ?? work.dramaId)}`;
 }
 
-export function groupCvSeries(works = []) {
+export function groupCvSeries(works = [], { requireCompletePlayback = false } = {}) {
   const groups = new Map();
   works.forEach((work) => {
     const id = getCvSeriesId(work);
@@ -44,7 +44,8 @@ export function groupCvSeries(works = []) {
     const values = group.works.map(playback).filter((value) => value !== null);
     return {
       ...group,
-      playCount: values.length ? values.reduce((sum, value) => sum + value, 0) : null,
+      playCount: values.length && (!requireCompletePlayback || values.length === group.works.length)
+        ? values.reduce((sum, value) => sum + value, 0) : null,
       works: group.works.sort((a, b) => comparePlayback(playback(a), playback(b), a.title, b.title)),
     };
   }).sort((a, b) => comparePlayback(a.playCount, b.playCount, a.title, b.title));

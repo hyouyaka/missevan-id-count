@@ -374,6 +374,7 @@ export function ToolView({ initialAppConfig }) {
     { key: "search", label: "计算与统计" },
     { key: "missevan", label: "猫耳" },
     { key: "manbo", label: "漫播" },
+    { key: "cv", label: "CV" },
     { key: "favorites", label: "收藏" },
   ];
   const desktopPlatforms = [

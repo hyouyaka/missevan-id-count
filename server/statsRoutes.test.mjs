@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { registerStatsRoutes } from "./routes/statsRoutes.js";
+import { COMPACT_CV_RANKS_FORMAT, expandCvRanks } from "../shared/cvRanksWire.js";
 
 function createDeferred() {
   let resolve;
@@ -144,6 +145,16 @@ test("ranks conditional requests return recovered labor enrichment with a new ET
   let etag = initial.headers.get("etag");
   assert.ok(etag);
   const initialBody = await initial.json();
+  const compactUrl = `${url}?format=${COMPACT_CV_RANKS_FORMAT}`;
+  const compact = await fetch(compactUrl, { headers: { "If-None-Match": etag } });
+  assert.equal(compact.status, 200);
+  const compactEtag = compact.headers.get("etag");
+  assert.notEqual(compactEtag, etag);
+  const compactBody = await compact.json();
+  assert.ok(compactBody.cvData.works.length);
+  assert.equal(compactBody.platforms.cv.categories.find(({ key }) => key === "labor").ranks[1].useLegacyItems, true);
+  assert.deepEqual(expandCvRanks(compactBody), initialBody);
+  assert.equal((await fetch(compactUrl, { cache: "no-cache", headers: { "If-None-Match": compactEtag } })).status, 304);
   const item = (body, platform) => body.platforms[platform].categories.find(({ key }) => key === "cv").ranks.at(-1).items[0];
   for (const platform of ["missevan", "manbo"]) {
     assert.equal(item(initialBody, platform).totalViewCount, null);
@@ -167,6 +178,30 @@ test("ranks conditional requests return recovered labor enrichment with a new ET
     assert.equal(unchanged.headers.get("etag"), etag);
     assert.equal(await unchanged.text(), "");
   }
+});
+
+test("CV trend requests preserve identity and invalidate the ETag when badges change on the same date", async (t) => {
+  const app = express();
+  let rank = 6;
+  createStatsRouteHarness({ router: app, options: {
+    getCachedCvRankTrendResponse: async (name, profileId) => {
+      assert.equal(name, "同名CV");
+      assert.equal(profileId, "rank-work:missevan:101");
+      return { success: true, latestDate: "2026-11-20", cvRanks: { items: [{ rank }] } };
+    },
+  } });
+  const listener = await startTestServer(app, t);
+  const query = new URLSearchParams({ kind: "cv", id: "同名CV", profileId: "rank-work:missevan:101" });
+  const url = `http://127.0.0.1:${listener.address().port}/ranks/trends?${query}`;
+  const initial = await fetch(url);
+  assert.equal((await initial.json()).cvRanks.items[0].rank, 6);
+  const etag = initial.headers.get("etag");
+  assert.ok(etag);
+  rank = 5;
+  const updated = await fetch(url, { cache: "no-cache", headers: { "If-None-Match": etag } });
+  assert.equal(updated.status, 200);
+  assert.notEqual(updated.headers.get("etag"), etag);
+  assert.equal((await updated.json()).cvRanks.items[0].rank, 5);
 });
 
 test("a client abort during task recovery does not create a stats task", async (t) => {

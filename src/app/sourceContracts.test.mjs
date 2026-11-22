@@ -318,7 +318,7 @@ test("ongoing platform pills include both cached platform counts", () => {
 test("desktop rank toolbar keeps pills left and compact legend right", () => {
   assert.match(ranksPanelSource, /const desktopRankToolbarClassName = "hidden min-w-0 items-center gap-3 lg:flex lg:flex-nowrap"/);
   assert.match(ranksPanelSource, /const desktopRankControlsClassName = "flex shrink-0 items-center gap-3"/);
-  assert.match(ranksPanelSource, /className=\{desktopRankToolbarClassName\}[\s\S]*className=\{desktopRankControlsClassName\}[\s\S]*<MetricLegend[\s\S]*variant="compact"/);
+  assert.match(ranksPanelSource, /className=\{desktopRankToolbarClassName\}[\s\S]*className=\{desktopRankControlsClassName[^}]*\}[\s\S]*<MetricLegend[\s\S]*variant="compact"/);
   assert.match(ranksPanelSource, /className="ml-auto w-max min-w-0 max-w-full shrink overflow-x-auto/);
   assert.doesNotMatch(ranksPanelSource, /className="ml-auto min-w-0 flex-1 overflow-x-auto/);
   assert.match(ranksPanelSource, /isCompact\s*\n\s*\? "w-max min-w-full flex-nowrap justify-end gap-x-2/);
@@ -363,8 +363,7 @@ test("home drama covers stay static while more menus expose shared trend actions
   const cvItemEnd = homeViewSource.indexOf("function HomeRankCard", cvItemStart);
   assert.ok(cvItemStart >= 0 && cvItemEnd > cvItemStart);
   assert.doesNotMatch(homeViewSource.slice(cvItemStart, cvItemEnd), /HomeTrendCoverAction/);
-  assert.match(homeViewSource.slice(cvItemStart, cvItemEnd), /kind="cv"[\s\S]*onOpenTrend=\{onOpenTrend\}/);
-  assert.match(homeViewSource.slice(cvItemStart, cvItemEnd), /flex min-w-0 items-center gap-1\.5[\s\S]*kind="cv"[\s\S]*PlayCircleIcon/);
+  assert.doesNotMatch(homeViewSource.slice(cvItemStart, cvItemEnd), /onOpenTrend|HomeMoreMenu/);
 });
 
 test("shared badges avoid component-level RGB and HEX color literals", () => {
@@ -652,10 +651,13 @@ test("home view maps requested sections and see-more routes", () => {
   assert.match(homeViewSource, /categoryKey: "bestseller"[\s\S]*rankKey: "bestseller_weekly"/);
   assert.match(homeViewSource, /categoryKey: "box_office"[\s\S]*rankKey: "box_office_total"/);
   assert.match(homeViewSource, /categoryKey: "diamond"[\s\S]*rankKey: "diamond_monthly"/);
-  assert.match(homeViewSource, /猫耳巅峰榜[\s\S]*猫耳7日飙升榜[\s\S]*猫耳CV榜总榜/);
-  assert.match(homeViewSource, /漫播巅峰榜[\s\S]*漫播7日飙升榜[\s\S]*漫播CV总榜/);
+  assert.match(homeViewSource, /猫耳巅峰榜[\s\S]*猫耳7日飙升榜/);
+  assert.match(homeViewSource, /漫播巅峰榜[\s\S]*漫播7日飙升榜/);
   assert.match(homeViewSource, /categoryKey: "growth"[\s\S]*rankKey: "growth_weekly"/);
-  assert.match(homeViewSource, /categoryKey: "cv"[\s\S]*rankKey: "cv"/);
+  for (const category of ["total", "paid", "labor"]) {
+    assert.ok(homeViewSource.includes('categoryKey: "' + category + '", rankKey: "combined"'));
+  }
+  assert.match(homeViewSource, /categoryKey: "partner", rankKey: "workCount"/);
   assert.match(homeViewSource, /metric: "playback"/);
   assert.match(homeViewSource, /onNavigateRoute\(\{\s*view: "ongoing",\s*platform,\s*metric: "playback"/);
   assert.match(homeViewSource, /sortOngoingItemsByWindowDelta\(ongoingByPlatform\.missevan\?\.items \|\| \[\], "7d"\)/);
@@ -697,11 +699,11 @@ test("home single-drama titles preview metrics while series titles retain direct
 test("home title and trend logs keep homeview while CV rank links use ranks", () => {
   assert.match(homeViewSource, /usageSource: "homeview"/);
   assert.match(homeViewSource, /logRankTrendOpen\(\{[\s\S]*source: "homeview"/);
-  assert.match(homeViewSource, /name: lookup\.isCvRank \? item\?\.cvName : item\?\.name/);
+  assert.match(homeViewSource, /logRankTrendOpen\(\{[\s\S]*name: item\?\.name/);
   assert.match(homeViewSource, /onOpenCv\?\.\([\s\S]*source: "ranks"/);
   assert.match(homeViewSource, /profileId: buildCvRankProfileId\(platform, item\)/);
   assert.match(serverSource, /export function buildTrendOpenUsageLog/);
-  assert.match(serverSource, /platform === "cv" && \["cv", "cv-paid"\]\.includes\(rankKey\)/);
+  assert.match(serverSource, /platform === "cv" && \["cv", "cv-paid", "cv-series-count"\]\.includes\(rankKey\)/);
   assert.match(serverSource, /if \(action === "trend"\) \{[\s\S]*buildTrendOpenUsageLog\(payload\)[\s\S]*await writeUsageLog\(entry\)/);
 });
 
@@ -720,7 +722,7 @@ test("home compact more menus reuse rank actions with homeview logging", () => {
   assert.ok(favoriteIndex > compareIndex && paidIdIndex > favoriteIndex);
   assert.ok(revenueIndex > paidIdIndex && listenIndex > revenueIndex);
   assert.match(menuSource, /kind === "drama"/);
-  assert.match(menuSource, /!isCv \? <DropdownMenuItem[\s\S]*对比/);
+  assert.match(menuSource, /<DropdownMenuItem[^>]*onSelect=\{addCompareItem\}[\s\S]*对比/);
   assert.match(menuSource, /source: "homeview", success: true/);
   assert.match(menuSource, /source="homeview"/);
   assert.match(menuSource, /const opened = await openSearchResult\(\{ suppressUsageLog: true \}\);[\s\S]*if \(!opened\) return;/);
@@ -780,7 +782,7 @@ test("home view keeps see-more links below lists instead of top-right actions", 
   assert.match(homeViewSource, /title="一周内更新"/);
   assert.match(homeViewSource, /title="榜单速览"/);
   assert.match(homeViewSource, /ariaLabel=\{`查看更多\$\{platformMeta\[platform\]\.label\}一周内更新`\}/);
-  assert.match(homeViewSource, /ariaLabel=\{`查看更多\$\{rankConfig\.title\}`\}/);
+  assert.match(homeViewSource, /ariaLabel=\{`\$\{isCvRank \? "查看完整" : "查看更多"\}\$\{rankConfig\.title\}`\}/);
   assert.match(homeViewSource, /text-sm!/);
   assert.doesNotMatch(homeViewSource, /查看全部/);
   assert.doesNotMatch(homeViewSource, /absolute right-.*查看更多/);
@@ -824,7 +826,7 @@ test("home update and rank sections use editorial responsive layouts", () => {
   assert.doesNotMatch(homeViewSource, /home-editorial-ranks-grid/);
   assert.doesNotMatch(homeViewSource, /data-featured=/);
   assert.doesNotMatch(indexCssSource, /\.home-editorial-rank-slot\[data-featured=/);
-  assert.match(homeViewSource, /displayTitle: "CV总榜"/);
+  assert.match(homeViewSource, /title: "播放总榜", categoryKey: "total"/);
 });
 
 test("home rank carousel uses the shared Embla composition without replacing shared buttons", () => {
@@ -947,8 +949,8 @@ test("home rank previews keep titles compact and expose formatted playback conte
   assert.doesNotMatch(cvItemSource, /className=\{homeRankItemTitleClassName\}/);
   assert.doesNotMatch(cvItemSource, /whitespace-nowrap/);
   assert.match(cvItemSource, /underline underline-offset-4/);
-  assert.match(cvItemSource, /formatRankCompactCount\(item\?\.totalViewCount\)/);
-  assert.match(cvItemSource, /getHomeCvWorksPreviewText\(item\?\.topSeries \|\| item\?\.topWorks \|\| item\?\.works\)/);
+  assert.match(cvItemSource, /formatRankCompactCount\(item\.totalViewCount\)/);
+  assert.match(cvItemSource, /getHomeCvWorksPreviewText\(item\.topSeries \|\| item\.topWorks \|\| item\.works\)/);
   assert.match(cvItemSource, /className="[^"]*line-clamp-2[^"]*" title=\{topWorksText\}/);
   assert.doesNotMatch(cvItemSource, /\btruncate\b/);
   assert.doesNotMatch(cvItemSource, /formatCompactCount\(item\?\.totalViewCount\)/);
@@ -1065,15 +1067,14 @@ test("header navigation uses one right-side semantic surface drawer", () => {
   const drawerUpdaterStart = navigationSource.indexOf("setExpandedRootKeys((current) => {", drawerToggleStart);
   const drawerRequestStart = navigationSource.indexOf("onRequestRanksMenu?.(key);", drawerToggleStart);
   assert.ok(drawerToggleStart >= 0 && drawerRequestStart > drawerToggleStart && drawerRequestStart < drawerUpdaterStart);
-  assert.match(navigationSource, /next\.delete\(key === "missevan" \? "manbo" : "missevan"\)/);
+  assert.match(navigationSource, /\["missevan", "manbo", "cv"\]\.filter\(\(platform\) => platform !== key\)\.forEach/);
   assert.doesNotMatch(toolViewSource, /<DesktopMainNavigationMenu/);
   assert.doesNotMatch(toolViewSource, /<MobileMainNavigationMenu/);
   assert.doesNotMatch(toolViewSource, /buildMobileRankNavigationItems/);
   assert.match(navigationSource, /const routePatch = item\?\.routePatch \|\| item\?\.leafPatch \|\| null/);
   assert.match(navigationSource, /item=\{\{ \.\.\.item, routePatch \}\}/);
   assert.match(navigationSource, /function buildDrawerPlatformItem/);
-  assert.match(navigationSource, /platform\.key === "missevan"[\s\S]*label: platform\.label/);
-  assert.match(navigationSource, /platform\.key === "manbo"[\s\S]*label: platform\.label/);
+  assert.match(navigationSource, /\["missevan", "manbo", "cv"\]\.includes\(platform\.key\)/);
   assert.doesNotMatch(toolViewSource, /expandedMobileRootKey === "ranks"/);
   assert.doesNotMatch(toolViewSource, /rankItems\.map/);
   assert.match(toolViewSource, /openDrawerChangelog/);
@@ -1310,7 +1311,7 @@ test("list artwork uses shared lazy image loading", () => {
   assert.match(ongoingPanelSource, /<LazyImage alt=\{item\.name\}/);
   assert.match(ranksPanelSource, /<LazyImage alt=\{item\.name\}/);
   assert.match(ranksPanelSource, /<LazyImage alt=\{work\.title\}/);
-  assert.match(ranksPanelSource, /<LazyImage alt=\{item\.cvName\}/);
+  assert.match(ranksPanelSource, /<LazyImage alt=\{cv\.cvName\}/);
   assert.match(favoritesPanelSource, /<LazyImage alt=\{favorite\.title\}/);
   assert.match(dramaCompareSource, /<LazyImage alt=\{item\.title\}/);
   assert.match(platformTabLabelSource, /function PlatformGlyph/);
@@ -1508,7 +1509,8 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(serverSource, /function buildCvProfileOpenUsageLog|export function buildCvProfileOpenUsageLog/);
   assert.match(homeViewSource, /source: "ranks"/);
   assert.match(ranksPanelSource, /source: "ranks"/);
-  assert.match(ranksPanelSource, /profileId: buildCvRankProfileId\(platform, item\)/);
+  assert.match(ranksPanelSource, /const profileId = isPartner \? "" : buildCvRankProfileId\(platform, item\)/);
+  assert.match(ranksPanelSource, /fetchSharedRankTrendData\(\{\s*kind: "cv",\s*id: item\.cvName,\s*profileId,/);
   assert.match(appUtilsSource, /export function buildCvRankProfileId/);
   assert.match(appUtilsSource, /export function areToolRouteStatesEqual/);
   assert.match(appUtilsSource, /"cvKey"/);
@@ -3402,7 +3404,7 @@ test("rank overview copy keeps refresh time in the same compact row", () => {
   assert.doesNotMatch(ranksPanelSource, /const rankIntro = isCvCategory/);
   assert.match(ranksPanelSource, /同步猫耳和漫播榜单，每日更新。/);
   assert.match(ranksPanelSource, /统计来自猫耳\$\{formatPlainNumber\(cvSummary\.missevanDramaCount\)\}部/);
-  assert.match(ranksPanelSource, /const rankInfoText = isCvCategory/);
+  assert.match(ranksPanelSource, /<CvRankColumn[\s\S]*?infoText=\{getCvRankInfoText\(rank\)\}[\s\S]*?refreshAt=\{resolveRankRefreshAt\(rankData, category\.key, rank\)\}/);
   assert.match(ranksPanelSource, /infoText=\{rankInfoText\}/);
   assert.match(ranksPanelSource, /<RankInfoPopover infoText=\{infoText\} \/>/);
   assert.doesNotMatch(ranksPanelSource, /className="px-1 text-sm leading-6 text-muted-foreground"[\s\S]*此次数据刷新于/);
@@ -3553,7 +3555,7 @@ test("CV ranks use a dedicated expandable works layout", () => {
   assert.match(ranksPanelSource, /function CvRankColumn/);
   assert.match(ranksPanelSource, /function CvRankItemCard/);
   assert.match(ranksPanelSource, /function CvWorksList/);
-  assert.match(ranksPanelSource, /category\?\.key === "cv"/);
+  assert.match(ranksPanelSource, /selectedPlatform === "cv"/);
   assert.match(ranksPanelSource, /overflow-y-auto/);
   assert.match(ranksPanelSource, /ScrollTextIcon/);
   assert.match(ranksPanelSource, /ChevronDownIcon/);
@@ -3602,14 +3604,14 @@ test("CV rank works expose platform ids and search result jumps", () => {
   assert.notEqual(cvWorksEnd, -1, "CV works list should end before CV item card");
   const cvWorksSource = ranksPanelSource.slice(cvWorksStart, cvWorksEnd);
 
-  assert.match(cvWorksSource, /PlatformIdIcon[\s\S]*platform=\{platform\}/);
+  assert.match(cvWorksSource, /PlatformIdIcon[\s\S]*platform=\{workPlatform\}/);
   assert.doesNotMatch(cvWorksSource, /PlatformDramaLink|ExternalLinkIcon|<a\b/);
   assert.match(cvWorksSource, /dramaId: work\.dramaId/);
   assert.match(cvWorksSource, /usageAction: "ranks_open_search_result"/);
   assert.match(cvWorksSource, /underline underline-offset-4/);
   assert.match(cvWorksSource, /formatRankCompactCount\(work\.viewCount\)/);
   assert.match(cvWorksSource, /title=\{work\.title\}/);
-  assert.match(cvWorksSource, /<span className="min-w-0 break-all text-foreground">\{work\.dramaId\}<\/span>/);
+  assert.match(cvWorksSource, /const workPlatform = work\.platform \|\| platform/);
   assert.match(cvWorksSource, /truncate/);
 });
 
@@ -3695,7 +3697,7 @@ test("CV rank card aligns actions with the CV name and TOP3 with the rank edge",
   assert.equal(cvItemSource.match(/<CvRankActions/g)?.length ?? 0, 1);
   assert.match(
     cvItemSource,
-    /className="row-span-2 size-\[3\.75rem\][^"]*sm:size-\[4\.25rem\]"/
+    /size-\[3\.75rem\][^"]*sm:size-\[4\.25rem\]/
   );
   assert.doesNotMatch(cvItemSource, /sm:row-span-3/);
   assert.match(
@@ -3991,11 +3993,11 @@ test("rank trend chart legend selects exactly one metric with radio controls", (
   assert.match(rankTrendUiSource, /name="rank-trend-metric"/);
   assert.match(rankTrendUiSource, /checked=\{isSelected\}/);
   assert.match(rankTrendUiSource, /onChange=\{\(\) => onSelectMetric\?\.\(metric\.key\)\}/);
-  assert.match(rankTrendUiSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\("view_count"\)/);
+  assert.match(rankTrendUiSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\(initialMetricKey\)/);
   assert.match(rankTrendUiSource, /function selectTrendMetric\(metricKey\)/);
-  assert.match(rankTrendUiSource, /const selectedChartMetric = chartMetrics\.find\(\(metric\) => metric\.key === selectedMetricKey\) \|\| chartMetrics\[0\] \|\| null/);
+  assert.match(rankTrendUiSource, /const selectedChartMetric = chartMetrics\.find\(\(metric\) => metric\.key === selectedMetricKey\)[\s\S]*?\|\| chartMetrics\.find\(\(metric\) => metric\.key === initialMetricKey\)[\s\S]*?\|\| chartMetrics\[0\] \|\| null/);
   assert.match(rankTrendUiSource, /const visibleChartMetrics = selectedChartMetric \? \[selectedChartMetric\] : \[\]/);
-  assert.match(rankTrendUiSource, /setSelectedMetricKey\("view_count"\)/);
+  assert.match(rankTrendUiSource, /setSelectedMetricKey\(initialMetricKey\)/);
   assert.doesNotMatch(rankTrendUiSource, /visibleMetricKeys/);
   assert.doesNotMatch(rankTrendUiSource, /TrendMetricToggleLegend/);
   assert.doesNotMatch(rankTrendUiSource, /type="checkbox"/);
@@ -4090,7 +4092,7 @@ test("rank trend dialog exposes absolute and increment curve modes", () => {
   assert.doesNotMatch(rankTrendUiSource, /buildDualAxisTrendChartLines/);
 });
 
-test("rank trend expanded details replace the disclosure title with the table header", () => {
+test("rank trend details keep the CV disclosure outside the horizontally scrollable table", () => {
   const detailsStart = rankTrendUiSource.indexOf("function TrendSnapshotDetails");
   const detailsEnd = rankTrendUiSource.indexOf("export function RankTrendDeltaBadge", detailsStart);
   assert.notEqual(detailsStart, -1, "TrendSnapshotDetails should exist");
@@ -4099,13 +4101,13 @@ test("rank trend expanded details replace the disclosure title with the table he
 
   assert.match(detailsSource, /aria-label="收起数据明细"/);
   assert.match(detailsSource, /\{column\.label\}/);
-  assert.match(detailsSource, /!isOpen \? \(/);
+  assert.match(detailsSource, /!isOpen \|\| isCvTable \? \(/);
   assert.match(detailsSource, /className="flex h-8 w-full[\s\S]*text-xs!/);
-  assert.match(detailsSource, /table className="w-full table-fixed border-collapse text-\[0\.68rem\]"/);
-  assert.match(detailsSource, /columns\.map\(\(column, index\) =>/);
-  assert.match(detailsSource, /const isLastColumn = index === columns\.length - 1/);
-  assert.match(detailsSource, /isLastColumn \? "relative pr-8" : ""/);
-  assert.match(detailsSource, /index === columns\.length - 1 \? "pr-8" : ""/);
+  assert.match(detailsSource, /max-h-44 overflow-auto/);
+  assert.match(detailsSource, /min-w-\[34rem\]/);
+  assert.match(detailsSource, /const showCollapse = !isCvTable && index === columns\.length - 1/);
+  assert.match(detailsSource, /showCollapse \? "relative pr-8" : ""/);
+  assert.match(rankTrendUiSource, /key: "combined_total_view_count", label: "双平台总播放量"[\s\S]*?key: "combined_paid_view_count", label: "双平台付费播放量"[\s\S]*?key: "missevan_total_view_count", label: "猫耳汇总"/);
   assert.doesNotMatch(detailsSource, /colSpan=\{columns\.length\}/);
   assert.doesNotMatch(detailsSource, /index === 0 \? \(/);
 });
@@ -4240,14 +4242,14 @@ test("trend and compare dialogs default to 7-day absolute playback", () => {
   const trendDialogSource = rankTrendUiSource.slice(trendDialogStart);
   assert.match(trendDialogSource, /const \[selectedWindow, setSelectedWindow\] = useState\("7d"\)/);
   assert.match(trendDialogSource, /const \[selectedChartMode, setSelectedChartMode\] = useState\("absolute"\)/);
-  assert.match(trendDialogSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\("view_count"\)/);
+  assert.match(trendDialogSource, /const \[selectedMetricKey, setSelectedMetricKey\] = useState\(initialMetricKey\)/);
   assert.match(trendDialogSource, /const isWeeklyPlaybackTrend = data\?\.kind === "weekly_playback"/);
   assert.match(trendDialogSource, /const defaultWindowKey = isCvTrend \|\| isWeeklyPlaybackTrend \? "7w" : "7d"/);
   assert.match(trendDialogSource, /每周统计·仅播放量/);
   assert.match(rankTrendUiSource, /availableLegendMetrics\.length > 1/);
   assert.match(trendDialogSource, /setSelectedWindow\(primaryHasWeeklyTrend && !primaryHasDailyTrend \? "7w" : "7d"\)/);
   assert.match(trendDialogSource, /setSelectedChartMode\("absolute"\)/);
-  assert.match(trendDialogSource, /setSelectedMetricKey\("view_count"\)/);
+  assert.match(trendDialogSource, /setSelectedMetricKey\(initialMetricKey\)/);
 
   const compareDialogStart = dramaCompareSource.indexOf("export function DramaCompareDialog");
   const compareDialogEnd = dramaCompareSource.indexOf("export function DramaCompareBasket", compareDialogStart);
@@ -4579,7 +4581,7 @@ test("Manbo peak rank items reuse ordinary trend and compare actions when daily 
   );
   assert.match(
     ranksPanelSource,
-    /\(category\?\.key === "cv" \? \[\] : category\?\.ranks \|\| \[\]\)[\s\S]*\.flatMap\(\(rank\) => rank\?\.items \|\| \[\]\)[\s\S]*\.filter\(\(item\) => item\?\.type !== "peak"\)[\s\S]*\.map\(\(item\) => String\(item\?\.id \?\? ""\)\.trim\(\)\)/
+    /\(selectedPlatform === "cv" \? \[\] : category\?\.ranks \|\| \[\]\)[\s\S]*\.flatMap\(\(rank\) => rank\?\.items \|\| \[\]\)[\s\S]*\.filter\(\(item\) => item\?\.type !== "peak"\)[\s\S]*\.map\(\(item\) => String\(item\?\.id \?\? ""\)\.trim\(\)\)/
   );
   assert.doesNotMatch(
     ranksPanelSource,

@@ -34,7 +34,14 @@ vi.mock("@/app/ranksData", () => ({
           categories: [
             { key: "new", ranks: [{ key: "new_daily", items: [{ id: "22", name: "首页榜单剧", rank: 2, main_cv_text: "CV乙", view_count: 8800 }] }] },
             { key: "peak", ranks: [{ key: "peak", items: [{ name: "首页巅峰系列", type: "peak", rank: 1, drama_ids: ["33"], view_count: 9900, daily_view_delta: { available: true, delta: 100 } }] }] },
-            { key: "cv", ranks: [{ key: "cv", items: [{ cvName: "首页CV", rank: 3, totalViewCount: 7700, topSeries: [{ title: "首页系列" }], topWorks: [{ title: "旧剧集" }], works: [] }] }] },
+          ],
+        },
+        cv: {
+          categories: [
+            { key: "total", ranks: [{ key: "combined", available: true, items: [{ cvName: "首页CV", rank: 3, totalViewCount: 7700, topSeries: [{ title: "首页系列" }], topWorks: [{ title: "旧剧集" }], works: [] }] }] },
+            { key: "paid", ranks: [{ key: "combined", available: true, items: [] }] },
+            { key: "labor", ranks: [{ key: "combined", available: true, items: [] }] },
+            { key: "partner", ranks: [{ key: "workCount", available: true, items: [{ rank: 1, cvs: [{ cvName: "甲" }, { cvName: "乙" }], seriesCount: 7 }] }] },
           ],
         },
       },
@@ -173,20 +180,18 @@ test("home peak and CV menus expose only actions supported by their rank type", 
   expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["趋势", "对比"]);
   await user.keyboard("{Escape}");
 
+  const rankTabs = screen.getByRole("tablist", { name: "选择榜单平台" });
+  await user.click(within(rankTabs).getByRole("tab", { name: "CV", exact: true }));
   expect(screen.getByText("TOP3：《首页系列》")).toBeInTheDocument();
   expect(screen.queryByText(/旧剧集/)).not.toBeInTheDocument();
-  const cvTrigger = screen.getByRole("button", { name: "首页CV更多操作" });
-  await user.click(cvTrigger);
-  expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["趋势"]);
-  await user.click(screen.getByRole("menuitem", { name: "趋势" }));
-  expect(logRankTrendOpen).toHaveBeenLastCalledWith({
-    platform: "cv",
-    id: "首页CV",
-    name: "首页CV",
-    source: "homeview",
-    rankKey: "cv",
-    frontendVersion: "1.7.9",
-  });
+  expect(screen.getByText("甲 & 乙")).toBeInTheDocument();
+  for (const title of ["播放总榜", "付费总榜", "勤劳总榜", "搭档次数榜"]) {
+    expect(screen.getByRole("heading", { name: title, exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看完整" + title })).toBeInTheDocument();
+  }
+  expect(screen.getByText("7", { exact: true })).toBeInTheDocument();
+  expect(screen.queryByText("7 部", { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "首页CV更多操作" })).not.toBeInTheDocument();
 });
 
 test("home work titles open previews while peak series and CV titles keep their original destinations", async () => {
@@ -211,6 +216,7 @@ test("home work titles open previews while peak series and CV titles keep their 
   await user.click(screen.getByRole("button", { name: "首页巅峰系列", exact: true }));
   expect(props.onOpenSearchResult).toHaveBeenLastCalledWith(expect.objectContaining({ ids: ["33"], suppressUsageLog: false, usageAction: "ranks_open_search_result" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.click(within(screen.getByRole("tablist", { name: "选择榜单平台" })).getByRole("tab", { name: "CV", exact: true }));
   await user.click(screen.getByRole("button", { name: "首页CV", exact: true }));
   expect(props.onOpenCv).toHaveBeenCalledWith("首页CV", expect.objectContaining({ source: "ranks" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

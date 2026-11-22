@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildAggregatedRankTrendResponse,
   buildCvTrendResponse,
+  buildCvTrendWeeklyDelta,
   buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
   buildRankTrendAvailabilityResponse,
@@ -18,6 +19,40 @@ const sampleIndex = {
   dates: ["2026-04-24", "2026-04-26"],
   updated_at: "2026-04-26T01:06:48.925778+00:00",
 };
+
+test("CV weekly playback uses one platform scope and only the previous week", () => {
+  const cvName = "勤劳样本";
+  const date = "2026-11-20";
+  const publicationId = "latest-edition";
+  function trend(platform, dailyValues) {
+    const samples = Object.fromEntries(Object.entries(dailyValues).map(([sampleDate, totalViewCount]) => [
+      sampleDate, { metrics: { totalViewCount }, generated_at: `${sampleDate}T05:00:00Z`, publicationId },
+    ]));
+    return { version: 2, kind: "cv", platform, dates: Object.keys(samples), cvs: { [cvName]: { samples } } };
+  }
+  const manbo = trend("manbo", { "2026-11-13": 1000 });
+  const missevan = trend("missevan", { [date]: 120, "2026-11-13": 100, "2026-11-06": 90 });
+  const options = { cvName, platform: "combined", scope: "total", date, publicationId, trendSnapshots: { publicationId, missevan, manbo } };
+  const delta = buildCvTrendWeeklyDelta(options);
+  assert.equal(delta.delta, 20);
+  const chart = buildCvTrendResponse({ id: cvName, trendSnapshots: options.trendSnapshots });
+  const metric = chart.windows["3w"].metrics.find((entry) => entry.key === "combined_total_view_count");
+  assert.equal(metric.toValue, delta.toValue);
+  assert.equal(chart.windows["3w"].generatedAt, "2026-11-20T05:00:00Z");
+  assert.equal(buildCvTrendWeeklyDelta({ ...options, requiredPlatforms: ["missevan", "manbo"] }).available, false);
+  const sameDayManboSample = { generated_at: "2026-11-20T02:00:00Z", publicationId, metrics: { totalViewCount: 1100 } };
+  manbo.cvs[cvName].samples[date] = sameDayManboSample;
+  const batch = { ...options, requiredPlatforms: ["missevan", "manbo"], currentGeneratedAt: "2026-11-20T05:00:00Z" };
+  assert.equal(buildCvTrendWeeklyDelta(batch).available, false);
+  assert.equal(buildCvTrendWeeklyDelta(batch).toValue, null);
+  sameDayManboSample.generated_at = "2026-11-20T13:00:00+08:00";
+  sameDayManboSample.publicationId = "earlier-edition";
+  assert.equal(buildCvTrendWeeklyDelta(batch).available, false);
+  sameDayManboSample.publicationId = publicationId;
+  assert.equal(buildCvTrendWeeklyDelta(batch).delta, 120);
+  delete missevan.cvs[cvName].samples["2026-11-13"];
+  assert.equal(buildCvTrendWeeklyDelta(options).available, false);
+});
 
 test("rank trend window end dates use Beijing calendar dates and fall back for invalid metadata", () => {
   assert.equal(
@@ -551,6 +586,8 @@ test("buildCvTrendResponse combines cross-platform weekly playback metrics", () 
   assert.deepEqual(
     response.windows["3w"].metrics.map((metric) => [metric.key, metric.label, metric.delta, metric.available]),
     [
+      ["combined_total_view_count", "双平台总播放量", 1507223, true],
+      ["combined_paid_view_count", "双平台付费播放量", null, false],
       ["missevan_total_view_count", "猫耳总播放量", 1506223, true],
       ["missevan_paid_view_count", "猫耳付费播放量", null, false],
       ["manbo_total_view_count", "漫播总播放量", 1000, true],

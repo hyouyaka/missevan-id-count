@@ -128,6 +128,9 @@ test("buildCvProfileOpenUsagePayload separates search and rank navigation source
   assert.equal(buildCvProfileOpenUsagePayload("", { source: "search" }), null);
   assert.equal(buildCvProfileOpenUsagePayload("张福正", { source: "direct" }), null);
   assert.equal(buildCvProfileOpenUsagePayload("张福正", { source: "ranks" }), null);
+  assert.deepEqual(buildCvProfileOpenUsagePayload("张福正", { source: "home", platform: "cv", rankKey: "cv-paid" }), {
+    action: "cv_profile_open", cvName: "张福正", source: "ranks", platform: "cv", rankKey: "cv-paid",
+  });
 });
 
 test("buildCvRankProfileId derives a rank navigation discriminator from a work", () => {
@@ -524,7 +527,7 @@ test("tool route URL builder keeps only ranks route params", () => {
       { pathname: "/", search: "?view=ongoing&platform=manbo&window=30d&foo=bar", hash: "" },
       { view: "ranks", platform: "missevan", category: "cv", rank: "weekly" }
     ),
-    "/?foo=bar&view=ranks&platform=missevan&category=cv&rank=weekly"
+    "/?foo=bar&view=ranks&platform=cv&category=total&rank=missevan"
   );
 });
 
@@ -832,28 +835,7 @@ test("ranks navigation menu derives platform category and rank route patches fro
       rank: "new_weekly",
     },
   });
-  assert.deepEqual(menu[0].children[1].children, [
-    {
-      key: "cv",
-      label: "总榜",
-      routePatch: {
-        view: "ranks",
-        platform: "missevan",
-        category: "cv",
-        rank: "cv",
-      },
-    },
-    {
-      key: "cv-paid",
-      label: "付费榜",
-      routePatch: {
-        view: "ranks",
-        platform: "missevan",
-        category: "cv",
-        rank: "cv-paid",
-      },
-    },
-  ]);
+  assert.equal(menu[0].children.some((category) => category.key === "cv"), false);
   assert.deepEqual(menu[1].children[0].routePatch, {
     view: "ranks",
     platform: "manbo",
@@ -988,11 +970,11 @@ test("mobile rank navigation items flatten platform categories into direct rank 
 
   assert.deepEqual(
     missevanItems.map((item) => item.label),
-    ["新品日榜", "新品周榜", "人气周榜", "人气月榜", "畅销周榜", "畅销月榜", "巅峰榜", "飙升周榜", "飙升月榜", "CV总榜", "CV付费榜"]
+    ["新品日榜", "新品周榜", "人气周榜", "人气月榜", "畅销周榜", "畅销月榜", "巅峰榜", "飙升周榜", "飙升月榜"]
   );
   assert.deepEqual(
     manboItems.map((item) => item.label),
-    ["热播榜", "票房总榜", "票房会员剧榜", "票房付费剧榜", "钻石月榜", "巅峰榜", "飙升周榜", "飙升月榜", "CV总榜", "CV付费榜"]
+    ["热播榜", "票房总榜", "票房会员剧榜", "票房付费剧榜", "钻石月榜", "巅峰榜", "飙升周榜", "飙升月榜"]
   );
   assert.deepEqual(missevanItems[1].routePatch, {
     view: "ranks",
@@ -1036,17 +1018,16 @@ test("rank view logs identify the visible rank or the full desktop category", ()
   assert.equal(buildRanksViewUsagePayload({ platform: "missevan", category: { key: "new", label: "新品榜" } }), null);
 });
 
-test("mobile CV navigation includes labor ranks with a direct platform route", () => {
-  const menu = buildRanksNavigationMenu({ data: { platforms: Object.fromEntries(
-    ["missevan", "manbo"].map((platform) => [platform, { key: platform, categories: [{ key: "cv", label: "CV榜", ranks: [
-      { key: "cv", label: "总榜" }, { key: "cv-paid", label: "付费榜" }, { key: "cv-series-count", label: "勤劳榜" },
-    ] }] }])
-  ) } });
-  for (const entry of menu) {
-    const items = buildMobileRankNavigationItems(entry);
-    assert.equal(items.at(-1).label, "CV勤劳榜");
-    assert.deepEqual(items.at(-1).routePatch, { view: "ranks", platform: entry.key, category: "cv", rank: "cv-series-count" });
-  }
+test("CV navigation defaults to the combined or count sub-rank", () => {
+  const menu = buildRanksNavigationMenu({ data: { platforms: { cv: { key: "cv", label: "CV", categories: [
+    { key: "total", label: "总榜", ranks: [{ key: "combined", label: "汇总" }, { key: "missevan", label: "猫耳" }] },
+    { key: "labor", label: "勤劳榜", ranks: [{ key: "combined", label: "汇总" }] },
+    { key: "partner", label: "搭档榜", ranks: [{ key: "workCount", label: "次数" }, { key: "viewCount", label: "播放量" }] },
+  ] } } } });
+  const [cv] = menu;
+  assert.deepEqual(cv.routePatch, { view: "ranks", platform: "cv", category: "total", rank: "combined" });
+  assert.deepEqual(cv.children[1].routePatch, { view: "ranks", platform: "cv", category: "labor", rank: "combined" });
+  assert.deepEqual(cv.children[2].routePatch, { view: "ranks", platform: "cv", category: "partner", rank: "workCount" });
 });
 
 test("mobile rank navigation category defaults land on requested ranks", () => {
@@ -1080,7 +1061,7 @@ test("mobile rank navigation category defaults land on requested ranks", () => {
   assert.equal(missevanCategories.find((item) => item.key === "new").routePatch.rank, "new_daily");
   assert.equal(missevanCategories.find((item) => item.key === "popular").routePatch.rank, "popular_weekly");
   assert.equal(missevanCategories.find((item) => item.key === "best_seller").routePatch.rank, "best_seller_weekly");
-  assert.equal(missevanCategories.find((item) => item.key === "cv").routePatch.rank, "cv");
+  assert.equal(missevanCategories.some((item) => item.key === "cv"), false);
   assert.equal(manboCategories.find((item) => item.key === "box_office").routePatch.rank, "box_office_total");
 });
 

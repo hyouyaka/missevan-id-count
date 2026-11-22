@@ -666,6 +666,23 @@ function getLatestPlaybackPoint(bundle, id) {
   return null;
 }
 
+export function resolveCvRankWorkIdentity(catalog, name, works, platform) {
+  const nameKey = normalizeNameKey(name);
+  const workIds = new Set((Array.isArray(works) ? works : []).map((work) => {
+    const workPlatform = platform === "combined" ? work?.platform : platform;
+    const id = normalizeCvPlatformId(work?.dramaId ?? work?.id);
+    return workPlatform && id ? workPlatform + ":" + id : "";
+  }).filter(Boolean));
+  const candidates = catalog.filter((candidate) =>
+    uniqueNames([candidate.name, ...(candidate.aliases || [])])
+      .some((alias) => normalizeNameKey(alias) === nameKey) &&
+    ["missevan", "manbo"].some((workPlatform) =>
+      (candidate.workIds?.[workPlatform] || [])
+        .some((id) => workIds.has(workPlatform + ":" + normalizeCvPlatformId(id))))
+  );
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 export function buildCvProfileRanks({ catalog = [], entry, rankData, trendSnapshots } = {}) {
   const items = [];
   if (!entry?.profileId) {
@@ -694,16 +711,7 @@ export function buildCvProfileRanks({ catalog = [], entry, rankData, trendSnapsh
 
     // A rank can aggregate homonyms. Only attach it when its work evidence
     // points to exactly one identity, never choose the first name match.
-    const workIds = new Set((Array.isArray(item?.works) ? item.works : [])
-      .map((work) => normalizeCvPlatformId(work?.dramaId ?? work?.id))
-      .filter(Boolean));
-    const candidates = catalog.filter((candidate) =>
-      uniqueNames([candidate.name, ...(candidate.aliases || [])])
-        .some((alias) => normalizeNameKey(alias) === nameKey) &&
-      (candidate.workIds?.[platform] || [])
-        .some((id) => workIds.has(normalizeCvPlatformId(id)))
-    );
-    return candidates.length === 1 && candidates[0].profileId === entry.profileId;
+    return resolveCvRankWorkIdentity(catalog, name, item?.works, platform)?.profileId === entry.profileId;
   }
 
   for (const platform of ["missevan", "manbo"]) {
@@ -743,7 +751,20 @@ export function buildCvProfileRanks({ catalog = [], entry, rankData, trendSnapsh
       }
     }
   }
-  return { updatedAt: latestTimestamp(Object.values(updatedAtByPlatform)), updatedAtByPlatform, items };
+  for (const category of rankData?.platforms?.cv?.categories || []) {
+    const rankKey = { total: "cv", paid: "cv-paid", labor: "cv-series-count" }[category.key];
+    if (!rankKey) continue;
+    for (const board of category.ranks || []) {
+      const platform = board.key;
+      if (platform !== "combined" && rankKey !== "cv-series-count") continue;
+      const matches = (board.items || []).filter((item) =>
+        Number.isInteger(item.rank) && item.rank > 0 && matchesProfile(item, platform));
+      if (matches.length === 1) {
+        items.push({ platform, rankKey, rank: matches[0].rank, updatedAt: board.fetchedAt });
+      }
+    }
+  }
+  return { updatedAt: latestTimestamp([...Object.values(updatedAtByPlatform), ...items.map((item) => item.updatedAt)]), updatedAtByPlatform, items };
 }
 
 export function buildCvProfileResponse({

@@ -1,3 +1,5 @@
+import { COMPACT_CV_RANKS_FORMAT, compactCvRanks } from "../../shared/cvRanksWire.js";
+
 export function registerStatsRoutes(router, {
   desktopApp = false,
   adminCacheRefreshToken,
@@ -154,17 +156,14 @@ export function registerStatsRoutes(router, {
           });
         }
         try {
-          const response = await getCachedCvRankTrendResponse(dramaId);
+          const profileId = String(req.query.profileId ?? "").trim().slice(0, 240);
+          const response = await getCachedCvRankTrendResponse(dramaId, profileId);
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
           if (!response.success) {
             return res.status(response.status || 404).json(response);
           }
-          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
           if (response.latestDate) {
             res.setHeader("X-Ranks-Trend-Latest-Date", response.latestDate);
-            res.setHeader(
-              "ETag",
-              `"ranks-trend-cv-${Buffer.from(`${dramaId}:${response.latestDate}:${response.windowEndDate || ""}`).toString("base64url")}"`
-            );
           }
           return res.json(response);
         } catch (error) {
@@ -257,6 +256,7 @@ export function registerStatsRoutes(router, {
     router.get("/ranks", async (req, res) => {
       try {
         const { response, cacheStatus, probePhase } = await getCachedRanksResponse();
+        const compact = req.query?.format === COMPACT_CV_RANKS_FORMAT;
         res.setHeader("Cache-Control", "no-cache, must-revalidate");
         res.setHeader("X-Ranks-Cache-Status", cacheStatus || "hit");
         res.setHeader("X-Ranks-Normal-Updated-At", response.updatedAt || "");
@@ -265,12 +265,14 @@ export function registerStatsRoutes(router, {
         if (probePhase) {
           res.setHeader("X-Ranks-Probe-Phase", probePhase);
         }
-        const ranksResponseValidator = getRanksResponseCacheValidator(response);
         if (response.updatedAt) {
           res.setHeader("X-Ranks-Updated-At", response.updatedAt);
-          res.setHeader("ETag", `"ranks-${Buffer.from(ranksResponseValidator).toString("base64url")}"`);
         }
-        return res.json(response);
+        const validator = getRanksResponseCacheValidator(response);
+        const format = compact ? `${COMPACT_CV_RANKS_FORMAT}-` : "";
+        res.setHeader("ETag", `"ranks-${format}${Buffer.from(validator).toString("base64url")}"`);
+        if (req.fresh) return res.status(304).end();
+        return res.json(compact ? compactCvRanks(response) : response);
       } catch (error) {
         void logger.error("ranks_snapshot_read_failed", error);
         return res.status(503).json({

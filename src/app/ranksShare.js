@@ -28,10 +28,10 @@ const PEAK_RANK_LIMIT = 50;
 const TITLE_METADATA_FONT = shareImageFonts.subtitle;
 const STATUS_FONT = '500 12px "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
 
-const platformNames = { missevan: "猫耳", manbo: "漫播" };
+const platformNames = { missevan: "猫耳", manbo: "漫播", cv: "CV" };
 
 function normalizePlatform(platform) {
-  return platform === "manbo" ? "manbo" : "missevan";
+  return Object.hasOwn(platformNames, platform) ? platform : "missevan";
 }
 
 function hasFiniteMetric(value) {
@@ -79,6 +79,7 @@ function getRankLimit(categoryKey, rankKey) {
 function getRankShareTitle(platform, categoryKey, rank) {
   const platformName = platformNames[platform];
   const rankKey = String(rank?.key ?? "");
+  if (rank?.rankKind) return rank.name;
   if (categoryKey === "growth") {
     return `${platformName}飙升榜（${rankKey === "growth_monthly" ? "4周" : "7日"}）`;
   }
@@ -110,7 +111,7 @@ function getRankShareTitle(platform, categoryKey, rank) {
   return `${platformName}${String(rank?.name || rank?.label || "榜单")}`;
 }
 
-function getRankShareMetadata({ categoryKey, rank, updatedAt }) {
+function getRankShareMetadata({ categoryKey, rank, updatedAt, cvSummary }) {
   if (categoryKey === "growth") {
     const period = rank?.statisticsPeriod;
     const startDate = String(period?.startDate ?? "").trim();
@@ -120,7 +121,13 @@ function getRankShareMetadata({ categoryKey, rank, updatedAt }) {
   }
   if (categoryKey === "cv") {
     const date = formatShareDate(rank?.fetchedAt || updatedAt);
-    return { inlineText: `更新日期：${date}`, statusText: "*此榜单非官方" };
+    const formatCount = (value) => hasFiniteMetric(value) ? formatPlainNumber(value) : "未知";
+    const missevanCount = formatCount(cvSummary?.missevanDramaCount);
+    const manboCount = formatCount(cvSummary?.manboDramaCount);
+    return {
+      inlineText: `更新日期：${date}`,
+      statusText: `此榜单非官方，统计来自猫耳${missevanCount}部，漫播${manboCount}部上架中的作品`,
+    };
   }
   return { inlineText: `更新日期：${formatShareDate(updatedAt || rank?.fetchedAt)}`, statusText: "" };
 }
@@ -128,12 +135,12 @@ function getRankShareMetadata({ categoryKey, rank, updatedAt }) {
 function getRankShareColumns(platform, categoryKey, rankKey) {
   if (categoryKey === "cv") {
     const columns = [
-      { key: "title", label: "CV", minWidth: 160, maxWidth: 300 },
+      { key: "title", label: rankKey.startsWith("partner-") ? "搭档" : "CV", minWidth: 160, maxWidth: 300 },
       { key: "view", label: "播放量", minWidth: 125, maxWidth: 210, align: "center" },
       { key: "workCount", label: "系列数量", minWidth: 125, maxWidth: 180, align: "center" },
       { key: "top3", label: "TOP3", minWidth: 280, maxWidth: 560 },
     ];
-    return rankKey === "cv-series-count" ? [columns[0], columns[2], columns[1], columns[3]] : columns;
+    return ["cv-series-count", "partner-count"].includes(rankKey) ? [columns[0], columns[2], columns[1], columns[3]] : columns;
   }
   if (categoryKey === "growth") {
     const growthLabel = rankKey === "growth_monthly" ? "4周增量" : "7日增量";
@@ -172,10 +179,11 @@ function getRankShareColumns(platform, categoryKey, rankKey) {
 }
 
 function getRankShareRow({ item, index, platform, categoryKey, rankKey }) {
+  const pairName = Array.isArray(item?.cvs) ? item.cvs.map((cv) => cv.cvName).join(" & ") : "";
   const row = {
-    title: `${formatPlainNumber(item?.rank ?? index + 1)}. ${String(item?.name ?? item?.cvName ?? "未命名").trim() || "未命名"}`,
+    title: `${formatPlainNumber(item?.rank ?? index + 1)}. ${String(item?.name ?? item?.cvName ?? (pairName || "未命名")).trim() || "未命名"}`,
     view: categoryKey === "cv"
-      ? rankKey === "cv-series-count" && !hasFiniteMetric(item?.totalViewCount) ? "暂无数据" : formatRankCompactCount(item?.totalViewCount)
+      ? !hasFiniteMetric(item?.totalViewCount) ? "暂无数据" : formatRankCompactCount(item?.totalViewCount)
       : formatOptionalRankMetric(item?.view_count),
   };
 
@@ -216,30 +224,35 @@ function getRankShareRow({ item, index, platform, categoryKey, rankKey }) {
   return row;
 }
 
-export function buildRanksShareTable({ platform, categoryKey, rank, updatedAt } = {}) {
+export function buildRanksShareTable({ platform, categoryKey, rank, updatedAt, cvSummary } = {}) {
   const normalizedPlatform = normalizePlatform(platform);
   const normalizedCategory = String(categoryKey ?? "").trim();
   const normalizedRank = rank && typeof rank === "object" ? rank : {};
   const rankKey = String(normalizedRank.key ?? "").trim();
-  const limit = getRankLimit(normalizedCategory, rankKey);
+  const tableCategory = normalizedRank.rankKind ? "cv" : normalizedCategory;
+  const tableRankKey = normalizedRank.rankKind === "partner" ? (rankKey === "workCount" ? "partner-count" : "partner-views")
+    : normalizedRank.rankKind === "labor" ? "cv-series-count" : rankKey;
+  const limit = getRankLimit(tableCategory, tableRankKey);
   const sourceItems = Array.isArray(normalizedRank.items) ? normalizedRank.items : [];
-  const items = normalizedCategory === "cv" && rankKey === "cv-series-count"
-    ? sortRankTiesByPlayback(filterItemsByRank(sourceItems, limit))
-    : sourceItems.slice(0, limit);
-  const columns = getRankShareColumns(normalizedPlatform, normalizedCategory, rankKey);
+  const items = normalizedRank.rankKind
+    ? sourceItems
+    : normalizedCategory === "cv" && rankKey === "cv-series-count"
+      ? sortRankTiesByPlayback(filterItemsByRank(sourceItems, limit))
+      : sourceItems.slice(0, limit);
+  const columns = getRankShareColumns(normalizedPlatform, tableCategory, tableRankKey);
   const rows = items.map((item, index) => getRankShareRow({
     item,
     index,
     platform: normalizedPlatform,
-    categoryKey: normalizedCategory,
-    rankKey,
+    categoryKey: tableCategory,
+    rankKey: tableRankKey,
   }));
   return {
     platform: normalizedPlatform,
     categoryKey: normalizedCategory,
     rankKey,
     title: getRankShareTitle(normalizedPlatform, normalizedCategory, normalizedRank),
-    metadata: getRankShareMetadata({ categoryKey: normalizedCategory, rank: normalizedRank, updatedAt }),
+    metadata: getRankShareMetadata({ categoryKey: tableCategory, rank: normalizedRank, updatedAt, cvSummary }),
     columns,
     rows,
     limit,
@@ -322,10 +335,11 @@ export async function createRanksSharePng({
   categoryKey,
   rank,
   updatedAt,
+  cvSummary,
   canvasFactory = () => document.createElement("canvas"),
   loadLogo = loadLocalLogo,
 } = {}) {
-  const table = buildRanksShareTable({ platform, categoryKey, rank, updatedAt });
+  const table = buildRanksShareTable({ platform, categoryKey, rank, updatedAt, cvSummary });
   if (!table.rows.length) throw new Error("当前榜单没有可分享的数据。");
   const canvas = canvasFactory();
   const context = canvas?.getContext?.("2d");

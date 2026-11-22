@@ -34,7 +34,7 @@ export function getInlineTaggedTitleDisplayText(title, options = {}) {
 
 export function buildCvRankProfileId(platform, item = {}) {
   const normalizedPlatform = String(platform ?? "").trim();
-  if (!["missevan", "manbo"].includes(normalizedPlatform)) {
+  if (!["missevan", "manbo", "cv"].includes(normalizedPlatform)) {
     return "";
   }
 
@@ -43,10 +43,11 @@ export function buildCvRankProfileId(platform, item = {}) {
     : Array.isArray(item?.topWorks)
       ? item.topWorks
       : [];
-  const dramaId = works
-    .map((work) => String(work?.dramaId ?? work?.id ?? "").trim())
-    .find((value) => /^\d+$/.test(value));
-  return dramaId ? `rank-work:${normalizedPlatform}:${dramaId}` : "";
+  const work = works.find((entry) => /^\d+$/.test(String(entry?.dramaId ?? entry?.id ?? "").trim()) &&
+    (normalizedPlatform !== "cv" || ["missevan", "manbo"].includes(entry?.platform)));
+  if (!work) return "";
+  const workPlatform = normalizedPlatform === "cv" ? work.platform : normalizedPlatform;
+  return ["rank-work", workPlatform, String(work.dramaId ?? work.id).trim()].join(":");
 }
 
 export function getDefaultAppConfig() {
@@ -153,7 +154,7 @@ export function buildCvProfileOpenUsagePayload(name, context = {}) {
     : ["home", "ranks"].includes(requestedSource)
       ? "ranks"
       : "";
-  const platform = ["missevan", "manbo"].includes(context?.platform)
+  const platform = ["missevan", "manbo", "cv"].includes(context?.platform)
     ? context.platform
     : "";
   if (!cvName || !source || (source === "ranks" && !platform)) {
@@ -313,11 +314,26 @@ export function normalizeOngoingMetric(value) {
   return ["playback", "secondary", "paid-id"].includes(value) ? value : "playback";
 }
 
+export function normalizeRanksSelection(platform, category = "", rank = "") {
+  const sourcePlatform = normalizeToolPlatform(platform);
+  if (category === "cv" && platform !== "cv") {
+    return {
+      platform: "cv",
+      category: ({ cv: "total", "cv-paid": "paid", "cv-series-count": "labor" })[rank] || "total",
+      rank: sourcePlatform,
+    };
+  }
+  return { platform: platform === "cv" ? "cv" : sourcePlatform, category, rank };
+}
+
 export function normalizeToolRouteState(routeState = {}, options = {}) {
   const view = normalizeToolView(routeState.view, options);
   const desktopApp = options?.desktopApp === true;
   const desktopRouteWasDisallowed = desktopApp && String(routeState.view || "").trim() !== "search";
   const searchPlatform = normalizeSearchRoutePlatform(routeState.platform);
+  const category = desktopApp ? "" : String(routeState.category || "").trim();
+  const rank = desktopApp ? "" : String(routeState.rank || "").trim();
+  const ranksSelection = view === "ranks" ? normalizeRanksSelection(routeState.platform, category, rank) : null;
   return {
     view,
     q: view === "search" && !desktopRouteWasDisallowed ? normalizeSearchRouteQuery(routeState.q) : "",
@@ -327,11 +343,11 @@ export function normalizeToolRouteState(routeState = {}, options = {}) {
       ? normalizeCvPlatform(routeState.platform)
       : view === "search"
         ? searchPlatform
-      : normalizeToolPlatform(routeState.platform),
+      : ranksSelection?.platform || normalizeToolPlatform(routeState.platform),
     window: "7d",
     metric: desktopApp ? "playback" : normalizeOngoingMetric(routeState.metric),
-    category: desktopApp ? "" : String(routeState.category || "").trim(),
-    rank: desktopApp ? "" : String(routeState.rank || "").trim(),
+    category: ranksSelection?.category ?? category,
+    rank: ranksSelection?.rank ?? rank,
     cv: desktopApp ? "" : String(routeState.cv || "").replace(/\s+/g, " ").trim(),
     cvKey: desktopApp ? "" : String(routeState.cvKey || "").trim().slice(0, 240),
     payment: desktopApp ? "all" : normalizeCvPayment(routeState.payment),
@@ -540,13 +556,13 @@ function formatMobileRankNavigationLabel(categoryLabel, rankLabel, singleRank = 
 }
 
 export function buildRanksViewUsagePayload({ platform, category, rank, showAllRanks = false } = {}) {
-  if (!["missevan", "manbo"].includes(platform) || !category?.key || !category?.label) return null;
+  if (!["missevan", "manbo", "cv"].includes(platform) || !category?.key || !category?.label) return null;
   if (!showAllRanks && !rank?.key) return null;
   const keyword = showAllRanks
-    ? normalizeNavigationLabel(category.label, "")
-    : rank.label
-      ? formatMobileRankNavigationLabel(category.label, rank.label, category.ranks?.length === 1)
-      : normalizeNavigationLabel(rank.name, "");
+    ? (platform === "cv" ? "CV" : "") + normalizeNavigationLabel(category.label, "")
+    : platform === "cv" || !rank.label
+      ? normalizeNavigationLabel(rank.name, "")
+      : formatMobileRankNavigationLabel(category.label, rank.label, category.ranks?.length === 1);
   return keyword ? { platform, action: "ranks", keyword, success: true } : null;
 }
 
@@ -638,10 +654,11 @@ export function buildRankPlatformSwitchRoutePatch(platform, platformData, curren
 
 export function buildRanksNavigationMenu(ranksPayload) {
   const platforms = ranksPayload?.data?.platforms || ranksPayload?.platforms || {};
-  return ["missevan", "manbo"]
+  return ["missevan", "manbo", "cv"]
     .map((platformKey) => {
       const platform = platforms?.[platformKey];
       const categories = (Array.isArray(platform?.categories) ? platform.categories : [])
+        .filter((category) => category?.key !== "cv")
         .map((category) => {
           const ranks = (Array.isArray(category?.ranks) ? category.ranks : [])
             .map((rank) => {

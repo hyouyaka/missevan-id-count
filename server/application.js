@@ -35,6 +35,7 @@ import {
   parseCvIdMapSnapshot,
   parseManboInfoSnapshotPreservingCvIds,
   resolveCvCatalogEntry,
+  resolveCvRankWorkIdentity,
   searchCvCatalog,
 } from "../shared/cvProfileUtils.js";
 import { attachCvSeries, groupCvSeries } from "../shared/cvSeriesUtils.js";
@@ -59,12 +60,15 @@ import { filterItemsByRank, isSkippedDanmakuMetricValue, sortRankTiesByPlayback 
 import {
   buildAggregatedRankTrendResponse,
   buildCvTrendResponse,
+  buildCvTrendWeeklyDelta,
+  findCvTrendRecord,
   buildMetricSnapshotsFromRankTrendAggregate,
   buildPeakSeriesTrendResponse,
   buildRankTrendAvailabilityResponse,
   getPeakSeriesDailyViewDelta,
   isCvRankTrendAggregateSnapshot,
   isRankTrendAggregateSnapshot,
+  matchesCvTrendPublication,
   normalizeRankTrendDates,
   resolveRankTrendWindowEndDate,
 } from "../shared/ranksTrendUtils.js";
@@ -391,6 +395,7 @@ const ranksCache = {
   weeklyGrowthCovers: { missevan: {}, manbo: {} },
   normalUpdatedAt: "",
   cvUpdatedAt: "",
+  cvContentSha1: "",
   weeklyGrowthUpdatedAt: "",
   response: null,
   loadedAt: 0,
@@ -407,7 +412,7 @@ const ranksCache = {
 const rankTrendAggregateCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const rankTrendsCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
 const ongoingCache = new TtlLruCache({ maxEntries: CACHE_MAX_ENTRIES });
-const RANKS_RESPONSE_SCHEMA_VERSION = 8;
+const RANKS_RESPONSE_SCHEMA_VERSION = 9;
 const RANK_TRENDS_RESPONSE_SCHEMA_VERSION = 8;
 const ONGOING_RESPONSE_SCHEMA_VERSION = 8;
 
@@ -1781,17 +1786,21 @@ function normalizeRanksMetaResource(section, key, fallbackToSection = false) {
   const fallbackPublishedAt = shouldFallbackToSection
     ? normalizeTextValue(section?.publishedAt ?? section?.published_at)
     : "";
+  const contentSha1 = normalizeTextValue(resource?.contentSha1 ?? (shouldFallbackToSection ? section?.contentSha1 : ""));
   return {
     updatedAt: normalizeRanksMetaUpdatedAt(resource) || fallbackUpdatedAt,
     publishedAt:
       normalizeTextValue(resource?.publishedAt ?? resource?.published_at) ||
       fallbackPublishedAt,
+    ...([CV_RANKS_KEY, CV_RANK_TREND_V2_KEY].includes(key) && contentSha1 ? { contentSha1 } : {}),
   };
 }
 
 function normalizeRanksMeta(meta) {
   const growthSection = meta?.watchcountGrowth ?? meta?.growth;
+  const cvTrend = normalizeRanksMetaResource(meta?.cv, CV_RANK_TREND_V2_KEY);
   return {
+    ...(cvTrend.contentSha1 ? { cvTrend } : meta?.cvTrend ? { cvTrend: meta.cvTrend } : {}),
     normal: normalizeRanksMetaResource(meta?.normal, RANKS_KEY, true),
     cv: normalizeRanksMetaResource(meta?.cv, CV_RANKS_KEY, true),
     growth: normalizeRanksMetaResource(growthSection, WEEKLY_GROWTH_RANKS_KEY, true),
@@ -1818,7 +1827,13 @@ export function buildRanksMetaRefreshDecision(currentVersions = {}, meta = {}) {
     cvUpdatedAt,
     weeklyGrowthUpdatedAt,
     refreshNormal: Boolean(normalizedMeta.normal.updatedAt && normalizedMeta.normal.updatedAt !== normalizeTextValue(currentVersions.normalUpdatedAt)),
-    refreshCv: Boolean(normalizedMeta.cv.updatedAt && normalizedMeta.cv.updatedAt !== normalizeTextValue(currentVersions.cvUpdatedAt)),
+    refreshCv: Boolean(
+      (normalizedMeta.cv.updatedAt && normalizedMeta.cv.updatedAt !== normalizeTextValue(currentVersions.cvUpdatedAt)) ||
+      (Object.hasOwn(currentVersions, "cvContentSha1") && normalizedMeta.cv.contentSha1 &&
+        normalizedMeta.cv.contentSha1 !== currentVersions.cvContentSha1) ||
+      (normalizedMeta.cvTrend?.contentSha1 &&
+        normalizedMeta.cvTrend.contentSha1 !== currentVersions.cvTrendContentSha1)
+    ),
     refreshGrowth: Boolean(
       normalizedMeta.growth.updatedAt &&
         normalizedMeta.growth.updatedAt !== normalizeTextValue(currentVersions.weeklyGrowthUpdatedAt)
@@ -2351,7 +2366,7 @@ export function buildShareImageGenerateUsageLog(payload = {}) {
   const source = normalizeTextValue(payload.source);
   const itemCount = Number(payload.itemCount);
   if (
-    !USAGE_LOG_PLATFORMS.has(platform) ||
+    !(USAGE_LOG_PLATFORMS.has(platform) || (source === "ranks" && platform === "cv")) ||
     !["ongoing", "ranks"].includes(source) ||
     !Number.isSafeInteger(itemCount) ||
     itemCount < 1 ||
@@ -2401,7 +2416,7 @@ export function buildCvProfileOpenUsageLog(payload = {}) {
   if (
     !cvName ||
     !source ||
-    (source === "ranks" && !["missevan", "manbo"].includes(platform))
+    (source === "ranks" && !["missevan", "manbo", "cv"].includes(platform))
   ) {
     return null;
   }
@@ -2427,7 +2442,7 @@ export function buildTrendOpenUsageLog(payload = {}) {
   const rankKey = normalizeTextValue(payload.rankKey).slice(0, 80);
   const isPeakSeriesTrend = platform === "missevan" && rankKey === "peak" && Boolean(dramaId);
   const isDramaTrend = ["missevan", "manbo"].includes(platform) && (isNumericId(dramaId) || isPeakSeriesTrend);
-  const isCvTrend = platform === "cv" && ["cv", "cv-paid"].includes(rankKey) && Boolean(dramaId) && Boolean(dramaName);
+  const isCvTrend = platform === "cv" && ["cv", "cv-paid", "cv-series-count"].includes(rankKey) && Boolean(dramaId) && Boolean(dramaName);
 
   if (!isDramaTrend && !isCvTrend) {
     return null;
@@ -3120,7 +3135,7 @@ function normalizeCvRankWork(work, platform) {
 
   const dramaId = normalizeTextValue(work.dramaId ?? work.id);
   const title = normalizeTextValue(work.title ?? work.name);
-  if (!isNumericId(dramaId) || !title) {
+  if (!["missevan", "manbo"].includes(platform) || !isNumericId(dramaId) || !title) {
     return null;
   }
 
@@ -3135,92 +3150,6 @@ function normalizeCvRankWork(work, platform) {
   };
 }
 
-function getCvTrendRecord(snapshot, cvName) {
-  const normalizedCvName = normalizeTextValue(cvName);
-  const cvs = snapshot?.cvs && typeof snapshot.cvs === "object" ? snapshot.cvs : {};
-  if (!normalizedCvName) {
-    return null;
-  }
-  if (cvs[normalizedCvName] && typeof cvs[normalizedCvName] === "object") {
-    return cvs[normalizedCvName];
-  }
-  return Object.values(cvs).find((record) =>
-    normalizeTextValue(record?.cvName ?? record?.name) === normalizedCvName
-  ) || null;
-}
-
-function buildCvPlaybackDelta({
-  item,
-  platform,
-  scope,
-  cvTrendSnapshots,
-  currentSnapshotGeneratedAt,
-}) {
-  const cvName = normalizeTextValue(item?.cvName ?? item?.name);
-  const metricKey = scope === "paid" ? "paidViewCount" : "totalViewCount";
-  const points = [];
-
-  const trendSnapshot = cvTrendSnapshots?.[platform];
-  const trendRecord = getCvTrendRecord(trendSnapshot, cvName);
-  const samples = trendRecord?.samples && typeof trendRecord.samples === "object" ? trendRecord.samples : {};
-  Object.entries(samples).forEach(([date, sample]) => {
-    const normalizedDate = normalizeTextValue(date);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
-      return;
-    }
-    const metrics = sample?.metrics && typeof sample.metrics === "object" ? sample.metrics : {};
-    const value = normalizeRankNumber(metrics?.[metricKey]);
-    if (value == null) {
-      return;
-    }
-    points.push({
-      date: normalizedDate,
-      generatedAt: normalizeTextValue(sample?.generated_at ?? sample?.generatedAt),
-      value,
-    });
-  });
-
-  const currentValue = normalizeRankNumber(item?.totalViewCount ?? item?.total_view_count);
-  const currentGeneratedAt =
-    normalizeTextValue(item?.generated_at ?? item?.generatedAt) ||
-    normalizeTextValue(currentSnapshotGeneratedAt);
-  const currentDate =
-    normalizeTextValue(item?.date) ||
-    (/^\d{4}-\d{2}-\d{2}/.test(currentGeneratedAt)
-      ? currentGeneratedAt.slice(0, 10)
-      : "");
-  if (currentValue != null && currentDate) {
-    const currentPoint = {
-      date: currentDate,
-      generatedAt: currentGeneratedAt,
-      value: currentValue,
-    };
-    const existingPointIndex = points.findIndex((point) => point.date === currentDate);
-    if (existingPointIndex >= 0) {
-      points[existingPointIndex] = currentPoint;
-    } else {
-      points.push(currentPoint);
-    }
-  }
-
-  const sortedPoints = points
-    .filter((point) => point.date && point.value != null)
-    .sort((left, right) => left.date.localeCompare(right.date));
-  const fromPoint = sortedPoints.at(-2) || null;
-  const toPoint = sortedPoints.at(-1) || null;
-  const available = Boolean(fromPoint && toPoint && fromPoint !== toPoint);
-  return {
-    key: "view_count",
-    label: scope === "paid" ? "付费播放量" : "总播放量",
-    available,
-    fromDate: fromPoint?.date || "",
-    toDate: toPoint?.date || "",
-    fromValue: fromPoint?.value ?? null,
-    toValue: toPoint?.value ?? currentValue ?? null,
-    delta: available ? toPoint.value - fromPoint.value : null,
-  };
-}
-
 function normalizeCvRankItem(item, index, platform, options = {}) {
   if (!item || typeof item !== "object") {
     return null;
@@ -3232,10 +3161,12 @@ function normalizeCvRankItem(item, index, platform, options = {}) {
   }
 
   const works = attachCvSeries((Array.isArray(item.works) ? item.works : [])
-    .map((work) => normalizeCvRankWork(work, platform))
+    .map((work) => normalizeCvRankWork(work, platform === "combined" ? work?.platform : platform))
     .filter(Boolean), options.seriesIndex);
   const series = groupCvSeries(works);
   const explicitWorkCount = normalizeRankNumber(item.workCount ?? item.work_count);
+  const itemGeneratedAt = normalizeTextValue(item.generated_at ?? item.generatedAt);
+  const scope = options.scope === "paid" ? "paid" : "total";
 
   return {
     rank: normalizeRankNumber(item.rank) ?? index + 1,
@@ -3249,13 +3180,16 @@ function normalizeCvRankItem(item, index, platform, options = {}) {
     topSeries: series.slice(0, 3),
     works,
     trendKind: "cv",
-    trendScope: options.scope === "paid" ? "paid" : "total",
-    playbackDelta: buildCvPlaybackDelta({
-      item,
+    trendScope: scope,
+    playbackDelta: buildCvTrendWeeklyDelta({
+      cvName,
       platform,
-      scope: options.scope === "paid" ? "paid" : "total",
-      cvTrendSnapshots: options.cvTrendSnapshots,
-      currentSnapshotGeneratedAt: options.currentSnapshotGeneratedAt,
+      scope,
+      trendSnapshots: options.cvTrendSnapshots,
+      date: item.date || itemGeneratedAt.slice(0, 10) || options.currentSnapshotDate,
+      requiredPlatforms: works.map((work) => work.platform),
+      currentGeneratedAt: options.currentSnapshotGeneratedAt || itemGeneratedAt,
+      publicationId: options.publicationId,
     }),
   };
 }
@@ -3271,7 +3205,9 @@ function buildNormalizedCvRank(cvSnapshot, platform, options = {}) {
     .map((item, index) =>
       normalizeCvRankItem(item, index, platform, {
         ...options,
+        currentSnapshotDate: cvSnapshot?.date || fetchedAt.slice(0, 10),
         currentSnapshotGeneratedAt: fetchedAt,
+        publicationId: cvSnapshot?.publicationId,
       })
     )
     .filter(Boolean);
@@ -3293,15 +3229,18 @@ function buildNormalizedCvRank(cvSnapshot, platform, options = {}) {
 function buildNormalizedCvSeriesCountRank(cvSnapshot, platform, options = {}) {
   if (!cvSnapshot) return null;
   const meta = cvSnapshot.seriesCountMeta?.[platform] || {};
+  const playbackSnapshotAt = normalizeTextValue(cvSnapshot.generated_at ?? cvSnapshot.generatedAt);
+  const playbackSnapshotDate = normalizeTextValue(cvSnapshot.date) || playbackSnapshotAt.slice(0, 10);
   const rankings = Array.isArray(cvSnapshot.seriesCountRankings?.[platform])
     ? cvSnapshot.seriesCountRankings[platform] : [];
   const items = filterItemsByRank(rankings, 30).map((item) => {
     const cvName = normalizeTextValue(item?.cvName);
     const seriesCount = normalizeRankNumber(item?.seriesCount);
     if (!cvName || item.seriesCount == null || !Number.isInteger(seriesCount) || seriesCount < 0) return null;
-    const trendRecord = getCvTrendRecord(options.cvTrendSnapshots?.[platform], cvName);
+    const trendRecord = findCvTrendRecord(options.cvTrendSnapshots?.[platform], cvName);
     const samples = trendRecord?.samples || {};
     const latestPlayback = Object.keys(samples).sort().reverse()
+      .filter((date) => !playbackSnapshotDate || date <= playbackSnapshotDate)
       .map((date) => ({ date, value: samples[date]?.metrics?.totalViewCount == null
         ? null : normalizeRankNumber(samples[date].metrics.totalViewCount) }))
       .find((point) => point.value != null);
@@ -3325,7 +3264,7 @@ function buildNormalizedCvSeriesCountRank(cvSnapshot, platform, options = {}) {
         return work ? { ...work, seriesId: `${platform}:${group.seriesKey}`, seriesTitle: group.title } : null;
       }).filter(Boolean)
     );
-    const series = groupCvSeries(works);
+    const series = groupCvSeries(works, { requireCompletePlayback: true });
     return {
       rank: Number(item.rank),
       cvName,
@@ -3334,7 +3273,16 @@ function buildNormalizedCvSeriesCountRank(cvSnapshot, platform, options = {}) {
       workCount: works.length,
       totalViewCount: latestPlayback?.value ?? null,
       playbackDate: latestPlayback?.date || "",
-      works, series, topWorks: works.slice(0, 3), topSeries: series.slice(0, 3),
+      ...(latestPlayback ? {
+        playbackDelta: buildCvTrendWeeklyDelta({
+          cvName, platform, scope: "total",
+          trendSnapshots: options.cvTrendSnapshots, date: playbackSnapshotDate || latestPlayback.date,
+          currentGeneratedAt: playbackSnapshotAt,
+          publicationId: cvSnapshot.publicationId,
+        }),
+      } : {}),
+      works, series, topWorks: works.slice(0, 3),
+      topSeries: series.filter((group) => Number.isFinite(group.playCount)).slice(0, 3),
     };
   }).filter(Boolean);
   return {
@@ -3343,6 +3291,172 @@ function buildNormalizedCvSeriesCountRank(cvSnapshot, platform, options = {}) {
     sourceVersions: meta.sourceVersions || {},
     items: sortRankTiesByPlayback(items),
   };
+}
+
+// For published cross-platform groups, keep the producer's series identity and
+// only enrich the individual releases from the platform catalogs.
+function normalizePublishedCvSeries(groups, options, getReleases, requireCompletePlayback) {
+  const series = [];
+  for (const group of Array.isArray(groups) ? groups : []) {
+    const id = normalizeTextValue(group?.seriesKey);
+    const title = normalizeTextValue(group?.title);
+    if (!id || !title) continue;
+    const works = getReleases(group).map((release) => {
+      const platform = release?.platform;
+      const dramaId = normalizeTextValue(release?.dramaId);
+      const stored = options.cvWorkMetadata?.[platform]?.get(dramaId);
+      const work = normalizeCvRankWork({
+        dramaId,
+        title: release?.title || stored?.title || stored?.name || title,
+        cover: stored?.cover,
+        viewCount: release?.viewCount,
+        mainCvs: platform === "missevan"
+          ? getMissevanMainCvNames({ maincvs: stored?.maincvs || [], cvnames: stored?.cvnames || {} })
+          : getManboMainCvNames(stored || {}),
+        isPaid: stored?.needpay,
+      }, platform);
+      return work ? { ...work, seriesId: id, seriesTitle: title } : null;
+    }).filter(Boolean);
+    if (!works.length) continue;
+    const counts = works.map((work) => work.viewCount).filter(Number.isFinite);
+    series.push({
+      id,
+      title,
+      playCount: counts.length && (!requireCompletePlayback || counts.length === works.length)
+        ? counts.reduce((total, count) => total + count, 0) : null,
+      works: works.sort((left, right) => (right.viewCount ?? -1) - (left.viewCount ?? -1)),
+    });
+  }
+  return series.sort((left, right) => (right.playCount ?? -1) - (left.playCount ?? -1));
+}
+
+function getCombinedLaborPlayback(row, cvName, cvTrendSnapshots, fetchedAt, sampleDate, publicationId) {
+  const byPlatform = {};
+  const groups = Array.isArray(row.works) ? row.works : [];
+  const platforms = ["missevan", "manbo"].filter((platform) =>
+    groups.some((group) => Array.isArray(group?.dramaIds?.[platform]) && group.dramaIds[platform].length));
+  const snapshotTime = Date.parse(fetchedAt);
+  const publicationMatches = matchesCvTrendPublication(cvTrendSnapshots, publicationId);
+  for (const platform of platforms) {
+    const trend = cvTrendSnapshots?.[platform];
+    const record = findCvTrendRecord(trend, cvName);
+    const sample = record?.samples?.[sampleDate];
+    if (!sample || !Number.isFinite(snapshotTime) || Date.parse(sample.generated_at ?? sample.generatedAt) !== snapshotTime) continue;
+    if (publicationId && (!publicationMatches || sample.publicationId !== publicationId)) continue;
+    // Work details describe the current trend snapshot, not older samples.
+    const works = Date.parse(trend.updated_at) === snapshotTime && Array.isArray(record.works) ? record.works : [];
+    byPlatform[platform] = {
+      total: sample.metrics?.totalViewCount == null ? null : normalizeRankNumber(sample.metrics.totalViewCount),
+      works: new Map(works.map((work) => [normalizeTextValue(work?.dramaId ?? work?.id), work])),
+    };
+  }
+
+  const totals = platforms.map((platform) => byPlatform[platform]?.total);
+  return {
+    byPlatform,
+    platform: platforms.length === 1 ? platforms[0] : "combined",
+    total: totals.length && totals.every(Number.isFinite) ? totals.reduce((sum, value) => sum + value, 0) : null,
+  };
+}
+
+function normalizePublishedCvSeriesRankItem(row, options, isPartner, fetchedAt, sampleDate) {
+  const rank = normalizeRankNumber(row?.rank);
+  const count = row?.[isPartner ? "workCount" : "seriesCount"];
+  const cvs = (Array.isArray(row?.cvs) ? row.cvs : []).map((cv) => ({
+    cvName: normalizeTextValue(cv?.cvName),
+    avatar: normalizeTextValue(cv?.avatar),
+  }));
+  const cvName = normalizeTextValue(row?.cvName);
+  if (!Number.isInteger(rank) || rank < 1 || !Number.isInteger(count) || count < 0 ||
+    (isPartner ? cvs.length !== 2 || cvs.some((cv) => !cv.cvName) : !cvName)) return null;
+  const playback = isPartner ? null : getCombinedLaborPlayback(
+    row, cvName, options.cvTrendSnapshots, fetchedAt, sampleDate, options.publicationId
+  );
+  const series = normalizePublishedCvSeries(row.works, options, (group) => {
+    if (isPartner) return Array.isArray(group.releases) ? group.releases : [];
+    return ["missevan", "manbo"].flatMap((platform) => {
+      const ids = group.dramaIds?.[platform];
+      return Array.isArray(ids) ? ids.map((dramaId) => {
+        const detail = playback.byPlatform[platform]?.works.get(normalizeTextValue(dramaId));
+        return { platform, dramaId, title: detail?.title, viewCount: detail?.viewCount };
+      }) : [];
+    });
+  }, !isPartner);
+  const works = series.flatMap((group) => group.works);
+  const topSeries = (isPartner ? series : series.filter((group) => Number.isFinite(group.playCount)))
+    .slice(0, 3);
+  return {
+    rank,
+    ...(isPartner ? { cvs } : { cvName, avatar: normalizeTextValue(row.avatar), playbackPlatform: playback.platform }),
+    seriesCount: count,
+    workCount: isPartner ? count : works.length,
+    totalViewCount: playback ? playback.total
+      : row.totalViewCount == null ? null : normalizeRankNumber(row.totalViewCount),
+    series,
+    topSeries,
+    works,
+    ...(playback?.total != null ? {
+      playbackDelta: buildCvTrendWeeklyDelta({
+        cvName, platform: playback.platform, scope: "total", date: sampleDate,
+        trendSnapshots: options.cvTrendSnapshots, currentGeneratedAt: fetchedAt,
+        publicationId: options.publicationId,
+      }),
+    } : {}),
+    topWorks: works.slice(0, 3),
+  };
+}
+
+const CV_RANK_CATEGORIES = [
+  { key: "total", label: "总榜", source: "rankings", legacyKey: "cv", unit: "总播放量", names: { combined: "播放总榜", missevan: "猫耳播放榜", manbo: "漫播播放榜" } },
+  { key: "paid", label: "付费榜", source: "paidRankings", legacyKey: "cv-paid", unit: "付费剧播放量", names: { combined: "付费总榜", missevan: "猫耳付费榜", manbo: "漫播付费榜" } },
+  { key: "labor", label: "勤劳榜", source: "seriesCountRankings", legacyKey: "cv-series-count", unit: "系列总数", names: { combined: "勤劳总榜", missevan: "猫耳勤劳榜", manbo: "漫播勤劳榜" } },
+  { key: "partner", label: "搭档榜", source: "partnerRankings", legacyKey: "", unit: "", names: { workCount: "搭档次数榜", viewCount: "搭档播放榜" } },
+];
+
+function buildCvRankPlatform(snapshot, legacyPlatforms, options) {
+  const fetchedAt = normalizeTextValue(snapshot?.generated_at ?? snapshot?.generatedAt);
+  const sampleDate = normalizeTextValue(snapshot?.date) || fetchedAt.slice(0, 10);
+  const rankOptions = { ...options, publicationId: snapshot?.publicationId };
+  const categories = CV_RANK_CATEGORIES.map(({ key, label, source, legacyKey, unit, names }) => {
+    const isPartner = key === "partner";
+    const scopes = isPartner
+      ? [["workCount", "次数"], ["viewCount", "播放量"]]
+      : [["combined", "汇总"], ["missevan", "猫耳"], ["manbo", "漫播"]];
+    const ranks = scopes.map(([scope, scopeLabel]) => {
+      const rows = snapshot?.[source]?.[scope];
+      const available = Array.isArray(rows);
+      const sourcePlatform = scope === "missevan" || scope === "manbo" ? scope : "";
+      const legacyRank = legacyPlatforms[sourcePlatform]?.categories
+        ?.find((category) => category.key === "cv")?.ranks.find((rank) => rank.key === legacyKey);
+      let items = legacyRank?.items || [];
+      if (available && !sourcePlatform) {
+        items = rows.map((row, index) => isPartner || key === "labor"
+          ? normalizePublishedCvSeriesRankItem(row, rankOptions, isPartner, fetchedAt, sampleDate)
+          : normalizeCvRankItem(row, index, "combined", {
+            ...rankOptions, scope: key, currentSnapshotDate: sampleDate, currentSnapshotGeneratedAt: fetchedAt,
+          })).filter(Boolean);
+      }
+      if ((!sourcePlatform && key === "labor") || (isPartner && scope === "workCount")) {
+        items = sortRankTiesByPlayback(items);
+      }
+      return {
+        ...legacyRank,
+        key: scope,
+        label: scopeLabel,
+        name: names[scope],
+        unitName: isPartner ? (scope === "workCount" ? "合作系列数" : "总播放量") : unit,
+        rankKind: key,
+        sourcePlatform,
+        fetchedAt: available ? (key === "labor"
+          ? normalizeTextValue(snapshot?.seriesCountMeta?.[scope]?.generated_at) || fetchedAt
+          : fetchedAt) : "",
+        available,
+        items,
+      };
+    });
+    return { key, label, ranks };
+  });
+  return { key: "cv", label: "CV", categories };
 }
 
 function buildNormalizedCvRankCategory(cvSnapshot, platform, cvTrendOptions = {}) {
@@ -3582,6 +3696,26 @@ export function buildNormalizedRanksResponse(
       ? weeklyGrowthCovers
       : {};
 
+  const legacyPlatforms = {
+    missevan: buildNormalizedRankPlatform(
+      safeSnapshot,
+      "missevan",
+      peakTrendSnapshot,
+      cvSnapshot,
+      cvTrendOptions,
+      weeklyGrowthSnapshot,
+      safeWeeklyGrowthCovers.missevan || {}
+    ),
+    manbo: buildNormalizedRankPlatform(
+      safeSnapshot,
+      "manbo",
+      null,
+      cvSnapshot,
+      cvTrendOptions,
+      weeklyGrowthSnapshot,
+      safeWeeklyGrowthCovers.manbo || {}
+    ),
+  };
   return {
     success: true,
     schemaVersion: RANKS_RESPONSE_SCHEMA_VERSION,
@@ -3589,43 +3723,29 @@ export function buildNormalizedRanksResponse(
     cvSummary,
     growthSummary,
     meta,
-    platforms: {
-      missevan: buildNormalizedRankPlatform(
-        safeSnapshot,
-        "missevan",
-        peakTrendSnapshot,
-        cvSnapshot,
-        cvTrendOptions,
-        weeklyGrowthSnapshot,
-        safeWeeklyGrowthCovers.missevan || {}
-      ),
-      manbo: buildNormalizedRankPlatform(
-        safeSnapshot,
-        "manbo",
-        null,
-        cvSnapshot,
-        cvTrendOptions,
-        weeklyGrowthSnapshot,
-        safeWeeklyGrowthCovers.manbo || {}
-      ),
-    },
+    platforms: { ...legacyPlatforms, cv: buildCvRankPlatform(cvSnapshot, legacyPlatforms, cvTrendOptions) },
   };
 }
 
+const ranksPlatformHashes = new WeakMap();
+
+function getRanksPlatformHash(platforms) {
+  if (!platforms) return "";
+  if (!ranksPlatformHashes.has(platforms)) {
+    // Enrichment can recover without a new publication. Include the rendered data.
+    ranksPlatformHashes.set(platforms, createHash("sha256").update(JSON.stringify(platforms)).digest("hex"));
+  }
+  return ranksPlatformHashes.get(platforms);
+}
+
 export function getRanksResponseCacheValidator(response = {}) {
-  // Enrichment may recover without a new publication; hash the rendered contents too.
-  const laborRanks = ["missevan", "manbo"].map((platform) =>
-    response.platforms?.[platform]?.categories?.find((category) => category.key === "cv")
-      ?.ranks?.find((rank) => rank.key === "cv-series-count")
-      ?.items || []
-  );
   return [
     response?.schemaVersion || RANKS_RESPONSE_SCHEMA_VERSION,
     normalizeTextValue(response?.updatedAt),
     normalizeTextValue(response?.cvSummary?.updatedAt),
     normalizeTextValue(response?.cvSummary?.seriesMappingVersion),
     createHash("sha256").update(JSON.stringify(response?.cvSummary?.seriesCountMeta || {})).digest("hex"),
-    createHash("sha256").update(JSON.stringify(laborRanks)).digest("hex"),
+    getRanksPlatformHash(response.platforms),
     normalizeTextValue(response?.growthSummary?.updatedAt),
     normalizeTextValue(response?.meta?.normal?.publishedAt),
     normalizeTextValue(response?.meta?.cv?.publishedAt),
@@ -3713,7 +3833,7 @@ function collectPeakSeriesNames(snapshot) {
 function collectCvRankNames(snapshot) {
   const names = [];
   ["rankings", "paidRankings", "seriesCountRankings"].forEach((sourceKey) => {
-    ["missevan", "manbo"].forEach((platform) => {
+    ["missevan", "manbo", "combined"].forEach((platform) => {
       const items = snapshot?.[sourceKey]?.[platform];
       (Array.isArray(items) ? items : []).forEach((item) => {
         const name = normalizeCvTrendFieldName(item?.cvName ?? item?.name);
@@ -3739,7 +3859,7 @@ async function readNormalRanksBundle() {
 }
 
 async function ensureCvRankWorkMetadata(snapshot) {
-  if (!snapshot?.seriesCountRankings) return;
+  if (!snapshot?.seriesCountRankings && !snapshot?.partnerRankings) return;
   await Promise.allSettled([
     ensureInfoStoreLoaded(missevanInfoStore),
     ensureInfoStoreLoaded(manboInfoStore),
@@ -4072,6 +4192,7 @@ export async function getCachedRanksResponse(options = {}) {
         ranksCache.weeklyGrowthSnapshot = growthBundle.weeklyGrowthSnapshot || null;
         ranksCache.weeklyGrowthCovers = growthBundle.weeklyGrowthCovers || { missevan: {}, manbo: {} };
         ranksCache.cvUpdatedAt = cvBundle.updatedAt;
+        ranksCache.cvContentSha1 = cvBundle.cvSnapshot ? ranksCache.meta?.cv?.contentSha1 || "" : "";
         ranksCache.weeklyGrowthUpdatedAt = growthBundle.weeklyGrowthUpdatedAt || "";
         const response = updateCombinedRanksResponseCache();
         return { response, cacheStatus: "cold-refresh", probePhase: "" };
@@ -4099,6 +4220,8 @@ export async function getCachedRanksResponse(options = {}) {
         {
           normalUpdatedAt: ranksCache.normalUpdatedAt,
           cvUpdatedAt: ranksCache.cvUpdatedAt,
+          cvContentSha1: ranksCache.cvContentSha1,
+          cvTrendContentSha1: ranksCache.cvTrendSnapshots?.contentSha1,
           weeklyGrowthUpdatedAt: ranksCache.weeklyGrowthUpdatedAt,
         },
         metaResult.meta
@@ -4135,7 +4258,18 @@ export async function getCachedRanksResponse(options = {}) {
           ranksCache.cvSnapshot = requireRanksSnapshot(cvBundle.cvSnapshot, "CV ranks");
           ranksCache.cvTrendSnapshots = cvBundle.cvTrendSnapshots;
           ranksCache.cvUpdatedAt = cvBundle.updatedAt || decision.cvUpdatedAt;
-          recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
+          ranksCache.cvContentSha1 = metaResult.meta.cv.contentSha1;
+          const trendVersion = metaResult.meta.cvTrend?.contentSha1;
+          const snapshotTime = Date.parse(cvBundle.cvSnapshot.generated_at ?? cvBundle.cvSnapshot.generatedAt);
+          const trendMatches = trendVersion === cvBundle.cvTrendSnapshots?.contentSha1 &&
+            (!cvBundle.cvSnapshot.publicationId || matchesCvTrendPublication(cvBundle.cvTrendSnapshots, cvBundle.cvSnapshot.publicationId)) &&
+            ["missevan", "manbo"].every((platform) =>
+              Date.parse(cvBundle.cvTrendSnapshots?.[platform]?.updated_at) === snapshotTime);
+          if (!Array.isArray(cvBundle.cvSnapshot.seriesCountRankings?.combined) || trendMatches) {
+            recordRanksMetaPostRefreshBackoff("cv", probeCycleIds, now);
+          } else {
+            delete ranksCache.metaPostRefreshBackoff.cv;
+          }
           refreshStatuses.push("cv-refresh");
         } catch (error) {
           void logger.operation("cv_ranks_refresh_failed", {}, "warn", error);
@@ -4279,6 +4413,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   }
   if (refreshCv) {
     nextMeta.cv = meta.cv;
+    if (meta.cvTrend) nextMeta.cvTrend = meta.cvTrend;
+    else delete nextMeta.cvTrend;
   }
   if (refreshGrowth) {
     nextMeta.growth = meta.growth;
@@ -4316,6 +4452,8 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
       {
         normalUpdatedAt: ranksCache.normalUpdatedAt,
         cvUpdatedAt: ranksCache.cvUpdatedAt,
+        cvContentSha1: ranksCache.cvContentSha1,
+        cvTrendContentSha1: ranksCache.cvTrendSnapshots?.contentSha1,
         weeklyGrowthUpdatedAt: ranksCache.weeklyGrowthUpdatedAt,
       },
       meta
@@ -4359,6 +4497,9 @@ export async function refreshAdminRanksCacheTarget(options = {}) {
   ranksCache.weeklyGrowthCovers = nextWeeklyGrowthCovers;
   ranksCache.normalUpdatedAt = nextNormalUpdatedAt;
   ranksCache.cvUpdatedAt = nextCvUpdatedAt;
+  if (statuses.includes("cv-refresh")) {
+    ranksCache.cvContentSha1 = nextMeta?.cv?.contentSha1 || "";
+  }
   ranksCache.weeklyGrowthUpdatedAt = nextWeeklyGrowthUpdatedAt;
   ranksCache.meta = nextMeta;
   ranksCache.metaLoadedAt = target === "ranks" ? now : 0;
@@ -4992,7 +5133,11 @@ async function readCvRankTrendV2SnapshotsForNames(cvNames) {
   if (Number(meta?.version) !== 2 || meta?.kind !== "cv") {
     return null;
   }
-  const snapshots = {};
+  const snapshots = {
+    contentSha1: normalizeTextValue(meta?.contentSha1),
+    publicationId: normalizeTextValue(meta?.publicationId),
+    requestedNames: new Set(normalizedNames),
+  };
   ["missevan", "manbo"].forEach((platform, platformIndex) => {
     const platformMeta = meta?.platforms?.[platform];
     if (!platformMeta) {
@@ -5124,73 +5269,136 @@ async function readPeakRankTrendV2Snapshots(seriesNames) {
   }
 }
 
-async function getCachedCvRankTrendResponse(cvName) {
-  const normalizedCvName = normalizeTextValue(cvName);
-  const cacheKey = getRankTrendCacheKey("cv", normalizedCvName, "", CV_RANK_TREND_V2_KEY);
-  const now = Date.now();
-  const cached = rankTrendsCache.get(cacheKey);
-  if (cached?.response && isRankDerivedCacheEntryFresh(cached.loadedAt, now)) {
-    return cached.response;
+const cvTrendCatalogPending = {
+  success: false,
+  status: 503,
+  code: "CV_CATALOG_PENDING",
+  message: "CV 目录暂未就绪，身份确认后才会显示趋势。",
+};
+
+async function getReadyCvTrendCatalog() {
+  const stores = [missevanInfoStore, manboInfoStore, cvInfoStore];
+  await Promise.allSettled(stores.map(ensureInfoStoreReadyForSearch));
+  // A failed initial read also sets loaded, using an empty fallback without a verified hash.
+  return stores.every((store) => store.contentSha1) ? getCvCatalog() : null;
+}
+
+export function buildCvTrendResponseWithRanks({ cvName, profileId, rankData, catalog, trendSnapshots }) {
+  if (!catalog?.length) return cvTrendCatalogPending;
+  const nameMatch = resolveCvCatalogEntry(catalog, cvName);
+  const ambiguous = nameMatch.status === 409;
+  const identity = profileId ? resolveCvCatalogEntry(catalog, cvName, profileId) : nameMatch;
+  const { entry } = identity;
+  if (!entry || !resolveCvCatalogEntry([entry], cvName).entry) {
+    return {
+      success: false,
+      status: identity.status === 409 ? 409 : 404,
+      code: "CV_IDENTITY_UNCONFIRMED",
+      message: "暂无可确认属于此 CV 的趋势数据。",
+    };
   }
-  if (cached?.loadPromise) {
-    return cached.loadPromise;
+  const platforms = ["missevan", "manbo"];
+  const scopedTrends = Object.fromEntries(platforms.map((platform) => {
+    const snapshot = trendSnapshots?.[platform];
+    if (!snapshot || !ambiguous) return [platform, snapshot];
+    const record = findCvTrendRecord(snapshot, cvName);
+    const workIdentity = resolveCvRankWorkIdentity(catalog, cvName, record?.works, platform);
+    const cvs = workIdentity?.profileId === entry.profileId ? { [cvName]: record } : {};
+    return [platform, { ...snapshot, cvs }];
+  }));
+
+  // A work on a platform is evidence that a missing metric must not count as zero.
+  const requiredPlatforms = new Set();
+  for (const category of rankData?.platforms?.cv?.categories || []) {
+    if (category.key === "partner") continue;
+    const items = category.ranks.find((board) => board.key === "combined")?.items || [];
+    for (const item of items) {
+      if (item.cvName !== cvName) continue;
+      if (ambiguous &&
+        resolveCvRankWorkIdentity(catalog, cvName, item.works, "combined")?.profileId !== entry.profileId) continue;
+      for (const work of item.works || []) requiredPlatforms.add(work.platform);
+    }
   }
 
+  const response = buildCvTrendResponse({
+    id: cvName,
+    trendSnapshots: scopedTrends,
+    requiredPlatforms,
+  });
+  const cvRanks = buildCvProfileRanks({ catalog, entry, rankData, trendSnapshots: scopedTrends });
+  return {
+    ...response,
+    ...(ambiguous && response.status === 404 ? { message: "暂无可确认属于此 CV 的趋势数据。" } : {}),
+    schemaVersion: RANK_TRENDS_RESPONSE_SCHEMA_VERSION,
+    cvRanks,
+  };
+}
+
+export async function getCachedCvRankTrendResponse(cvName, profileId = "", {
+  readRanks = getCachedRanksResponse,
+  readTrend = readCvRankTrendV2Snapshots,
+  getCatalog = getReadyCvTrendCatalog,
+  getBatch = () => ranksCache.cvTrendSnapshots,
+  getRankVersion = () => ranksCache.cvContentSha1,
+} = {}) {
+  const normalizedCvName = normalizeTextValue(cvName);
+  const normalizedProfileId = normalizeTextValue(profileId);
+  const catalog = await getCatalog();
+  if (!catalog?.length) return cvTrendCatalogPending;
+  const rankData = await readRanks().then(({ response }) => response).catch((error) => {
+    void logger.operation("cv_trend_rank_badges_read_failed", { cvName: normalizedCvName }, "warn", error);
+    return null;
+  });
+  const batch = getBatch();
+  const sourceVersion = JSON.stringify([
+    getRankVersion(), batch?.contentSha1, rankData ? getRanksResponseCacheValidator(rankData) : "",
+  ]);
+  const cacheKey = JSON.stringify([RANK_TRENDS_RESPONSE_SCHEMA_VERSION, "cv", normalizedCvName, normalizedProfileId]);
+  const cached = rankTrendsCache.get(cacheKey);
+  const matchingCache = cached?.sourceVersion === sourceVersion && cached.catalogRef?.deref() === catalog ? cached : null;
+  if (matchingCache?.response && isRankDerivedCacheEntryFresh(matchingCache.loadedAt)) {
+    return matchingCache.response;
+  }
+  if (matchingCache?.loadPromise) {
+    return matchingCache.loadPromise;
+  }
+  const catalogRef = new WeakRef(catalog);
+
   const loadPromise = (async () => {
-    let v2Snapshots = null;
-    try {
-      v2Snapshots = await readCvRankTrendV2Snapshots(normalizedCvName);
-    } catch (error) {
-      void logger.operation(
-        "cv_trend_v2_read_failed",
-        { cvName: normalizedCvName },
-        "warn",
-        error
-      );
-    }
-    const response = buildCvTrendResponse({
-      id: normalizedCvName,
-      trendSnapshots: {
-        missevan: v2Snapshots?.missevan || null,
-        manbo: v2Snapshots?.manbo || null,
-      },
+    const trendSnapshots = batch?.requestedNames?.has(normalizedCvName)
+      ? batch
+      : await readTrend(normalizedCvName).catch((error) => {
+        void logger.operation("cv_trend_v2_read_failed", { cvName: normalizedCvName }, "warn", error);
+        return null;
+      });
+    const response = buildCvTrendResponseWithRanks({
+      cvName: normalizedCvName,
+      profileId: normalizedProfileId,
+      catalog,
+      rankData,
+      trendSnapshots,
     });
-    if (response && typeof response === "object") {
-      response.schemaVersion = RANK_TRENDS_RESPONSE_SCHEMA_VERSION;
-    }
+    // The batch path has no asynchronous read before the cache entry is set.
+    await Promise.resolve();
     if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) {
-      if (response.status === 503) {
-        if (cached?.response) {
-          rankTrendsCache.set(cacheKey, {
-            response: cached.response,
-            loadedAt: cached.loadedAt,
-            loadPromise: null,
-          });
-          return cached.response;
+      if (response.status === 503 || !rankData) {
+        if (matchingCache?.response) {
+          rankTrendsCache.set(cacheKey, matchingCache);
+          return matchingCache.response;
         }
         rankTrendsCache.delete(cacheKey);
       } else {
-        rankTrendsCache.set(cacheKey, {
-          response,
-          loadedAt: Date.now(),
-          loadPromise: null,
-        });
+        rankTrendsCache.set(cacheKey, { response, sourceVersion, catalogRef, loadedAt: Date.now() });
       }
     }
     return response;
   })();
 
-  pruneRankTrendCacheEntries("cv", normalizedCvName, cacheKey);
-  rankTrendsCache.set(cacheKey, {
-    response: null,
-    loadedAt: 0,
-    loadPromise,
-  });
-
+  rankTrendsCache.set(cacheKey, { loadPromise, sourceVersion, catalogRef });
   try {
     return await loadPromise;
   } catch (error) {
-    rankTrendsCache.delete(cacheKey);
+    if (rankTrendsCache.get(cacheKey)?.loadPromise === loadPromise) rankTrendsCache.delete(cacheKey);
     throw error;
   }
 }
@@ -12120,7 +12328,7 @@ if (!DESKTOP_APP) app.post("/usage-log", async (req, res) => {
     }
 
     if (action === "ranks") {
-      if (!["missevan", "manbo"].includes(platform)) {
+      if (!["missevan", "manbo", "cv"].includes(platform)) {
         return res.status(400).json({
           success: false,
           message: "Invalid usage log payload",

@@ -387,6 +387,9 @@ test("CV profile open usage logs normalize search, rank and legacy events", asyn
     cvName: "乔苏",
     source: "ranks",
   }), null);
+  assert.equal(buildCvProfileOpenUsageLog({
+    action: "cv_profile_open", cvName: "乔苏", source: "ranks", platform: "cv",
+  })?.platform, "cv");
 });
 
 test("trend usage logs accept named CV ranks without weakening drama id validation", async () => {
@@ -1927,6 +1930,8 @@ test("terminal stats task usage logs preserve the full result and optional sourc
     rankKey: "new_daily",
   });
   assert.equal(buildUserActionKeywordText("share_image_generate", ranksShareLog), "榜单图片分享（2项）");
+  assert.equal(buildShareImageGenerateUsageLog({ ...ranksShareLog, platform: "cv", categoryKey: "partner", rankKey: "workCount" })?.platform, "cv");
+  assert.equal(buildShareImageGenerateUsageLog({ ...ongoingShareLog, platform: "cv" }), null);
   assert.equal(buildShareImageGenerateUsageLog({
     platform: "other",
     source: "ranks",

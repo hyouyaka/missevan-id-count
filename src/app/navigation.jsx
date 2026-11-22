@@ -13,7 +13,7 @@ import {
   StarIcon,
 } from "lucide-react";
 
-import { PlatformIdIcon } from "@/app/platformTabLabel";
+import { PlatformGlyph } from "@/app/platformTabLabel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
@@ -40,11 +40,11 @@ export function LazyRouteFallback({ title = "正在加载页面", description = 
 
 function MainNavigationTabLabel({ platform }) {
   const Icon = mainNavigationIconMap[platform.key];
-  const isPlatformIcon = platform.key === "missevan" || platform.key === "manbo";
+  const isPlatformIcon = ["missevan", "manbo", "cv"].includes(platform.key);
   return (
     <span className="inline-flex min-w-0 items-center justify-center gap-1.5">
       {isPlatformIcon ? (
-        <PlatformIdIcon aria-hidden="true" platform={platform.key} className="size-3.5 shrink-0 sm:size-4" />
+        <PlatformGlyph aria-hidden="true" platform={platform.key} className="size-3.5 shrink-0 sm:size-4" />
       ) : Icon ? (
         <Icon aria-hidden="true" className="size-3.5 shrink-0 sm:size-4" />
       ) : null}
@@ -76,6 +76,7 @@ export function getInitialDrawerExpandedRootKeys(currentRoute, isDesktopBrowser)
   if (isDesktopBrowser && (currentRoute?.platform === "missevan" || currentRoute?.platform === "manbo")) {
     return [currentRoute.platform];
   }
+  if (currentRoute?.view === "ranks" && currentRoute.platform === "cv") return ["cv"];
   if ((currentRoute?.view === "ongoing" || currentRoute?.view === "ranks") && (currentRoute?.platform === "missevan" || currentRoute?.platform === "manbo")) {
     return [currentRoute.platform];
   }
@@ -444,7 +445,7 @@ export function MainNavigationDrawer({
   const [expandedRootKeys, setExpandedRootKeys] = useState(() => new Set(defaultExpandedRootKeys));
   const wasOpenRef = useRef(false);
   const rootItems = platforms.map((platform) => {
-    if (platform.key === "missevan" || platform.key === "manbo") {
+    if (["missevan", "manbo", "cv"].includes(platform.key)) {
       return buildDrawerPlatformItem(platform);
     }
     return {
@@ -476,12 +477,14 @@ export function MainNavigationDrawer({
   }
 
   function buildDrawerPlatformItem(platform) {
-    const children = [getPlatformOngoingItem(platform), ...getPlatformRankItems(platform)];
+    const children = getPlatformRankItems(platform);
+    if (platform.key !== "cv") children.unshift(getPlatformOngoingItem(platform));
     return {
       key: platform.key,
       label: platform.label,
       platform,
-      leafPatch: getFirstNavigationItem(children)?.routePatch || { view: "ongoing", platform: platform.key, metric: "playback" },
+      activeRoutePatch: platform.key === "cv" ? { view: "ranks", platform: "cv" } : undefined,
+      leafPatch: getFirstNavigationItem(children)?.routePatch,
       hasSubmenu: true,
       children,
     };
@@ -491,7 +494,7 @@ export function MainNavigationDrawer({
     if (open && !wasOpenRef.current) {
       const nextExpandedRootKeys = new Set(defaultExpandedRootKeys);
       setExpandedRootKeys(nextExpandedRootKeys);
-      const expandedPlatform = defaultExpandedRootKeys.find((key) => key === "missevan" || key === "manbo");
+      const expandedPlatform = defaultExpandedRootKeys.find((key) => ["missevan", "manbo", "cv"].includes(key));
       if (expandedPlatform) {
         onRequestRanksMenu?.(expandedPlatform);
       }
@@ -500,7 +503,7 @@ export function MainNavigationDrawer({
   }, [defaultExpandedRootKeys, onRequestRanksMenu, open]);
 
   function toggleRoot(key) {
-    const isPlatformRoot = key === "missevan" || key === "manbo";
+    const isPlatformRoot = ["missevan", "manbo", "cv"].includes(key);
     if (isPlatformRoot && !expandedRootKeys.has(key)) {
       onRequestRanksMenu?.(key);
     }
@@ -510,7 +513,7 @@ export function MainNavigationDrawer({
         next.delete(key);
       } else {
         if (isPlatformRoot) {
-          next.delete(key === "missevan" ? "manbo" : "missevan");
+          ["missevan", "manbo", "cv"].filter((platform) => platform !== key).forEach((platform) => next.delete(platform));
         }
         next.add(key);
       }
@@ -601,9 +604,9 @@ export function MainNavigationDrawer({
             {expandedRootKeys.has(item.key) ? (
               <div className="ml-2 grid gap-1 border-l border-border/70 pl-2">
                 {item.children.map((menuItem) => renderMobileItem(menuItem, { indent: true }))}
-                {(item.key === "missevan" || item.key === "manbo") && ranksMenuStatus === "loading" ? (
+                {["missevan", "manbo", "cv"].includes(item.key) && ranksMenuStatus === "loading" ? (
                   <div className="px-2.5 py-2 text-sm text-muted-foreground">加载中</div>
-                ) : (item.key === "missevan" || item.key === "manbo") && ranksMenuStatus === "error" ? (
+                ) : ["missevan", "manbo", "cv"].includes(item.key) && ranksMenuStatus === "error" ? (
                   <div className="px-2.5 py-2 text-sm text-muted-foreground">榜单暂不可用</div>
                 ) : null}
               </div>

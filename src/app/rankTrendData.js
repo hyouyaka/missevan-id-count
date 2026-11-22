@@ -61,12 +61,13 @@ export function resolveRankTrendAvailabilityIds({ response, data, requestedIds }
   );
 }
 
-export async function fetchRankTrendData({ platform, id, kind = "", frontendVersion }) {
+export async function fetchRankTrendData({ platform, id, kind = "", profileId = "", frontendVersion }) {
   const normalizedPlatform = String(platform ?? "").trim();
   const normalizedId = String(id ?? "").trim();
   const normalizedKind = String(kind ?? "").trim();
   const normalizedVersion = String(frontendVersion ?? "").trim();
-  const cacheKey = `${RANK_TREND_CLIENT_SCHEMA_VERSION}:${normalizedVersion}:${normalizedKind}:${normalizedPlatform}:${normalizedId}`;
+  const cvProfileId = normalizedKind === "cv" ? String(profileId).trim() : "";
+  const cacheKey = JSON.stringify([RANK_TREND_CLIENT_SCHEMA_VERSION, normalizedVersion, normalizedKind, normalizedPlatform, normalizedId, cvProfileId]);
   const cached = rankTrendClientCache.get(cacheKey);
   if (cached?.promise) {
     return cached.promise;
@@ -81,6 +82,9 @@ export async function fetchRankTrendData({ platform, id, kind = "", frontendVers
   }
   if (normalizedPlatform) {
     params.set("platform", normalizedPlatform);
+  }
+  if (cvProfileId) {
+    params.set("profileId", cvProfileId);
   }
   const promise = (async () => {
     try {

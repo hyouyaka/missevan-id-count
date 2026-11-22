@@ -9,6 +9,7 @@ import {
   MoreHorizontalIcon,
   PlayCircleIcon,
   RefreshCwIcon,
+  ScrollTextIcon,
   StarIcon,
   TrendingUpIcon,
   UserSearchIcon,
@@ -26,6 +27,7 @@ import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
 import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
+import { RankPlatformTabList } from "@/app/RankPlatformTabList";
 import { RankWatermark } from "@/app/RankBadge";
 import { StatsHistoryList } from "@/app/StatsHistoryList";
 import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
@@ -56,6 +58,7 @@ import { getOngoingMetricDisplay, sortOngoingItemsByWindowDelta } from "../../sh
 const platformMeta = {
   missevan: { label: "猫耳" },
   manbo: { label: "漫播" },
+  cv: { label: "CV" },
 };
 
 const HOME_RANK_CONFIG = {
@@ -65,7 +68,6 @@ const HOME_RANK_CONFIG = {
     { title: "猫耳畅销周榜", displayTitle: "畅销周榜", categoryKey: "bestseller", rankKey: "bestseller_weekly" },
     { title: "猫耳巅峰榜", displayTitle: "巅峰榜", categoryKey: "peak", rankKey: "peak" },
     { title: "猫耳7日飙升榜", displayTitle: "7日飙升榜", categoryKey: "growth", rankKey: "growth_weekly" },
-    { title: "猫耳CV榜总榜", displayTitle: "CV总榜", categoryKey: "cv", rankKey: "cv", itemType: "cv" },
   ],
   manbo: [
     { title: "漫播热播榜", displayTitle: "热播榜", categoryKey: "hot", rankKey: "hot" },
@@ -73,7 +75,12 @@ const HOME_RANK_CONFIG = {
     { title: "漫播钻石榜", displayTitle: "钻石榜", categoryKey: "diamond", rankKey: "diamond_monthly" },
     { title: "漫播巅峰榜", displayTitle: "巅峰榜", categoryKey: "peak", rankKey: "peak" },
     { title: "漫播7日飙升榜", displayTitle: "7日飙升榜", categoryKey: "growth", rankKey: "growth_weekly" },
-    { title: "漫播CV总榜", displayTitle: "CV总榜", categoryKey: "cv", rankKey: "cv", itemType: "cv" },
+  ],
+  cv: [
+    { title: "播放总榜", categoryKey: "total", rankKey: "combined", itemType: "cv" },
+    { title: "付费总榜", categoryKey: "paid", rankKey: "combined", itemType: "cv" },
+    { title: "勤劳总榜", categoryKey: "labor", rankKey: "combined", itemType: "cv" },
+    { title: "搭档次数榜", categoryKey: "partner", rankKey: "workCount", itemType: "cv" },
   ],
 };
 
@@ -183,12 +190,10 @@ function getRankByConfig(data, platform, rankConfig) {
 }
 
 function getHomeTrendLookup(item, platform, rankKey = "") {
-  const isCvRank = rankKey === "cv" && Boolean(item?.cvName);
   const isMissevanPeak = platform === "missevan" && (rankKey === "peak" || item?.type === "peak");
-  const id = String(isCvRank ? item?.cvName : isMissevanPeak ? item?.name : item?.id ?? "").trim();
+  const id = String((isMissevanPeak ? item?.name : item?.id) ?? "").trim();
   return {
     id,
-    isCvRank,
     isMissevanPeak,
     canUseSeriesTrend: isMissevanPeak && Boolean(item?.daily_view_delta?.available),
   };
@@ -216,13 +221,15 @@ function SectionHeader({ title, description, sectionIcon: SectionIcon }) {
   );
 }
 
-function PlatformTabs({ value, onValueChange, ariaLabel, counts = null }) {
+function PlatformTabs({ value, onValueChange, ariaLabel, counts = null, includeCv = false }) {
+  const List = includeCv ? RankPlatformTabList : TabsList;
   return (
-    <Tabs value={value} onValueChange={onValueChange} className="shrink-0 gap-0">
-      <TabsList aria-label={ariaLabel} className={`${homePillTabsListClassName} grid-cols-2`}>
-        {["missevan", "manbo"].map((platform) => (
+    <Tabs value={value} onValueChange={onValueChange} className={includeCv ? "w-full min-w-0 max-w-full gap-0 sm:w-fit" : "shrink-0 gap-0"}>
+      <List aria-label={ariaLabel} className={homePillTabsListClassName}>
+        {(includeCv ? ["missevan", "manbo", "cv"] : ["missevan", "manbo"]).map((platform) => (
           <TabsTrigger
             key={platform}
+            aria-label={includeCv ? platformMeta[platform].label : undefined}
             data-touch="compact"
             data-platform={platform}
             className={homePillTabClassName}
@@ -232,7 +239,7 @@ function PlatformTabs({ value, onValueChange, ariaLabel, counts = null }) {
             {counts ? <span className="ml-0.5 tabular-nums">{counts[platform] ?? 0}</span> : null}
           </TabsTrigger>
         ))}
-      </TabsList>
+      </List>
     </Tabs>
   );
 }
@@ -273,9 +280,8 @@ function HomeMoreMenu({
   const [statisticsActionPending, setStatisticsActionPending] = useState("");
   const statisticsActionLockRef = useRef(false);
   const isPeakSeries = kind === "peak";
-  const isCv = kind === "cv";
   const dramaId = String(item?.id ?? "").trim();
-  const title = String(isCv ? item?.cvName : item?.name ?? "").trim() || (isCv ? "未命名CV" : "未命名剧集");
+  const title = String(item?.name ?? "").trim() || "未命名剧集";
   const favoriteKey = dramaId ? `${platform}:${dramaId}` : "";
   const isFavorite = Boolean(favoriteKey && favoriteKeys?.has?.(favoriteKey));
 
@@ -286,7 +292,7 @@ function HomeMoreMenu({
   }
 
   function addCompareItem() {
-    if (!canOpenTrend || isCv) return;
+    if (!canOpenTrend) return;
     onAddCompareItem?.({
       platform,
       id: isPeakSeries ? title : dramaId,
@@ -357,7 +363,7 @@ function HomeMoreMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem disabled={!canOpenTrend} onSelect={openTrend}><TrendingUpIcon aria-hidden="true" />趋势</DropdownMenuItem>
-        {!isCv ? <DropdownMenuItem disabled={!canOpenTrend || !onAddCompareItem} onSelect={addCompareItem}><ArrowLeftRightIcon aria-hidden="true" />对比</DropdownMenuItem> : null}
+        <DropdownMenuItem disabled={!canOpenTrend || !onAddCompareItem} onSelect={addCompareItem}><ArrowLeftRightIcon aria-hidden="true" />对比</DropdownMenuItem>
         {kind === "drama" ? (
           <>
             <DropdownMenuItem disabled={favoriteActionsDisabled || !dramaId} onSelect={toggleFavorite}><StarIcon aria-hidden="true" className={isFavorite ? "fill-primary text-primary" : ""} />{isFavorite ? "取消收藏" : "收藏"}</DropdownMenuItem>
@@ -694,51 +700,53 @@ function RankDramaItem({
   );
 }
 
-function RankCvItem({ item, platform, rankKey, onOpenCv, onOpenTrend, canOpenTrend = false, actionProps }) {
-  const avatarUrl = buildProxyImageUrl(item?.avatar);
-  const playCountText = formatRankCompactCount(item?.totalViewCount);
-  const topWorksText = getHomeCvWorksPreviewText(item?.topSeries || item?.topWorks || item?.works);
+function RankCvItem({ item, platform, categoryKey, onOpenCv }) {
+  const isPartner = categoryKey === "partner";
+  const isSeriesCount = isPartner || categoryKey === "labor";
+  const profiles = isPartner ? item.cvs : [item];
+  const metricLabel = isPartner ? "合作系列数" : isSeriesCount ? "系列数" : "播放量";
+  const metricText = isSeriesCount ? formatPlainNumber(item.seriesCount)
+    : formatRankCompactCount(item.totalViewCount);
+  const MetricIcon = isSeriesCount ? ScrollTextIcon : PlayCircleIcon;
+  const topWorksText = getHomeCvWorksPreviewText(item.topSeries || item.topWorks || item.works);
   return (
     <div className="relative isolate grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden">
-      <RankWatermark rank={item?.rank} placement="row" />
-      <div className="relative z-10 size-14 overflow-hidden rounded-full border border-border/70 bg-muted/55">
-        {avatarUrl ? (
-          <LazyImage alt={item?.cvName || "CV头像"} className="size-full object-cover" src={avatarUrl} />
-        ) : (
-          <div className="flex size-full items-center justify-center text-xs font-semibold text-muted-foreground">CV</div>
-        )}
+      <RankWatermark rank={item.rank} placement="row" />
+      <div className="relative z-10 flex items-center -space-x-2">
+        {profiles.map((cv) => {
+          const avatarUrl = buildProxyImageUrl(cv.avatar);
+          return (
+            <div key={cv.cvName} className={isPartner
+              ? "size-8 shrink-0 overflow-hidden rounded-full border-2 border-card bg-muted"
+              : "size-14 overflow-hidden rounded-full border border-border/70 bg-muted/55"}>
+              {avatarUrl ? (
+                <LazyImage alt={cv.cvName} className="size-full object-cover" src={avatarUrl} />
+              ) : (
+                <div className="flex size-full items-center justify-center text-xs font-semibold text-muted-foreground">CV</div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div className="relative z-10 min-w-0">
-        <div className="flex min-w-0 items-center gap-1.5">
+        {isPartner ? <div className="break-words font-semibold">{profiles.map((cv) => cv.cvName).join(" & ")}</div> : (
           <button
             type="button"
             className="min-w-0 break-words rounded-sm text-left text-base! font-semibold! leading-6! text-foreground underline underline-offset-4 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            title={item?.cvName || "未命名CV"}
-            onClick={() => onOpenCv?.(item?.cvName, {
+            title={item.cvName}
+            onClick={() => onOpenCv?.(item.cvName, {
               platform,
               profileId: buildCvRankProfileId(platform, item),
               source: "ranks",
-              rankKey,
+              rankKey: categoryKey === "labor" ? "cv-series-count" : categoryKey === "paid" ? "cv-paid" : "cv",
             })}
           >
-            {item?.cvName || "未命名CV"}
+            {item.cvName}
           </button>
-          <HomeMoreMenu
-            item={item}
-            platform={platform}
-            rankKey={rankKey}
-            kind="cv"
-            canOpenTrend={canOpenTrend}
-            onOpenTrend={onOpenTrend}
-            {...actionProps}
-          />
-        </div>
-        <div
-          className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs leading-5 text-muted-foreground"
-          title={`播放量：${playCountText}`}
-        >
-          <PlayCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="min-w-0 break-words tabular-nums">{playCountText}</span>
+        )}
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-5 text-muted-foreground" title={metricLabel + "：" + metricText}>
+          <MetricIcon aria-hidden="true" className="size-3.5 shrink-0" />
+          <span className="min-w-0 break-words tabular-nums">{metricText}</span>
         </div>
         <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground" title={topWorksText}>
           {topWorksText}
@@ -786,14 +794,11 @@ function HomeRankCard({
             items.map((item) =>
               isCvRank ? (
                 <RankCvItem
-                  key={`${rankConfig.rankKey}-${item.rank}-${item.cvName}`}
+                  key={item.rank + ":" + (item.cvName || item.cvs?.map((cv) => cv.cvName).join("&"))}
                   item={item}
                   platform={platform}
-                  rankKey={rankConfig.rankKey}
+                  categoryKey={rankConfig.categoryKey}
                   onOpenCv={onOpenCv}
-                  onOpenTrend={onOpenTrend}
-                  canOpenTrend={canOpenTrend(item, platform, rankConfig.rankKey)}
-                  actionProps={actionProps}
                 />
               ) : (
                 <RankDramaItem
@@ -811,12 +816,12 @@ function HomeRankCard({
           ) : (
             <div className="home-editorial-empty">
               <ChartNoAxesColumnIcon aria-hidden="true" className="size-5" />
-              <span>暂无榜单数据</span>
+              <span>{isCvRank && !rank?.available ? "榜单数据暂未发布" : "暂无榜单数据"}</span>
             </div>
           )}
       </div>
       <HomeTextLink
-        ariaLabel={`查看更多${rankConfig.title}`}
+        ariaLabel={`${isCvRank ? "查看完整" : "查看更多"}${rankConfig.title}`}
         onClick={() => onNavigateRoute({
           view: "ranks",
           platform,
@@ -824,7 +829,7 @@ function HomeRankCard({
           rank: rankConfig.rankKey,
         })}
       >
-        查看更多
+        {isCvRank ? "查看完整榜单" : "查看更多"}
       </HomeTextLink>
     </div>
   );
@@ -1044,9 +1049,6 @@ export function HomeView({
     if (!lookup.id) {
       return false;
     }
-    if (lookup.isCvRank) {
-      return true;
-    }
     if (lookup.isMissevanPeak) {
       return lookup.canUseSeriesTrend;
     }
@@ -1059,21 +1061,16 @@ export function HomeView({
       return;
     }
     const lookup = getHomeTrendLookup(item, platform, rankKey);
-    const trendItem = lookup.isCvRank
-      ? { id: lookup.id, name: lookup.id }
-      : lookup.isMissevanPeak
-        ? { ...item, id: lookup.id }
-        : item;
-    const trendPlatform = lookup.isCvRank ? "cv" : platform;
+    const trendItem = lookup.isMissevanPeak ? { ...item, id: lookup.id } : item;
     const requestId = trendRequestIdRef.current + 1;
     trendRequestIdRef.current = requestId;
-    setTrendDialog({ open: true, item: trendItem, platform: trendPlatform, rankKey });
+    setTrendDialog({ open: true, item: trendItem, platform, rankKey });
     logRankTrendOpen({
-      platform: trendPlatform,
+      platform,
       id: lookup.id,
-      name: lookup.isCvRank ? item?.cvName : item?.name,
+      name: item?.name,
       source: "homeview",
-      rankKey: lookup.isCvRank ? (item?.trendScope === "paid" ? "cv-paid" : "cv") : rankKey,
+      rankKey,
       frontendVersion,
     });
     setTrendState((current) => ({
@@ -1083,9 +1080,8 @@ export function HomeView({
     }));
     try {
       const { response, data } = await fetchRankTrendData({
-        platform: lookup.isCvRank ? "" : platform,
+        platform,
         id: lookup.id,
-        kind: lookup.isCvRank ? "cv" : "",
         frontendVersion,
       });
       if (trendRequestIdRef.current !== requestId) {
@@ -1180,7 +1176,7 @@ export function HomeView({
             title="榜单速览"
             sectionIcon={ChartNoAxesColumnIcon}
           />
-          <PlatformTabs value={selectedRankPlatform} onValueChange={setSelectedRankPlatform} ariaLabel="选择榜单平台" />
+          <PlatformTabs value={selectedRankPlatform} onValueChange={setSelectedRankPlatform} ariaLabel="选择榜单平台" includeCv />
         </div>
         <Carousel
           className="home-editorial-ranks-carousel"

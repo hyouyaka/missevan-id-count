@@ -40,6 +40,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { CvRankBadges } from "@/app/CvRankBadges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -662,14 +663,11 @@ function RankTrendLineChart({ metrics, legendMetrics = metrics, selectedMetricKe
 function getSnapshotColumns(metrics, platform, isWeeklyPlayback = false) {
   const metricMap = new Map((Array.isArray(metrics) ? metrics : []).map((metric) => [metric.key, metric]));
   const viewMetric = metricMap.get("view_count") || null;
-  const isCvTrend =
-    metricMap.has("missevan_total_view_count") ||
-    metricMap.has("missevan_paid_view_count") ||
-    metricMap.has("manbo_total_view_count") ||
-    metricMap.has("manbo_paid_view_count");
-  if (isCvTrend) {
+  if (platform === "cv") {
     return [
       { key: "date", label: "日期", metric: null },
+      { key: "combined_total_view_count", label: "双平台总播放量", metric: metricMap.get("combined_total_view_count") || null },
+      { key: "combined_paid_view_count", label: "双平台付费播放量", metric: metricMap.get("combined_paid_view_count") || null },
       { key: "missevan_total_view_count", label: "猫耳汇总", metric: metricMap.get("missevan_total_view_count") || null },
       { key: "missevan_paid_view_count", label: "猫耳付费", metric: metricMap.get("missevan_paid_view_count") || null },
       { key: "manbo_total_view_count", label: "漫播汇总", metric: metricMap.get("manbo_total_view_count") || null },
@@ -764,41 +762,49 @@ function buildSnapshotRows(columns, chartMode = "absolute") {
 
 function TrendSnapshotDetails({ metrics, platform, chartMode = "absolute", isWeeklyPlayback = false }) {
   const [isOpen, setIsOpen] = useState(false);
+  const isCvTable = platform === "cv";
   const columns = getSnapshotColumns(metrics, platform, isWeeklyPlayback);
   const rows = buildSnapshotRows(columns, chartMode);
 
   return (
-    <div className="rounded-lg border border-border/70 bg-background/82">
-      {!isOpen ? (
+    <div className="min-w-0 rounded-lg border border-border/70 bg-background/82">
+      {!isOpen || isCvTable ? (
         <button
           type="button"
           className="flex h-8 w-full items-center justify-between gap-2 px-2.5 text-left text-xs! font-medium text-foreground"
           aria-expanded={isOpen}
-          onClick={() => setIsOpen(true)}
+          aria-label={isOpen ? "收起数据明细" : undefined}
+          onClick={() => setIsOpen(!isOpen)}
         >
           <span>数据明细</span>
           <ChevronDownIcon
             aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground transition-transform"
+            className={"size-3.5 shrink-0 text-muted-foreground transition-transform" + (isOpen ? " rotate-180" : "")}
           />
         </button>
-      ) : (
-        <div className="max-h-44 overflow-y-auto border-t border-border/70">
+      ) : null}
+      {isOpen ? (
+        <div
+          className="max-h-44 overflow-auto border-t border-border/70"
+          role={isCvTable ? "region" : undefined}
+          aria-label={isCvTable ? "CV每周数据" : undefined}
+          tabIndex={isCvTable ? 0 : undefined}
+        >
           {rows.length ? (
-            <table className="w-full table-fixed border-collapse text-[0.68rem]">
+            <table className={"w-full table-fixed border-collapse text-[0.68rem]" + (isCvTable ? " min-w-[34rem]" : "")}>
               <thead className="sticky top-0 z-10 bg-background/95 text-muted-foreground">
                 <tr>
                   {columns.map((column, index) => {
-                    const isLastColumn = index === columns.length - 1;
+                    const showCollapse = !isCvTable && index === columns.length - 1;
                     return (
                       <th
                         key={column.key}
                         className={`border-b border-border/70 px-2 py-1.5 font-medium ${
                           column.key === "date" ? "text-left" : "text-right"
-                        } ${isLastColumn ? "relative pr-8" : ""}`}
+                        } ${showCollapse ? "relative pr-8" : ""}`}
                       >
                         {column.label}
-                        {isLastColumn ? (
+                        {showCollapse ? (
                           <button
                             type="button"
                             className="absolute right-1 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -819,7 +825,7 @@ function TrendSnapshotDetails({ metrics, platform, chartMode = "absolute", isWee
                     {columns.map((column, index) => (
                       <td
                         key={`${row.date}-${column.key}`}
-                        className={`px-2 py-1.5 tabular-nums ${index === columns.length - 1 ? "pr-8" : ""} ${
+                        className={`px-2 py-1.5 tabular-nums ${!isCvTable && index === columns.length - 1 ? "pr-8" : ""} ${
                           column.key === "date" ? "text-left text-muted-foreground" : "text-right text-foreground"
                         }`}
                       >
@@ -837,18 +843,20 @@ function TrendSnapshotDetails({ metrics, platform, chartMode = "absolute", isWee
           ) : (
             <div className="flex items-center justify-between gap-2 px-2.5 py-3 text-xs text-muted-foreground">
               <span>暂无快照数据</span>
-              <button
-                type="button"
-                className="inline-flex size-6 items-center justify-center rounded-md hover:bg-muted hover:text-foreground"
-                aria-label="收起数据明细"
-                onClick={() => setIsOpen(false)}
-              >
-                <ChevronDownIcon aria-hidden="true" className="size-3.5 rotate-180" />
-              </button>
+              {!isCvTable && (
+                <button
+                  type="button"
+                  className="inline-flex size-6 items-center justify-center rounded-md hover:bg-muted hover:text-foreground"
+                  aria-label="收起数据明细"
+                  onClick={() => setIsOpen(false)}
+                >
+                  <ChevronDownIcon aria-hidden="true" className="size-3.5 rotate-180" />
+                </button>
+              )}
             </div>
           )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -957,9 +965,10 @@ export function RankTrendDialog({
   frontendVersion = "0.0.0",
   handleVersionResponse,
 }) {
+  const initialMetricKey = item?.trendMetricKey || "view_count";
   const [selectedWindow, setSelectedWindow] = useState("7d");
   const [selectedChartMode, setSelectedChartMode] = useState("absolute");
-  const [selectedMetricKey, setSelectedMetricKey] = useState("view_count");
+  const [selectedMetricKey, setSelectedMetricKey] = useState(initialMetricKey);
   const [activeTrendKind, setActiveTrendKind] = useState("metric");
   const [weeklyTrendData, setWeeklyTrendData] = useState(null);
   const [weeklyLoadState, setWeeklyLoadState] = useState("idle");
@@ -1016,7 +1025,9 @@ export function RankTrendDialog({
   const activeWindowGeneratedAt = getTrendWindowGeneratedAt(activeWindow, activeMetrics);
   const chartMetrics = getChartTrendMetrics(activeMetrics);
   const chartMetricKeySignature = chartMetrics.map((metric) => metric.key).join("|");
-  const selectedChartMetric = chartMetrics.find((metric) => metric.key === selectedMetricKey) || chartMetrics[0] || null;
+  const selectedChartMetric = chartMetrics.find((metric) => metric.key === selectedMetricKey)
+    || chartMetrics.find((metric) => metric.key === initialMetricKey)
+    || chartMetrics[0] || null;
   const visibleChartMetrics = selectedChartMetric ? [selectedChartMetric] : [];
   const detailIdText = Array.isArray(data?.dramaIds) && data.dramaIds.length
     ? data.dramaIds.join("，")
@@ -1047,12 +1058,13 @@ export function RankTrendDialog({
     setActiveTrendKind(primaryData?.kind || "metric");
     setSelectedWindow(primaryHasWeeklyTrend && !primaryHasDailyTrend ? "7w" : "7d");
     setSelectedChartMode("absolute");
-    setSelectedMetricKey("view_count");
-    dailyMetricKeyRef.current = "view_count";
+    setSelectedMetricKey(initialMetricKey);
+    dailyMetricKeyRef.current = initialMetricKey;
     setShouldRestoreWeekly(preferredKind === "weekly_playback" && !unavailable);
   }, [
     open,
     trendSessionKey,
+    initialMetricKey,
     canSwitchTrendKind,
     platform,
     trendId,
@@ -1137,16 +1149,16 @@ export function RankTrendDialog({
     }
     const chartMetricKeys = chartMetricKeySignature.split("|").filter(Boolean);
     if (!chartMetricKeys.length) {
-      setSelectedMetricKey("view_count");
+      setSelectedMetricKey(initialMetricKey);
       return;
     }
     setSelectedMetricKey((current) => {
       if (chartMetricKeys.includes(current)) {
         return current;
       }
-      return chartMetricKeys.includes("view_count") ? "view_count" : chartMetricKeys[0];
+      return chartMetricKeys.includes(initialMetricKey) ? initialMetricKey : chartMetricKeys[0];
     });
-  }, [open, activeWindowKey, chartMetricKeySignature]);
+  }, [open, activeWindowKey, chartMetricKeySignature, initialMetricKey]);
 
   function selectTrendMetric(metricKey) {
     if (chartMetrics.some((metric) => metric.key === metricKey)) {
@@ -1189,7 +1201,8 @@ export function RankTrendDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent
         scrollable
-        className="w-[calc(100vw-1.5rem)] max-w-[30rem] gap-3 overflow-visible p-3 pt-4 sm:max-w-[32rem] sm:p-4 sm:pt-5"
+        className={"w-[calc(100vw-1.5rem)] gap-3 overflow-visible p-3 pt-4 sm:p-4 sm:pt-5 " +
+          (platform === "cv" ? "max-w-[38rem]" : "max-w-[30rem] sm:max-w-[32rem]")}
       >
         <AlertDialogCancel
           aria-label="关闭趋势弹窗"
@@ -1226,6 +1239,15 @@ export function RankTrendDialog({
             <span className="min-w-0 flex-1 break-words" style={{ textWrap: "wrap" }}>{detailIdText}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
+
+        {platform === "cv" ? (
+          <CvRankBadges cvRanks={data?.cvRanks || {
+            items: shouldShowRankHistoryDate ? [] : (latestRankHistory?.ranks || []).map(({ key, position }) => {
+              const split = key.indexOf("-");
+              return { platform: key.slice(0, split), rankKey: key.slice(split + 1), rank: position };
+            }),
+          }} />
+        ) : null}
 
         {trendState.isLoading ? (
           <Alert>
@@ -1309,7 +1331,7 @@ export function RankTrendDialog({
                   {activeWindow.insufficientData ? "，数据不足" : ""}
                   {activeWindowGeneratedAt ? `，数据刷新于：${formatDeviceDateTime(activeWindowGeneratedAt)}` : ""}
                 </div>
-                {latestRankHistory?.ranks?.length ? (
+                {!isCvTrend && latestRankHistory?.ranks?.length ? (
                   <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                     {latestRankHistory.ranks.map((rank) => (
                       <Badge key={`${latestRankHistory.date}-${rank.key}`} variant="outline">

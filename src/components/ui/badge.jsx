@@ -14,6 +14,12 @@ const badgeVariants = cva(
           "border-[var(--border-warm)] bg-secondary text-secondary-foreground [a]:hover:bg-[color-mix(in_oklch,var(--secondary)_88%,var(--card))]",
         info:
           "border-[color-mix(in_oklch,var(--accent-cool)_18%,transparent)] bg-[var(--accent-cool)] text-[var(--accent-cool-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-cool)_90%,var(--foreground))]",
+        infoSoft:
+          "border-[color-mix(in_oklch,var(--accent-cool)_22%,transparent)] bg-[var(--accent-cool-soft)] text-[color-mix(in_oklch,var(--accent-cool)_70%,var(--foreground))]",
+        paidSoft:
+          "border-[color-mix(in_oklch,var(--accent-warm)_22%,transparent)] bg-[var(--accent-warm-soft)] text-[color-mix(in_oklch,var(--accent-warm)_70%,var(--foreground))]",
+        successSoft:
+          "border-[color-mix(in_oklch,var(--accent-success)_22%,transparent)] bg-[var(--accent-success-soft)] text-[color-mix(in_oklch,var(--accent-success)_70%,var(--foreground))]",
         coral:
           "border-[color-mix(in_oklch,var(--accent-warm)_18%,transparent)] bg-[var(--accent-warm)] text-[var(--accent-warm-foreground)] shadow-[inset_0_1px_0_oklch(1_0_0/0.12)] [a]:hover:bg-[color-mix(in_oklch,var(--accent-warm)_90%,var(--foreground))]",
         missevanPlatform:

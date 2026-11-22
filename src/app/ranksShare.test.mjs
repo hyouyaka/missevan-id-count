@@ -220,6 +220,7 @@ test("CV share tables include TOP3, date status, and compact playback values", (
   const table = buildRanksShareTable({
     platform: "manbo",
     categoryKey: "cv",
+    cvSummary: { missevanDramaCount: 1200, manboDramaCount: 34 },
     updatedAt: "2026-09-29T17:00:00.000Z",
     rank: {
       key: "cv-paid",
@@ -237,7 +238,7 @@ test("CV share tables include TOP3, date status, and compact playback values", (
     },
   });
   assert.equal(table.title, "漫播CV付费榜");
-  assert.deepEqual(table.metadata, { inlineText: "更新日期：2026-09-29", statusText: "*此榜单非官方" });
+  assert.deepEqual(table.metadata, { inlineText: "更新日期：2026-09-29", statusText: "此榜单非官方，统计来自猫耳1200部，漫播34部上架中的作品" });
   assert.deepEqual(table.columns.map(({ label }) => label), ["CV", "播放量", "系列数量", "TOP3"]);
   assert.equal(table.columns.at(-1).maxWidth, 560);
   assert.deepEqual(table.rows[0], {
@@ -411,4 +412,35 @@ test("rank PNG uses adaptive width, the shared low-opacity watermark, and the sh
   assert.ok(longHarness.canvas.width <= ranksShareConstants.maxWidth);
   assert.ok(longHarness.canvas.width < ranksShareConstants.maxWidth);
   assert.ok(longHarness.calls.texts.some((text) => text.includes("超长标题")));
+});
+
+
+test("CV partner PNG tables keep published rows and emphasize the selected metric and draw the source notice", async () => {
+  const items = [{
+    rank: 1, cvs: [{ cvName: "甲" }, { cvName: "乙" }], seriesCount: 4,
+    totalViewCount: 12000, topSeries: [{ title: "共同作品" }],
+  }];
+  for (const [key, firstMetric, name] of [["workCount", "workCount", "搭档次数榜"], ["viewCount", "view", "搭档播放榜"]]) {
+    const request = {
+      platform: "cv", categoryKey: "partner",
+      rank: { key, rankKind: "partner", name, items },
+      cvSummary: { missevanDramaCount: 1200, manboDramaCount: 34 },
+    };
+    const table = buildRanksShareTable(request);
+    assert.equal(table.title, name);
+    assert.equal(table.columns[1].key, firstMetric);
+    assert.equal(table.rows[0].title, "1. 甲 & 乙");
+    assert.equal(table.rows[0].top3, "《共同作品》");
+    const harness = createCanvasHarness();
+    await createRanksSharePng({
+      ...request,
+      canvasFactory: () => harness.canvas,
+      loadLogo: async () => ({ local: true }),
+    });
+    const status = harness.calls.textPositions.find(({ text }) =>
+      text === "此榜单非官方，统计来自猫耳1200部，漫播34部上架中的作品");
+    assert.equal(status.align, "right");
+    assert.equal(status.x, harness.canvas.width - 24);
+    assert.ok(status.x - status.width > 0);
+  }
 });

@@ -1,3 +1,4 @@
+import { selectCvRankBadges } from "./cvRankBadges.js";
 import { buildCvSeriesIndex } from "./cvSeriesUtils.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -850,4 +851,21 @@ test("CV profile does not turn missing playback metrics into zero", () => {
   assert.equal(response.series[0].playCount, null);
   assert.equal(response.works[0].playCount, null);
   assert.equal(response.totals.playback, null);
+});
+
+test("CV badge priority depends on top-30 membership and fills missing slots", () => {
+  const select = (items) => selectCvRankBadges(items).map(({ label, rank }) => [label, rank]);
+  const combined = { platform: "combined", rankKey: "cv", rank: 30 };
+  const paid = { platform: "combined", rankKey: "cv-paid", rank: 1 };
+  const labor = { platform: "manbo", rankKey: "cv-series-count", rank: 2 };
+  const below = { platform: "missevan", rankKey: "cv", rank: 31 };
+  assert.deepEqual(select([labor, below, paid, combined]), [
+    ["播放总榜", 30], ["付费总榜", 1], ["漫播勤劳榜", 2], ["勤劳总榜", null],
+  ]);
+  assert.deepEqual(select([labor, below]), [
+    ["漫播勤劳榜", 2], ["播放总榜", null], ["付费总榜", null], ["勤劳总榜", null],
+  ]);
+  assert.deepEqual(select([labor, below, paid, combined, { ...below, rank: 3 }, { ...labor, rank: 1, rankKey: "cv" }]), [
+    ["播放总榜", 30], ["付费总榜", 1], ["猫耳总榜", 3], ["漫播总榜", 1],
+  ]);
 });

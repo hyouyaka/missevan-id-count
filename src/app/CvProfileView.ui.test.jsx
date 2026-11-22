@@ -149,7 +149,7 @@ test("CV profile shows four non-interactive platform badges unchanged by work fi
   const ranks = await screen.findByLabelText("CV榜排名");
   const rankText = ranks.textContent;
   expect(Array.from(ranks.children).map((badge) => badge.textContent)).toEqual([
-    "猫耳总榜 #8", "猫耳付费榜 #3", "漫播总榜 #12", "漫播付费榜 #6",
+    "猫耳总榜 #8", "漫播总榜 #12", "猫耳付费榜 #3", "漫播付费榜 #6",
   ]);
   for (const badge of ranks.children) {
     expect(badge.tagName).toBe("SPAN");
@@ -178,20 +178,22 @@ test("CV badge tooltips use each platform publication date", async () => {
   expect(within(ranks).getByText("漫播总榜 #17")).toHaveAttribute("title", `榜单更新时间：${formatDeviceDateTime(updatedAtByPlatform.manbo)}`);
 });
 
-test.each([undefined, { updatedAt: "", items: [] }])("CV profile hides badges for legacy or empty ranks (%s)", async (cvRanks) => {
+test.each([undefined, { updatedAt: "", items: [] }])("CV profile fills four badges for legacy or empty ranks (%s)", async (cvRanks) => {
   mockProfileFetch({ ...createProfileData(), cvRanks });
   render(<ProfileHarness />);
   await screen.findByRole("heading", { name: "路知行" });
-  expect(screen.queryByLabelText("CV榜排名")).not.toBeInTheDocument();
+  const badges = Array.from(screen.getByLabelText("CV榜排名").children);
+  expect(badges.map((badge) => badge.textContent)).toEqual(["播放总榜", "付费总榜", "勤劳总榜", "猫耳总榜"]);
+  expect(badges.map((badge) => badge.dataset.variant)).toEqual(["infoSoft", "paidSoft", "successSoft", "missevanPlatformSoft"]);
 });
 
-test("CV profile only renders the available rank", async () => {
+test("CV profile places a qualifying rank before the fallback labels", async () => {
   mockProfileFetch({ ...createProfileData(), cvRanks: {
     updatedAt: "", items: [{ platform: "manbo", rankKey: "cv-paid", rank: 9 }],
   } });
   render(<ProfileHarness />);
   const ranks = await screen.findByLabelText("CV榜排名");
-  expect(ranks.children).toHaveLength(1);
+  expect(ranks.children).toHaveLength(4);
   expect(ranks.firstElementChild).toHaveTextContent("漫播付费榜 #9");
   expect(ranks.firstElementChild).toHaveAttribute("title", "榜单更新时间：暂无数据");
 });
