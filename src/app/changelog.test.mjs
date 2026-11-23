@@ -60,12 +60,22 @@ test("getShouldAutoOpenChangelog tolerates unavailable storage", () => {
   assert.doesNotThrow(() => markChangelogVersionSeen("1.5.5", blockedStorage));
 });
 
-test("package version is 1.8.8", () => {
-  assert.equal(packageJson.version, "1.8.8");
+test("package version is 1.9.0", () => {
+  assert.equal(packageJson.version, "1.9.0");
 });
 
-test("latest changelog contains the approved 1.8.8 updates", () => {
+test("latest changelog contains the 1.9.0 CV rankings and ongoing updates", () => {
   assert.deepEqual(CHANGELOG_ENTRIES[0], {
+    version: "1.9.0",
+    changes: [
+      "独立CV榜分类，新增播放量和勤劳榜的双平台汇总榜单，新增搭档榜",
+      "统一播放量显示格式，修正付费ID为0时的显示",
+    ],
+  });
+});
+
+test("changelog keeps the approved 1.8.8 updates", () => {
+  assert.deepEqual(CHANGELOG_ENTRIES.find((item) => item.version === "1.8.8"), {
     version: "1.8.8",
     changes: [
       "CV榜新增「勤劳榜」，分平台按作品总数排序（多季算作一部作品）",

@@ -4,6 +4,13 @@ export const CHANGELOG_SEEN_VERSION_STORAGE_KEY = "missevan-changelog-seen-versi
 
 export const CHANGELOG_ENTRIES = [
   {
+    version: "1.9.0",
+    changes: [
+      "独立CV榜分类，新增播放量和勤劳榜的双平台汇总榜单，新增搭档榜",
+      "统一播放量显示格式，修正付费ID为0时的显示",
+    ],
+  },
+  {
     version: "1.8.8",
     changes: [
       "CV榜新增「勤劳榜」，分平台按作品总数排序（多季算作一部作品）",
