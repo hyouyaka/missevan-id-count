@@ -161,6 +161,8 @@ test("desktop routes drama IDs, episode IDs and share links to their platform im
     await expect.poll(() => state.requests.length).toBe(before + 1);
     expect(state.requests.at(-1)).toMatchObject({ importPlatform: platform, items: [{ raw }] });
     await expect(page.getByText(titles[platform], { exact: true }).first()).toBeVisible();
+    // Requests are recorded before the import response updates the form.
+    await expect(page.getByRole("button", { name: "搜索", exact: true })).toBeEnabled();
   }
   expect(state.errors).toEqual([]);
   expect(await page.evaluate(() => window.desktopStorageAccesses)).toEqual([]);
