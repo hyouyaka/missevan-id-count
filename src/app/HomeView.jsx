@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRightIcon,
   CalendarClockIcon,
@@ -7,7 +7,9 @@ import {
   HandCoinsIcon,
   MicIcon,
   MoreHorizontalIcon,
+  PauseIcon,
   PlayCircleIcon,
+  PlayIcon,
   RefreshCwIcon,
   ScrollTextIcon,
   StarIcon,
@@ -26,8 +28,7 @@ import {
 import { fetchOngoingData, getCachedOngoingData } from "@/app/ongoingData";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
-import { PlatformDramaLink, PlatformTabLabel } from "@/app/platformTabLabel";
-import { RankPlatformTabList } from "@/app/RankPlatformTabList";
+import { PlatformDramaLink, PlatformGlyph, PlatformTabLabel } from "@/app/platformTabLabel";
 import { RankWatermark } from "@/app/RankBadge";
 import { StatsHistoryList } from "@/app/StatsHistoryList";
 import { fetchRanksData, getCachedRanksData, resolveRankRefreshAt } from "@/app/ranksData";
@@ -52,7 +53,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getOngoingMetricDisplay, sortOngoingItemsByWindowDelta } from "../../shared/ongoingUtils.js";
 
 const platformMeta = {
@@ -60,6 +60,13 @@ const platformMeta = {
   manbo: { label: "漫播" },
   cv: { label: "CV" },
 };
+
+const homeRankCarouselOptions = {
+  align: "start",
+  loop: false,
+  breakpoints: { "(prefers-reduced-motion: reduce)": { duration: 0 } },
+};
+const homeRankAutoplayDelay = 6000;
 
 const HOME_RANK_CONFIG = {
   missevan: [
@@ -84,8 +91,6 @@ const HOME_RANK_CONFIG = {
   ],
 };
 
-const homePillTabsListClassName = "inline-flex h-9 min-h-9 w-fit";
-const homePillTabClassName = "h-7 min-h-7 min-w-0 px-3 text-sm!";
 const homeRankItemTitleClassName =
   "min-w-0 truncate whitespace-nowrap text-base! font-semibold! leading-6! text-foreground";
 const homeMoreButtonClassName =
@@ -221,29 +226,6 @@ function SectionHeader({ title, description, sectionIcon: SectionIcon }) {
   );
 }
 
-function PlatformTabs({ value, onValueChange, ariaLabel, counts = null, includeCv = false }) {
-  const List = includeCv ? RankPlatformTabList : TabsList;
-  return (
-    <Tabs value={value} onValueChange={onValueChange} className={includeCv ? "w-full min-w-0 max-w-full gap-0 sm:w-fit" : "shrink-0 gap-0"}>
-      <List aria-label={ariaLabel} className={homePillTabsListClassName}>
-        {(includeCv ? ["missevan", "manbo", "cv"] : ["missevan", "manbo"]).map((platform) => (
-          <TabsTrigger
-            key={platform}
-            aria-label={includeCv ? platformMeta[platform].label : undefined}
-            data-touch="compact"
-            data-platform={platform}
-            className={homePillTabClassName}
-            value={platform}
-          >
-            <PlatformTabLabel platform={platform} />
-            {counts ? <span className="ml-0.5 tabular-nums">{counts[platform] ?? 0}</span> : null}
-          </TabsTrigger>
-        ))}
-      </List>
-    </Tabs>
-  );
-}
-
 function HomeTextLink({ children, ariaLabel, onClick }) {
   return (
     <Button
@@ -265,6 +247,7 @@ function HomeMoreMenu({
   rankKey = "",
   kind = "drama",
   overlay = false,
+  onOverlayOpenChange,
   canOpenTrend = false,
   onOpenTrend,
   openSearchResult,
@@ -277,6 +260,13 @@ function HomeMoreMenu({
   onStartRevenueEstimate,
   frontendVersion = "0.0.0",
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  useLayoutEffect(() => {
+    if (!menuOpen || !onOverlayOpenChange) return;
+    onOverlayOpenChange(true);
+    return () => onOverlayOpenChange(false);
+  }, [menuOpen, onOverlayOpenChange]);
+
   const [statisticsActionPending, setStatisticsActionPending] = useState("");
   const statisticsActionLockRef = useRef(false);
   const isPeakSeries = kind === "peak";
@@ -348,7 +338,7 @@ function HomeMoreMenu({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -553,6 +543,93 @@ function OngoingPlatformList({
   );
 }
 
+function HomeRankCarousel({ platform, autoplay, delay, children }) {
+  const [api, setApi] = useState(null);
+  const [openOverlayCount, setOpenOverlayCount] = useState(0);
+  const rootRef = useRef(null);
+  const canAutoplay = autoplay && openOverlayCount === 0;
+  const onOverlayOpenChange = useCallback((open) => {
+    setOpenOverlayCount((count) => count + (open ? 1 : -1));
+  }, []);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!api || !root || !canAutoplay) return;
+
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    let inView = typeof IntersectionObserver !== "function";
+    let hovering = root.matches(":hover");
+    let dragging = false;
+    let keyboardFocused = root.contains(document.activeElement) && document.activeElement.matches(":focus-visible");
+    let timer;
+
+    function schedule() {
+      window.clearTimeout(timer);
+      if (!inView || document.hidden || reducedMotion?.matches || hovering || dragging ||
+        keyboardFocused || api.scrollSnapList().length < 2) return;
+      timer = window.setTimeout(() => {
+        if (api.canScrollNext()) api.scrollNext();
+        else api.scrollTo(0, true);
+        schedule();
+      }, delay);
+    }
+
+    const startHover = (event) => {
+      if (event.pointerType !== "mouse") return;
+      hovering = true;
+      schedule();
+    };
+    const endHover = () => { hovering = false; schedule(); };
+    const startFocus = (event) => { keyboardFocused = event.target.matches(":focus-visible"); schedule(); };
+    const endFocus = (event) => {
+      if (root.contains(event.relatedTarget)) return;
+      keyboardFocused = false;
+      schedule();
+    };
+    const startDrag = () => { dragging = true; schedule(); };
+    const endDrag = () => { dragging = false; schedule(); };
+    const observer = typeof IntersectionObserver === "function" ? new IntersectionObserver(([entry]) => {
+      inView = entry.isIntersecting && entry.intersectionRatio >= 0.35;
+      schedule();
+    }, { threshold: 0.35 }) : null;
+
+    observer?.observe(root);
+    root.addEventListener("pointerenter", startHover);
+    root.addEventListener("pointerleave", endHover);
+    root.addEventListener("focusin", startFocus);
+    root.addEventListener("focusout", endFocus);
+    document.addEventListener("visibilitychange", schedule);
+    reducedMotion?.addEventListener("change", schedule);
+    api.on("pointerDown", startDrag).on("pointerUp", endDrag).on("select", schedule).on("reInit", schedule);
+    schedule();
+    return () => {
+      window.clearTimeout(timer);
+      observer?.disconnect();
+      root.removeEventListener("pointerenter", startHover);
+      root.removeEventListener("pointerleave", endHover);
+      root.removeEventListener("focusin", startFocus);
+      root.removeEventListener("focusout", endFocus);
+      document.removeEventListener("visibilitychange", schedule);
+      reducedMotion?.removeEventListener("change", schedule);
+      api.off("pointerDown", startDrag).off("pointerUp", endDrag).off("select", schedule).off("reInit", schedule);
+    };
+  }, [api, canAutoplay, delay]);
+
+  return (
+    <Carousel
+      ref={rootRef}
+      setApi={setApi}
+      className="home-editorial-ranks-carousel"
+      opts={homeRankCarouselOptions}
+      aria-label={`${platformMeta[platform].label}榜单速览`}
+    >
+      <CarouselContent className="-ml-[12px]">{children(onOverlayOpenChange)}</CarouselContent>
+      <CarouselPrevious className="left-2" aria-label={`上一张${platformMeta[platform].label}榜单`} />
+      <CarouselNext className="right-2" aria-label={`下一张${platformMeta[platform].label}榜单`} />
+    </Carousel>
+  );
+}
+
 function HomeSkeleton() {
   return (
     <div className="home-editorial-skeleton" aria-hidden="true">
@@ -574,9 +651,9 @@ function HomeSkeleton() {
           ))}
         </div>
       </section>
-      <section className="home-editorial-section">
+      <section className="home-editorial-section home-editorial-ranks-section">
         <div className="home-editorial-skeleton-line home-editorial-skeleton-title" />
-        <div className="home-editorial-skeleton-ranks">
+        <div className="home-editorial-ranks-layout">
           {[0, 1, 2].map((rankIndex) => (
             <div className="home-editorial-skeleton-card" key={rankIndex}>
               <div className="home-editorial-skeleton-line home-editorial-skeleton-label" />
@@ -600,6 +677,7 @@ function RankDramaItem({
   rankKey,
   onOpenSearchResult,
   onOpenTrend,
+  onOverlayOpenChange,
   canOpenTrend = false,
   actionProps,
 }) {
@@ -661,7 +739,7 @@ function RankDramaItem({
       <div className="relative z-10 min-w-0">
         {searchDramaIds.length ? (
           isMissevanPeak ? titleButton : (
-            <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item?.payment_label || item?.paymentLabel || item?.payStatus} contentTypeLabel={item?.content_type_label || item?.contentTypeLabel} source="homeview" frontendVersion={actionProps.frontendVersion} handleVersionResponse={actionProps.handleVersionResponse} onEnterStatistics={() => openSearchResult({ suppressUsageLog: true })}>
+            <DramaMetricsPreview platform={platform} id={item.id} name={item.name} item={item} paymentLabel={item?.payment_label || item?.paymentLabel || item?.payStatus} contentTypeLabel={item?.content_type_label || item?.contentTypeLabel} source="homeview" frontendVersion={actionProps.frontendVersion} handleVersionResponse={actionProps.handleVersionResponse} onOpenChange={onOverlayOpenChange} onEnterStatistics={() => openSearchResult({ suppressUsageLog: true })}>
               {titleButton}
             </DramaMetricsPreview>
           )
@@ -689,6 +767,7 @@ function RankDramaItem({
             rankKey={rankKey}
             kind={isMissevanPeak ? "peak" : "drama"}
             overlay
+            onOverlayOpenChange={onOverlayOpenChange}
             canOpenTrend={canOpenTrend}
             onOpenTrend={onOpenTrend}
             openSearchResult={openSearchResult}
@@ -766,6 +845,7 @@ function HomeRankCard({
   onOpenCv,
   canOpenTrend,
   onOpenTrend,
+  onOverlayOpenChange,
   actionProps,
 }) {
   const items = (rank?.items || []).slice(0, 3);
@@ -776,12 +856,13 @@ function HomeRankCard({
   return (
     <div className="home-editorial-rank-card">
       <div className="home-editorial-rank-header">
-          <h3 className="line-clamp-1 min-w-0" title={rankConfig.displayTitle || rankConfig.title}>
-            {rankConfig.displayTitle || rankConfig.title}
+          <h3 className="flex min-w-0 items-center gap-2" data-platform={platform} title={rankConfig.title}>
+            <PlatformGlyph platform={platform} tone="inherit" />
+            <span className="truncate">{rankConfig.displayTitle || rankConfig.title}</span>
           </h3>
           {statisticsPeriodText ? (
             <span className="home-editorial-updated-at">
-              统计区间：{statisticsPeriodText}
+              {statisticsPeriodText}
             </span>
           ) : formatHomeUpdatedLabel(updatedAt) ? (
             <span className="home-editorial-updated-at">
@@ -808,6 +889,7 @@ function HomeRankCard({
                   rankKey={rankConfig.rankKey}
                   onOpenSearchResult={onOpenSearchResult}
                   onOpenTrend={onOpenTrend}
+                  onOverlayOpenChange={onOverlayOpenChange}
                   canOpenTrend={canOpenTrend(item, platform, rankConfig.rankKey)}
                   actionProps={actionProps}
                 />
@@ -857,7 +939,6 @@ export function HomeView({
   historyActionsDisabled = false,
 }) {
   const handleVersionResponseRef = useRef(handleVersionResponse);
-  const [selectedRankPlatform, setSelectedRankPlatform] = useState("missevan");
   const [ongoingByPlatform, setOngoingByPlatform] = useState({ missevan: null, manbo: null });
   const [rankData, setRankData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -867,6 +948,7 @@ export function HomeView({
     manbo: { ids: new Set(), isLoaded: false },
   });
   const [trendDialog, setTrendDialog] = useState({ open: false, item: null, platform: "", rankKey: "" });
+  const [rankAutoplayPaused, setRankAutoplayPaused] = useState(false);
   const [trendState, setTrendState] = useState({ isLoading: false, error: "", data: null });
   const trendRequestIdRef = useRef(0);
 
@@ -965,32 +1047,27 @@ export function HomeView({
     manbo: ongoingByPlatform.manbo?.items?.length || 0,
   }), [ongoingByPlatform.missevan?.items, ongoingByPlatform.manbo?.items]);
 
-  const activeRankConfigs = useMemo(
-    () => HOME_RANK_CONFIG[selectedRankPlatform] || [],
-    [selectedRankPlatform]
-  );
   const trendIdsByPlatform = useMemo(() => {
     const ids = {
       missevan: new Set(ongoingItems.missevan.map((item) => String(item?.id ?? "").trim()).filter(Boolean)),
       manbo: new Set(ongoingItems.manbo.map((item) => String(item?.id ?? "").trim()).filter(Boolean)),
     };
-    activeRankConfigs.forEach((rankConfig) => {
-      if (rankConfig.itemType === "cv") {
-        return;
-      }
-      const rank = getRankByConfig(rankData, selectedRankPlatform, rankConfig);
-      (rank?.items || []).slice(0, 3).forEach((item) => {
-        const lookup = getHomeTrendLookup(item, selectedRankPlatform, rankConfig.rankKey);
-        if (lookup.id && !lookup.isMissevanPeak) {
-          ids[selectedRankPlatform].add(lookup.id);
-        }
+    for (const platform of ["missevan", "manbo"]) {
+      HOME_RANK_CONFIG[platform].forEach((rankConfig) => {
+        const rank = getRankByConfig(rankData, platform, rankConfig);
+        (rank?.items || []).slice(0, 3).forEach((item) => {
+          const lookup = getHomeTrendLookup(item, platform, rankConfig.rankKey);
+          if (lookup.id && !lookup.isMissevanPeak) {
+            ids[platform].add(lookup.id);
+          }
+        });
       });
-    });
+    }
     return {
       missevan: Array.from(ids.missevan).sort(),
       manbo: Array.from(ids.manbo).sort(),
     };
-  }, [activeRankConfigs, ongoingItems.manbo, ongoingItems.missevan, rankData, selectedRankPlatform]);
+  }, [ongoingItems.manbo, ongoingItems.missevan, rankData]);
   const missevanTrendLookupKey = trendIdsByPlatform.missevan.join("|");
   const manboTrendLookupKey = trendIdsByPlatform.manbo.join("|");
 
@@ -1170,46 +1247,60 @@ export function HomeView({
         </div>
       </section>
 
-      <section className="home-editorial-section">
+      <section className="home-editorial-section home-editorial-ranks-section">
         <div className="home-editorial-section-header home-editorial-ranks-header">
           <SectionHeader
             title="榜单速览"
             sectionIcon={ChartNoAxesColumnIcon}
           />
-          <PlatformTabs value={selectedRankPlatform} onValueChange={setSelectedRankPlatform} ariaLabel="选择榜单平台" includeCv />
+          {rankData ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className="rounded-full motion-reduce:hidden"
+              aria-label={rankAutoplayPaused ? "继续榜单自动轮播" : "暂停榜单自动轮播"}
+              title={rankAutoplayPaused ? "继续榜单自动轮播" : "暂停榜单自动轮播"}
+              onClick={() => setRankAutoplayPaused((paused) => !paused)}
+            >
+              {rankAutoplayPaused ? <PlayIcon aria-hidden="true" /> : <PauseIcon aria-hidden="true" />}
+            </Button>
+          ) : null}
         </div>
-        <Carousel
-          className="home-editorial-ranks-carousel"
-          opts={{ align: "start", loop: false }}
-          aria-label={`${platformMeta[selectedRankPlatform].label}榜单速览`}
-        >
-          <CarouselContent className="-ml-3">
-            {activeRankConfigs.map((rankConfig) => {
-              const rank = getRankByConfig(rankData, selectedRankPlatform, rankConfig);
-              return (
-                <CarouselItem
-                  key={`${selectedRankPlatform}-${rankConfig.categoryKey}-${rankConfig.rankKey}`}
-                  className="flex basis-full pl-3 sm:basis-1/2 lg:basis-1/3"
-                >
-                  <HomeRankCard
-                    platform={selectedRankPlatform}
-                    rankConfig={rankConfig}
-                    rank={rank}
-                    updatedAt={resolveRankRefreshAt(rankData, rankConfig.categoryKey, rank)}
-                    onNavigateRoute={onNavigateRoute}
-                    onOpenSearchResult={onOpenSearchResult}
-                    onOpenCv={onOpenCv}
-                    canOpenTrend={canOpenHomeTrend}
-                    onOpenTrend={openHomeTrend}
-                    actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion, handleVersionResponse }}
-                  />
-                </CarouselItem>
-              );
-            })}
-          </CarouselContent>
-          <CarouselPrevious className="left-2" />
-          <CarouselNext className="right-2" />
-        </Carousel>
+        <div className="home-editorial-ranks-layout">
+          {Object.entries(HOME_RANK_CONFIG).map(([platform, rankConfigs], index) => (
+            <HomeRankCarousel
+              key={platform}
+              platform={platform}
+              autoplay={Boolean(rankData) && !rankAutoplayPaused && !trendDialog.open}
+              delay={homeRankAutoplayDelay + index * 1000}
+            >
+              {(onOverlayOpenChange) => rankConfigs.map((rankConfig) => {
+                const rank = getRankByConfig(rankData, platform, rankConfig);
+                return (
+                  <CarouselItem
+                    key={`${rankConfig.categoryKey}-${rankConfig.rankKey}`}
+                    className="home-editorial-rank-slide flex pl-[12px]"
+                  >
+                    <HomeRankCard
+                      platform={platform}
+                      rankConfig={rankConfig}
+                      rank={rank}
+                      updatedAt={resolveRankRefreshAt(rankData, rankConfig.categoryKey, rank)}
+                      onNavigateRoute={onNavigateRoute}
+                      onOpenSearchResult={onOpenSearchResult}
+                      onOpenCv={onOpenCv}
+                      canOpenTrend={canOpenHomeTrend}
+                      onOpenTrend={openHomeTrend}
+                      onOverlayOpenChange={onOverlayOpenChange}
+                      actionProps={{ favoriteKeys, favoriteActionsDisabled, statisticsActionsDisabled, onToggleFavorite, onAddCompareItem, onStartDramaPaidIdStatistics, onStartRevenueEstimate, frontendVersion, handleVersionResponse }}
+                    />
+                  </CarouselItem>
+                );
+              })}
+            </HomeRankCarousel>
+          ))}
+        </div>
       </section>
         </>
       ) : null}

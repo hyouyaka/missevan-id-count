@@ -260,21 +260,18 @@ test("growth ranks show both periods on desktop and one switchable period on mob
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
     await page.goto("/");
-    const growthCard = page.locator(".home-editorial-rank-card").filter({
+    const growthCard = page.getByRole("region", { name: "猫耳榜单速览" }).locator(".home-editorial-rank-card").filter({
       has: page.getByRole("heading", { name: "7日飙升榜", exact: true }),
     });
     await expect(growthCard).toHaveCount(1);
-    await expect(growthCard).toContainText("统计区间：2026-08-27 至 2026-09-03");
+    await expect(growthCard.locator(".home-editorial-updated-at")).toHaveText("2026-08-27 至 2026-09-03");
     await expect(growthCard).not.toContainText("更新");
 
-    await page.getByRole("tablist", { name: "选择榜单平台" })
-      .getByRole("tab", { name: "漫播", exact: true })
-      .click();
-    const manboGrowthCard = page.locator(".home-editorial-rank-card").filter({
+    const manboGrowthCard = page.getByRole("region", { name: "漫播榜单速览" }).locator(".home-editorial-rank-card").filter({
       has: page.getByRole("heading", { name: "7日飙升榜", exact: true }),
     });
     await expect(manboGrowthCard).toHaveCount(1);
-    await expect(manboGrowthCard).toContainText("统计区间：2026-08-27 至 2026-09-03");
+    await expect(manboGrowthCard.locator(".home-editorial-updated-at")).toHaveText("2026-08-27 至 2026-09-03");
   } finally {
     await context.close();
   }

@@ -663,12 +663,32 @@ body {
   font-size: 0.875rem;
 }
 
-.home-editorial-ranks-header {
-  align-items: flex-end;
-}
-
 .home-editorial-ranks-header .home-editorial-section-icon {
   color: var(--home-warm);
+}
+
+.home-editorial-ranks-section {
+  container: home-ranks / inline-size;
+}
+
+.home-editorial-ranks-layout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem 16px;
+}
+
+/* Allow 320px per card, with a 12px slide gap or 16px between carousels. */
+@container home-ranks (652px <= width < 992px) {
+  .home-editorial-rank-slide {
+    flex-basis: 50%;
+  }
+}
+
+@container home-ranks (width >= 992px) {
+  .home-editorial-ranks-layout {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .home-editorial [data-slot="button"][data-variant="link"]:hover {
@@ -703,7 +723,7 @@ body {
 
 .home-editorial-rank-header h3 {
   margin: 0;
-  color: var(--home-accent);
+  color: var(--platform-current, var(--home-accent));
   font-size: 1rem;
   font-weight: 720;
   line-height: 1.5rem;
@@ -777,12 +797,6 @@ body {
   border-radius: var(--radius);
 }
 
-.home-editorial-skeleton-ranks {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.875rem;
-}
-
 .home-editorial-skeleton-card {
   display: grid;
   gap: 1rem;
@@ -816,17 +830,6 @@ body {
 @media (min-width: 768px) {
   .home-editorial-updates-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 639.98px) {
-  .home-editorial-ranks-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .home-editorial-skeleton-ranks {
-    grid-template-columns: 1fr;
   }
 }
 

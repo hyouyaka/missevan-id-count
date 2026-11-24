@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useResponsiveCardColumns } from "@/app/useResponsiveCardColumns";
 import {
   ArrowLeftRightIcon,
   SlidersHorizontalIcon,
@@ -853,6 +854,7 @@ export function OngoingPanel({
   const [cvFilterQuery, setCvFilterQuery] = useState("");
   const [desktopCvFilterOpen, setDesktopCvFilterOpen] = useState(false);
   const [mobileCvFilterOpen, setMobileCvFilterOpen] = useState(false);
+  const { containerRef, columns } = useResponsiveCardColumns();
   const [ongoingData, setOngoingData] = useState(null);
   const [platformCounts, setPlatformCounts] = useState({
     missevan: null,
@@ -1343,7 +1345,7 @@ export function OngoingPanel({
   }, []);
 
   return (
-    <div className="grid gap-4 sm:gap-5">
+    <div ref={containerRef} className="grid min-w-0 grid-cols-1 gap-4 sm:gap-5">
       <div className="px-1 py-1">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -1566,7 +1568,7 @@ export function OngoingPanel({
       ) : null}
 
       {!isLoading && !errorMessage && filteredItems.length ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="ongoing-card-grid grid gap-3 gap-x-[12px]" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
           {filteredItems.map((item) => (
             <OngoingCard
               key={`${selectedPlatform}-${item.id}`}

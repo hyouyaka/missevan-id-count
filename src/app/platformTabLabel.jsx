@@ -18,13 +18,22 @@ export const platformTabMeta = {
 export function PlatformGlyph({ platform, className = "size-4", tone = "brand", ...props }) {
   const key = platform?.key || platform;
   const meta = platformTabMeta[key];
+  if (key === "combined") {
+    return (
+      <span aria-hidden="true" data-platform={key} className={`relative inline-block shrink-0 ${className}`} {...props}>
+        <PlatformGlyph platform="missevan" tone={tone} className="absolute inset-0 size-full [clip-path:inset(0_50%_0_0)]" />
+        {/* The visible right half starts lower in its source mask. Stretch it upwards from the bottom edge. */}
+        <PlatformGlyph platform="manbo" tone={tone} className="absolute inset-0 size-full origin-bottom scale-y-[1.075] [clip-path:inset(0_0_0_50%)]" />
+      </span>
+    );
+  }
   if (key === "cv") {
     return (
       <MicIcon
         aria-hidden="true"
         data-platform={key}
         data-tone={tone}
-        className={`shrink-0 text-foreground/70 ${className}`.trim()}
+        className={`shrink-0 ${tone === "inherit" ? "text-current" : "text-foreground/70"} ${className}`.trim()}
         {...props}
       />
     );

@@ -37,9 +37,21 @@ function AlertDialogContent({
   className,
   scrollable = false,
   size = "default",
+  onBackdropClick,
   ...props
 }) {
+  const panelRef = React.useRef(null);
+  const backdropPressed = React.useRef(false);
   if (scrollable) {
+    function isBackdropEvent(event) {
+      return event.currentTarget.contains(event.target) && !panelRef.current?.contains(event.target);
+    }
+    const handleBackdropPointerDown = onBackdropClick && ((event) => {
+      backdropPressed.current = isBackdropEvent(event);
+    });
+    const handleBackdropClick = onBackdropClick && ((event) => {
+      if (backdropPressed.current && isBackdropEvent(event)) onBackdropClick();
+    });
     return (
       <AlertDialogPortal>
         <AlertDialogOverlay />
@@ -47,10 +59,13 @@ function AlertDialogContent({
           data-slot="alert-dialog-content"
           data-size={size}
           className="fixed inset-0 z-50 h-[100dvh] overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-[max(1rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))] duration-100 outline-none [-webkit-overflow-scrolling:touch] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+          onPointerDownCapture={handleBackdropPointerDown}
+          onClick={handleBackdropClick}
           {...props}
         >
           <div className="flex min-h-full w-full items-start justify-center">
             <div
+              ref={panelRef}
               className={cn(
                 "group/alert-dialog-content relative z-50 grid w-full gap-4 rounded-[calc(var(--radius)+0.32rem)] border border-border bg-[var(--surface-floating)] p-4 text-popover-foreground shadow-[var(--shadow-panel)] duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
                 className

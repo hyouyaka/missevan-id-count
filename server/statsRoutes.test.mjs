@@ -119,17 +119,19 @@ async function startTestServer(app, t) {
 test("ranks conditional requests return recovered labor enrichment with a new ETag on either platform", async (t) => {
   process.env.START_SERVER_ON_IMPORT = "false";
   const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("../server.js");
+  const cvKey = "person:00000000-0000-0000-0000-000000000001";
   const snapshot = {
     generated_at: "2026-11-06T00:00:00Z",
+    publicationId: "edition",
     seriesCountMeta: {},
     seriesCountRankings: {},
   };
   for (const platform of ["missevan", "manbo"]) {
     snapshot.seriesCountMeta[platform] = { generated_at: "2026-11-13T00:00:00Z" };
-    snapshot.seriesCountRankings[platform] = [{ cvName: "恢复CV", rank: 1, seriesCount: 1,
+    snapshot.seriesCountRankings[platform] = [{ cvName: "恢复CV", cvKey, rank: 1, seriesCount: 1,
       works: [{ seriesKey: "series", title: "备用标题", dramaIds: ["101"] }] }];
   }
-  const trends = {};
+  const trends = { publicationId: snapshot.publicationId };
   const build = () => buildNormalizedRanksResponse({ _meta: { updated_at: snapshot.generated_at } }, null, snapshot, { cvTrendSnapshots: trends });
   let response = build();
   const originalSummary = structuredClone(response.cvSummary);
@@ -158,8 +160,8 @@ test("ranks conditional requests return recovered labor enrichment with a new ET
   const item = (body, platform) => body.platforms[platform].categories.find(({ key }) => key === "cv").ranks.at(-1).items[0];
   for (const platform of ["missevan", "manbo"]) {
     assert.equal(item(initialBody, platform).totalViewCount, null);
-    trends[platform] = { cvs: { 恢复CV: {
-      samples: { "2026-11-06": { metrics: { totalViewCount: 123456 } } },
+    trends[platform] = { updated_at: snapshot.generated_at, cvs: { [cvKey]: {
+      samples: { "2026-11-06": { generated_at: snapshot.generated_at, publicationId: snapshot.publicationId, metrics: { totalViewCount: 123456 } } },
       works: [{ dramaId: "101", title: "恢复的作品标题", cover: "https://example.com/recovered.jpg" }],
     } } };
     response = build();
@@ -177,6 +179,43 @@ test("ranks conditional requests return recovered labor enrichment with a new ET
     assert.equal(unchanged.status, 304);
     assert.equal(unchanged.headers.get("etag"), etag);
     assert.equal(await unchanged.text(), "");
+  }
+});
+
+test("both rank response formats revalidate when CV or growth summary counts change", async (t) => {
+  process.env.START_SERVER_ON_IMPORT = "false";
+  const { buildNormalizedRanksResponse, getRanksResponseCacheValidator } = await import("../server.js");
+  const updatedAt = "2026-11-20T00:00:00Z";
+  const original = buildNormalizedRanksResponse({ _meta: { updated_at: updatedAt } }, null, {
+    generated_at: updatedAt, missevanDramaCount: 100,
+  }, {}, { generated_at: updatedAt, manboDramaCount: 200 });
+  let response = original;
+  const app = express();
+  createStatsRouteHarness({ router: app, options: {
+    getCachedRanksResponse: async () => ({ response, cacheStatus: "hit" }),
+    getRanksResponseCacheValidator,
+  } });
+  const listener = await startTestServer(app, t);
+  for (const suffix of ["", `?format=${COMPACT_CV_RANKS_FORMAT}`]) {
+    response = original;
+    const url = `http://127.0.0.1:${listener.address().port}/ranks${suffix}`;
+    const initial = await fetch(url);
+    assert.equal(initial.status, 200);
+    await initial.json();
+    let etag = initial.headers.get("etag");
+    for (const [summary, field, value] of [
+      ["cvSummary", "missevanDramaCount", 150],
+      ["growthSummary", "manboDramaCount", 250],
+    ]) {
+      response = { ...response, [summary]: { ...response[summary], [field]: value } };
+      const updated = await fetch(url, { cache: "no-cache", headers: { "If-None-Match": etag } });
+      assert.equal(updated.status, 200);
+      assert.equal((await updated.json())[summary][field], value);
+      assert.notEqual(updated.headers.get("etag"), etag);
+      etag = updated.headers.get("etag");
+    }
+    const unchanged = await fetch(url, { cache: "no-cache", headers: { "If-None-Match": etag } });
+    assert.equal(unchanged.status, 304);
   }
 });
 

@@ -281,7 +281,7 @@ test("home first content section omits the redundant top divider", () => {
   );
   assert.match(
     skeletonSource,
-    /home-editorial-updates-grid[\s\S]*<\/section>\s*<section className="home-editorial-section">[\s\S]*home-editorial-skeleton-ranks/
+    /home-editorial-updates-grid[\s\S]*<\/section>\s*<section className="home-editorial-section home-editorial-ranks-section">[\s\S]*home-editorial-ranks-layout/
   );
   assert.match(
     liveContentSource,
@@ -289,7 +289,7 @@ test("home first content section omits the redundant top divider", () => {
   );
   assert.match(
     liveContentSource,
-    /home-editorial-updates-grid[\s\S]*<\/section>\s*<section className="home-editorial-section">[\s\S]*home-editorial-ranks-header/
+    /home-editorial-updates-grid[\s\S]*<\/section>\s*<section className="home-editorial-section home-editorial-ranks-section">[\s\S]*home-editorial-ranks-header/
   );
   assert.match(
     indexCssSource,
@@ -316,7 +316,7 @@ test("ongoing platform pills include both cached platform counts", () => {
 });
 
 test("desktop rank toolbar keeps pills left and compact legend right", () => {
-  assert.match(ranksPanelSource, /const desktopRankToolbarClassName = "hidden min-w-0 items-center gap-3 lg:flex lg:flex-nowrap"/);
+  assert.match(ranksPanelSource, /const desktopRankToolbarClassName = "flex min-w-0 flex-nowrap items-center gap-3"/);
   assert.match(ranksPanelSource, /const desktopRankControlsClassName = "flex shrink-0 items-center gap-3"/);
   assert.match(ranksPanelSource, /className=\{desktopRankToolbarClassName\}[\s\S]*className=\{desktopRankControlsClassName[^}]*\}[\s\S]*<MetricLegend[\s\S]*variant="compact"/);
   assert.match(ranksPanelSource, /className="ml-auto w-max min-w-0 max-w-full shrink overflow-x-auto/);
@@ -768,7 +768,8 @@ test("home section subtitles show platform, growth periods, and shared rank refr
   assert.match(rankCardSource, /function HomeRankCard\(\{[\s\S]*platform,[\s\S]*rankConfig,[\s\S]*updatedAt,/);
   assert.match(rankCardSource, /home-editorial-updated-at/);
   assert.match(rankCardSource, /rankConfig\.categoryKey === "growth"[\s\S]*formatHomeStatisticsPeriod\(rank\?\.statisticsPeriod\)/);
-  assert.match(rankCardSource, /统计区间：\{statisticsPeriodText\}[\s\S]*formatHomeUpdatedLabel\(updatedAt\)/);
+  assert.match(rankCardSource, /\{statisticsPeriodText\}[\s\S]*formatHomeUpdatedLabel\(updatedAt\)/);
+  assert.doesNotMatch(rankCardSource, /统计区间：/);
   assert.match(rankCardSource, /\{formatHomeUpdatedLabel\(updatedAt\)\}/);
   assert.match(ranksDataSource, /export function resolveRankRefreshAt\(rankData, categoryKey, rank\)/);
   assert.match(ranksDataSource, /categoryKey === "cv"[\s\S]*rankData\?\.cvSummary\?\.updatedAt \|\| rank\?\.fetchedAt[\s\S]*rankData\?\.updatedAt/);
@@ -788,7 +789,7 @@ test("home view keeps see-more links below lists instead of top-right actions", 
   assert.doesNotMatch(homeViewSource, /absolute right-.*查看更多/);
 });
 
-test("home view keeps icon headers and uses shared platform pills", () => {
+test("home view displays the platform glyph on rank card headings", () => {
   assert.match(homeViewSource, /CalendarClockIcon/);
   assert.match(homeViewSource, /ChartNoAxesColumnIcon/);
   assert.doesNotMatch(homeViewSource, /CalendarSyncIcon/);
@@ -798,10 +799,9 @@ test("home view keeps icon headers and uses shared platform pills", () => {
   assert.doesNotMatch(homeViewSource, />0[12]</);
   assert.doesNotMatch(homeViewSource, /titleSize="compact"/);
   assert.doesNotMatch(homeViewSource, /titleSize="dense"/);
-  assert.match(homeViewSource, /homePillTabsListClassName/);
-  assert.match(homeViewSource, /homePillTabClassName/);
+  assert.match(homeViewSource, /<h3[^>]*data-platform=\{platform\}[^>]*>\s*<PlatformGlyph platform=\{platform\} tone="inherit" \/>/);
+  assert.doesNotMatch(homeViewSource, /ariaLabel="选择榜单平台"/);
   assert.match(homeViewSource, /text-sm!/);
-  assert.match(homeViewSource, /data-platform=\{platform\}/);
   assert.doesNotMatch(homeViewSource, /text-shadow:0_1px_6px_color-mix/);
 });
 
@@ -820,8 +820,10 @@ test("home update and rank sections use editorial responsive layouts", () => {
   assert.doesNotMatch(homeViewSource, /selectedOngoingPlatform/);
   assert.doesNotMatch(homeViewSource, /ariaLabel="选择更新平台"/);
   assert.match(homeViewSource, /home-editorial-updates-grid/);
-  assert.match(homeViewSource, /<Carousel[\s\S]*<CarouselContent[\s\S]*<CarouselItem[\s\S]*<CarouselPrevious[\s\S]*<CarouselNext/);
-  assert.match(homeViewSource, /basis-full[^"]*sm:basis-1\/2[^"]*lg:basis-1\/3/);
+  assert.match(homeViewSource, /Object\.entries\(HOME_RANK_CONFIG\)\.map\(\(\[platform, rankConfigs\], index\) => \(\s*<HomeRankCarousel/);
+  assert.match(homeViewSource, /<CarouselContent className="-ml-\[12px\]">\{children\(onOverlayOpenChange\)\}<\/CarouselContent>/);
+  assert.match(homeViewSource, /<HomeRankCarousel[\s\S]*<CarouselItem/);
+  assert.match(homeViewSource, /className="home-editorial-ranks-layout">\s*\{Object\.entries\(HOME_RANK_CONFIG\)/);
   assert.match(homeViewSource, /home-editorial-rank-card/);
   assert.doesNotMatch(homeViewSource, /home-editorial-ranks-grid/);
   assert.doesNotMatch(homeViewSource, /data-featured=/);
@@ -841,17 +843,18 @@ test("home rank carousel uses the shared Embla composition without replacing sha
   assert.match(packageSource, /"embla-carousel-react"/);
 });
 
-test("home rank carousel keeps equal responsive cards, one compact gap, and centered overlay controls", () => {
+test("home rank carousels show two cards only when stacked and keep their centered overlay controls", () => {
   const rankCardCss = indexCssSource.match(/\.home-editorial-rank-card \{[^}]*\}/)?.[0] ?? "";
 
-  assert.match(homeViewSource, /<CarouselContent className="-ml-3">/);
-  assert.match(
-    homeViewSource,
-    /<CarouselItem[\s\S]*className="flex basis-full pl-3 sm:basis-1\/2 lg:basis-1\/3"/
-  );
+  assert.match(homeViewSource, /<CarouselContent className="-ml-\[12px\]">/);
+  assert.match(homeViewSource, /<CarouselItem[\s\S]*className="home-editorial-rank-slide flex pl-\[12px\]"/);
+  assert.match(indexCssSource, /\.home-editorial-ranks-section \{\s*container: home-ranks \/ inline-size;/);
+  assert.match(indexCssSource, /\.home-editorial-ranks-layout \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(indexCssSource, /@container home-ranks \(652px <= width < 992px\) \{\s*\.home-editorial-rank-slide \{\s*flex-basis: 50%;/);
+  assert.match(indexCssSource, /@container home-ranks \(width >= 992px\) \{\s*\.home-editorial-ranks-layout \{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
   assert.doesNotMatch(homeViewSource, /sm:pl-4/);
-  assert.match(homeViewSource, /<CarouselPrevious className="left-2" \/>/);
-  assert.match(homeViewSource, /<CarouselNext className="right-2" \/>/);
+  assert.match(homeViewSource, /<CarouselPrevious className="left-2" aria-label=/);
+  assert.match(homeViewSource, /<CarouselNext className="right-2" aria-label=/);
   assert.doesNotMatch(homeViewSource, /sm:-left-|lg:-left-|sm:-right-|lg:-right-/);
   assert.match(rankCardCss, /width: 100%;/);
 });
@@ -1266,11 +1269,11 @@ test("mobile compact controls preserve visual density with non-layout hit areas"
   assert.match(ongoingPanelSource, /const mobileOngoingTextTabsListClassName =\s*\n\s*"grid h-9 min-h-9/);
   assert.match(ranksPanelSource, /const mobileCategoryTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center/);
   assert.match(ranksPanelSource, /const mobileRankTabClassName =\s*\n\s*"h-7 min-h-7 min-w-11 justify-center/);
-  assert.match(ranksPanelSource, /className="grid gap-1 lg:hidden"/);
+  assert.match(ranksPanelSource, /showAllRanks \? \([\s\S]*\) : \(\s*<div className="grid gap-1">/);
   assert.match(ranksPanelSource, /className="flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border\/60 pt-1"/);
   assert.match(ranksPanelSource, /className="w-fit max-w-full shrink-0 gap-0"/);
   assert.match(ranksPanelSource, /className=\{`\$\{mobileTextTabsListClassName\} w-fit`\}/);
-  assert.match(ranksPanelSource, /className="ml-auto w-fit shrink-0 items-end gap-0"/);
+  assert.match(ranksPanelSource, /hasCvPlatformScopes \? "ml-auto min-w-26 flex-1 gap-0" : "ml-auto w-fit shrink-0 items-end gap-0"/);
   assert.doesNotMatch(ranksPanelSource, /className="flex h-9 items-center gap-2 px-1\.5"/);
   assert.match(ongoingPanelSource, /const mobileOngoingPlatformTabClassName =\s*\n\s*"h-7 min-h-7/);
   assert.match(ongoingPanelSource, /const mobileOngoingMetricTabClassName =\s*\n\s*"h-auto min-h-8 min-w-max flex-none justify-center/);
@@ -1510,7 +1513,7 @@ test("CV search and profile stay library-backed and route-driven", () => {
   assert.match(homeViewSource, /source: "ranks"/);
   assert.match(ranksPanelSource, /source: "ranks"/);
   assert.match(ranksPanelSource, /const profileId = isPartner \? "" : buildCvRankProfileId\(platform, item\)/);
-  assert.match(ranksPanelSource, /fetchSharedRankTrendData\(\{\s*kind: "cv",\s*id: item\.cvName,\s*profileId,/);
+  assert.match(ranksPanelSource, /fetchSharedRankTrendData\(\{\s*kind: "cv",\s*id: item\.cvName,\s*profileId: item\.cvKey,/);
   assert.match(appUtilsSource, /export function buildCvRankProfileId/);
   assert.match(appUtilsSource, /export function areToolRouteStatesEqual/);
   assert.match(appUtilsSource, /"cvKey"/);
@@ -1928,7 +1931,7 @@ test("web ongoing and ranks filters use shared lightweight capsules", () => {
   assert.match(ranksPanelSource, /const desktopTextTabClassName =\s*\n\s*"h-7 min-h-7 min-w-0 px-3 text-sm!"/);
   assert.match(ranksPanelSource, /platform\.key === selectedPlatform \? desktopSelectedPlatformTabClassName : ""/);
   assert.match(ranksPanelSource, /item\.key === category\?\.key \? desktopSelectedTabClassName : ""/);
-  assert.match(ranksPanelSource, /const desktopRankToolbarClassName = "hidden min-w-0 items-center gap-3 lg:flex lg:flex-nowrap"/);
+  assert.match(ranksPanelSource, /const desktopRankToolbarClassName = "flex min-w-0 flex-nowrap items-center gap-3"/);
   assert.match(ranksPanelSource, /const desktopRankControlsClassName = "flex shrink-0 items-center gap-3"/);
   assert.match(ranksPanelSource, /className=\{`\$\{desktopTextTabsListClassName\} gap-1`\}/);
   assert.doesNotMatch(ranksPanelSource, /className=\{`\$\{desktopTextTabsListClassName\} gap-6`\}/);
@@ -3416,8 +3419,8 @@ test("rank overview copy keeps refresh time in the same compact row", () => {
   assert.match(ranksPanelSource, /const renderMobileMetricLegendToggle = \(\) =>/);
   assert.match(ranksPanelSource, /aria-expanded=\{showMetricLegend\}/);
   assert.match(ranksPanelSource, /showMetricLegend \? "收起图例" : "查看图例"/);
-  assert.match(ranksPanelSource, /canShowMetricLegend && showMetricLegend \? \(/);
-  assert.match(ranksPanelSource, /id="rank-metric-legend" className="px-1 lg:hidden"[\s\S]*<MetricLegend \/>/);
+  assert.match(ranksPanelSource, /canShowMetricLegend && showMetricLegend && !showAllRanks \? \(/);
+  assert.match(ranksPanelSource, /showMetricLegend && !showAllRanks \? \(\s*<div id="rank-metric-legend" className="px-1">[\s\S]*<MetricLegend \/>/);
   assert.match(ranksPanelSource, /<MetricLegend[\s\S]*variant="compact"[\s\S]*className="ml-auto w-max min-w-0 max-w-full shrink overflow-x-auto/);
   assert.match(ranksPanelSource, /\{renderMobileMetricLegendToggle\(\)\}/);
   assert.doesNotMatch(ranksPanelSource, /className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 px-1 text-sm leading-6 text-muted-foreground"[\s\S]*查看图例/);
@@ -3546,8 +3549,8 @@ test("weekly growth ranks keep responsive periods, independent counts, and compa
   assert.match(homeViewSource, /rankKey === "growth_weekly"[\s\S]*formatDelta\(item\?\.view_count_increase\)/);
   assert.match(homeViewSource, /growthText \? <span className="home-editorial-delta">（\{growthText\}）<\/span>/);
   assert.match(ranksPanelSource, /isWeeklyGrowth \? \([\s\S]*\{renderNormalActions\(\)\}/);
-  assert.match(ranksPanelSource, /hidden gap-3 lg:grid lg:grid-cols-\[repeat\(auto-fit,minmax\(21rem,1fr\)\)\]/);
-  assert.match(ranksPanelSource, /lg:hidden[\s\S]*activeRank/);
+  assert.match(ranksPanelSource, /style=\{getRankGridStyle\(visibleRanks\.length\)\}/);
+  assert.match(ranksPanelSource, /const visibleRanks = showAllRanks \? category\.ranks : activeRank \? \[activeRank\] : \[\]/);
   assert.match(ranksDataSource, /categoryKey === "growth"[\s\S]*rankData\?\.growthSummary\?\.updatedAt/);
 });
 
@@ -3926,12 +3929,13 @@ test("backend runtime logs flow through the structured logger", () => {
 });
 
 test("rank category tabs adapt to the number of categories", () => {
-  assert.match(ranksPanelSource, /getRankTabsGridStyle/);
-  assert.match(ranksPanelSource, /style=\{getRankTabsGridStyle\(platformData\.categories\.length\)\}/);
+  assert.match(ranksPanelSource, /getRankGridStyle/);
+  assert.match(ranksPanelSource, /style=\{getRankGridStyle\(platformData\.categories\.length\)\}/);
   assert.doesNotMatch(ranksPanelSource, /TabsList className="\$\{mobileMenuTabsListClassName\} grid-cols-4"/);
   assert.doesNotMatch(ranksPanelSource, /mobileRankPillTabsListClassName/);
   assert.doesNotMatch(ranksPanelSource, /mobileRankPillTabClassName/);
-  assert.match(ranksPanelSource, /className=\{`\$\{mobileTextTabsListClassName\} ml-auto w-fit`\}/);
+  assert.match(ranksPanelSource, /const ScopeTabList = hasCvPlatformScopes \? RankPlatformTabList : TabsList/);
+  assert.match(ranksPanelSource, /className: `\$\{mobileTextTabsListClassName\} ml-auto w-fit`/);
 });
 
 test("rank trend dialog shows metric refresh time in device timezone", () => {
@@ -4648,7 +4652,7 @@ test("rank trend availability route reads historical aggregate samples", () => {
   assert.match(routeSource, /Cache-Control", "no-store, no-cache, must-revalidate"/);
 });
 
-test("Upstash runtime reads are v2-only and entity-scoped", () => {
+test("Upstash runtime reads use current entity-scoped formats", () => {
   assert.doesNotMatch(serverSource, /UPSTASH_DATA_READ_MODE/);
   assert.doesNotMatch(envConfigSource, /INFO_STORE_SYNC_INTERVAL_MS/);
   assert.match(serverSource, /INFO_STORE_META_POLL_INTERVAL_MS/);
@@ -4657,7 +4661,8 @@ test("Upstash runtime reads are v2-only and entity-scoped", () => {
   assert.match(serverSource, /async function readInitialRanksBatch/);
   assert.match(serverSource, /"MGET",[\s\S]*RANKS_KEY,[\s\S]*RANKS_META_KEY/);
   assert.match(serverSource, /"HMGET", key, "__meta__", \.\.\.normalizedIds/);
-  assert.match(serverSource, /"HMGET",[\s\S]*CV_RANK_TREND_V2_KEY/);
+  assert.match(serverSource, /"HMGET", CV_RANK_TREND_V3_KEY, "__meta__"/);
+  assert.doesNotMatch(serverSource, /ranks:trend:cv:v2/);
   assert.match(serverSource, /"HMGET",[\s\S]*MISSEVAN_PEAK_SERIES_TREND_V2_KEY/);
   assert.match(weeklyPlaybackServiceSource, /WATCHCOUNT_HISTORY_KEY_SUFFIX/);
   assert.match(weeklyPlaybackServiceSource, /"HMGET",[\s\S]*historyKey,[\s\S]*\.\.\.missingIds/);

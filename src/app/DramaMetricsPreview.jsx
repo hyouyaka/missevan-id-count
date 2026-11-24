@@ -180,11 +180,17 @@ function PreviewContent({
   );
 }
 
-export function DramaMetricsPreview({ children, ...props }) {
+export function DramaMetricsPreview({ children, onOpenChange, ...props }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef(null);
   const desktop = useDesktopPreview();
   const titleId = useId();
+  useLayoutEffect(() => {
+    if (!open || !onOpenChange) return;
+    onOpenChange(true);
+    return () => onOpenChange(false);
+  }, [open, onOpenChange]);
+
   function restoreTitleFocus(event) {
     event.preventDefault();
     // A newly opened dialog owns focus when switching directly between previews.

@@ -37,6 +37,7 @@ export function buildCvRankProfileId(platform, item = {}) {
   if (!["missevan", "manbo", "cv"].includes(normalizedPlatform)) {
     return "";
   }
+  if (item.cvKey) return item.cvKey;
 
   const works = Array.isArray(item?.works)
     ? item.works

@@ -458,20 +458,30 @@ test("labor ranks keep series-first metrics and independent dates on both platfo
   await page.addInitScript((version) => {
     window.localStorage.setItem("missevan-changelog-seen-version", version);
   }, appVersion);
+  const cvKey = (id) => `person:00000000-0000-4000-8000-${String(id).padStart(12, "0")}`;
   const payload = {
-    success: true, schemaVersion: 8, updatedAt: "2026-11-13T12:00:00Z",
-    cvSummary: { updatedAt: "2026-11-06T12:00:00Z" },
+    success: true, schemaVersion: 9, updatedAt: "2026-11-13T12:00:00Z",
+    cvSummary: { updatedAt: "2026-11-06T12:00:00Z", date: "2026-11-06", publicationId: "labor-v3-fixture" },
     platforms: { cv: { key: "cv", label: "CV", categories: [{ key: "labor", label: "勤劳榜",
       ranks: ["missevan", "manbo"].map((platform) => ({
         key: platform, sourcePlatform: platform, rankKind: "labor", label: platform === "manbo" ? "漫播" : "猫耳",
         name: platform === "manbo" ? "漫播勤劳榜" : "猫耳勤劳榜",
         fetchedAt: platform === "manbo" ? "2026-11-12T12:00:00Z" : "2026-11-13T12:00:00Z",
         items: [{
-          cvName: "勤劳CV", rank: 1, seriesCount: 48, totalViewCount: 123456789,
+          cvKey: cvKey(1), cvName: "勤劳CV", rank: 1, seriesCount: 48, totalViewCount: 123456789,
+          playbackDelta: {
+            key: "view_count", label: "总播放量", available: true,
+            fromDate: "2026-10-30", toDate: "2026-11-06", fromValue: 123456689, toValue: 123456789, delta: 100,
+          },
           works: [{ platform, dramaId: "101", title: "勤劳作品", viewCount: 100, mainCvs: ["勤劳CV"] }],
         }, ...Array.from({ length: 31 }, (_, index) => ({
-          cvName: "并列CV" + (index + 1), rank: index < 28 ? index + 2 : 30,
-          seriesCount: index < 28 ? 47 - index : 10, totalViewCount: null, works: [],
+          cvKey: cvKey(index + 2), cvName: "并列CV" + (index + 1), rank: index < 28 ? index + 2 : 30,
+          seriesCount: index < 28 ? 47 - index : 10, totalViewCount: null,
+          playbackDelta: {
+            key: "view_count", label: "总播放量", available: false,
+            fromDate: "", toDate: "2026-11-06", fromValue: null, toValue: null, delta: null,
+          },
+          works: [],
         }))],
       })),
     }] } },
@@ -488,8 +498,17 @@ test("labor ranks keep series-first metrics and independent dates on both platfo
       await expect(rankSection.getByText("32 位 CV", { exact: true })).toBeVisible();
       await expect(rankSection.getByLabel("系列数: 48", { exact: true })).toBeVisible();
       await expect(rankSection.getByLabel("总播放量: 1.23亿", { exact: true })).toBeVisible();
-      await expect(rankSection.getByText(/周增/)).toHaveCount(32);
-      await expect(rankSection.getByRole("button", { name: "查看勤劳CV趋势" })).toBeVisible();
+      const featuredCv = rankSection.locator('[data-slot="card"]').filter({
+        has: page.getByRole("button", { name: "勤劳CV", exact: true }),
+      });
+      await expect(featuredCv.getByText("周增：+100", { exact: true })).toBeVisible();
+      await expect(featuredCv.getByRole("button", { name: "查看勤劳CV趋势" })).toBeVisible();
+      const cvWithoutSample = rankSection.locator('[data-slot="card"]').filter({
+        has: page.getByRole("button", { name: "并列CV1", exact: true }),
+      });
+      await expect(cvWithoutSample.getByText("周增：暂无数据", { exact: true })).toBeVisible();
+      await expect(cvWithoutSample.getByLabel("总播放量: 暂无数据", { exact: true })).toBeVisible();
+      await expect(cvWithoutSample.getByRole("button", { name: "查看并列CV1趋势" })).toBeVisible();
       await expect(rankSection.getByText(new RegExp(platform === "manbo" ? "更新：.*2026-11-12" : "更新：.*2026-11-13"))).toBeVisible();
       const metricOrder = await rankSection.evaluate((section) => {
         const count = section.querySelector('[aria-label="系列数: 48"]');

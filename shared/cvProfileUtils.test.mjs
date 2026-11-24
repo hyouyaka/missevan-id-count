@@ -94,6 +94,28 @@ test("CV profile ranks match canonical names and aliases and preserve all four s
   assert.deepEqual(buildCvProfileResponse().cvRanks, { updatedAt: "", items: [] });
 });
 
+test("CV catalog resolves stable rank identities with UUID accounts after a rename", () => {
+  const uuid = "00000000-0000-4000-8000-000000000001";
+  const cvKey = "person:" + uuid;
+  const { records } = parseCvIdMapSnapshot(JSON.stringify({
+    旧艺名: { displayName: "新艺名", cvKey, missevanCvId: uuid, manboCvId: uuid },
+  }));
+  const catalog = buildCvCatalog({
+    cvInfoRecords: records,
+    missevanRecords: [{ dramaId: "101", title: "甲剧", maincvs: [uuid], cvnames: { [uuid]: "新艺名" } }],
+    manboRecords: [{ dramaId: "201", name: "乙剧", mainCvIds: [uuid], mainCvNames: ["新艺名"] }],
+  });
+  const { entry } = resolveCvCatalogEntry(catalog, "新艺名", cvKey);
+  assert.equal(entry.cvKey, cvKey);
+  assert.deepEqual(entry.workIds, { missevan: ["101"], manbo: ["201"] });
+  const rankData = createCvRankData({
+    missevan: { cv: [{ cvName: "旧艺名", cvKey, rank: 8 }] },
+  });
+  assert.deepEqual(buildCvProfileRanks({ catalog, entry, rankData }).items, [
+    { platform: "missevan", rankKey: "cv", rank: 8 },
+  ]);
+});
+
 test("CV profile ranks omit missing, invalid and duplicated matches", () => {
   const catalog = buildCvCatalog({ missevanRecords, manboRecords, cvInfoRecords });
   const entry = resolveCvCatalogEntry(catalog, "路知行").entry;

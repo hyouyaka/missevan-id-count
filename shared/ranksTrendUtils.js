@@ -553,6 +553,7 @@ export function findCvTrendRecord(snapshot, cvName) {
   if (cvs[normalizedCvName] && typeof cvs[normalizedCvName] === "object") {
     return cvs[normalizedCvName];
   }
+  if (snapshot?.version === 3) return null;
   return Object.values(cvs).find((record) =>
     normalizeCvName(record?.cvName ?? record?.name) === normalizedCvName
   ) || null;
@@ -599,9 +600,11 @@ function getCvMetricPoint({ date, config, trendSnapshots, cvName, cvPlatforms })
   if (config.platform === "combined") {
     const samples = cvPlatforms.map((platform) => getCvTrendSample(trendSnapshots?.[platform], cvName, date));
     const values = samples.map((sample) => normalizeFiniteNumber(sample?.metrics?.[config.metricKey]));
+    const sameBatch = trendSnapshots?.cvIdentityVersion !== 1 ||
+      new Set(samples.map((sample) => sample?.publicationId || "")).size <= 1;
     return {
       date,
-      value: values.length && values.every(Number.isFinite) ? values.reduce((sum, value) => sum + value, 0) : null,
+      value: sameBatch && values.length && values.every(Number.isFinite) ? values.reduce((sum, value) => sum + value, 0) : null,
       generatedAt: latestCvGeneratedAt(samples.map(normalizeGeneratedAt)),
     };
   }
@@ -627,7 +630,9 @@ export function buildCvTrendWeeklyDelta({
   const config = { platform, metricKey, scope };
   const currentDate = normalizeDateKey(date);
   const cvPlatforms = platform === "combined"
-    ? getCvTrendCombinedPlatforms(trendSnapshots, cvName, currentDate, requiredPlatforms)
+    ? trendSnapshots?.cvIdentityVersion === 1 && requiredPlatforms
+      ? ["missevan", "manbo"].filter((key) => requiredPlatforms.includes(key))
+      : getCvTrendCombinedPlatforms(trendSnapshots, cvName, currentDate, requiredPlatforms)
     : [];
   const pointOn = (sampleDate) => getCvMetricPoint({ date: sampleDate, config, trendSnapshots, cvName, cvPlatforms });
   // Weekly samples can arrive a day early or late. Prefer the same weekday.
@@ -658,11 +663,12 @@ export function buildCvTrendWeeklyDelta({
   };
 }
 
-function buildCvMetric(config, history, rangeHistory = history) {
+function buildCvMetric(config, history, rangeHistory = history, requireLatest = false) {
   const range = getMetricHistoryRange(rangeHistory, (point) => normalizeFiniteNumber(point?.value));
   const fromValue = range.fromValue;
-  const toValue = range.toValue;
-  const available = range.hasComparableRange;
+  const toValue = requireLatest || config.platform === "combined"
+    ? normalizeFiniteNumber(rangeHistory.at(-1)?.value) : range.toValue;
+  const available = range.hasComparableRange && toValue != null;
   const delta = available ? toValue - fromValue : null;
   const deltaPercent = available && fromValue !== 0 ? delta / fromValue : null;
   let previousValue = null;
@@ -696,7 +702,7 @@ function buildCvMetric(config, history, rangeHistory = history) {
   };
 }
 
-function buildCvWindowTrend({ windowConfig, dates, latestDate, metricPointsByKey }) {
+function buildCvWindowTrend({ windowConfig, dates, latestDate, metricPointsByKey, requireLatest }) {
   const latestTime = parseDateKey(latestDate);
   const earliestAllowedTime = latestTime - windowConfig.days * DAY_MS;
   const preWindowDate = [...dates].reverse().find((date) => {
@@ -715,7 +721,7 @@ function buildCvWindowTrend({ windowConfig, dates, latestDate, metricPointsByKey
       date,
       ...(date === preWindowDate ? { isPreWindow: true } : {}),
     }));
-    return buildCvMetric(config, history, history.filter((point) => !point.isPreWindow));
+    return buildCvMetric(config, history, history.filter((point) => !point.isPreWindow), requireLatest);
   });
   const availableDates = windowDates.filter((date) =>
     CV_TREND_METRICS.some((config) => normalizeFiniteNumber(metricPointsByKey[config.key]?.[date]?.value) != null)
@@ -763,6 +769,8 @@ function buildCvRankHistory(dates, metricPointsByKey) {
 
 export function buildCvTrendResponse({
   id,
+  cvKey,
+  windowEndDate,
   trendSnapshots,
   requiredPlatforms,
 } = {}) {
@@ -789,15 +797,18 @@ export function buildCvTrendResponse({
     };
   }
 
-  const dates = getCvTrendDates(trendSnapshots, cvName);
-  const cvPlatforms = getCvTrendCombinedPlatforms(trendSnapshots, cvName, dates.at(-1), requiredPlatforms);
+  const lookupKey = cvKey || cvName;
+  const sampleDates = getCvTrendDates(trendSnapshots, lookupKey);
+  const currentDate = normalizeDateKey(windowEndDate);
+  const dates = currentDate ? [...new Set([...sampleDates, currentDate])].sort() : sampleDates;
+  const cvPlatforms = getCvTrendCombinedPlatforms(trendSnapshots, lookupKey, dates.at(-1), requiredPlatforms);
   const metricPointsByKey = Object.fromEntries(
     CV_TREND_METRICS.map((config) => [
       config.key,
       Object.fromEntries(
         dates.map((date) => [
           date,
-          getCvMetricPoint({ date, config, trendSnapshots, cvName, cvPlatforms }),
+          getCvMetricPoint({ date, config, trendSnapshots, cvName: lookupKey, cvPlatforms }),
         ])
       ),
     ])
@@ -815,7 +826,7 @@ export function buildCvTrendResponse({
     };
   }
 
-  const latestDate = availableDates.at(-1);
+  const latestDate = currentDate || availableDates.at(-1);
   return {
     success: true,
     kind: "cv",
@@ -833,6 +844,7 @@ export function buildCvTrendResponse({
           dates,
           latestDate,
           metricPointsByKey,
+          requireLatest: Boolean(cvKey),
         }),
       ])
     ),

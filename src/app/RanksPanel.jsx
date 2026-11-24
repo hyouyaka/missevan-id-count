@@ -1,7 +1,8 @@
 import { groupCvSeries } from "../../shared/cvSeriesUtils.js";
 import { CvSeriesGroup } from "@/app/CvSeriesGroup";
 import { DramaMetricsPreview } from "@/app/DramaMetricsPreview";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useResponsiveCardColumns } from "@/app/useResponsiveCardColumns";
 import {
   ArrowLeftRightIcon,
   BeanIcon,
@@ -40,7 +41,7 @@ import {
   getBackendVersionFromResponse,
   getInlineTaggedTitleDisplayText,
 } from "@/app/app-utils";
-import { PlatformDramaLink, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
+import { PlatformDramaLink, PlatformGlyph, PlatformIdIcon, PlatformTabLabel } from "@/app/platformTabLabel";
 import { LazyRankTrendDialog } from "@/app/LazyRankTrendDialog";
 import { RankPlatformTabList } from "@/app/RankPlatformTabList";
 import { RankWatermark } from "@/app/RankBadge";
@@ -91,6 +92,7 @@ const mobileCategoryTabClassName =
   "h-7 min-h-7 min-w-11 justify-center px-2 text-sm!";
 const mobileRankTabClassName =
   "h-7 min-h-7 min-w-11 justify-center px-2 text-xs!";
+const cvPlatformScopeTabClassName = "h-7 min-h-7 min-w-8 px-2 text-xs!";
 const mobileSelectedTabClassName = "";
 const mobileSelectedPlatformTabClassName = "";
 const desktopTextTabsListClassName =
@@ -99,25 +101,10 @@ const desktopTextTabClassName =
   "h-7 min-h-7 min-w-0 px-3 text-sm!";
 const desktopSelectedTabClassName = mobileSelectedTabClassName;
 const desktopSelectedPlatformTabClassName = `${desktopSelectedTabClassName} [&_.platform-tab-label-text]:font-bold!`;
-const desktopRankToolbarClassName = "hidden min-w-0 items-center gap-3 lg:flex lg:flex-nowrap";
+const desktopRankToolbarClassName = "flex min-w-0 flex-nowrap items-center gap-3";
 const desktopRankControlsClassName = "flex shrink-0 items-center gap-3";
-const ranksAllColumnsMediaQuery = "(min-width: 1024px)";
 
-function subscribeRanksLayout(callback) {
-  const query = window.matchMedia?.(ranksAllColumnsMediaQuery);
-  if (query) {
-    query.addEventListener("change", callback);
-    return () => query.removeEventListener("change", callback);
-  }
-  window.addEventListener("resize", callback);
-  return () => window.removeEventListener("resize", callback);
-}
-
-function getRanksLayoutSnapshot() {
-  return window.matchMedia?.(ranksAllColumnsMediaQuery)?.matches ?? window.innerWidth >= 1024;
-}
-
-function getRankTabsGridStyle(count) {
+function getRankGridStyle(count) {
   const columns = Math.max(1, Number(count) || 1);
   return { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` };
 }
@@ -740,14 +727,14 @@ function CvWorksList({ works = [], platform, onOpenSearchResult, frontendVersion
   );
 }
 
-function useCvRankTrend({ item, profileId, rankKind, frontendVersion, handleVersionResponse, enabled = true }) {
+function useCvRankTrend({ item, rankKind, frontendVersion, handleVersionResponse, enabled = true }) {
   const [isTrendOpen, setIsTrendOpen] = useState(false);
   const [trendState, setTrendState] = useState({
     isLoading: false,
     error: "",
     data: null,
   });
-  const canShowTrend = enabled && Boolean(item.cvName);
+  const canShowTrend = enabled && Boolean(item.cvKey);
 
   async function openTrendDialog() {
     if (!canShowTrend) {
@@ -767,7 +754,7 @@ function useCvRankTrend({ item, profileId, rankKind, frontendVersion, handleVers
       const { response, data } = await fetchSharedRankTrendData({
         kind: "cv",
         id: item.cvName,
-        profileId,
+        profileId: item.cvKey,
         frontendVersion,
       });
       handleVersionResponse?.({
@@ -874,7 +861,7 @@ function CvRankItemCard({
     openTrendDialog,
     setIsTrendOpen,
     trendState,
-  } = useCvRankTrend({ item, profileId, rankKind, frontendVersion, handleVersionResponse, enabled: !isPartner });
+  } = useCvRankTrend({ item, rankKind, frontendVersion, handleVersionResponse, enabled: !isPartner });
   const profiles = isPartner ? item.cvs : [item];
   const topWorksText = getCvWorksPreviewText(item.topSeries || series);
 
@@ -1029,7 +1016,7 @@ function CvRankColumn({
         <div className="grid grid-cols-1 gap-3">
           {rank.items.map((item) => (
             <CvRankItemCard
-              key={`${rank.key}-${item.rank}-${item.cvName || item.cvs?.map((cv) => cv.cvName).join("&")}`}
+              key={`${rank.key}-${item.rank}-${item.cvKey || item.cvName || item.cvs?.map((cv) => cv.cvKey || cv.cvName).join("&")}`}
               item={item}
               platform={platform}
               rankKey={rank.key}
@@ -1171,11 +1158,12 @@ export function RanksPanel({
   const [selectedCategory, setSelectedCategory] = useState(routeSelection.category);
   const [selectedRank, setSelectedRank] = useState(routeSelection.rank);
   const loggedRanksRef = useRef(new Set());
-  const showAllRanks = useSyncExternalStore(subscribeRanksLayout, getRanksLayoutSnapshot, () => false);
+  const { containerRef, columns } = useResponsiveCardColumns();
   const handleVersionResponseRef = useRef(handleVersionResponse);
   const shareObjectUrlRef = useRef("");
   const shareRequestRef = useRef(null);
   const shareGenerationRef = useRef(0);
+  const mobileCategoryTabsRef = useRef(null);
 
   useEffect(() => {
     handleVersionResponseRef.current = handleVersionResponse;
@@ -1357,6 +1345,8 @@ export function RanksPanel({
   const platformData = useMemo(() => getPlatformData(rankData, selectedPlatform), [rankData, selectedPlatform]);
   const category = getCategory(platformData, selectedCategory);
   const activeRank = getRank(category, selectedRank);
+  const showAllRanks = Boolean(category) && columns >= Math.max(2, category.ranks?.length || 0);
+  const visibleRanks = showAllRanks ? category.ranks : activeRank ? [activeRank] : [];
   const availablePlatforms = useMemo(() => {
     return ["missevan", "manbo", "cv"]
       .map((platform) => getPlatformData(rankData, platform))
@@ -1534,32 +1524,43 @@ export function RanksPanel({
       ? `统计来自猫耳${formatPlainNumber(growthSummary.missevanDramaCount)}部，漫播${formatPlainNumber(growthSummary.manboDramaCount)}部上架中的作品，每周更新。`
       : "每周更新。"
     : `同步猫耳和漫播榜单，每日更新。此次数据刷新于：${formatRankUpdatedAt(rankRefreshAt)}`;
+  const hasCvPlatformScopes = isCvCategory && category?.key !== "partner";
   function renderRankScopeTabs() {
+    const ScopeTabList = hasCvPlatformScopes ? RankPlatformTabList : TabsList;
     return category?.ranks?.length > 1 ? (
       <Tabs
         value={activeRank?.key || ""}
         onValueChange={updateRank}
-        className="ml-auto w-fit shrink-0 items-end gap-0"
+        className={hasCvPlatformScopes ? "ml-auto min-w-26 flex-1 gap-0" : "ml-auto w-fit shrink-0 items-end gap-0"}
       >
-        <TabsList
+        <ScopeTabList
           aria-label={isCvCategory ? "CV 分榜" : undefined}
           variant="line"
-          className={`${mobileTextTabsListClassName} ml-auto w-fit`}
-          style={{ gridTemplateColumns: `repeat(${category.ranks.length}, minmax(0, 1fr))` }}
+          {...(hasCvPlatformScopes
+            ? { align: "end", leadingGroupRef: mobileCategoryTabsRef }
+            : { className: `${mobileTextTabsListClassName} ml-auto w-fit`, style: getRankGridStyle(category.ranks.length) })}
         >
-          {category.ranks.map((rank) => (
-            <TabsTrigger
-              key={rank.key}
-              data-touch="compact"
-              className={`${mobileRankTabClassName} ${
-                rank.key === activeRank?.key ? mobileSelectedTabClassName : ""
-              }`}
-              value={rank.key}
-            >
-              {formatMobileRankMenuLabel(rank.label)}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+          {category.ranks.map((rank) => {
+            const label = formatMobileRankMenuLabel(rank.label);
+            return (
+              <TabsTrigger
+                key={rank.key}
+                aria-label={hasCvPlatformScopes ? label : undefined}
+                title={hasCvPlatformScopes ? label : undefined}
+                data-touch="compact"
+                className={hasCvPlatformScopes ? cvPlatformScopeTabClassName : mobileRankTabClassName}
+                value={rank.key}
+              >
+                {hasCvPlatformScopes ? (
+                  <>
+                    <PlatformGlyph platform={rank.key} />
+                    <span className="platform-tab-label-text">{label}</span>
+                  </>
+                ) : label}
+              </TabsTrigger>
+            );
+          })}
+        </ScopeTabList>
       </Tabs>
     ) : null;
   }
@@ -1569,7 +1570,7 @@ export function RanksPanel({
         type="button"
         aria-controls="rank-metric-legend"
         aria-expanded={showMetricLegend}
-        className="shrink-0 text-sm! font-semibold leading-5 text-primary underline-offset-4 hover:underline lg:hidden"
+        className="shrink-0 text-sm! font-semibold leading-5 text-primary underline-offset-4 hover:underline"
         onClick={() => setShowMetricLegend((open) => !open)}
       >
         {showMetricLegend ? "收起图例" : "查看图例"}
@@ -1577,9 +1578,9 @@ export function RanksPanel({
     ) : null;
 
   return (
-    <div className="grid gap-4 sm:gap-5">
-      {canShowMetricLegend && showMetricLegend ? (
-        <div id="rank-metric-legend" className="px-1 lg:hidden">
+    <div ref={containerRef} data-ranks-layout className="grid min-w-0 grid-cols-1 gap-4 sm:gap-5">
+      {canShowMetricLegend && showMetricLegend && !showAllRanks ? (
+        <div id="rank-metric-legend" className="px-1">
           <MetricLegend />
         </div>
       ) : null}
@@ -1609,107 +1610,108 @@ export function RanksPanel({
       {!isLoading && !errorMessage && hasRanks ? (
         <>
           <div className="grid gap-2">
-            <div className={desktopRankToolbarClassName}>
-              <div className={desktopRankControlsClassName}>
-                <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
-                  <RankPlatformTabList aria-label="选择榜单平台" className={`${desktopTextTabsListClassName} gap-1`}>
-                    {availablePlatforms.map((platform) => (
-                      <TabsTrigger
-                        key={platform.key}
-                        aria-label={platform.label}
-                        data-platform={platform.key}
-                        className={`${desktopTextTabClassName} ${
-                          platform.key === selectedPlatform ? desktopSelectedPlatformTabClassName : ""
-                        }`}
-                        value={platform.key}
-                      >
-                        <PlatformTabLabel platform={platform} />
-                      </TabsTrigger>
-                    ))}
-                  </RankPlatformTabList>
-                </Tabs>
-                {platformData?.categories?.length ? (
-                  <Tabs value={category?.key || ""} onValueChange={updateCategory} className="gap-0">
-                    <TabsList className={`${desktopTextTabsListClassName} gap-1`}>
-                      {platformData.categories.map((item) => (
+            {showAllRanks ? (
+              <div className={desktopRankToolbarClassName}>
+                <div className={desktopRankControlsClassName}>
+                  <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="gap-0">
+                    <RankPlatformTabList aria-label="选择榜单平台" className={`${desktopTextTabsListClassName} gap-1`}>
+                      {availablePlatforms.map((platform) => (
                         <TabsTrigger
-                          key={item.key}
-                          className={`${desktopTextTabClassName} ${item.key === category?.key ? desktopSelectedTabClassName : ""}`}
-                          value={item.key}
+                          key={platform.key}
+                          aria-label={platform.label}
+                          data-platform={platform.key}
+                          className={`${desktopTextTabClassName} ${
+                            platform.key === selectedPlatform ? desktopSelectedPlatformTabClassName : ""
+                          }`}
+                          value={platform.key}
                         >
-                          {isCvCategory ? formatMobileRankMenuLabel(item.label) : item.label}
+                          <PlatformTabLabel platform={platform} />
                         </TabsTrigger>
                       ))}
-                    </TabsList>
+                    </RankPlatformTabList>
                   </Tabs>
+                  {platformData?.categories?.length ? (
+                    <Tabs value={category?.key || ""} onValueChange={updateCategory} className="gap-0">
+                      <TabsList className={`${desktopTextTabsListClassName} gap-1`}>
+                        {platformData.categories.map((item) => (
+                          <TabsTrigger
+                            key={item.key}
+                            className={`${desktopTextTabClassName} ${item.key === category?.key ? desktopSelectedTabClassName : ""}`}
+                            value={item.key}
+                          >
+                            {isCvCategory ? formatMobileRankMenuLabel(item.label) : item.label}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </Tabs>
+                  ) : null}
+                </div>
+                {canShowMetricLegend ? (
+                  <MetricLegend
+                    variant="compact"
+                    className="ml-auto w-max min-w-0 max-w-full shrink overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  />
                 ) : null}
               </div>
-              {canShowMetricLegend ? (
-                <MetricLegend
-                  variant="compact"
-                  className="ml-auto w-max min-w-0 max-w-full shrink overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                />
-              ) : null}
-            </div>
-            <div className="grid gap-1 lg:hidden">
-              <div className="flex items-center justify-between gap-3">
-                <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="min-w-0 flex-1 gap-0">
-                  <RankPlatformTabList className={mobilePlatformTabsListClassName} aria-label="选择榜单平台">
-                    {availablePlatforms.map((platform) => (
-                      <TabsTrigger
-                        key={platform.key}
-                        aria-label={platform.label}
-                        data-touch="compact"
-                        data-platform={platform.key}
-                        className={`${mobilePlatformTabClassName} ${
-                          platform.key === selectedPlatform ? mobileSelectedPlatformTabClassName : ""
-                        }`}
-                        value={platform.key}
-                      >
-                        <PlatformTabLabel platform={platform} />
-                      </TabsTrigger>
-                    ))}
-                  </RankPlatformTabList>
-                </Tabs>
-                {renderMobileMetricLegendToggle()}
-              </div>
-              {platformData?.categories?.length ? (
-                <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border/60 pt-1">
-                  <Tabs
-                    value={category?.key || ""}
-                    onValueChange={updateCategory}
-                    className="w-fit max-w-full shrink-0 gap-0"
-                  >
-                    <TabsList
-                      variant="line"
-                      className={`${mobileTextTabsListClassName} w-fit`}
-                      style={getRankTabsGridStyle(platformData.categories.length)}
-                    >
-                      {platformData.categories.map((item) => (
+            ) : (
+              <div className="grid gap-1">
+                <div className="flex items-center justify-between gap-3">
+                  <Tabs value={selectedPlatform} onValueChange={updatePlatform} className="min-w-0 flex-1 gap-0">
+                    <RankPlatformTabList className={mobilePlatformTabsListClassName} aria-label="选择榜单平台">
+                      {availablePlatforms.map((platform) => (
                         <TabsTrigger
-                          key={item.key}
+                          key={platform.key}
+                          aria-label={platform.label}
                           data-touch="compact"
-                          className={`${mobileCategoryTabClassName} ${
-                            item.key === category?.key ? mobileSelectedTabClassName : ""
+                          data-platform={platform.key}
+                          className={`${mobilePlatformTabClassName} ${
+                            platform.key === selectedPlatform ? mobileSelectedPlatformTabClassName : ""
                           }`}
-                          value={item.key}
+                          value={platform.key}
                         >
-                          {formatMobileRankMenuLabel(item.label)}
+                          <PlatformTabLabel platform={platform} />
                         </TabsTrigger>
                       ))}
-                    </TabsList>
+                    </RankPlatformTabList>
                   </Tabs>
-                  {renderRankScopeTabs()}
+                  {renderMobileMetricLegendToggle()}
                 </div>
-              ) : null}
-            </div>
+                {platformData?.categories?.length ? (
+                  <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-border/60 pt-1">
+                    <Tabs
+                      ref={mobileCategoryTabsRef}
+                      value={category?.key || ""}
+                      onValueChange={updateCategory}
+                      className="w-fit max-w-full shrink-0 gap-0"
+                    >
+                      <TabsList
+                        variant="line"
+                        className={`${mobileTextTabsListClassName} w-fit`}
+                        style={getRankGridStyle(platformData.categories.length)}
+                      >
+                        {platformData.categories.map((item) => (
+                          <TabsTrigger
+                            key={item.key}
+                            data-touch="compact"
+                            className={`${mobileCategoryTabClassName} ${
+                              item.key === category?.key ? mobileSelectedTabClassName : ""
+                            }`}
+                            value={item.key}
+                          >
+                            {formatMobileRankMenuLabel(item.label)}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </Tabs>
+                    {renderRankScopeTabs()}
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
 
-          {isCvCategory && activeRank ? (
-            <div className={category.key === "partner"
-              ? "grid items-start gap-3 lg:grid-cols-2"
-              : "grid items-start gap-3 lg:grid-cols-3"}>
-              {(showAllRanks ? category.ranks : [activeRank]).map((rank) => (
+          <div className="grid items-start gap-3 gap-x-[12px]" style={getRankGridStyle(visibleRanks.length)}>
+            {visibleRanks.map((rank) => isCvCategory ? (
                 <CvRankColumn
                   key={category.key + ":" + rank.key}
                   platform={rank.sourcePlatform || "cv"}
@@ -1722,57 +1724,28 @@ export function RanksPanel({
                   onOpenSearchResult={onOpenSearchResult}
                   onOpenCv={onOpenCv}
                 />
-              ))}
-            </div>
-          ) : (
-            <>
-              <div className="hidden gap-3 lg:grid lg:grid-cols-[repeat(auto-fit,minmax(21rem,1fr))]">
-                {(category?.ranks || []).map((rank) => (
-                  <RankColumn
-                    key={rank.key}
-                    platform={selectedPlatform}
-                    rank={rank}
-                    onShare={handleShareRank}
-                    infoText={rankInfoText}
-                    refreshAt={rankRefreshAt}
-                    frontendVersion={frontendVersion}
-                    handleVersionResponse={handleVersionResponse}
-                    onOpenSearchResult={onOpenSearchResult}
-                    favoriteKeys={favoriteKeys}
-                    favoriteActionsDisabled={favoriteActionsDisabled}
-                    statisticsActionsDisabled={statisticsActionsDisabled}
-                    onToggleFavorite={onToggleFavorite}
-                    onAddCompareItem={onAddCompareItem}
-                    onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
-                    onStartRevenueEstimate={onStartRevenueEstimate}
-                    trendAvailableIds={availableTrendIds}
-                  />
-                ))}
-              </div>
-              <div className="grid gap-3 lg:hidden">
-                {activeRank ? (
-                  <RankColumn
-                    platform={selectedPlatform}
-                    rank={activeRank}
-                    onShare={handleShareRank}
-                    infoText={rankInfoText}
-                    refreshAt={rankRefreshAt}
-                    frontendVersion={frontendVersion}
-                    handleVersionResponse={handleVersionResponse}
-                    onOpenSearchResult={onOpenSearchResult}
-                    favoriteKeys={favoriteKeys}
-                    favoriteActionsDisabled={favoriteActionsDisabled}
-                    statisticsActionsDisabled={statisticsActionsDisabled}
-                    onToggleFavorite={onToggleFavorite}
-                    onAddCompareItem={onAddCompareItem}
-                    onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
-                    onStartRevenueEstimate={onStartRevenueEstimate}
-                    trendAvailableIds={availableTrendIds}
-                  />
-                ) : null}
-              </div>
-            </>
-          )}
+            ) : (
+                <RankColumn
+                  key={rank.key}
+                  platform={selectedPlatform}
+                  rank={rank}
+                  onShare={handleShareRank}
+                  infoText={rankInfoText}
+                  refreshAt={rankRefreshAt}
+                  frontendVersion={frontendVersion}
+                  handleVersionResponse={handleVersionResponse}
+                  onOpenSearchResult={onOpenSearchResult}
+                  favoriteKeys={favoriteKeys}
+                  favoriteActionsDisabled={favoriteActionsDisabled}
+                  statisticsActionsDisabled={statisticsActionsDisabled}
+                  onToggleFavorite={onToggleFavorite}
+                  onAddCompareItem={onAddCompareItem}
+                  onStartDramaPaidIdStatistics={onStartDramaPaidIdStatistics}
+                  onStartRevenueEstimate={onStartRevenueEstimate}
+                  trendAvailableIds={availableTrendIds}
+                />
+            ))}
+          </div>
         </>
       ) : null}
 

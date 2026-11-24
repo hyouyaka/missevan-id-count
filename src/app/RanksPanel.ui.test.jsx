@@ -135,24 +135,26 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function mockRanksLayout(initialWide) {
+function mockRanksLayout(initialWidth) {
   const listeners = new Set();
-  const media = {
-    matches: initialWide,
-    addEventListener: (_event, listener) => listeners.add(listener),
-    removeEventListener: (_event, listener) => listeners.delete(listener),
-  };
-  vi.stubGlobal("matchMedia", vi.fn((query) => query === "(min-width: 1024px)" ? media : {
-    matches: false, addEventListener() {}, removeEventListener() {},
-  }));
-  return (wide) => act(() => {
-    media.matches = wide;
-    listeners.forEach((listener) => listener());
+  let width = initialWidth;
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback) { this.callback = callback; }
+    observe(element) {
+      if (!element.hasAttribute("data-ranks-layout")) return;
+      listeners.add(this.callback);
+      this.callback([{ contentRect: { width } }]);
+    }
+    disconnect() { listeners.delete(this.callback); }
+  });
+  return (nextWidth) => act(() => {
+    width = nextWidth;
+    listeners.forEach((listener) => listener([{ contentRect: { width } }]));
   });
 }
 
 test("single-rank views log daily and weekly separately and deduplicate repeat visits", async () => {
-  const setWide = mockRanksLayout(false);
+  const setWidth = mockRanksLayout(651);
   const user = userEvent.setup();
   render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "new", rank: "new_daily" }} />);
   await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["新品日榜"]));
@@ -160,14 +162,14 @@ test("single-rank views log daily and weekly separately and deduplicate repeat v
   await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["新品日榜", "新品周榜"]));
   await user.click(screen.getByRole("tab", { name: "日", exact: true }));
   expect(getUsageLogEntries("ranks")).toHaveLength(2);
-  setWide(true);
+  setWidth(652);
   await waitFor(() => expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["新品日榜", "新品周榜", "新品榜"]));
-  setWide(false);
+  setWidth(651);
   expect(getUsageLogEntries("ranks")).toHaveLength(3);
 });
 
 test.each([false, true])("CV view logs match the visible scope (wide=%s)", async (wide) => {
-  mockRanksLayout(wide);
+  mockRanksLayout(wide ? 984 : 651);
   const user = userEvent.setup();
   setCvRanks("missevan", [
     { key: "cv", label: "总榜", name: "CV总榜", items: [] },
@@ -181,29 +183,39 @@ test.each([false, true])("CV view logs match the visible scope (wide=%s)", async
 });
 
 test("CV shows all sub-ranks side by side only in wide layouts", async () => {
-  const setWide = mockRanksLayout(true);
+  const setWidth = mockRanksLayout(984);
   const user = userEvent.setup();
   const makeRanks = (kind, title, scopes) => scopes.map(([key, label]) => ({
     key, label, name: title + "（" + label + "）", rankKind: kind, items: [],
   }));
   testState.payload.platforms.cv = {
     key: "cv", label: "CV", categories: [
-      { key: "total", label: "总榜", ranks: makeRanks("total", "CV总榜", [["combined", "汇总"], ["missevan", "猫耳"], ["manbo", "漫播"]]) },
-      { key: "partner", label: "搭档榜", ranks: makeRanks("partner", "CV搭档榜", [["workCount", "次数"], ["viewCount", "播放量"]]) },
+      { key: "total", label: "总榜", ranks: makeRanks("total", "CV总榜", [["combined", "合计"], ["missevan", "猫耳"], ["manbo", "漫播"]]) },
+      { key: "partner", label: "搭档榜", ranks: makeRanks("partner", "CV搭档榜", [["workCount", "次数"], ["viewCount", "播放"]]) },
     ],
   };
   render(<RanksPanel routeState={{ view: "ranks", platform: "cv", category: "total", rank: "manbo" }} />);
   expect(screen.getAllByRole("heading", { name: /CV总榜/ })).toHaveLength(3);
+  expect(screen.queryByRole("tablist", { name: "CV 分榜" })).not.toBeInTheDocument();
   expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["CV总榜"]);
-  setWide(false);
+  setWidth(983);
+  const mobileScopes = screen.getByRole("tablist", { name: "CV 分榜" });
+  expect(mobileScopes).toHaveTextContent("合计猫耳漫播");
+  expect(mobileScopes.querySelector('[role="tab"]')).toHaveAccessibleName("合计");
+  expect(mobileScopes.querySelector('[data-platform="combined"] [data-platform="missevan"]')).toBeInTheDocument();
+  expect(mobileScopes.querySelector('[data-platform="combined"] [data-platform="manbo"]')).toBeInTheDocument();
   expect(screen.getAllByRole("heading", { name: /CV总榜/ })).toHaveLength(1);
   expect(screen.getByRole("heading", { name: /CV总榜（漫播）/ })).toBeInTheDocument();
   expect(getUsageLogEntries("ranks").map((entry) => entry.keyword)).toEqual(["CV总榜", "CV总榜（漫播）"]);
-  setWide(true);
+  setWidth(652);
   await user.click(screen.getAllByRole("tab", { name: "搭档", exact: true })[0]);
   expect(screen.getAllByRole("heading", { name: /CV搭档榜/ })).toHaveLength(2);
   expect(screen.getByRole("heading", { name: /CV搭档榜（次数）/ })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: /CV搭档榜（播放量）/ })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /CV搭档榜（播放）/ })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "播放", exact: true })).not.toBeInTheDocument();
+  setWidth(651);
+  expect(screen.getAllByRole("heading", { name: /CV搭档榜/ })).toHaveLength(1);
+  expect(screen.getByRole("tab", { name: "播放", exact: true })).toBeInTheDocument();
 });
 
 test.each(["missevan", "manbo"])("labor rank %s keeps series counts primary and exposes playback trends", async (platform) => {
@@ -211,7 +223,7 @@ test.each(["missevan", "manbo"])("labor rank %s keeps series counts primary and 
   testState.payload.platforms[platform] ||= { key: platform, label: platform === "manbo" ? "漫播" : "猫耳", categories: [] };
   setCvRanks(platform, [
     { key: "cv-series-count", label: "勤劳榜", name: "CV勤劳榜", fetchedAt: "2026-11-13T12:00:00Z", items: [
-      { cvName: "勤劳CV", rank: 1, seriesCount: 48, totalViewCount: 123456789, works, playbackDelta: { available: true, delta: 100 } },
+      { cvName: "勤劳CV", cvKey: "person:00000000-0000-0000-0000-000000000001", rank: 1, seriesCount: 48, totalViewCount: 123456789, works, playbackDelta: { available: true, delta: 100 } },
       { cvName: "无播放CV", rank: 2, seriesCount: 47, totalViewCount: null, works: [] },
     ] },
   ]);
@@ -222,7 +234,8 @@ test.each(["missevan", "manbo"])("labor rank %s keeps series counts primary and 
   const playback = screen.getAllByLabelText("总播放量: 1.23亿")[0];
   expect(playback.querySelector("span")).toHaveClass("font-medium");
   expect(screen.getAllByLabelText("总播放量: 暂无数据").length).toBeGreaterThan(0);
-  expect(screen.getAllByText(/周增：/)).toHaveLength(2);
+  expect(screen.getAllByText(/周增：/)).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "查看无播放CV趋势" })).toBeNull();
   expect(screen.getByRole("button", { name: "查看勤劳CV趋势" })).toBeInTheDocument();
   const user = userEvent.setup();
   await user.click(screen.getAllByRole("button", { name: "勤劳CV", exact: true })[0]);
@@ -233,7 +246,7 @@ test.each(["missevan", "manbo"])("labor rank %s keeps series counts primary and 
 
 test.each(["missevan", "manbo", "combined"])("combined labor dialog defaults to the row's %s playback scope", async (playbackPlatform) => {
   setCvRanks("combined", [{ key: "cv-series-count", label: "汇总", name: "勤劳总榜", items: [
-    { cvName: "汇总勤劳CV", rank: 1, seriesCount: 7, totalViewCount: 120, playbackPlatform, works: [] },
+    { cvName: "汇总勤劳CV", cvKey: "person:00000000-0000-0000-0000-000000000001", rank: 1, seriesCount: 7, totalViewCount: 120, playbackPlatform, works: [] },
   ] }]);
   render(<RanksPanel routeState={{ view: "ranks", platform: "cv", category: "labor", rank: "combined" }} />);
   await userEvent.click(screen.getByRole("button", { name: "查看汇总勤劳CV趋势" }));
@@ -366,15 +379,17 @@ test("CV rank work titles preview without changing the series disclosure or CV p
 });
 
 test("rank title share buttons are per-rank on desktop, active-rank only on mobile, and disabled for empty ranks", async () => {
+  const setWidth = mockRanksLayout(652);
   const user = userEvent.setup();
   shareState.failNext = true;
   render(<RanksPanel routeState={{ view: "ranks", platform: "missevan", category: "new", rank: "new_daily" }} />);
 
-  const dailyButtons = await screen.findAllByRole("button", { name: "分享新品日榜为 PNG" });
+  const dailyButton = await screen.findByRole("button", { name: "分享新品日榜为 PNG" });
   const weeklyButton = screen.getByRole("button", { name: "分享新品周榜为 PNG" });
-  expect(dailyButtons.length).toBe(2);
   expect(weeklyButton).toBeDisabled();
-  await user.click(dailyButtons[0]);
+  setWidth(651);
+  expect(screen.queryByRole("button", { name: "分享新品周榜为 PNG" })).not.toBeInTheDocument();
+  await user.click(dailyButton);
   await screen.findByText("模拟绘图失败");
   await user.click(screen.getByRole("button", { name: "重试" }));
   await screen.findByRole("img", { name: "新品日榜" });

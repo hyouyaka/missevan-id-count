@@ -426,6 +426,7 @@ export function DramaCompareDialog({ open, onOpenChange, items, frontendVersion,
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent
         scrollable
+        onBackdropClick={() => onOpenChange(false)}
         className="w-[calc(100vw-1.5rem)] max-w-[58rem] gap-3 overflow-x-hidden p-3 pt-4 sm:p-4"
       >
         <AlertDialogCancel

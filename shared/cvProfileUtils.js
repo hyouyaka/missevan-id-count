@@ -28,6 +28,23 @@ function uniqueNames(values) {
     });
 }
 
+const cvUuidPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+
+export function normalizeCvKey(value) {
+  const key = normalizeName(value);
+  const personId = key.startsWith("person:") ? key.slice(7) : "";
+  return cvUuidPattern.test(personId) || /^(missevan|manbo):id:[^\s]{1,200}$/.test(key) ? key : "";
+}
+
+export function getCvCatalogTrendKey(entry) {
+  return normalizeCvKey(entry?.cvKey) || normalizeCvKey(entry?.profileId);
+}
+
+function normalizeCvAccountId(value) {
+  return typeof value === "string" && cvUuidPattern.test(value.trim())
+    ? value.trim() : normalizeCvPlatformId(value);
+}
+
 export function normalizeCvPlatformId(value) {
   if (typeof value === "number") {
     return Number.isSafeInteger(value) && value > 0 ? String(value) : "";
@@ -50,7 +67,7 @@ export function normalizeCvPlatformId(value) {
 function buildMappedIdentityKeys(platformIds = {}) {
   return ["missevan", "manbo"].flatMap((platform) =>
     (Array.isArray(platformIds[platform]) ? platformIds[platform] : [])
-      .map(normalizeCvPlatformId)
+      .map(normalizeCvAccountId)
       .filter(Boolean)
       .map((id) => `mapped:${platform}:${id}`)
   );
@@ -58,13 +75,13 @@ function buildMappedIdentityKeys(platformIds = {}) {
 
 function buildMappedProfileId(platformIds = {}) {
   const missevanId = (Array.isArray(platformIds.missevan) ? platformIds.missevan : [])
-    .map(normalizeCvPlatformId)
+    .map(normalizeCvAccountId)
     .find(Boolean);
   if (missevanId) {
     return `mapped:missevan:${missevanId}`;
   }
   const manboId = (Array.isArray(platformIds.manbo) ? platformIds.manbo : [])
-    .map(normalizeCvPlatformId)
+    .map(normalizeCvAccountId)
     .find(Boolean);
   return manboId ? `mapped:manbo:${manboId}` : "";
 }
@@ -157,10 +174,14 @@ function consolidateCvInfoRecords(records) {
       members.flatMap((record) => [record.name, ...record.aliases])
     ).filter((alias) => normalizeNameKey(alias) !== normalizeNameKey(canonical.name));
     const profileId = buildMappedProfileId(platformIds);
+    const cvKeys = new Set(members.map(({ cvKey }) => normalizeCvKey(cvKey)).filter(Boolean));
+    const cvKey = cvKeys.size === 1 ? [...cvKeys][0] : "";
     return {
       profileId,
+      ...(cvKey ? { cvKey } : {}),
       identityKeys: Array.from(new Set([
         profileId,
+        cvKey,
         ...buildMappedIdentityKeys(platformIds),
       ].filter(Boolean))),
       name: canonical.name,
@@ -196,8 +217,8 @@ export function parseCvIdMapSnapshot(raw) {
       if (!name) {
         return null;
       }
-      const missevanId = normalizeCvPlatformId(record.missevanCvId);
-      const manboId = normalizeCvPlatformId(record.manboCvId);
+      const missevanId = normalizeCvAccountId(record.missevanCvId);
+      const manboId = normalizeCvAccountId(record.manboCvId);
       [record.missevanCvId, record.manboCvId].forEach((value, index) => {
         if (
           value !== null &&
@@ -219,6 +240,7 @@ export function parseCvIdMapSnapshot(raw) {
       }
       return {
         profileId,
+        cvKey: normalizeCvKey(record.cvKey),
         identityKeys: buildMappedIdentityKeys(platformIds),
         name,
         avatar: normalizeName(record.avatar),
@@ -251,12 +273,12 @@ function normalizeCvInfoRecords(records) {
       const platformIds = {
         missevan: Array.from(
           new Set((Array.isArray(record?.platformIds?.missevan) ? record.platformIds.missevan : [])
-            .map(normalizeCvPlatformId)
+            .map(normalizeCvAccountId)
             .filter(Boolean))
         ),
         manbo: Array.from(
           new Set((Array.isArray(record?.platformIds?.manbo) ? record.platformIds.manbo : [])
-            .map(normalizeCvPlatformId)
+            .map(normalizeCvAccountId)
             .filter(Boolean))
         ),
       };
@@ -266,6 +288,7 @@ function normalizeCvInfoRecords(records) {
       }
       return {
         profileId,
+        cvKey: normalizeCvKey(record.cvKey),
         identityKeys: Array.from(new Set([
           ...(Array.isArray(record?.identityKeys) ? record.identityKeys : []),
           ...buildMappedIdentityKeys(platformIds),
@@ -292,7 +315,7 @@ function getMissevanCvIdentities(record) {
     .map((id) => ({
       name: normalizeName(cvNames[String(id)]),
       aliases: [],
-      platformId: normalizeCvPlatformId(id),
+      platformId: normalizeCvAccountId(id),
     }))
     .filter((identity) => identity.name);
   return identities;
@@ -302,7 +325,7 @@ function getManboCvIdentities(record) {
   const names = (Array.isArray(record?.mainCvNames) ? record.mainCvNames : []).map(normalizeName);
   const nicknames = (Array.isArray(record?.mainCvNicknames) ? record.mainCvNicknames : []).map(normalizeName);
   const ids = (Array.isArray(record?.mainCvIds) ? record.mainCvIds : [])
-    .map(normalizeCvPlatformId);
+    .map(normalizeCvAccountId);
   const tupleCount = Math.max(names.length, nicknames.length, ids.length);
   const seen = new Set();
   return Array.from({ length: tupleCount }, (_, index) => {
@@ -397,6 +420,7 @@ export function buildCvCatalog({
             : `${platform}:name:${canonicalKey}`;
         const current = catalog.get(key) || {
           profileId: key,
+          cvKey: cvInfo?.cvKey,
           identityKeys: new Set(cvInfo?.identityKeys || [key]),
           name: canonicalName,
           avatar: cvInfo?.avatar || "",
@@ -443,6 +467,7 @@ export function buildCvCatalog({
 
   return Array.from(catalog.values()).map((entry) => ({
     profileId: entry.profileId,
+    ...(entry.cvKey ? { cvKey: entry.cvKey } : {}),
     identityKeys: Array.from(entry.identityKeys),
     name: entry.name,
     avatar: entry.avatar,
@@ -696,6 +721,8 @@ export function buildCvProfileRanks({ catalog = [], entry, rankData, trendSnapsh
   }
 
   function matchesProfile(item, platform) {
+    const cvKey = normalizeCvKey(item?.cvKey);
+    if (cvKey) return cvKey === getCvCatalogTrendKey(entry);
     const name = normalizeName(item?.cvName ?? item?.name);
     const nameKey = normalizeNameKey(name);
     if (!nameKeys.has(nameKey)) {

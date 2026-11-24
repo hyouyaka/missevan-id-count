@@ -48,6 +48,18 @@ test("opening fetches fresh complete numbers without navigating or showing stale
   expect(usageActions()).toEqual([expect.objectContaining({ action: "drama_preview_open", platform: "missevan", dramaId: "123", source: "ranks" })]);
 });
 
+test("reports preview closure both on dismissal and when the trigger unmounts", async () => {
+  const user = userEvent.setup();
+  const onOpenChange = vi.fn();
+  const { unmount } = render(<Preview onOpenChange={onOpenChange} />);
+  const open = () => user.click(screen.getByRole("button", { name: "作品标题" }));
+  await open();
+  await user.keyboard("{Escape}");
+  await open();
+  unmount();
+  expect(onOpenChange.mock.calls).toEqual([[true], [false], [true], [false]]);
+});
+
 test.each([
   [{ revenue_type: "drama" }, "付费人数", "收听人数"],
   [{ is_member: true }, "收听人数", "付费人数"],
